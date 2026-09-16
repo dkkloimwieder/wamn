@@ -18,15 +18,19 @@ pub(crate) struct LoadReceiptScreenRow {
     pub remaining_quantity: Option<wamn_postgres_statements::Numeric>,
 }
 
-pub(crate) const LOAD_RECEIPT_SCREEN_DIGEST: &str = "sha256:d10b99c537b6c8b826c9d8e4f61f3aae4683073aaefc0915356ae7b41157b068";
+pub(crate) const LOAD_RECEIPT_SCREEN_DIGEST: &str =
+    "sha256:d10b99c537b6c8b826c9d8e4f61f3aae4683073aaefc0915356ae7b41157b068";
 
 pub(crate) async fn load_receipt_screen(
     transaction: &mut Transaction,
     purchase_order_id: wamn_postgres_statements::Uuid,
 ) -> Result<Vec<LoadReceiptScreenRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(LOAD_RECEIPT_SCREEN_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(purchase_order_id),
-    ]).await?;
+    let rows = transaction
+        .run(
+            LOAD_RECEIPT_SCREEN_DIGEST,
+            vec![wamn_postgres_statements::into_sql_value(purchase_order_id)],
+        )
+        .await?;
     wamn_postgres_statements::decode_all(LOAD_RECEIPT_SCREEN_DIGEST, rows, |row| {
         Ok(LoadReceiptScreenRow {
             purchase_order_id: row.decode("purchase_order_id")?,

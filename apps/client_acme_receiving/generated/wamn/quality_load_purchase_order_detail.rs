@@ -13,15 +13,19 @@ pub(crate) struct LoadPurchaseOrderDetailRow {
     pub acme_quality_status: String,
 }
 
-pub(crate) const LOAD_PURCHASE_ORDER_DETAIL_DIGEST: &str = "sha256:80ee1d1fc0391b2167f4ad4360f2c8d2876d5d0303dc1996cb1a757288eb536f";
+pub(crate) const LOAD_PURCHASE_ORDER_DETAIL_DIGEST: &str =
+    "sha256:80ee1d1fc0391b2167f4ad4360f2c8d2876d5d0303dc1996cb1a757288eb536f";
 
 pub(crate) async fn load_purchase_order_detail(
     transaction: &mut Transaction,
     purchase_order_id: wamn_postgres_statements::Uuid,
 ) -> Result<Option<LoadPurchaseOrderDetailRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(LOAD_PURCHASE_ORDER_DETAIL_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(purchase_order_id),
-    ]).await?;
+    let rows = transaction
+        .run(
+            LOAD_PURCHASE_ORDER_DETAIL_DIGEST,
+            vec![wamn_postgres_statements::into_sql_value(purchase_order_id)],
+        )
+        .await?;
     wamn_postgres_statements::decode_optional(LOAD_PURCHASE_ORDER_DETAIL_DIGEST, rows, |row| {
         Ok(LoadPurchaseOrderDetailRow {
             id: row.decode("id")?,

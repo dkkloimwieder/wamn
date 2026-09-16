@@ -46,11 +46,7 @@ pub const INVENTORY_FIELDS: &[FieldDescriptor] = &[
         path: "pallet_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "product_id",
@@ -80,20 +76,13 @@ pub const INVENTORY_FIELDS: &[FieldDescriptor] = &[
         path: "source_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "held",
-        ],
+        values: &["available", "held"],
     },
     FieldDescriptor {
         path: "target_pallet_id",
@@ -105,14 +94,9 @@ pub const INVENTORY_FIELDS: &[FieldDescriptor] = &[
         path: "target_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
 ];
-
 
 /// Input for `wamn-wms:inventory/adjust@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -212,10 +196,7 @@ pub const INVENTORY_ADJUST_INPUT: &[FieldDescriptor] = &[
         path: "value.status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "held",
-        ],
+        values: &["available", "held"],
     },
 ];
 
@@ -243,11 +224,7 @@ pub const INVENTORY_ADJUST_RESULT: &[FieldDescriptor] = &[
         path: "pallet_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "row_version",
@@ -258,69 +235,190 @@ pub const INVENTORY_ADJUST_RESULT: &[FieldDescriptor] = &[
 ];
 
 pub const INVENTORY_ADJUST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value", type_name: "object", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.expected_row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.idempotency_key", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.occurred_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.product_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.quantity", type_name: "numeric", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.reason_code", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.status", type_name: "text", nullable: false, values: &["available", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "value",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.expected_row_version",
+                    type_name: "int64",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.idempotency_key",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.occurred_at",
+                    type_name: "timestamptz",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.pallet_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.product_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.quantity",
+                    type_name: "numeric",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.reason_code",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.status",
+                    type_name: "text",
+                    nullable: false,
+                    values: &["available", "held"],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+        ],
+    },
 ];
 
 pub const INVENTORY_ADJUST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "adjusted_quantity", type_name: "numeric", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "movement_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "pallet_status", type_name: "text", nullable: false, values: &["available", "consumed", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "adjusted_quantity",
+            type_name: "numeric",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "movement_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const INVENTORY_ADJUST_KIND: &str = "command";
@@ -371,7 +469,6 @@ pub async fn adjust(
         .await
 }
 
-
 /// Input for `wamn-wms:inventory/aggregate@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryAggregateRequest {
@@ -395,14 +492,12 @@ pub struct InventoryAggregateResult {
 }
 
 /// Input descriptors for `wamn-wms:inventory/aggregate@1.0.0`.
-pub const INVENTORY_AGGREGATE_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const INVENTORY_AGGREGATE_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "request_id",
+    type_name: "text",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-wms:inventory/aggregate@1.0.0`.
 pub const INVENTORY_AGGREGATE_RESULT: &[FieldDescriptor] = &[
@@ -434,41 +529,85 @@ pub const INVENTORY_AGGREGATE_RESULT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "held",
-        ],
+        values: &["available", "held"],
     },
 ];
 
-pub const INVENTORY_AGGREGATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-];
+pub const INVENTORY_AGGREGATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    }];
 
 pub const INVENTORY_AGGREGATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "location_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "pallet_count", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "product_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "quantity", type_name: "numeric", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "status", type_name: "text", nullable: false, values: &["available", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "location_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_count",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "product_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "quantity",
+            type_name: "numeric",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const INVENTORY_AGGREGATE_KIND: &str = "projection";
@@ -511,10 +650,13 @@ pub async fn aggregate(
     items: &[serde_json::Value],
 ) -> Result<Vec<wamn_client::ItemOutcome>, ClientError> {
     client
-        .invoke(&aggregate_route(), &std::collections::BTreeMap::new(), items)
+        .invoke(
+            &aggregate_route(),
+            &std::collections::BTreeMap::new(),
+            items,
+        )
         .await
 }
-
 
 /// Input for `wamn-wms:inventory/merge@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -624,66 +766,159 @@ pub const INVENTORY_MERGE_RESULT: &[FieldDescriptor] = &[
         path: "target_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
 ];
 
 pub const INVENTORY_MERGE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value", type_name: "object", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.expected_row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.idempotency_key", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.occurred_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.source_pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.target_pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "value",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.expected_row_version",
+                    type_name: "int64",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.idempotency_key",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.occurred_at",
+                    type_name: "timestamptz",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.source_pallet_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.target_pallet_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+        ],
+    },
 ];
 
 pub const INVENTORY_MERGE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "movement_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "source_pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "target_pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "target_status", type_name: "text", nullable: false, values: &["available", "consumed", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "movement_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "source_pallet_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "target_pallet_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "target_status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const INVENTORY_MERGE_KIND: &str = "command";
@@ -732,7 +967,6 @@ pub async fn merge(
         .invoke(&merge_route(), &std::collections::BTreeMap::new(), items)
         .await
 }
-
 
 /// Input for `wamn-wms:inventory/move@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -848,11 +1082,7 @@ pub const INVENTORY_MOVE_RESULT: &[FieldDescriptor] = &[
         path: "pallet_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "row_version",
@@ -881,79 +1111,211 @@ pub const INVENTORY_MOVE_RESULT: &[FieldDescriptor] = &[
 ];
 
 pub const INVENTORY_MOVE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value", type_name: "object", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.expected_row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.idempotency_key", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.occurred_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.to_location_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "value",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.expected_row_version",
+                    type_name: "int64",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.idempotency_key",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.occurred_at",
+                    type_name: "timestamptz",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.pallet_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.to_location_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+        ],
+    },
 ];
 
 pub const INVENTORY_MOVE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "location_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "movement_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "pallet_status", type_name: "text", nullable: false, values: &["available", "consumed", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "stored", type_name: "object", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "stored.container", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "stored.key", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "zpl", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "location_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "movement_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "stored",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "stored.container",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "stored.key",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+        ],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "zpl",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const INVENTORY_MOVE_KIND: &str = "command";
 pub const INVENTORY_MOVE_REQUIRES_COMPOSITION: bool = true;
 pub const INVENTORY_MOVE_REPLAY: Option<&str> = None;
-pub const INVENTORY_MOVE_RESPONSE_CONTRACT: Option<&str> = Some("{\"items\":{\"additionalProperties\":false,\"oneOf\":[{\"not\":{\"required\":[\"error\"]},\"required\":[\"value\"]},{\"not\":{\"required\":[\"value\"]},\"required\":[\"error\"]}],\"properties\":{\"error\":{\"properties\":{\"code\":{\"minLength\":1,\"type\":\"string\"},\"detail\":{\"type\":\"object\"}},\"required\":[\"code\"],\"type\":\"object\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"movement_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_status\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"row_version\":{\"type\":\"integer\"},\"stored\":{\"additionalProperties\":false,\"properties\":{\"container\":{\"type\":\"string\"},\"key\":{\"type\":\"string\"}},\"required\":[\"container\",\"key\"],\"type\":\"object\"},\"zpl\":{\"type\":\"string\"}},\"required\":[\"movement_id\",\"pallet_id\",\"location_id\",\"pallet_status\",\"row_version\",\"zpl\",\"stored\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}");
+pub const INVENTORY_MOVE_RESPONSE_CONTRACT: Option<&str> = Some(
+    "{\"items\":{\"additionalProperties\":false,\"oneOf\":[{\"not\":{\"required\":[\"error\"]},\"required\":[\"value\"]},{\"not\":{\"required\":[\"value\"]},\"required\":[\"error\"]}],\"properties\":{\"error\":{\"properties\":{\"code\":{\"minLength\":1,\"type\":\"string\"},\"detail\":{\"type\":\"object\"}},\"required\":[\"code\"],\"type\":\"object\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"movement_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_status\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"row_version\":{\"type\":\"integer\"},\"stored\":{\"additionalProperties\":false,\"properties\":{\"container\":{\"type\":\"string\"},\"key\":{\"type\":\"string\"}},\"required\":[\"container\",\"key\"],\"type\":\"object\"},\"zpl\":{\"type\":\"string\"}},\"required\":[\"movement_id\",\"pallet_id\",\"location_id\",\"pallet_status\",\"row_version\",\"zpl\",\"stored\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+);
 pub const INVENTORY_MOVE_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `wamn-wms:inventory/move@1.0.0`.
 pub const INVENTORY_MOVE_GRANT: &str = "wamn-wms:inventory/move@1.0.0";
@@ -997,7 +1359,6 @@ pub async fn r#move(
         .invoke(&move_route(), &std::collections::BTreeMap::new(), items)
         .await
 }
-
 
 /// Input for `wamn-wms:inventory/split@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -1099,10 +1460,7 @@ pub const INVENTORY_SPLIT_INPUT: &[FieldDescriptor] = &[
         path: "value.status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "held",
-        ],
+        values: &["available", "held"],
     },
     FieldDescriptor {
         path: "value.to_location_id",
@@ -1142,82 +1500,207 @@ pub const INVENTORY_SPLIT_RESULT: &[FieldDescriptor] = &[
         path: "source_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
 ];
 
 pub const INVENTORY_SPLIT_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value", type_name: "object", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.expected_row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.idempotency_key", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.new_pallet_code", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.occurred_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.product_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.quantity", type_name: "numeric", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.source_pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.status", type_name: "text", nullable: false, values: &["available", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "value.to_location_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "value",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.expected_row_version",
+                    type_name: "int64",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.idempotency_key",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.new_pallet_code",
+                    type_name: "text",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.occurred_at",
+                    type_name: "timestamptz",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.product_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.quantity",
+                    type_name: "numeric",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.source_pallet_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.status",
+                    type_name: "text",
+                    nullable: false,
+                    values: &["available", "held"],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.to_location_id",
+                    type_name: "uuid",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+        ],
+    },
 ];
 
 pub const INVENTORY_SPLIT_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "movement_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "new_pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "source_pallet_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "source_status", type_name: "text", nullable: false, values: &["available", "consumed", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "movement_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "new_pallet_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "source_pallet_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "source_status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const INVENTORY_SPLIT_KIND: &str = "command";

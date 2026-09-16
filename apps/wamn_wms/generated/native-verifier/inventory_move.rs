@@ -51,14 +51,22 @@ pub(crate) struct ValidateLocationRow {
     pub id: uuid::Uuid,
 }
 
-pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/inventory_move/claim_command.sql");
-pub(crate) const FINALIZE_COMMAND_SQL: &str = include_str!("../../command/inventory_move/finalize_command.sql");
-pub(crate) const FIND_REPLAY_SQL: &str = include_str!("../../command/inventory_move/find_replay.sql");
-pub(crate) const INSERT_MOVEMENT_SQL: &str = include_str!("../../command/inventory_move/insert_movement.sql");
-pub(crate) const LOCK_PALLET_SQL: &str = include_str!("../../command/inventory_move/lock_pallet.sql");
-pub(crate) const MOVE_PALLET_SQL: &str = include_str!("../../command/inventory_move/move_pallet.sql");
-pub(crate) const SELECT_PALLET_QUANTITY_SQL: &str = include_str!("../../command/inventory_move/select_pallet_quantity.sql");
-pub(crate) const VALIDATE_LOCATION_SQL: &str = include_str!("../../command/inventory_move/validate_location.sql");
+pub(crate) const CLAIM_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_move/claim_command.sql");
+pub(crate) const FINALIZE_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_move/finalize_command.sql");
+pub(crate) const FIND_REPLAY_SQL: &str =
+    include_str!("../../command/inventory_move/find_replay.sql");
+pub(crate) const INSERT_MOVEMENT_SQL: &str =
+    include_str!("../../command/inventory_move/insert_movement.sql");
+pub(crate) const LOCK_PALLET_SQL: &str =
+    include_str!("../../command/inventory_move/lock_pallet.sql");
+pub(crate) const MOVE_PALLET_SQL: &str =
+    include_str!("../../command/inventory_move/move_pallet.sql");
+pub(crate) const SELECT_PALLET_QUANTITY_SQL: &str =
+    include_str!("../../command/inventory_move/select_pallet_quantity.sql");
+pub(crate) const VALIDATE_LOCATION_SQL: &str =
+    include_str!("../../command/inventory_move/validate_location.sql");
 
 pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
     String::new()

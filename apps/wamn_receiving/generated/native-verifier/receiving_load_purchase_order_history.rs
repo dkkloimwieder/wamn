@@ -14,7 +14,8 @@ pub(crate) struct LoadPurchaseOrderHistoryRow {
     pub head_position: Option<i64>,
 }
 
-pub(crate) const LOAD_PURCHASE_ORDER_HISTORY_SQL: &str = include_str!("../../query/load_purchase_order_history.sql");
+pub(crate) const LOAD_PURCHASE_ORDER_HISTORY_SQL: &str =
+    include_str!("../../query/load_purchase_order_history.sql");
 
 pub(crate) fn load_purchase_order_history_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()

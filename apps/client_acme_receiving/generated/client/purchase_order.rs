@@ -16,11 +16,7 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
         path: "acme_quality_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "approved",
-            "not_required",
-            "pending",
-        ],
+        values: &["approved", "not_required", "pending"],
     },
     FieldDescriptor {
         path: "created_at",
@@ -56,11 +52,7 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "cancelled",
-            "complete",
-            "open",
-        ],
+        values: &["cancelled", "complete", "open"],
     },
     FieldDescriptor {
         path: "supplier_id",
@@ -81,7 +73,6 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
 ];
-
 
 /// Input for `client-acme-receiving:purchase-order/get@3.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -147,11 +138,7 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
         path: "acme_quality_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "approved",
-            "not_required",
-            "pending",
-        ],
+        values: &["approved", "not_required", "pending"],
     },
     FieldDescriptor {
         path: "created_at",
@@ -187,11 +174,7 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "cancelled",
-            "complete",
-            "open",
-        ],
+        values: &["cancelled", "complete", "open"],
     },
     FieldDescriptor {
         path: "supplier_id",
@@ -214,61 +197,165 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
 ];
 
 pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "string", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "string",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const PURCHASE_ORDER_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "acme_inspection_required", type_name: "boolean", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "acme_quality_status", type_name: "text", nullable: false, values: &["approved", "not_required", "pending"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "purchase_order_number", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "status", type_name: "text", nullable: false, values: &["cancelled", "complete", "open"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "supplier_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "acme_inspection_required",
+            type_name: "boolean",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "acme_quality_status",
+            type_name: "text",
+            nullable: false,
+            values: &["approved", "not_required", "pending"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "purchase_order_number",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "status",
+            type_name: "text",
+            nullable: false,
+            values: &["cancelled", "complete", "open"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "supplier_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const PURCHASE_ORDER_GET_KIND: &str = "get";
@@ -315,7 +402,6 @@ pub async fn get(
         .invoke(&get_route(), &std::collections::BTreeMap::new(), items)
         .await
 }
-
 
 /// Input for `client-acme-receiving:purchase-order/update@3.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -377,11 +463,7 @@ pub const PURCHASE_ORDER_UPDATE_INPUT: &[FieldDescriptor] = &[
         path: "change.acme_quality_status",
         type_name: "text",
         nullable: true,
-        values: &[
-            "approved",
-            "not_required",
-            "pending",
-        ],
+        values: &["approved", "not_required", "pending"],
     },
     FieldDescriptor {
         path: "expected_row_version",
@@ -415,11 +497,7 @@ pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
         path: "acme_quality_status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "approved",
-            "not_required",
-            "pending",
-        ],
+        values: &["approved", "not_required", "pending"],
     },
     FieldDescriptor {
         path: "created_at",
@@ -455,11 +533,7 @@ pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "cancelled",
-            "complete",
-            "open",
-        ],
+        values: &["cancelled", "complete", "open"],
     },
     FieldDescriptor {
         path: "supplier_id",
@@ -482,77 +556,214 @@ pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
 ];
 
 pub const PURCHASE_ORDER_UPDATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "change", type_name: "object", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "change.acme_inspection_required", type_name: "boolean", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "change.acme_quality_status", type_name: "text", nullable: false, values: &["approved", "not_required", "pending"] },
-required: false, minimum: None, maximum: None, children: &[
-], },
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "expected_row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "string", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "change",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "change.acme_inspection_required",
+                    type_name: "boolean",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "change.acme_quality_status",
+                    type_name: "text",
+                    nullable: false,
+                    values: &["approved", "not_required", "pending"],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+        ],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "expected_row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "string",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const PURCHASE_ORDER_UPDATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "acme_inspection_required", type_name: "boolean", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "acme_quality_status", type_name: "text", nullable: false, values: &["approved", "not_required", "pending"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "purchase_order_number", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "status", type_name: "text", nullable: false, values: &["cancelled", "complete", "open"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "supplier_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "acme_inspection_required",
+            type_name: "boolean",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "acme_quality_status",
+            type_name: "text",
+            nullable: false,
+            values: &["approved", "not_required", "pending"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "purchase_order_number",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "status",
+            type_name: "text",
+            nullable: false,
+            values: &["cancelled", "complete", "open"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "supplier_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const PURCHASE_ORDER_UPDATE_KIND: &str = "update";

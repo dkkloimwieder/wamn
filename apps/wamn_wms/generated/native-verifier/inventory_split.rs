@@ -67,17 +67,28 @@ pub(crate) struct ValidateLocationRow {
     pub id: uuid::Uuid,
 }
 
-pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/inventory_split/claim_command.sql");
-pub(crate) const CREATE_PALLET_SQL: &str = include_str!("../../command/inventory_split/create_pallet.sql");
-pub(crate) const FINALIZE_COMMAND_SQL: &str = include_str!("../../command/inventory_split/finalize_command.sql");
-pub(crate) const FIND_REPLAY_SQL: &str = include_str!("../../command/inventory_split/find_replay.sql");
-pub(crate) const INSERT_MOVEMENT_SQL: &str = include_str!("../../command/inventory_split/insert_movement.sql");
-pub(crate) const LOCK_PALLET_SQL: &str = include_str!("../../command/inventory_split/lock_pallet.sql");
-pub(crate) const PLACE_QUANTITY_SQL: &str = include_str!("../../command/inventory_split/place_quantity.sql");
-pub(crate) const SELECT_QUANTITY_SQL: &str = include_str!("../../command/inventory_split/select_quantity.sql");
-pub(crate) const TAKE_FROM_SOURCE_SQL: &str = include_str!("../../command/inventory_split/take_from_source.sql");
-pub(crate) const TOUCH_SOURCE_SQL: &str = include_str!("../../command/inventory_split/touch_source.sql");
-pub(crate) const VALIDATE_LOCATION_SQL: &str = include_str!("../../command/inventory_split/validate_location.sql");
+pub(crate) const CLAIM_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_split/claim_command.sql");
+pub(crate) const CREATE_PALLET_SQL: &str =
+    include_str!("../../command/inventory_split/create_pallet.sql");
+pub(crate) const FINALIZE_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_split/finalize_command.sql");
+pub(crate) const FIND_REPLAY_SQL: &str =
+    include_str!("../../command/inventory_split/find_replay.sql");
+pub(crate) const INSERT_MOVEMENT_SQL: &str =
+    include_str!("../../command/inventory_split/insert_movement.sql");
+pub(crate) const LOCK_PALLET_SQL: &str =
+    include_str!("../../command/inventory_split/lock_pallet.sql");
+pub(crate) const PLACE_QUANTITY_SQL: &str =
+    include_str!("../../command/inventory_split/place_quantity.sql");
+pub(crate) const SELECT_QUANTITY_SQL: &str =
+    include_str!("../../command/inventory_split/select_quantity.sql");
+pub(crate) const TAKE_FROM_SOURCE_SQL: &str =
+    include_str!("../../command/inventory_split/take_from_source.sql");
+pub(crate) const TOUCH_SOURCE_SQL: &str =
+    include_str!("../../command/inventory_split/touch_source.sql");
+pub(crate) const VALIDATE_LOCATION_SQL: &str =
+    include_str!("../../command/inventory_split/validate_location.sql");
 
 pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
     String::new()

@@ -13,16 +13,21 @@ pub struct ReceiptRow {
     pub receipt_reference: String,
 }
 
-pub(crate) const GET_DIGEST: &str = "sha256:0761529775d51c86b2f7a77c646630c0384012476c84d7dc99e027616cf3afd2";
-pub(crate) const QUERY_DIGEST: &str = "sha256:2814a03759be697b6ad57b0c484db94dbf0ae628db238c4b32c1ab7cf2718706";
+pub(crate) const GET_DIGEST: &str =
+    "sha256:0761529775d51c86b2f7a77c646630c0384012476c84d7dc99e027616cf3afd2";
+pub(crate) const QUERY_DIGEST: &str =
+    "sha256:2814a03759be697b6ad57b0c484db94dbf0ae628db238c4b32c1ab7cf2718706";
 
 pub(crate) async fn get(
     connection: &mut Connection,
     id: wamn_postgres_statements::Uuid,
 ) -> Result<Option<ReceiptRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection.run(GET_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(id),
-    ]).await?;
+    let rows = connection
+        .run(
+            GET_DIGEST,
+            vec![wamn_postgres_statements::into_sql_value(id)],
+        )
+        .await?;
     wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
         Ok(ReceiptRow {
             created_at: row.decode("created_at")?,
@@ -42,11 +47,16 @@ pub(crate) async fn query_created_at_ascending(
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
 ) -> Result<Vec<ReceiptRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection.run(QUERY_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(cursor_key),
-        wamn_postgres_statements::into_sql_value(cursor_id),
-        wamn_postgres_statements::into_sql_value(limit),
-    ]).await?;
+    let rows = connection
+        .run(
+            QUERY_DIGEST,
+            vec![
+                wamn_postgres_statements::into_sql_value(cursor_key),
+                wamn_postgres_statements::into_sql_value(cursor_id),
+                wamn_postgres_statements::into_sql_value(limit),
+            ],
+        )
+        .await?;
     wamn_postgres_statements::decode_all(QUERY_DIGEST, rows, |row| {
         Ok(ReceiptRow {
             created_at: row.decode("created_at")?,

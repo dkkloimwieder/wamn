@@ -1,9 +1,11 @@
 //! Generates deterministic package artifacts from migration-derived schema IR.
 //!
-//! Core generation is a pure transformation: callers provide the normalized
-//! [`CatalogIr`], exact manifest bytes, authored SQL bytes, and explicit
-//! provenance. That transformation performs no filesystem, database, clock,
-//! or environment access.
+//! Core generation is a deterministic transformation: callers provide the
+//! normalized [`CatalogIr`], exact manifest bytes, authored SQL bytes, and
+//! explicit provenance. That transformation performs no filesystem, database,
+//! clock, or environment access; its one child process is `rustfmt`, which
+//! formats the Rust it emits so that the committed artifacts equal what
+//! `cargo fmt` produces.
 //!
 //! Generated identifiers follow
 //! `docs/architecture/naming.md`. Migration introspection owns
@@ -26,6 +28,7 @@ mod generate;
 mod manifest;
 mod materialize;
 mod parity;
+mod rustfmt;
 mod sql;
 mod sql_lex;
 

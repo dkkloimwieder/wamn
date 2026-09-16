@@ -52,15 +52,24 @@ pub(crate) struct ValidateReceiptLineRow {
     pub id: Option<uuid::Uuid>,
 }
 
-pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/record_receipt/claim_command.sql");
-pub(crate) const FINALIZE_COMMAND_SQL: &str = include_str!("../../command/record_receipt/finalize_command.sql");
-pub(crate) const FIND_REPLAY_SQL: &str = include_str!("../../command/record_receipt/find_replay.sql");
-pub(crate) const FINISH_PURCHASE_ORDER_SQL: &str = include_str!("../../command/record_receipt/finish_purchase_order.sql");
-pub(crate) const INSERT_RECEIPT_SQL: &str = include_str!("../../command/record_receipt/insert_receipt.sql");
-pub(crate) const INSERT_RECEIPT_LINE_SQL: &str = include_str!("../../command/record_receipt/insert_receipt_line.sql");
-pub(crate) const LOCK_PURCHASE_ORDER_SQL: &str = include_str!("../../command/record_receipt/lock_purchase_order.sql");
-pub(crate) const UPDATE_PURCHASE_ORDER_LINE_SQL: &str = include_str!("../../command/record_receipt/update_purchase_order_line.sql");
-pub(crate) const VALIDATE_RECEIPT_LINE_SQL: &str = include_str!("../../command/record_receipt/validate_receipt_line.sql");
+pub(crate) const CLAIM_COMMAND_SQL: &str =
+    include_str!("../../command/record_receipt/claim_command.sql");
+pub(crate) const FINALIZE_COMMAND_SQL: &str =
+    include_str!("../../command/record_receipt/finalize_command.sql");
+pub(crate) const FIND_REPLAY_SQL: &str =
+    include_str!("../../command/record_receipt/find_replay.sql");
+pub(crate) const FINISH_PURCHASE_ORDER_SQL: &str =
+    include_str!("../../command/record_receipt/finish_purchase_order.sql");
+pub(crate) const INSERT_RECEIPT_SQL: &str =
+    include_str!("../../command/record_receipt/insert_receipt.sql");
+pub(crate) const INSERT_RECEIPT_LINE_SQL: &str =
+    include_str!("../../command/record_receipt/insert_receipt_line.sql");
+pub(crate) const LOCK_PURCHASE_ORDER_SQL: &str =
+    include_str!("../../command/record_receipt/lock_purchase_order.sql");
+pub(crate) const UPDATE_PURCHASE_ORDER_LINE_SQL: &str =
+    include_str!("../../command/record_receipt/update_purchase_order_line.sql");
+pub(crate) const VALIDATE_RECEIPT_LINE_SQL: &str =
+    include_str!("../../command/record_receipt/validate_receipt_line.sql");
 
 pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
     String::new()

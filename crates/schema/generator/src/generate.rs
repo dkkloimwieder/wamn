@@ -176,7 +176,17 @@ pub struct GeneratedFile {
 impl GeneratedFile {
     /// One generated artifact. Sibling modules emit their own files; the
     /// fields stay private so a path and its bytes are always set together.
+    ///
+    /// A `.rs` artifact is formatted here, at the single point every emitter
+    /// passes through, so that a generated Rust file is committed formatted and
+    /// the drift check compares the same bytes a write would have placed on
+    /// disk. JSON, TOML, and SQL bytes are kept exactly as emitted.
     pub(crate) fn new(path: Box<str>, bytes: Box<[u8]>) -> Self {
+        let bytes = if path.ends_with(".rs") {
+            crate::rustfmt::format_rust(&bytes).into_boxed_slice()
+        } else {
+            bytes
+        };
         Self { path, bytes }
     }
 
@@ -359,6 +369,9 @@ fn valid_sha256(value: &str) -> bool {
 }
 
 /// Generate a package without filesystem, database, clock, or environment I/O.
+///
+/// The one child process is `rustfmt`, which formats each emitted `.rs`
+/// artifact. It reads and writes only the bytes it is handed.
 pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, GenerateError> {
     let manifest = PackageManifest::from_slice(input.manifest_json)?;
     validate(input, &manifest)?;
@@ -428,10 +441,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
 
     let files = files
         .into_iter()
-        .map(|(path, bytes)| GeneratedFile {
-            path: path.into_boxed_str(),
-            bytes: bytes.into_boxed_slice(),
-        })
+        .map(|(path, bytes)| GeneratedFile::new(path.into_boxed_str(), bytes.into_boxed_slice()))
         .collect::<Vec<_>>()
         .into_boxed_slice();
 

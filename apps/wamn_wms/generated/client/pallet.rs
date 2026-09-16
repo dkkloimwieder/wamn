@@ -46,11 +46,7 @@ pub const PALLET_FIELDS: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "updated_at",
@@ -65,7 +61,6 @@ pub const PALLET_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
 ];
-
 
 /// Input for `wamn-wms:pallet/get@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -157,11 +152,7 @@ pub const PALLET_GET_RESULT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "updated_at",
@@ -178,53 +169,141 @@ pub const PALLET_GET_RESULT: &[FieldDescriptor] = &[
 ];
 
 pub const PALLET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "string", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "string",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const PALLET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "location_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "pallet_code", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "status", type_name: "text", nullable: false, values: &["available", "consumed", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "location_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_code",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const PALLET_GET_KIND: &str = "get";
@@ -271,7 +350,6 @@ pub async fn get(
         .invoke(&get_route(), &std::collections::BTreeMap::new(), items)
         .await
 }
-
 
 /// Input for `wamn-wms:pallet/query@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -353,11 +431,7 @@ pub const PALLET_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "filter.status[]",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "limit",
@@ -375,21 +449,13 @@ pub const PALLET_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "sort.direction",
         type_name: "text",
         nullable: false,
-        values: &[
-            "ascending",
-            "descending",
-        ],
+        values: &["ascending", "descending"],
     },
     FieldDescriptor {
         path: "sort.field",
         type_name: "text",
         nullable: false,
-        values: &[
-            "created_at",
-            "location_id",
-            "pallet_code",
-            "updated_at",
-        ],
+        values: &["created_at", "location_id", "pallet_code", "updated_at"],
     },
 ];
 
@@ -435,11 +501,7 @@ pub const PALLET_QUERY_RESULT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[
-            "available",
-            "consumed",
-            "held",
-        ],
+        values: &["available", "consumed", "held"],
     },
     FieldDescriptor {
         path: "updated_at",
@@ -456,97 +518,272 @@ pub const PALLET_QUERY_RESULT: &[FieldDescriptor] = &[
 ];
 
 pub const PALLET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "cursor", type_name: "text", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "filter", type_name: "object", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "filter.location_id[]", type_name: "array", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "filter.location_id[]", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "filter.pallet_code[]", type_name: "array", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "filter.pallet_code[]", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "filter.status[]", type_name: "array", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "filter.status[]", type_name: "text", nullable: false, values: &["available", "consumed", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "limit", type_name: "int64", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "string", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "sort", type_name: "object", nullable: false, values: &[] },
-required: false, minimum: None, maximum: None, children: &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "sort.direction", type_name: "text", nullable: false, values: &["ascending", "descending"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "sort.field", type_name: "text", nullable: false, values: &["created_at", "location_id", "pallet_code", "updated_at"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "cursor",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: false,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "filter",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: false,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "filter.location_id[]",
+                    type_name: "array",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[wamn_client::descriptor::FieldSchema {
+                    field: FieldDescriptor {
+                        path: "filter.location_id[]",
+                        type_name: "uuid",
+                        nullable: false,
+                        values: &[],
+                    },
+                    required: true,
+                    minimum: None,
+                    maximum: None,
+                    children: &[],
+                }],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "filter.pallet_code[]",
+                    type_name: "array",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[wamn_client::descriptor::FieldSchema {
+                    field: FieldDescriptor {
+                        path: "filter.pallet_code[]",
+                        type_name: "text",
+                        nullable: false,
+                        values: &[],
+                    },
+                    required: true,
+                    minimum: None,
+                    maximum: None,
+                    children: &[],
+                }],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "filter.status[]",
+                    type_name: "array",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[wamn_client::descriptor::FieldSchema {
+                    field: FieldDescriptor {
+                        path: "filter.status[]",
+                        type_name: "text",
+                        nullable: false,
+                        values: &["available", "consumed", "held"],
+                    },
+                    required: true,
+                    minimum: None,
+                    maximum: None,
+                    children: &[],
+                }],
+            },
+        ],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "limit",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: false,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "string",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "sort",
+            type_name: "object",
+            nullable: false,
+            values: &[],
+        },
+        required: false,
+        minimum: None,
+        maximum: None,
+        children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "sort.direction",
+                    type_name: "text",
+                    nullable: false,
+                    values: &["ascending", "descending"],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "sort.field",
+                    type_name: "text",
+                    nullable: false,
+                    values: &["created_at", "location_id", "pallet_code", "updated_at"],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+        ],
+    },
 ];
 
 pub const PALLET_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "location_id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "pallet_code", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "status", type_name: "text", nullable: false, values: &["available", "consumed", "held"] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "location_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_code",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const PALLET_QUERY_KIND: &str = "query";

@@ -13,17 +13,23 @@ pub(crate) struct ApproveInspectionRow {
     pub purchase_order_row_version: Option<i64>,
 }
 
-pub(crate) const APPROVE_INSPECTION_DIGEST: &str = "sha256:1049669b64fe0491694988be7e38771a8c4068839c06371b2bd3a81cd09140c0";
+pub(crate) const APPROVE_INSPECTION_DIGEST: &str =
+    "sha256:1049669b64fe0491694988be7e38771a8c4068839c06371b2bd3a81cd09140c0";
 
 pub(crate) async fn approve_inspection(
     transaction: &mut Transaction,
     receipt_id: wamn_postgres_statements::Uuid,
     expected_row_version: i64,
 ) -> Result<ApproveInspectionRow, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(APPROVE_INSPECTION_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(receipt_id),
-        wamn_postgres_statements::into_sql_value(expected_row_version),
-    ]).await?;
+    let rows = transaction
+        .run(
+            APPROVE_INSPECTION_DIGEST,
+            vec![
+                wamn_postgres_statements::into_sql_value(receipt_id),
+                wamn_postgres_statements::into_sql_value(expected_row_version),
+            ],
+        )
+        .await?;
     wamn_postgres_statements::decode_one(APPROVE_INSPECTION_DIGEST, rows, |row| {
         Ok(ApproveInspectionRow {
             outcome: row.decode("outcome")?,

@@ -9,4 +9,5 @@ pub(crate) struct InventoryAggregateRow {
     pub pallet_count: i64,
 }
 
-pub(crate) const INVENTORY_AGGREGATE_SQL: &str = include_str!("../../query/inventory_aggregate.sql");
+pub(crate) const INVENTORY_AGGREGATE_SQL: &str =
+    include_str!("../../query/inventory_aggregate.sql");

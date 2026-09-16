@@ -62,16 +62,26 @@ pub(crate) struct TouchTargetRow {
     pub status: String,
 }
 
-pub(crate) const ADD_TO_TARGET_SQL: &str = include_str!("../../command/inventory_merge/add_to_target.sql");
-pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/inventory_merge/claim_command.sql");
-pub(crate) const CONSUME_SOURCE_SQL: &str = include_str!("../../command/inventory_merge/consume_source.sql");
-pub(crate) const FINALIZE_COMMAND_SQL: &str = include_str!("../../command/inventory_merge/finalize_command.sql");
-pub(crate) const FIND_REPLAY_SQL: &str = include_str!("../../command/inventory_merge/find_replay.sql");
-pub(crate) const INSERT_MOVEMENT_SQL: &str = include_str!("../../command/inventory_merge/insert_movement.sql");
-pub(crate) const LOCK_BOTH_PALLETS_SQL: &str = include_str!("../../command/inventory_merge/lock_both_pallets.sql");
-pub(crate) const PLACE_ON_TARGET_SQL: &str = include_str!("../../command/inventory_merge/place_on_target.sql");
-pub(crate) const SELECT_SOURCE_QUANTITY_SQL: &str = include_str!("../../command/inventory_merge/select_source_quantity.sql");
-pub(crate) const TOUCH_TARGET_SQL: &str = include_str!("../../command/inventory_merge/touch_target.sql");
+pub(crate) const ADD_TO_TARGET_SQL: &str =
+    include_str!("../../command/inventory_merge/add_to_target.sql");
+pub(crate) const CLAIM_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_merge/claim_command.sql");
+pub(crate) const CONSUME_SOURCE_SQL: &str =
+    include_str!("../../command/inventory_merge/consume_source.sql");
+pub(crate) const FINALIZE_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_merge/finalize_command.sql");
+pub(crate) const FIND_REPLAY_SQL: &str =
+    include_str!("../../command/inventory_merge/find_replay.sql");
+pub(crate) const INSERT_MOVEMENT_SQL: &str =
+    include_str!("../../command/inventory_merge/insert_movement.sql");
+pub(crate) const LOCK_BOTH_PALLETS_SQL: &str =
+    include_str!("../../command/inventory_merge/lock_both_pallets.sql");
+pub(crate) const PLACE_ON_TARGET_SQL: &str =
+    include_str!("../../command/inventory_merge/place_on_target.sql");
+pub(crate) const SELECT_SOURCE_QUANTITY_SQL: &str =
+    include_str!("../../command/inventory_merge/select_source_quantity.sql");
+pub(crate) const TOUCH_TARGET_SQL: &str =
+    include_str!("../../command/inventory_merge/touch_target.sql");
 
 pub(crate) fn add_to_target_target_pallet_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()

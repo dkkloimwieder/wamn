@@ -11,7 +11,8 @@ pub(crate) struct LoadPurchaseOrderDetailRow {
     pub acme_quality_status: String,
 }
 
-pub(crate) const LOAD_PURCHASE_ORDER_DETAIL_SQL: &str = include_str!("../../query/quality_purchase_order_detail.sql");
+pub(crate) const LOAD_PURCHASE_ORDER_DETAIL_SQL: &str =
+    include_str!("../../query/quality_purchase_order_detail.sql");
 
 pub(crate) fn load_purchase_order_detail_purchase_order_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()

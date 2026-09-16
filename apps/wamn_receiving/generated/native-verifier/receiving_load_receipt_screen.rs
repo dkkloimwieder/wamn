@@ -16,7 +16,8 @@ pub(crate) struct LoadReceiptScreenRow {
     pub remaining_quantity: Option<rust_decimal::Decimal>,
 }
 
-pub(crate) const LOAD_RECEIPT_SCREEN_SQL: &str = include_str!("../../query/load_receipt_screen.sql");
+pub(crate) const LOAD_RECEIPT_SCREEN_SQL: &str =
+    include_str!("../../query/load_receipt_screen.sql");
 
 pub(crate) fn load_receipt_screen_purchase_order_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()

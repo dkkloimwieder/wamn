@@ -29,21 +29,28 @@ pub struct PurchaseOrderUpdateRow {
 }
 
 pub(crate) const GET_SQL: &str = include_str!("../sql/purchase_order/get.sql");
-pub(crate) const QUERY_0_SQL: &str = include_str!("../../query/open_purchase_order_by_purchase_order_number_ascending.sql");
-pub(crate) const QUERY_1_SQL: &str = include_str!("../../query/open_purchase_order_by_purchase_order_number_descending.sql");
-pub(crate) const QUERY_2_SQL: &str = include_str!("../../query/open_purchase_order_by_status_ascending.sql");
-pub(crate) const QUERY_3_SQL: &str = include_str!("../../query/open_purchase_order_by_status_descending.sql");
+pub(crate) const QUERY_0_SQL: &str =
+    include_str!("../../query/open_purchase_order_by_purchase_order_number_ascending.sql");
+pub(crate) const QUERY_1_SQL: &str =
+    include_str!("../../query/open_purchase_order_by_purchase_order_number_descending.sql");
+pub(crate) const QUERY_2_SQL: &str =
+    include_str!("../../query/open_purchase_order_by_status_ascending.sql");
+pub(crate) const QUERY_3_SQL: &str =
+    include_str!("../../query/open_purchase_order_by_status_descending.sql");
 pub(crate) const QUERY_4_SQL: &str = include_str!("../../query/open_purchase_order.sql");
-pub(crate) const QUERY_5_SQL: &str = include_str!("../../query/open_purchase_order_by_created_at_descending.sql");
+pub(crate) const QUERY_5_SQL: &str =
+    include_str!("../../query/open_purchase_order_by_created_at_descending.sql");
 pub(crate) const UPDATE_SQL: &str = include_str!("../sql/purchase_order/update.sql");
 
 pub(crate) fn get_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn query_purchase_order_number_ascending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_purchase_order_number_ascending_supplier_id_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
-pub(crate) fn query_purchase_order_number_ascending_status_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_purchase_order_number_ascending_status_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
 pub(crate) fn query_purchase_order_number_ascending_cursor_key_bind_fixture() -> Option<String> {
@@ -55,22 +62,26 @@ pub(crate) fn query_purchase_order_number_ascending_cursor_id_bind_fixture() -> 
 pub(crate) fn query_purchase_order_number_ascending_limit_bind_fixture() -> i64 {
     0_i64
 }
-pub(crate) fn query_purchase_order_number_descending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_purchase_order_number_descending_supplier_id_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
-pub(crate) fn query_purchase_order_number_descending_status_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_purchase_order_number_descending_status_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
 pub(crate) fn query_purchase_order_number_descending_cursor_key_bind_fixture() -> Option<String> {
     None
 }
-pub(crate) fn query_purchase_order_number_descending_cursor_id_bind_fixture() -> Option<uuid::Uuid> {
+pub(crate) fn query_purchase_order_number_descending_cursor_id_bind_fixture() -> Option<uuid::Uuid>
+{
     None
 }
 pub(crate) fn query_purchase_order_number_descending_limit_bind_fixture() -> i64 {
     0_i64
 }
-pub(crate) fn query_status_ascending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_status_ascending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value>
+{
     None
 }
 pub(crate) fn query_status_ascending_status_filter_bind_fixture() -> Option<serde_json::Value> {
@@ -85,7 +96,8 @@ pub(crate) fn query_status_ascending_cursor_id_bind_fixture() -> Option<uuid::Uu
 pub(crate) fn query_status_ascending_limit_bind_fixture() -> i64 {
     0_i64
 }
-pub(crate) fn query_status_descending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_status_descending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value>
+{
     None
 }
 pub(crate) fn query_status_descending_status_filter_bind_fixture() -> Option<serde_json::Value> {
@@ -100,13 +112,15 @@ pub(crate) fn query_status_descending_cursor_id_bind_fixture() -> Option<uuid::U
 pub(crate) fn query_status_descending_limit_bind_fixture() -> i64 {
     0_i64
 }
-pub(crate) fn query_created_at_ascending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_created_at_ascending_supplier_id_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
 pub(crate) fn query_created_at_ascending_status_filter_bind_fixture() -> Option<serde_json::Value> {
     None
 }
-pub(crate) fn query_created_at_ascending_cursor_key_bind_fixture() -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn query_created_at_ascending_cursor_key_bind_fixture()
+-> Option<chrono::DateTime<chrono::Utc>> {
     None
 }
 pub(crate) fn query_created_at_ascending_cursor_id_bind_fixture() -> Option<uuid::Uuid> {
@@ -115,13 +129,16 @@ pub(crate) fn query_created_at_ascending_cursor_id_bind_fixture() -> Option<uuid
 pub(crate) fn query_created_at_ascending_limit_bind_fixture() -> i64 {
     0_i64
 }
-pub(crate) fn query_created_at_descending_supplier_id_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_created_at_descending_supplier_id_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
-pub(crate) fn query_created_at_descending_status_filter_bind_fixture() -> Option<serde_json::Value> {
+pub(crate) fn query_created_at_descending_status_filter_bind_fixture() -> Option<serde_json::Value>
+{
     None
 }
-pub(crate) fn query_created_at_descending_cursor_key_bind_fixture() -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn query_created_at_descending_cursor_key_bind_fixture()
+-> Option<chrono::DateTime<chrono::Utc>> {
     None
 }
 pub(crate) fn query_created_at_descending_cursor_id_bind_fixture() -> Option<uuid::Uuid> {

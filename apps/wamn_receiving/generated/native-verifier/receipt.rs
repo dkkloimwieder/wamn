@@ -17,7 +17,8 @@ pub(crate) const QUERY_SQL: &str = include_str!("../sql/receipt/query_created_at
 pub(crate) fn get_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn query_created_at_ascending_cursor_key_bind_fixture() -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn query_created_at_ascending_cursor_key_bind_fixture()
+-> Option<chrono::DateTime<chrono::Utc>> {
     None
 }
 pub(crate) fn query_created_at_ascending_cursor_id_bind_fixture() -> Option<uuid::Uuid> {

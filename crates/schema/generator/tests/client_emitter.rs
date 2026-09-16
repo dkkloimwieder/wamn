@@ -298,7 +298,9 @@ fn valid_operations_cannot_collide_with_route_helpers_or_their_fallbacks() {
         ] {
             assert!(source.contains(&format!("pub async fn {name}(")));
             assert!(source.contains(&format!("pub fn {helper}() -> RouteMetadata")));
-            assert!(source.contains(&format!(".invoke(&{helper}(),")));
+            // The invoke call is formatted, so a long helper name wraps its
+            // arguments onto their own lines. The argument itself is the claim.
+            assert!(source.contains(&format!("&{helper}(),")));
         }
     }
     check_compiles(&ir, "wamn-emitted-client-route-collision");

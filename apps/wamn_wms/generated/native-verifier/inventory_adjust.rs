@@ -44,13 +44,20 @@ pub(crate) struct TouchPalletRow {
     pub status: String,
 }
 
-pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/inventory_adjust/claim_command.sql");
-pub(crate) const FINALIZE_COMMAND_SQL: &str = include_str!("../../command/inventory_adjust/finalize_command.sql");
-pub(crate) const FIND_REPLAY_SQL: &str = include_str!("../../command/inventory_adjust/find_replay.sql");
-pub(crate) const INSERT_MOVEMENT_SQL: &str = include_str!("../../command/inventory_adjust/insert_movement.sql");
-pub(crate) const LOCK_PALLET_SQL: &str = include_str!("../../command/inventory_adjust/lock_pallet.sql");
-pub(crate) const SET_QUANTITY_SQL: &str = include_str!("../../command/inventory_adjust/set_quantity.sql");
-pub(crate) const TOUCH_PALLET_SQL: &str = include_str!("../../command/inventory_adjust/touch_pallet.sql");
+pub(crate) const CLAIM_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_adjust/claim_command.sql");
+pub(crate) const FINALIZE_COMMAND_SQL: &str =
+    include_str!("../../command/inventory_adjust/finalize_command.sql");
+pub(crate) const FIND_REPLAY_SQL: &str =
+    include_str!("../../command/inventory_adjust/find_replay.sql");
+pub(crate) const INSERT_MOVEMENT_SQL: &str =
+    include_str!("../../command/inventory_adjust/insert_movement.sql");
+pub(crate) const LOCK_PALLET_SQL: &str =
+    include_str!("../../command/inventory_adjust/lock_pallet.sql");
+pub(crate) const SET_QUANTITY_SQL: &str =
+    include_str!("../../command/inventory_adjust/set_quantity.sql");
+pub(crate) const TOUCH_PALLET_SQL: &str =
+    include_str!("../../command/inventory_adjust/touch_pallet.sql");
 
 pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
     String::new()

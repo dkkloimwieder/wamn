@@ -11,7 +11,8 @@ pub(crate) struct ApproveInspectionRow {
     pub purchase_order_row_version: Option<i64>,
 }
 
-pub(crate) const APPROVE_INSPECTION_SQL: &str = include_str!("../../command/approve_inspection/approve_inspection.sql");
+pub(crate) const APPROVE_INSPECTION_SQL: &str =
+    include_str!("../../command/approve_inspection/approve_inspection.sql");
 
 pub(crate) fn approve_inspection_receipt_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()

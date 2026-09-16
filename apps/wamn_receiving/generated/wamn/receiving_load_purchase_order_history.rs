@@ -16,7 +16,8 @@ pub(crate) struct LoadPurchaseOrderHistoryRow {
     pub head_position: Option<i64>,
 }
 
-pub(crate) const LOAD_PURCHASE_ORDER_HISTORY_DIGEST: &str = "sha256:985bbbfdaaf76a1939b287a21c2c805c8cfaa8ea007d73c2199bb85d04f238fd";
+pub(crate) const LOAD_PURCHASE_ORDER_HISTORY_DIGEST: &str =
+    "sha256:985bbbfdaaf76a1939b287a21c2c805c8cfaa8ea007d73c2199bb85d04f238fd";
 
 pub(crate) async fn load_purchase_order_history(
     transaction: &mut Transaction,
@@ -24,11 +25,16 @@ pub(crate) async fn load_purchase_order_history(
     after_position: i64,
     limit: i64,
 ) -> Result<Vec<LoadPurchaseOrderHistoryRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(LOAD_PURCHASE_ORDER_HISTORY_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(id),
-        wamn_postgres_statements::into_sql_value(after_position),
-        wamn_postgres_statements::into_sql_value(limit),
-    ]).await?;
+    let rows = transaction
+        .run(
+            LOAD_PURCHASE_ORDER_HISTORY_DIGEST,
+            vec![
+                wamn_postgres_statements::into_sql_value(id),
+                wamn_postgres_statements::into_sql_value(after_position),
+                wamn_postgres_statements::into_sql_value(limit),
+            ],
+        )
+        .await?;
     wamn_postgres_statements::decode_all(LOAD_PURCHASE_ORDER_HISTORY_DIGEST, rows, |row| {
         Ok(LoadPurchaseOrderHistoryRow {
             position: row.decode("position")?,

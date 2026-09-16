@@ -316,7 +316,13 @@ fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
         "async fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>>"
     ));
     assert!(main.contains("#[tokio::main]"));
-    assert!(main.contains("wamn_client_terminal::operator::run(\"client_acme_receiving\", wamn_generated_client_acme_receiving_tui::screens).await"));
+    assert!(main.contains(concat!(
+        "wamn_client_terminal::operator::run(\n",
+        "        \"client_acme_receiving\",\n",
+        "        wamn_generated_client_acme_receiving_tui::screens,\n",
+        "    )\n",
+        "    .await",
+    )));
 }
 
 #[test]
@@ -343,7 +349,7 @@ fn receiving_replay_and_wms_composed_completion_use_the_served_contract() {
     assert!(command.contains("direct: false"));
     assert!(command.contains("replay: submission::Replay::Unknown"));
     assert!(command.contains("result_class: Some(\"one\")"));
-    assert!(command.contains("errors: &[\n        ]"));
+    assert!(command.contains("errors: &[],"));
     assert!(command.contains("partial_schema: Some("));
     assert!(command.contains("committed_result"));
     let bindings = emit_rust_client(&ir).unwrap();
@@ -513,7 +519,14 @@ fn platform_and_revision_inputs_come_only_from_exact_declared_paths() {
         source(&files, "generated/example-tui/src/screens/entry.rs"),
         "reserved",
     );
-    assert!(reserved.contains("revision_inputs: &[\"expected_row_version\", \"record_revision\", \"value.expected_row_version\", \"value.version_seen\"]"));
+    assert!(reserved.contains(concat!(
+        "revision_inputs: &[\n",
+        "        \"expected_row_version\",\n",
+        "        \"record_revision\",\n",
+        "        \"value.expected_row_version\",\n",
+        "        \"value.version_seen\",\n",
+        "    ],",
+    )));
     for path in [
         "request_id",
         "idempotency_key",
@@ -521,7 +534,7 @@ fn platform_and_revision_inputs_come_only_from_exact_declared_paths() {
         "occurred_at",
         "value.occurred_at",
     ] {
-        assert!(reserved.contains(&format!("SuppliedField {{ path: {path:?},")));
+        assert!(reserved.contains(&format!("SuppliedField {{\n            path: {path:?},")));
     }
     assert_eq!(reserved.matches("screen::SuppliedField").count(), 5);
     for path in [
@@ -657,7 +670,7 @@ fn screens_reference_the_same_collision_free_helpers_as_the_client() {
     ] {
         assert!(spec(screens, name).contains(&format!("route: Some(crate::entry::{helper})")));
         assert!(bindings.contains(&format!("pub fn {helper}() -> RouteMetadata")));
-        assert!(bindings.contains(&format!(".invoke(&{helper}(),")));
+        assert!(bindings.contains(&format!("&{helper}(),")));
     }
 }
 

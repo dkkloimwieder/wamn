@@ -34,8 +34,10 @@ pub struct PurchaseOrderUpdateRow {
     pub updated_by: Option<wamn_postgres_statements::Uuid>,
 }
 
-pub(crate) const GET_DIGEST: &str = "sha256:39b89be8cfeb1ad9031416d2aac96a6fdcfa092e0f1300f7ed1dfd8799cd415c";
-pub(crate) const UPDATE_DIGEST: &str = "sha256:09f969f5adda1cbaf63ccc3c6f034e2b44a4a199509cef2085e5a06e14bbbf13";
+pub(crate) const GET_DIGEST: &str =
+    "sha256:39b89be8cfeb1ad9031416d2aac96a6fdcfa092e0f1300f7ed1dfd8799cd415c";
+pub(crate) const UPDATE_DIGEST: &str =
+    "sha256:09f969f5adda1cbaf63ccc3c6f034e2b44a4a199509cef2085e5a06e14bbbf13";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];
@@ -46,9 +48,12 @@ pub(crate) async fn get(
     connection: &mut Connection,
     id: wamn_postgres_statements::Uuid,
 ) -> Result<Option<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection.run(GET_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(id),
-    ]).await?;
+    let rows = connection
+        .run(
+            GET_DIGEST,
+            vec![wamn_postgres_statements::into_sql_value(id)],
+        )
+        .await?;
     wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             acme_inspection_required: row.decode("acme_inspection_required")?,
@@ -75,14 +80,19 @@ pub(crate) async fn update(
     acme_quality_status_present: bool,
     acme_quality_status_value: Option<String>,
 ) -> Result<PurchaseOrderUpdateRow, wamn_postgres_statements::StatementError> {
-    let rows = connection.run(UPDATE_DIGEST, vec![
-        wamn_postgres_statements::into_sql_value(id),
-        wamn_postgres_statements::into_sql_value(expected_row_version),
-        wamn_postgres_statements::into_sql_value(acme_inspection_required_present),
-        wamn_postgres_statements::into_sql_value(acme_inspection_required_value),
-        wamn_postgres_statements::into_sql_value(acme_quality_status_present),
-        wamn_postgres_statements::into_sql_value(acme_quality_status_value),
-    ]).await?;
+    let rows = connection
+        .run(
+            UPDATE_DIGEST,
+            vec![
+                wamn_postgres_statements::into_sql_value(id),
+                wamn_postgres_statements::into_sql_value(expected_row_version),
+                wamn_postgres_statements::into_sql_value(acme_inspection_required_present),
+                wamn_postgres_statements::into_sql_value(acme_inspection_required_value),
+                wamn_postgres_statements::into_sql_value(acme_quality_status_present),
+                wamn_postgres_statements::into_sql_value(acme_quality_status_value),
+            ],
+        )
+        .await?;
     wamn_postgres_statements::decode_one(UPDATE_DIGEST, rows, |row| {
         Ok(PurchaseOrderUpdateRow {
             outcome: row.decode("outcome")?,

@@ -20,7 +20,6 @@ pub const LOCATION_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-
 /// Input for `wamn-receiving:location/list@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationListRequest {
@@ -38,14 +37,12 @@ pub struct LocationListResult {
 }
 
 /// Input descriptors for `wamn-receiving:location/list@1.0.0`.
-pub const LOCATION_LIST_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const LOCATION_LIST_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "request_id",
+    type_name: "text",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-receiving:location/list@1.0.0`.
 pub const LOCATION_LIST_RESULT: &[FieldDescriptor] = &[
@@ -63,22 +60,45 @@ pub const LOCATION_LIST_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const LOCATION_LIST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-];
+pub const LOCATION_LIST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    }];
 
 pub const LOCATION_LIST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
-wamn_client::descriptor::FieldSchema {
-field: FieldDescriptor { path: "location_code", type_name: "text", nullable: false, values: &[] },
-required: true, minimum: None, maximum: None, children: &[
-], },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "location_code",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
 ];
 
 pub const LOCATION_LIST_KIND: &str = "projection";
