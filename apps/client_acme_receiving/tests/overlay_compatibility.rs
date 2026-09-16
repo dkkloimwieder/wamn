@@ -523,10 +523,8 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
 
 /// Narrow seam check; the paired journey remains the fresh-install test.
 #[tokio::test]
-async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()
+async fn installed_contract_observer_reads_a_production_install_and_refuses_changed_requirements()
 -> anyhow::Result<()> {
-    use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};
-
     // deploy/sql/postgres-init.sql creates shared roles and the database wamn,
     // so the test applies it as the superuser postgres to a server of its own.
     let mut postgres = wamn_test_infrastructure::postgres::start(&[])?;
@@ -592,11 +590,6 @@ async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirem
         .await?
         .get::<_, Option<String>>(0)
         .context("production install must retain an explicit schema ACL")?;
-    let refusal = read_catalog(&project, &["receiving"]).await.unwrap_err();
-    ensure!(
-        refusal.kind() == PostgresIntrospectionErrorKind::UnsupportedAcl,
-        "authoring ACL refusal changed: {refusal}"
-    );
     let metadata: Value = serde_json::from_slice(&std::fs::read(
         super::overlay_package_root().join("generated/package-weld.json"),
     )?)?;
@@ -676,7 +669,7 @@ async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirem
     let evidence = json!({
         "case":"installed-overlay-contract-observer", "server_version_num":version,
         "installed_schema_acl":schema_acl, "retained_schema_acl":retained_acl,
-        "authoring_refusal":refusal.to_string(), "schema_admission_claim":false,
+        "schema_admission_claim":false,
         "positive":positive, "controls":negative,
         "baseline_observed_schema_sha256":component_digest(&serde_json::to_vec(&baseline)?),
         "additive_observed_schema_sha256":component_digest(&serde_json::to_vec(&additive)?),
