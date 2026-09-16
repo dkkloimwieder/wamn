@@ -168,8 +168,8 @@ pub fn insert_component_connection_binding_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 }
 
-/// The `sha256:<hex>` identity of `bytes`. This crate hashes through this one
-/// copy.
+/// The `sha256:<hex>` identity of `bytes`. The package manifest digest and the
+/// per-migration digest both use this one copy.
 pub(crate) fn prefixed_sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut out = String::with_capacity("sha256:".len() + digest.len() * 2);

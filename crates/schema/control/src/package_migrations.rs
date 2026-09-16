@@ -10,11 +10,11 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use sha2::{Digest as _, Sha256};
 use wamn_catalog::PackageCoordinate;
 use wamn_record_history::history_table_name;
 use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
 
+use crate::connections::prefixed_sha256;
 use crate::{SqlStatement, Value};
 
 pub const PACKAGE_MANIFEST_PATH: &str = "wamn.json";
@@ -339,7 +339,7 @@ pub fn plan_package_migrations(
         })?;
     }
     let predecessor_version = manifest.package.predecessor_version.clone();
-    let manifest_sha256 = sha256(&directory.manifest_bytes);
+    let manifest_sha256 = prefixed_sha256(&directory.manifest_bytes);
 
     if let Some(existing) = applied {
         if existing.coordinate != coordinate {
@@ -539,7 +539,7 @@ fn normalized_migrations(
             Ok(NormalizedMigration {
                 ordinal,
                 source,
-                sha256: sha256(&source.bytes),
+                sha256: prefixed_sha256(&source.bytes),
             })
         })
         .collect::<Result<Vec<_>, PackageMigrationError>>()?;
@@ -732,17 +732,6 @@ fn record_migration_statement(
     })
 }
 
-fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity(7 + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        use fmt::Write as _;
-        write!(output, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    output
-}
-
 fn coordinate_text(coordinate: &PackageCoordinate) -> String {
     format!(
         "{}@{}",
@@ -791,6 +780,43 @@ mod tests {
                 source("migrations/0001_initial.sql", "SELECT 1;"),
             ],
         }
+    }
+
+    /// `manifest_sha256` is persisted in `catalog.packages` and each migration
+    /// `sha256` is persisted in `catalog.package_migrations`. Both are compared
+    /// on every reapply, so their bytes must never move. The golden values are
+    /// the sha256 of the literal preimages below, computed outside this code.
+    #[test]
+    fn the_persisted_package_digest_bytes_are_pinned() {
+        const PINNED_MANIFEST: &str = concat!(
+            r#"{"package":{"id":"orders","version":"1.0.0"},"#,
+            r#""required_platform_policy_contract":{"id":"orders_access","state":"unsatisfied"},"#,
+            r#""models":{"purchase_order":{"schema":"receiving","table":"purchase_order","#,
+            r#""owner":"orders","audit_log":{"columns":[],"retention":"none"},"#,
+            r#""operations":{"get":{"permission":"purchase_order.get","#,
+            r#""error_details":{"invalid_input":{"required":["field"]},"#,
+            r#""not_found":{"required":["field","id"]},"retry":{},"timeout":{},"#,
+            r#""permission_denied":{"required":["operation"]},"internal_error":{}},"#,
+            r#""result":"one"}}}},"#,
+            r#""connections":{"postgres":{"interface":"wamn:postgres@0.1.0"}},"#,
+            r#""components":{"data":{"connections":["postgres"]}}}"#,
+        );
+        const PINNED_MIGRATION: &str = "SELECT 1;";
+
+        let pinned = PackageDirectory {
+            manifest_bytes: PINNED_MANIFEST.as_bytes().to_vec(),
+            migrations: vec![source("migrations/0001_initial.sql", PINNED_MIGRATION)],
+        };
+        let plan = plan_package_migrations(&pinned, None).unwrap();
+
+        assert_eq!(
+            plan.manifest_sha256,
+            "sha256:4cb4a5dbfe22df459e6876b430f7462bc12547bc4451e10a119dbc50e441ab9e"
+        );
+        assert_eq!(
+            plan.pending[0].sha256,
+            "sha256:17db4fd369edb9244b9f91d9aeed145c3d04ad8ba6e95d06247f07a63527d11a"
+        );
     }
 
     #[test]
