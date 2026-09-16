@@ -21,15 +21,13 @@ pub mod event_advisories;
 pub mod identity_verbs;
 #[cfg(feature = "ops")]
 mod ops_schema;
+#[cfg(feature = "ops")]
+pub mod ops_verbs;
 mod owned_command;
 pub mod package_verbs;
 pub mod print_release_env;
 pub mod provision_org;
 pub mod provisioning_verbs;
-#[cfg(feature = "ops")]
-pub use wamn_control::prune_record_history;
-#[cfg(feature = "ops")]
-pub use wamn_control::prune_run_history;
 pub mod push_release_manifest;
 pub mod release_verbs;
 #[cfg(feature = "ops")]

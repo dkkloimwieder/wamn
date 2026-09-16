@@ -4,8 +4,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    copy_project_env, dump_project_env, event_advisories, prune_record_history, prune_run_history,
-    restore_project_env,
+    copy_project_env, dump_project_env, event_advisories, ops_verbs, restore_project_env,
 };
 
 #[derive(Parser)]
@@ -28,9 +27,9 @@ enum Command {
     /// Copy a project-env to another environment.
     CopyProjectEnv(copy_project_env::CopyProjectEnvArgs),
     /// Prune terminal run history older than the retention period.
-    PruneRunHistory(prune_run_history::PruneRunHistoryArgs),
+    PruneRunHistory(ops_verbs::PruneRunHistoryArgs),
     /// Remove expired record history entries as the audit retention task.
-    PruneRecordHistory(prune_record_history::PruneRecordHistoryArgs),
+    PruneRecordHistory(ops_verbs::PruneRecordHistoryArgs),
     /// Read retained broker advisories and the available source payloads.
     EventAdvisories(event_advisories::EventAdvisoriesArgs),
 }
@@ -51,8 +50,8 @@ async fn main() -> anyhow::Result<()> {
         Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
         Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
-        Command::PruneRunHistory(args) => prune_run_history::run(args).await,
-        Command::PruneRecordHistory(args) => prune_record_history::run(args).await,
+        Command::PruneRunHistory(args) => ops_verbs::prune_run_history(args).await,
+        Command::PruneRecordHistory(args) => ops_verbs::prune_record_history(args).await,
         Command::EventAdvisories(args) => event_advisories::run(args).await,
     }
 }

@@ -30,90 +30,75 @@
 //! it ages beyond the configured window.
 
 use anyhow::{Context as _, bail};
-use clap::Args;
 use tokio_postgres::NoTls;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
 
-#[derive(Debug, Args)]
-pub struct PruneRunHistoryArgs {
+/// Inputs of one terminal run history prune.
+#[derive(Debug)]
+pub struct PruneRunHistoryRequest {
     /// Postgres URL for this tenant's `wamn_run_retention` credential generation
     /// — the NOSUPERUSER/NOBYPASSRLS role whose whole authority is the terminal
-    /// run delete. The verb refuses any other identity. Env `WAMN_PG_URL`.
-    #[arg(long, env = "WAMN_PG_URL")]
+    /// run delete. The verb refuses any other identity.
     pub database_url: String,
 
     /// The run-plane schema the `runs` table lives in (set as the session
     /// `search_path`). Bare identifier, and REQUIRED: the statement this
     /// verb drives is `DELETE FROM runs` — UNQUALIFIED — so it resolves through
     /// that session `search_path`. A default would let an invocation that omits
-    /// the flag prune a relation the operator never named and still report
+    /// the schema prune a relation the operator never named and still report
     /// success.
-    #[arg(long)]
     pub schema: String,
 
     /// The tenant whose run history to prune. It must be the tenant the mounted
     /// retention credential was minted for; a mismatch refuses loudly rather
     /// than pruning nothing and reporting success.
-    #[arg(long)]
     pub tenant: String,
 
     /// Prune terminal runs whose `created_at` is older than this many days.
-    #[arg(long)]
     pub retention_days: u32,
 
     /// Count what WOULD be pruned (a rolled-back delete under the same predicate)
     /// without deleting anything.
-    #[arg(long)]
     pub dry_run: bool,
 }
 
-pub async fn run(args: PruneRunHistoryArgs) -> anyhow::Result<()> {
-    if !crate::ident::is_bare_ident(&args.schema) {
+/// Prune one tenant's expired terminal run history and return the number of
+/// `runs` rows the delete removed. A dry run rolls back and returns the count
+/// the same delete would have removed.
+pub async fn prune_terminal_run_history(
+    request: PruneRunHistoryRequest,
+) -> anyhow::Result<u64> {
+    if !crate::ident::is_bare_ident(&request.schema) {
         bail!(
-            "--schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",
-            args.schema
+            "the schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",
+            request.schema
         );
     }
-    if args.tenant.trim().is_empty() {
-        bail!("--tenant must be non-empty (it is the tenant the delete is bound to)");
+    if request.tenant.trim().is_empty() {
+        bail!("the tenant must be non-empty (it is the tenant the delete is bound to)");
     }
 
-    let (mut client, conn) = tokio_postgres::connect(&args.database_url, NoTls)
+    let (mut client, conn) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("retention credential connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
-        verify_retention_identity(&client, &args.tenant).await?;
+        verify_retention_identity(&client, &request.tenant).await?;
         prune(
             &mut client,
-            &args.schema,
-            &args.tenant,
-            args.retention_days,
-            !args.dry_run,
+            &request.schema,
+            &request.tenant,
+            request.retention_days,
+            !request.dry_run,
         )
         .await
     }
     .await;
     drop(client);
     let _ = conn_task.await;
-    let pruned = result?;
-
-    if args.dry_run {
-        println!(
-            "prune-run-history (dry-run): {pruned} terminal run(s) older than {} day(s) WOULD be \
-             pruned in schema {} (tenant {})",
-            args.retention_days, args.schema, args.tenant
-        );
-    } else {
-        println!(
-            "prune-run-history: pruned {pruned} terminal run(s) older than {} day(s) in schema {} \
-             (tenant {})",
-            args.retention_days, args.schema, args.tenant
-        );
-    }
-    Ok(())
+    result
 }
 
 /// Refuse unless the connected role is one of the two credential generations

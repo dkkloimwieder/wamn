@@ -23,7 +23,6 @@
 //! (`deploy/platform/audit-retention.example.yaml`) sets the retention precision.
 
 use anyhow::{Context as _, bail};
-use clap::Args;
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL,
@@ -34,16 +33,15 @@ use wamn_control_provision::{
 };
 use wamn_pg_core::{Identifier, QualifiedName};
 
-#[derive(Debug, Args)]
-pub struct PruneRecordHistoryArgs {
+/// Inputs of one record history retention run.
+#[derive(Debug)]
+pub struct PruneRecordHistoryRequest {
     /// Postgres URL for this tenant's `wamn_audit_retention` credential
-    /// generation. The verb refuses any other login. Env `WAMN_PG_URL`.
-    #[arg(long, env = "WAMN_PG_URL")]
+    /// generation. The verb refuses any other login.
     pub database_url: String,
 
     /// The tenant that the mounted audit retention credential was minted for.
     /// A different tenant refuses before any statement runs.
-    #[arg(long)]
     pub tenant: String,
 }
 
@@ -60,35 +58,26 @@ pub struct PrunedHistory {
     pub removed: u64,
 }
 
-pub async fn run(args: PruneRecordHistoryArgs) -> anyhow::Result<()> {
-    if args.tenant.trim().is_empty() {
-        bail!("--tenant must be non-empty (it names the tenant of the retention credential)");
+/// Prune the expired record history of one tenant database and return what each
+/// history table lost, in the order the run visited the tables.
+pub async fn prune_expired_record_history(
+    request: PruneRecordHistoryRequest,
+) -> anyhow::Result<Vec<PrunedHistory>> {
+    if request.tenant.trim().is_empty() {
+        bail!("the tenant must be non-empty (it names the tenant of the retention credential)");
     }
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("audit retention credential connect")?;
     let connection_task = tokio::spawn(connection);
     let result = async {
-        verify_audit_retention_identity(&client, &args.tenant).await?;
+        verify_audit_retention_identity(&client, &request.tenant).await?;
         prune(&mut client).await
     }
     .await;
     drop(client);
     let _ = connection_task.await;
-    let pruned = result?;
-
-    for history in &pruned {
-        println!(
-            "prune-record-history: removed {} entries from {}.{} (retention P{}D, tenant {})",
-            history.removed, history.schema, history.history, history.days, args.tenant
-        );
-    }
-    println!(
-        "prune-record-history: pruned {} history table(s) for tenant {}",
-        pruned.len(),
-        args.tenant
-    );
-    Ok(())
+    result
 }
 
 /// Refuse unless the connected role is one of the two audit retention
