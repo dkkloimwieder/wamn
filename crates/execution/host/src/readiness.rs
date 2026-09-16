@@ -166,7 +166,7 @@ impl RouterReadinessProbe {
                     error = %rendered,
                     "release readiness evaluation failed"
                 );
-                state.finish(generation, Err(RELEASE_READINESS_CHECK_FAILED))
+                state.finish(generation, Err(RELEASE_READINESS_CHECK_FAILED));
             }
         }
         state.snapshot.clone()

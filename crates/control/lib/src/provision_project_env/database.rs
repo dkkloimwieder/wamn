@@ -46,9 +46,9 @@ pub(super) fn workload_url(
         "target admin URL must use postgres or postgresql"
     );
     url.set_username(role)
-        .map_err(|_| anyhow::anyhow!("set workload URL username"))?;
+        .map_err(|()| anyhow::anyhow!("set workload URL username"))?;
     url.set_password(Some(password))
-        .map_err(|_| anyhow::anyhow!("set workload URL password"))?;
+        .map_err(|()| anyhow::anyhow!("set workload URL password"))?;
     url.set_path(&format!("/{database}"));
     url.set_query(None);
     url.set_fragment(None);

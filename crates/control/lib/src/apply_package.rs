@@ -298,11 +298,11 @@ async fn apply(
         // statements; every host-authored record statement has binds.
         if statement.params.is_empty() {
             set_package_owner_role(&tx).await?;
-            execute(&tx, statement, &coordinate_text).await?;
+            execute(&tx, statement, coordinate_text).await?;
             reset_host_role(&tx).await?;
         } else {
             assert_host_role(&tx).await?;
-            execute(&tx, statement, &coordinate_text).await?;
+            execute(&tx, statement, coordinate_text).await?;
         }
     }
     assert_host_role(&tx).await?;

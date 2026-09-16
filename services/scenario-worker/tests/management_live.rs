@@ -37,6 +37,8 @@
 //!
 //! The recipe in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` supplies one disposable database.
 
+use std::fmt::Write as _;
+
 use std::time::{Duration, SystemTime};
 
 use anyhow::Context as _;
@@ -211,10 +213,10 @@ async fn send(
         body.len()
     );
     if let Some(bearer) = bearer {
-        request.push_str(&format!("Authorization: Bearer {bearer}\r\n"));
+        writeln!(request, "Authorization: Bearer {bearer}\r").expect("writing to a String cannot fail");
     }
     for (name, value) in extra {
-        request.push_str(&format!("{name}: {value}\r\n"));
+        writeln!(request, "{name}: {value}\r").expect("writing to a String cannot fail");
     }
     request.push_str("\r\n");
     request.push_str(body);
@@ -849,15 +851,18 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
         WorkloadRoleFamily::IdentityReader.acl_role().to_owned(),
     ]
     .iter()
-    .map(|role| {
-        format!(
+    .fold(String::new(), |mut sql, role| {
+        use std::fmt::Write as _;
+        write!(
+            sql,
             "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
                EXECUTE 'DROP OWNED BY \"{role}\"'; \
                EXECUTE 'DROP ROLE \"{role}\"'; \
              END IF; END $$; "
         )
-    })
-    .collect();
+        .expect("writing to a String cannot fail");
+        sql
+    });
     admin
         .batch_execute(&format!(
             "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
@@ -2190,7 +2195,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "{}",
         divergent_gate.body
     );
-    let reused = post(
+    let reused_publish = post(
         "/authoring",
         Some(alice.token()),
         &[],
@@ -2198,13 +2203,13 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     )
     .await;
     assert_eq!(
-        outcome(&reused.body)["value"],
+        outcome(&reused_publish.body)["value"],
         serde_json::json!({
             "command": "publish",
             "reason": {"kind": "command-id-reuse"},
         }),
         "{}",
-        reused.body
+        reused_publish.body
     );
     assert_eq!(stored_wiring_count(&project).await, 1);
     assert_eq!(minted_release_snapshot_count(&project).await, 0);

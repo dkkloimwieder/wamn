@@ -706,7 +706,7 @@ impl fmt::Debug for FilesystemInvalidationSource {
             .field("git", &self.git)
             .field("pending", &self.pending.len())
             .field("generated_native_outputs", &self.generated_native_outputs)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -934,7 +934,7 @@ impl FilesystemInvalidationSource {
                         )
                     })?;
                 }
-                Err(_would_block) => continue,
+                Err(_would_block) => {}
             }
         };
 
@@ -1038,7 +1038,7 @@ fn read_changes(
     descriptor: &OwnedFd,
     watched_directories: &HashMap<i32, PathBuf>,
 ) -> io::Result<Vec<RawChange>> {
-    let mut buffer = [MaybeUninit::uninit(); INOTIFY_BUFFER_BYTES];
+    let mut buffer = vec![MaybeUninit::uninit(); INOTIFY_BUFFER_BYTES].into_boxed_slice();
     let mut reader = inotify::Reader::new(descriptor, &mut buffer);
     let mut changes = Vec::new();
     loop {

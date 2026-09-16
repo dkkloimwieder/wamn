@@ -20,7 +20,7 @@ pub struct PrintPlatformPrincipalsArgs {
 }
 
 /// Print the platform principal rows as SQL on stdout.
-pub fn run(args: PrintPlatformPrincipalsArgs) -> anyhow::Result<()> {
+pub fn run(args: &PrintPlatformPrincipalsArgs) -> anyhow::Result<()> {
     let sql = wamn_control_provision::platform_principals_sql(&args.tenant, &args.platform_domain)
         .context("render the platform principal rows")?;
     print!("{sql}");

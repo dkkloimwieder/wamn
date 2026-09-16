@@ -247,7 +247,7 @@ mod tests {
 
     const PRINCIPAL: &str = "6d3f2d1c-0000-4000-8000-00000000abcd";
     const PREFIX: &str = "0123456789abcdef";
-    const LIFETIME: Duration = Duration::from_secs(2_592_000);
+    const LIFETIME: Duration = Duration::from_hours(720);
 
     fn response() -> serde_json::Value {
         serde_json::json!({

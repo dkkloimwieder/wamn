@@ -333,8 +333,8 @@ fn node_trace_context(request: &RouterDriverRequest) -> NodeTraceContext {
         // A tracing subscriber without the OTel layer is the supported
         // no-export mode: the span has no exportable context to inject, so pass
         // the caller's own header through rather than dropping propagation.
-        carrier.traceparent = request.traceparent.clone();
-        carrier.tracestate = request.tracestate.clone();
+        carrier.traceparent.clone_from(&request.traceparent);
+        carrier.tracestate.clone_from(&request.tracestate);
     }
     carrier
 }
@@ -727,7 +727,7 @@ impl RouterDriver {
             .resolve_candidate(&request.target, &request.binding_world)
             .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
-        self.validate_candidate_closure(&request.target, &active)?;
+        Self::validate_candidate_closure(&request.target, &active)?;
         let component_bytes = self.fetch_candidate_components(&active).await?;
         let native = active
             .facts
@@ -1090,7 +1090,6 @@ impl RouterDriver {
     }
 
     fn validate_candidate_closure(
-        &self,
         target: &CandidateWiringTarget,
         active: &ActiveWiring<CatalogFacts>,
     ) -> Result<(), CandidateExecutionRefusal> {
@@ -1413,7 +1412,7 @@ fn validate_component_in_release(
         .packages
         .iter()
         .find(|package| package.package_id() == component.scope.package_id)
-        .map(|package| package.package_version());
+        .map(wamn_catalog::PackageCoordinate::package_version);
     anyhow::ensure!(
         component.scope.tenant_id == manifest.release.tenant_id
             && package_version == Some(component.scope.package_version.as_str()),
@@ -1528,10 +1527,14 @@ impl NodeAcquisition {
     /// the caller's identity while naming its own package (`wamn-b2m6.7`).
     /// The original wiring owner and root component remain in `origin`.
     fn retarget(mut self, target: &AdmittedComponent, operation: &str) -> Self {
-        self.invocation.package_id = target.scope.package_id.clone();
-        self.invocation.component_digest = target.component_digest.clone();
-        self.invocation.component = target.component.clone();
-        self.invocation.operation = operation.to_owned();
+        self.invocation
+            .package_id
+            .clone_from(&target.scope.package_id);
+        self.invocation
+            .component_digest
+            .clone_from(&target.component_digest);
+        self.invocation.component.clone_from(&target.component);
+        operation.clone_into(&mut self.invocation.operation);
         self
     }
 }
@@ -1578,7 +1581,7 @@ impl fmt::Display for NestedOperationRefusal {
 
 impl std::error::Error for NestedOperationRefusal {}
 
-fn nested_host_error(error: anyhow::Error) -> wash_runtime::wasmtime::Error {
+fn nested_host_error(error: &anyhow::Error) -> wash_runtime::wasmtime::Error {
     if let Some(denial) = error.downcast_ref::<OperationRefusal>() {
         return wash_runtime::wasmtime::Error::new(denial.clone());
     }
@@ -1678,10 +1681,14 @@ fn next_scope(component: &str) -> Box<str> {
     format!("{component}#{}", NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)).into()
 }
 
+/// The host call ceiling in milliseconds. The constant is well under an hour,
+/// so it fits every width this bound converts to.
+fn max_host_call_ms() -> u64 {
+    u64::try_from(MAX_HOST_CALL_DURATION.as_millis()).unwrap_or(u64::MAX)
+}
+
 fn bounded_node_deadline_ms(deadline_ms: Option<u64>) -> u64 {
-    deadline_ms
-        .unwrap_or(MAX_HOST_CALL_DURATION.as_millis() as u64)
-        .clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64)
+    deadline_ms.unwrap_or(max_host_call_ms()).clamp(1, max_host_call_ms())
 }
 
 fn lower_node_outcome(
@@ -1887,7 +1894,7 @@ mod tests {
 
     #[test]
     fn node_deadline_is_nonzero_and_host_bounded() {
-        let ceiling = MAX_HOST_CALL_DURATION.as_millis() as u64;
+        let ceiling = max_host_call_ms();
 
         assert_eq!(bounded_node_deadline_ms(None), ceiling);
         assert_eq!(bounded_node_deadline_ms(Some(0)), 1);

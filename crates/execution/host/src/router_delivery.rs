@@ -216,8 +216,7 @@ impl RouterDeliveryBridge {
                 let failure = interrupted
                     .source
                     .downcast_ref::<OperationRefusal>()
-                    .map(|denial| lower_operation_refusal(denial.clone()))
-                    .unwrap_or(DeliveryError::ExecutionFailed);
+                    .map_or(DeliveryError::ExecutionFailed, lower_operation_refusal);
                 self.record(&attributes, DeliveryClass::ExecutionFailed);
                 self.tap(
                     source,
@@ -229,7 +228,7 @@ impl RouterDeliveryBridge {
                 )
                 .await;
                 tracing::warn!(error = %format_args!("{:#}", interrupted.source), "router delivery failed after a declared committed result");
-                partial_outcome(interrupted.evidence.clone(), FailedOutcome::Error(failure))
+                partial_outcome(&interrupted.evidence, FailedOutcome::Error(failure))
             }
             Err(error) if error.downcast_ref::<OperationRefusal>().is_some() => {
                 let denial = error
@@ -255,7 +254,7 @@ impl RouterDeliveryBridge {
                     &serde_json::Value::Null,
                 )
                 .await;
-                Err(lower_operation_refusal(denial))
+                Err(lower_operation_refusal(&denial))
             }
             Err(error) => {
                 self.record(&attributes, DeliveryClass::ExecutionFailed);
@@ -383,7 +382,7 @@ impl fmt::Debug for RouterDeliveryBridge {
             .debug_struct("RouterDeliveryBridge")
             .field("driver", &self.driver)
             .field("release", &self.release.release())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -536,7 +535,7 @@ fn resolve_authorized_target(
     validate_caller(source, &target, caller)?;
     // Attachments do not own freshness. The driver reads each released operation.
     authorize_registered_operation(caller, target.registered_operation.as_deref(), false)
-        .map_err(lower_operation_refusal)?;
+        .map_err(|denial| lower_operation_refusal(&denial))?;
     Ok(target)
 }
 
@@ -579,7 +578,7 @@ fn caller_matches_source(
     }
 }
 
-fn lower_operation_refusal(denial: OperationRefusal) -> DeliveryError {
+fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
     let detail = PermissionDenial {
         operation: denial.operation().to_owned(),
     };
@@ -717,18 +716,18 @@ fn lower_with_evidence(
     let lowered = lower_outcome(outcome);
     match (lowered, evidence) {
         (Ok(DeliveryOutcome::Failed(failure)), Some(evidence)) => {
-            partial_outcome(evidence, FailedOutcome::Failed(failure))
+            partial_outcome(&evidence, FailedOutcome::Failed(failure))
         }
         (Ok(DeliveryOutcome::Cancelled), Some(evidence)) => {
-            partial_outcome(evidence, FailedOutcome::Cancelled)
+            partial_outcome(&evidence, FailedOutcome::Cancelled)
         }
-        (Err(error), Some(evidence)) => partial_outcome(evidence, FailedOutcome::Error(error)),
+        (Err(error), Some(evidence)) => partial_outcome(&evidence, FailedOutcome::Error(error)),
         (outcome, _) => outcome,
     }
 }
 
 fn partial_outcome(
-    evidence: PartialEvidence,
+    evidence: &PartialEvidence,
     failed_outcome: FailedOutcome,
 ) -> Result<DeliveryOutcome, DeliveryError> {
     let committed_result = serde_json::to_string(&evidence.committed_result)
@@ -772,7 +771,6 @@ fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
         return lower_verdict(verdict);
     }
     match outcome.status {
-        WalkStatus::Completed => Err(DeliveryError::ExecutionFailed),
         WalkStatus::Failed => outcome
             .failure
             .map(|failure| {
@@ -784,7 +782,7 @@ fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
             })
             .ok_or(DeliveryError::ExecutionFailed),
         WalkStatus::Cancelled => Ok(DeliveryOutcome::Cancelled),
-        WalkStatus::Running => Err(DeliveryError::ExecutionFailed),
+        WalkStatus::Completed | WalkStatus::Running => Err(DeliveryError::ExecutionFailed),
     }
 }
 
@@ -943,7 +941,7 @@ mod tests {
 
         assert_eq!(denial.operation(), operation);
         assert!(matches!(
-            lower_operation_refusal(denial),
+            lower_operation_refusal(&denial),
             DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
                 if denied == operation
         ));
@@ -963,7 +961,7 @@ mod tests {
             .clone();
 
         assert!(matches!(
-            lower_operation_refusal(denial),
+            lower_operation_refusal(&denial),
             DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
                 if denied == operation
         ));
@@ -986,7 +984,7 @@ mod tests {
             OperationRefusalKind::FreshCredentialRequired
         );
         assert!(matches!(
-            lower_operation_refusal(refusal),
+            lower_operation_refusal(&refusal),
             DeliveryError::FreshCredentialRequired(PermissionDenial { operation: refused })
                 if refused == operation
         ));
@@ -1090,6 +1088,9 @@ mod tests {
         provider: SdkMeterProvider,
     }
 
+    /// One exported series: instrument name, sorted attributes, and value.
+    type MetricSeries = (String, Vec<(String, String)>, u64);
+
     impl MetricHarness {
         fn install() -> Self {
             let exporter = InMemoryMetricExporter::default();
@@ -1106,7 +1107,7 @@ mod tests {
         /// Every `(name, sorted attributes, value)` the exporter holds, sorted,
         /// so an assertion names the whole emitted surface and a series that
         /// should not exist cannot hide.
-        fn series(&self) -> Vec<(String, Vec<(String, String)>, u64)> {
+        fn series(&self) -> Vec<MetricSeries> {
             self.provider
                 .force_flush()
                 .expect("test metrics must flush");

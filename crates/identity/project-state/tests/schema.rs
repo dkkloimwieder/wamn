@@ -10,6 +10,8 @@
 //!   the platform principal rows — on a test database of the test PostgreSQL
 //!   server (a superuser URL; the harness prepares App generations).
 
+use std::fmt::Write as _;
+
 use std::path::Path;
 
 use wamn_control_provision::{
@@ -247,16 +249,16 @@ fn app_generation(database: &str, tenant: &str) -> String {
 /// App generations).
 #[test]
 fn app_schema_applies_and_enforces_isolation_on_postgres() {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
-
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
     const U4: &str = "44444444-4444-4444-4444-444444444444";
     const TENANT_1: &str = "t1";
     const TENANT_2: &str = "t2";
+
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let database = current_database(&url);
     let tenant_1_app = app_generation(&database, TENANT_1);
@@ -291,7 +293,8 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // Seed as the superuser (bypasses RLS): two tenants for the isolation test,
     // known user ids to tie the docs rows to. U1 has a role, key, and config.
     // The fixture writes as U1, its test principal, whose row stamps itself.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "SET app.user_id = '{U1}';\n\
          SET app.operation = 'admin:seed-isolation-fixture';\n\
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
@@ -300,12 +303,14 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('t1','admin','receipts:read');\n\
          INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
-         INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);\n"
-    ));
+         INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);"
+    )
+    .expect("writing to a String cannot fail");
 
     // Tenant isolation follows current_user's prepared scope: tenant 1 sees only
     // tenant 1's rows without any settable tenant claim.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "BEGIN;\n\
          SET LOCAL ROLE {tenant_1_app};\n\
          DO $$ BEGIN\n\
@@ -317,11 +322,13 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
            ASSERT (SELECT count(*) FROM app_system.api_keys)=1, 't1 sees its api key';\n\
            ASSERT (SELECT count(*) FROM app_system.configurations)=1, 't1 sees its config';\n\
          END $$;\n\
-         COMMIT;\n"
-    ));
+         COMMIT;"
+    )
+    .expect("writing to a String cannot fail");
     // Tenant 2 sees only its row. Spoofing the retired app.tenant claim does not
     // move tenant 1, and the stable ACL carrier itself maps to no tenant.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "BEGIN;\n\
          SET LOCAL ROLE {tenant_2_app};\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=1, 't2 sees only its user'; END $$;\n\
@@ -335,8 +342,9 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          SET LOCAL ROLE wamn_app;\n\
          SET LOCAL app.tenant = '{TENANT_1}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
-         COMMIT;\n"
-    ));
+         COMMIT;"
+    )
+    .expect("writing to a String cannot fail");
     // users.id is an org-issued UUID: PostgreSQL must report both the exact type
     // and the absence of any database-minted default.
     script.push_str(
@@ -356,7 +364,8 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          END $$;\n",
     );
     // The status / empty-tenant CHECKs reject bad rows.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "DO $$ BEGIN BEGIN\n\
            INSERT INTO app_system.users (tenant_id, id, type, email, status) VALUES ('t1','{U3}','person','x@t1','zombie');\n\
            ASSERT false, 'an unknown user status must be rejected';\n\
@@ -364,16 +373,19 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          DO $$ BEGIN BEGIN\n\
            INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('','{U4}','person','x@none');\n\
            ASSERT false, 'a ''-tenant row must be rejected (a45)';\n\
-         EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n"
-    ));
+         EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
+    )
+    .expect("writing to a String cannot fail");
     // FK cascade: deleting U1 prunes its role grant and api key.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "DELETE FROM app_system.users WHERE tenant_id='t1' AND id='{U1}';\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM app_system.user_roles WHERE user_id='{U1}')=0, 'user_roles cascade';\n\
            ASSERT (SELECT count(*) FROM app_system.api_keys WHERE user_id='{U1}')=0, 'api_keys cascade';\n\
-         END $$;\n"
-    ));
+         END $$;"
+    )
+    .expect("writing to a String cannot fail");
 
     script.push_str("DROP SCHEMA app_system CASCADE;\n");
 
@@ -436,10 +448,12 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
     );
     // The fixture writes as its first admitted person row below.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "COMMIT;\nSET app.user_id = '{FIXTURE_PERSON}';\n\
-         SET app.operation = 'admin:seed-platform-row-fixture';\n"
-    ));
+         SET app.operation = 'admin:seed-platform-row-fixture';"
+    )
+    .expect("writing to a String cannot fail");
     // Every refused row sits in its own subtransaction, so the fresh rows
     // above stay as the only rows in the table.
     let refused = [
@@ -504,30 +518,36 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     );
     for (condition, statement) in refused {
         let quoted = statement.replace('\'', "''");
-        script.push_str(&format!(
+        writeln!(
+            script,
             "DO $$ BEGIN BEGIN\n\
                EXECUTE '{quoted}';\n\
                RAISE EXCEPTION 'the users CHECKs admitted: %', '{quoted}';\n\
-             EXCEPTION WHEN {condition} THEN NULL; END; END $$;\n"
-        ));
+             EXCEPTION WHEN {condition} THEN NULL; END; END $$;"
+        )
+        .expect("writing to a String cannot fail");
     }
     // Every user type is admitted.
     for (index, user_type) in UserType::ALL.into_iter().enumerate() {
         if user_type == UserType::Platform {
             continue;
         }
-        script.push_str(&format!(
+        writeln!(
+            script,
             "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
              VALUES ('other', '00000000-0000-0000-0000-00000000000{index}', '{user_type}', \
-                     '{user_type}@{DOMAIN}', 'Fixture {user_type}');\n"
-        ));
+                     '{user_type}@{DOMAIN}', 'Fixture {user_type}');"
+        )
+        .expect("writing to a String cannot fail");
     }
-    script.push_str(&format!(
+    writeln!(
+        script,
         "SELECT display_name, id, type, email FROM app_system.users \
           WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
          SELECT count(*) FROM app_system.users WHERE tenant_id = 'other';\n\
-         DROP SCHEMA app_system CASCADE;\n"
-    ));
+         DROP SCHEMA app_system CASCADE;"
+    )
+    .expect("writing to a String cannot fail");
 
     let output = run(&url, &script);
     // The provisioning SQL first binds its actor and operation, and psql prints that result.
@@ -600,15 +620,17 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
     script.push_str(
         &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
     );
-    script.push_str(&format!(
+    writeln!(
+        script,
         "COMMIT;\n\
          SELECT 'actor|' || COALESCE(current_setting('app.user_id', true), '');\n\
          SELECT 'stamp|' || display_name || '|' || (id = created_by)::text || '|' \
                 || created_by::text || '|' || updated_by::text || '|' \
                 || (updated_at >= created_at)::text \
            FROM app_system.users WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
-         DROP SCHEMA app_system CASCADE;\n"
-    ));
+         DROP SCHEMA app_system CASCADE;"
+    )
+    .expect("writing to a String cannot fail");
 
     let output = run(&url, &script);
     let mut expected = Vec::new();
@@ -719,7 +741,8 @@ fn app_system_relations_log_every_row_change_on_postgres() {
           WHERE n.nspname = 'app_system' AND c.relkind = 'r' \
           ORDER BY c.relname COLLATE \"C\";\n",
     );
-    script.push_str(&format!(
+    writeln!(
+        script,
         "BEGIN;\n\
          SET LOCAL app.user_id = '{U1}';\n\
          SET LOCAL app.operation = '{SEED}';\n\
@@ -756,8 +779,9 @@ fn app_system_relations_log_every_row_change_on_postgres() {
          DELETE FROM app_system.users WHERE id = '{U1}';\n\
          DELETE FROM app_system.users WHERE id = '{U2}';\n\
          DELETE FROM app_system.roles WHERE name = 'admin';\n\
-         COMMIT;\n"
-    ));
+         COMMIT;"
+    )
+    .expect("writing to a String cannot fail");
     // One line per entry, in relation and position order. The images leave out
     // the stamp columns, whose times differ in each run.
     let entries = TABLES
@@ -773,15 +797,17 @@ fn app_system_relations_log_every_row_change_on_postgres() {
         })
         .collect::<Vec<_>>()
         .join(" UNION ALL ");
-    script.push_str(&format!(
+    writeln!(
+        script,
         "SELECT 'entry|' || relation || '|' || tenant_id || '|' || kind || '|' || operation \
                 || '|' || changed_by || '|' || row_key::text \
                 || '|' || (before - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
                 || '|' || (after - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
            FROM ({entries}) AS entry \
           ORDER BY relation COLLATE \"C\", position;\n\
-         DROP SCHEMA app_system CASCADE;\n"
-    ));
+         DROP SCHEMA app_system CASCADE;"
+    )
+    .expect("writing to a String cannot fail");
 
     let output = run(&url, &script);
     let mut relations = TABLES

@@ -672,7 +672,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     apply(&url, &package)
         .await
         .expect("first package apply commits");
-    assert_eq!(
+    assert!(
         client
             .query_one(
                 "SELECT apply_effective_role::text = current_user::text \
@@ -684,7 +684,6 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .await
             .expect("read server-visible authority used for the migration records")
             .get::<_, bool>(0),
-        true,
         "apply-package did not RESET ROLE before its trusted migration-record write"
     );
     let ownership = client

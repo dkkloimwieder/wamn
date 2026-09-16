@@ -634,29 +634,32 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`CredentialProbeQueries` declares `async fn` because the production \
+                  implementation queries a database; this fake answers from memory and still \
+                  has to match the trait"
+    )]
     impl CredentialProbeQueries for FakeQueries {
-        fn identity(
-            &self,
-        ) -> impl std::future::Future<Output = Result<ObservedIdentity, CredentialProbePredicate>>
-        {
+        async fn identity(&self) -> Result<ObservedIdentity, CredentialProbePredicate> {
             self.identity_calls.fetch_add(1, Ordering::Relaxed);
-            std::future::ready(Ok(self.identity.clone()))
+            Ok(self.identity.clone())
         }
 
-        fn membership(
+        async fn membership(
             &self,
             _expectation: &MembershipExpectation,
-        ) -> impl std::future::Future<Output = Result<bool, CredentialProbePredicate>> {
+        ) -> Result<bool, CredentialProbePredicate> {
             self.membership_calls.fetch_add(1, Ordering::Relaxed);
-            std::future::ready(Ok(self.membership))
+            Ok(self.membership)
         }
 
-        fn acl(
+        async fn acl(
             &self,
             _expectation: &AclExpectation,
-        ) -> impl std::future::Future<Output = Result<bool, CredentialProbePredicate>> {
+        ) -> Result<bool, CredentialProbePredicate> {
             self.acl_calls.fetch_add(1, Ordering::Relaxed);
-            std::future::ready(Ok(self.acl))
+            Ok(self.acl)
         }
     }
 

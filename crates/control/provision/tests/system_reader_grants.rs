@@ -16,6 +16,8 @@
 //! Each test takes its own test database on the test PostgreSQL server and holds
 //! the process lock, because it drops and creates cluster-wide roles.
 
+use std::fmt::Write as _;
+
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
@@ -107,14 +109,16 @@ fn reset_roles(admin_url: &str, database: &str) {
     }
     let mut script = String::new();
     for role in roles {
-        script.push_str(&format!(
+        writeln!(
+            script,
             "DO $reset$ BEGIN \
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
                  EXECUTE 'DROP ROLE \"{role}\"'; \
                END IF; \
-             END $reset$;\n"
-        ));
+             END $reset$;"
+        )
+        .expect("writing to a String cannot fail");
     }
     run_admin(admin_url, "reset leftover reader roles", &script);
 }
@@ -286,10 +290,12 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
     // Every OTHER system-plane schema, and the sensitive identity relations, are
     // denied — this is the disjointness the two families exist to keep.
     for schema in ["identity", "provisioning"] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
-               'the registry reader reaches the {schema} schema'; \n"
-        ));
+               'the registry reader reaches the {schema} schema'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     for relation in [
         "identity.pats",
@@ -302,18 +308,22 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
         "registry.project_envs",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-            probes.push_str(&format!(
+            writeln!(
+                probes,
                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
-                   'the registry reader holds {privilege} on {relation}'; \n"
-            ));
+                   'the registry reader holds {privilege} on {relation}'; "
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     // …and on its OWN relation it holds the read and nothing else.
     for privilege in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT NOT has_table_privilege(r, 'registry.event_readers', '{privilege}'), \
-               'the registry reader holds {privilege} on its own relation'; \n"
-        ));
+               'the registry reader holds {privilege} on its own relation'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     probes.push_str("END $probe$;\n");
     run_admin(&admin_url, "the effective-privilege probes", &probes);
@@ -467,33 +477,41 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         "identity.project_env_memberships",
         "identity.project_roles",
     ] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT has_table_privilege(r, '{relation}', 'SELECT'), \
-               'the identity reader cannot read {relation}'; \n"
-        ));
+               'the identity reader cannot read {relation}'; "
+        )
+        .expect("writing to a String cannot fail");
         // THE THREE-TIMES-DRIFT GUARD, as the server reports it.
         for privilege in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
-            probes.push_str(&format!(
+            writeln!(
+                probes,
                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
-                   'the identity reader holds {privilege} on {relation}'; \n"
-            ));
+                   'the identity reader holds {privilege} on {relation}'; "
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     for schema in ["registry", "provisioning"] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
-               'the identity reader reaches the {schema} schema'; \n"
-        ));
+               'the identity reader reaches the {schema} schema'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     for relation in [
         "registry.event_readers",
         "registry.orgs",
         "provisioning.sagas",
     ] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT NOT has_table_privilege(r, '{relation}', 'SELECT'), \
-               'the identity reader can read {relation}'; \n"
-        ));
+               'the identity reader can read {relation}'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     probes.push_str("END $probe$;\n");
     run_admin(&admin_url, "the identity-reader privilege probes", &probes);

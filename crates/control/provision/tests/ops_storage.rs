@@ -4,6 +4,10 @@
 //! is applied afterwards, owns exactly two operations relations, and may
 //! reference only the core project-environment identity.
 
+use std::fmt::Write as _;
+use std::io::Write as _;
+use std::process::{Command, Stdio};
+
 use std::path::Path;
 
 fn deploy_dir() -> std::path::PathBuf {
@@ -181,18 +185,20 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
          RESET ROLE;\n\
          SET ROLE wamn_ops;\n",
     );
-    script.push_str(&format!(
+    writeln!(
+        script,
         "PREPARE dump (text,text,text,text,text,bigint) AS {record_dump};\n\
          EXECUTE dump('acme','app','dev','dumps/acme/app/dev/1','directory',10);\n\
          EXECUTE dump('acme','app','dev','dumps/acme/app/dev/1','directory',20);\n\
          PREPARE copy (text,text,text,int) AS {create_copy};\n\
          PREPARE advance (text) AS {advance_copy};\n\
          EXECUTE copy('copy-1','copy','acme/app/dev -> acme/app/prod',5);\n\
-         EXECUTE advance('copy-1');\n",
+         EXECUTE advance('copy-1');",
         record_dump = wamn_control_provision::state::record_dump_sql(),
         create_copy = wamn_control_provision::state::create_saga_sql(),
         advance_copy = wamn_control_provision::state::advance_saga_step_sql(),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(
         "DO $$ BEGIN\n\
            ASSERT (SELECT byte_size FROM provisioning.dumps WHERE object_key='dumps/acme/app/dev/1')=20, \
@@ -236,8 +242,6 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
 ",
     );
 
-    use std::io::Write;
-    use std::process::{Command, Stdio};
     let mut child = Command::new("psql")
         .arg(&url)
         .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])

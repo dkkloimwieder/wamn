@@ -40,6 +40,7 @@ pub fn saturated(baseline: &LevelStats, s: &LevelStats) -> bool {
         || (s.p99_ms > 2.0 * baseline.p99_ms && s.p99_ms > baseline.p99_ms + 2.0)
 }
 
+#[derive(Debug)]
 enum RampState {
     /// Doubling until the first saturated level.
     Coarse {
@@ -69,6 +70,7 @@ enum RampState {
 /// re-run appears in [`Ramp::levels`] as a second row at the same offered rate.
 /// For the same reason the p99-doubling baseline is the first ACCEPTED-good
 /// run, never a retried-away noise run.
+#[derive(Debug)]
 pub struct Ramp {
     tolerance: f64,
     max_levels: usize,
@@ -103,7 +105,7 @@ impl Ramp {
         match self.state {
             RampState::Coarse { next } => Some(next),
             RampState::Bisect { good, bad } if (bad - good) / good > self.tolerance => {
-                Some((good + bad) / 2.0)
+                Some(f64::midpoint(good, bad))
             }
             _ => None,
         }
@@ -180,8 +182,10 @@ pub fn ramp_csv(levels: &[LevelStats]) -> String {
          p50_ms,p99_ms,p999_ms,window_completed,drained\n",
     );
     for s in levels {
-        out.push_str(&format!(
-            "{:.0},{:.1},{:.1},{:.3},{:.3},{:.3},{},{}\n",
+        use std::fmt::Write as _;
+        writeln!(
+            out,
+            "{:.0},{:.1},{:.1},{:.3},{:.3},{:.3},{},{}",
             s.offered,
             s.achieved_enqueue,
             s.achieved_complete,
@@ -190,7 +194,8 @@ pub fn ramp_csv(levels: &[LevelStats]) -> String {
             s.p999_ms,
             s.window_completed,
             s.drained
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     out
 }
@@ -198,6 +203,13 @@ pub fn ramp_csv(levels: &[LevelStats]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A finite, non-negative rate as a whole count. `Duration` carries the
+    /// conversion, so the fixture needs no float-to-integer cast.
+    fn whole_count(value: f64) -> u64 {
+        std::time::Duration::try_from_secs_f64(value.round().max(0.0))
+            .map_or(0, |count| count.as_secs())
+    }
 
     /// A level at `offered` served by a system whose capacity is `cap`: below
     /// capacity it completes what is offered at a flat p99; above, completions
@@ -211,7 +223,7 @@ mod tests {
             p50_ms: 1.0,
             p99_ms: if saturated { 500.0 } else { 4.0 },
             p999_ms: if saturated { 900.0 } else { 8.0 },
-            window_completed: offered as u64 * 60,
+            window_completed: whole_count(offered * 60.0),
             drained: true,
         }
     }
@@ -311,7 +323,7 @@ mod tests {
             p50_ms: 40.0,
             p99_ms: 500.0,
             p999_ms: 900.0,
-            window_completed: (offered * 0.3) as u64 * 60,
+            window_completed: whole_count(offered * 0.3 * 60.0),
             drained: false,
         }
     }
@@ -326,7 +338,7 @@ mod tests {
         let mut poisoned_once = false;
         while let Some(rate) = ramp.next_offered() {
             offered_seq.push(rate);
-            if rate == 1000.0 && !poisoned_once {
+            if (rate - 1000.0).abs() < f64::EPSILON && !poisoned_once {
                 poisoned_once = true;
                 ramp.record(poisoned(rate));
             } else {

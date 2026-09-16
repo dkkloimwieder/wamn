@@ -595,7 +595,7 @@ impl fmt::Debug for DevConfig {
             .field("activation_identity", &self.activation_identity)
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -1918,7 +1918,7 @@ pub(crate) mod tests {
         assert_eq!(error.kind(), DevPackageErrorKind::BaseDependencyMissing);
         assert_eq!(error.coordinate(), Some("wamn_receiving@1.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
-        assert_eq!(error.searched_roots(), [overlay_root.clone()]);
+        assert_eq!(error.searched_roots(), std::slice::from_ref(&overlay_root));
 
         let mut ambiguous_document = complete_document(&addresses);
         ambiguous_document[PACKAGE_SOURCES] =

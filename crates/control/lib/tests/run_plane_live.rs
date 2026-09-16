@@ -438,11 +438,10 @@ async fn install_legacy_flow_registry(su: &Client) {
     .expect("install retired flow registry");
 }
 
-fn assert_db_code(error: tokio_postgres::Error, expected: &str, context: &str) {
+fn assert_db_code(error: &tokio_postgres::Error, expected: &str, context: &str) {
     let actual = error
         .as_db_error()
-        .map(|database| database.code().code())
-        .unwrap_or("non-database-error");
+        .map_or("non-database-error", |database| database.code().code());
     assert_eq!(actual, expected, "{context}: {error}");
 }
 
@@ -618,7 +617,7 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
             .batch_execute(&denied)
             .await
             .expect_err(&format!("reader was allowed {denied:?}"));
-        assert_db_code(error, "42501", &denied);
+        assert_db_code(&error, "42501", &denied);
     }
     drop(reader);
 
@@ -661,7 +660,7 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
         .batch_execute(&format!("SELECT count(*) FROM {SCHEMA}.runs"))
         .await
         .expect_err("the widened SELECT on runs survived the reconcile");
-    assert_db_code(error, "42501", "narrowed reader reads runs");
+    assert_db_code(&error, "42501", "narrowed reader reads runs");
     drop(reader);
     assert!(
         !su.query_one(
@@ -1419,7 +1418,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
             .batch_execute(&refused)
             .await
             .expect_err("the runtime role writes no run-plane row");
-        assert_db_code(denied, "42501", "runtime-role write refusal");
+        assert_db_code(&denied, "42501", "runtime-role write refusal");
     }
     // THE POST-STATE, not merely a count: the row the guest reads is ITS OWN,
     // and the foreign tenant's row — shown present above — is absent from the
@@ -1446,7 +1445,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         .query_one(&format!("SELECT count(*) FROM {SCHEMA}.run_queue"), &[])
         .await
         .expect_err("the runtime role cannot read the queue at all");
-    assert_db_code(queue_denied, "42501", "runtime-role queue read refusal");
+    assert_db_code(&queue_denied, "42501", "runtime-role queue read refusal");
     drop(guest);
     // Roles are CLUSTER-wide: leave none behind for the legs that follow.
     drop_generation_role(su, &guest_generation).await;
@@ -2084,7 +2083,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     .await
     .expect("leave the platform-member application session");
     let fact_error = direct_fact_append.expect_err("ordinary app cannot append immutable facts");
-    assert_db_code(fact_error, "42501", "effect-table ACL refusal");
+    assert_db_code(&fact_error, "42501", "effect-table ACL refusal");
     let error = direct_append.expect_err("platform membership cannot bypass the insert guard");
     assert!(
         error

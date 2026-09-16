@@ -121,15 +121,15 @@ async fn pinned_profile_refuses_before_fetch_and_claim_misses_never_gain_authori
     ] {
         let mut body = claims();
         body["roles"] = roles.clone();
-        let verified = verifier
+        let verified_claims = verifier
             .verify(&signed(&header(), &body))
             .await
             .expect("signed role evidence");
         assert_eq!(
-            serde_json::to_value(&verified.claims().roles).unwrap(),
+            serde_json::to_value(&verified_claims.claims().roles).unwrap(),
             roles
         );
-        verified.check_admission().expect("fresh evidence");
+        verified_claims.check_admission().expect("fresh evidence");
     }
     assert_eq!(server.count(), 1, "all warm verification remains offline");
 }

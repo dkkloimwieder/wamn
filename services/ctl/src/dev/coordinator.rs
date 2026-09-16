@@ -280,7 +280,7 @@ fn project_catalog_for_package(
             .collect::<Vec<_>>();
         let column_names = columns
             .iter()
-            .map(|column| column.name())
+            .map(wamn_schema_introspection::ir::Column::name)
             .collect::<BTreeSet<_>>();
         let constraints = table
             .constraints()
@@ -761,7 +761,7 @@ impl ProductionDevStageRunner {
         )
         .await
         .map_err(|source| {
-            ProductionDevStageError::owner("start the production component build", source.into())
+            ProductionDevStageError::owner("start the production component build", source)
         })?;
         require_command_success("build production components", &output)?;
         let plan = serde_json::from_slice(&output.stdout).map_err(|source| {
@@ -800,10 +800,7 @@ impl ProductionDevStageRunner {
         )
         .await
         .map_err(|source| {
-            ProductionDevStageError::owner(
-                "start the production component virtualizer",
-                source.into(),
-            )
+            ProductionDevStageError::owner("start the production component virtualizer", source)
         })?;
         require_command_success("virtualize production components", &output)?;
         self.artifacts = select_component_artifacts(
@@ -829,6 +826,12 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
+    #[expect(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "Admit is one stage of the `DevStageRunner` seam, and every stage the \
+                  dispatcher awaits has the same shape; this one reaches no I/O today"
+    )]
     async fn admit(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Admit);
         if self.artifacts.is_empty() {
@@ -1319,7 +1322,12 @@ impl ProductionDevStageRunner {
             inputs.extend(
                 package_inputs
                     .into_iter()
-                    .filter(|(path, _)| !path.ends_with(".rs") || path.starts_with("tests/"))
+                    .filter(|(path, _)| {
+                        std::path::Path::new(path)
+                            .extension()
+                            .is_none_or(|extension| extension != "rs")
+                            || path.starts_with("tests/")
+                    })
                     .map(|(path, bytes)| {
                         (format!("{}:{path}", package.manifest.package.id), bytes)
                     }),
@@ -1779,12 +1787,21 @@ fn collect_authored_bytes(
             relative.to_string_lossy().into_owned(),
             // Authored inputs are text. Encoding the bytes rather than the text
             // keeps a non-UTF-8 file from hashing to the same value as another.
-            bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+            bytes.iter().fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write as _;
+                write!(hex, "{byte:02x}").expect("writing to a string is infallible");
+                hex
+            }),
         ));
     }
     Ok(())
 }
 
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "`DevStageRunner` declares its stage seam as `async fn`; the stages this \
+              runner answers from already-read state still have to match the trait"
+)]
 impl DevStageRunner for ProductionDevStageRunner {
     type Error = ProductionDevStageError;
 
@@ -1999,12 +2016,8 @@ fn prepare_local_bindings(
     let path = config.local_artifacts().bindings.as_ref();
     let selections: Vec<LocalBindingSelection> = path
         .map(|path| -> anyhow::Result<_> {
-            Ok(
-                serde_json::from_slice(
-                    &fs::read(path).context("read local connection selections")?,
-                )
-                .context("parse strict local connection selections")?,
-            )
+            serde_json::from_slice(&fs::read(path).context("read local connection selections")?)
+                .context("parse strict local connection selections")
         })
         .transpose()?
         .unwrap_or_default();
@@ -2935,7 +2948,7 @@ mod tests {
             base_purchase_order
                 .columns()
                 .iter()
-                .map(|column| column.name())
+                .map(wamn_schema_introspection::ir::Column::name)
                 .collect::<Vec<_>>(),
             [
                 "created_at",
@@ -2950,7 +2963,7 @@ mod tests {
             base_purchase_order
                 .constraints()
                 .iter()
-                .map(|constraint| constraint.name())
+                .map(wamn_schema_introspection::ir::Constraint::name)
                 .collect::<Vec<_>>(),
             ["purchase_order_id_pkey"]
         );
@@ -2958,7 +2971,7 @@ mod tests {
             base_purchase_order
                 .exclusions()
                 .iter()
-                .map(|exclusion| exclusion.name())
+                .map(wamn_schema_introspection::ir::Exclusion::name)
                 .collect::<Vec<_>>(),
             ["purchase_order_supplier_id_excl"]
         );

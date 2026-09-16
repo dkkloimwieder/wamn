@@ -196,14 +196,13 @@ pub async fn enable_cdc_project_env(
 
     // Pick the target cluster: an explicit `--cluster` wins; otherwise derive it
     // from the org's placement (`cluster_of`).
-    let cluster = match &args.cluster {
-        Some(c) => c.clone(),
-        None => {
-            let url = args.system_database_url.as_deref().context(
-                "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
-            )?;
-            crate::provision_project_env::resolve_cluster(url, &args.org, &args.env).await?
-        }
+    let cluster = if let Some(cluster) = &args.cluster {
+        cluster.clone()
+    } else {
+        let url = args.system_database_url.as_deref().context(
+            "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
+        )?;
+        crate::provision_project_env::resolve_cluster(url, &args.org, &args.env).await?
     };
 
     let db_name = project_env_database_name(&args.org, &args.project, &args.env, &instance);

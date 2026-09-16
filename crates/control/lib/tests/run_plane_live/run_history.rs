@@ -430,7 +430,7 @@ pub(super) async fn child_run_cutover_leg(su: &Client) {
         .await
         .expect_err("populated child state must refuse cutover");
     let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
-    assert_db_code(postgres, "55000", "populated child state refusal");
+    assert_db_code(&postgres, "55000", "populated child state refusal");
     for column in [
         "parent_run_id",
         "parent_node_id",
@@ -607,7 +607,7 @@ pub(super) async fn rerun_lineage_cutover_leg(su: &Client) {
         .await
         .expect_err("unknown same-name runs_root must refuse");
     let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
-    assert_db_code(postgres, "55000", "unknown runs_root refusal");
+    assert_db_code(&postgres, "55000", "unknown runs_root refusal");
     assert!(column_exists(su, "runs", "replay_of").await);
     assert!(column_exists(su, "runs", "root_run_id").await);
     assert_eq!(

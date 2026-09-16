@@ -194,12 +194,15 @@ pub async fn read_status(repository_root: &Path) -> Result<GitSourceSnapshot, Gi
             "Git returned a non-UTF-8 commit identity",
         )
     })?;
-    let state = status
+    let state = if status
         .stdout
         .split(|byte| *byte == b'\n')
         .any(|line| !line.is_empty() && !line.starts_with(b"# "))
-        .then_some(GitSourceState::Dirty)
-        .unwrap_or(GitSourceState::Clean);
+    {
+        GitSourceState::Dirty
+    } else {
+        GitSourceState::Clean
+    };
     Ok(GitSourceSnapshot {
         repository_root: repository_root.to_owned(),
         source_commit: source_commit.to_owned().into_boxed_str(),

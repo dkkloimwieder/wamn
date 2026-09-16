@@ -11,6 +11,8 @@
 //! roles, revokes PUBLIC CONNECT on every non-template database, and revokes
 //! PUBLIC TEMPORARY on the exact project database.
 
+use std::fmt::Write as _;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -120,7 +122,10 @@ fn secret_url(path: &Path, database: &str) -> String {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "the role attributes, validity, membership, and database ACL are independent security assertions"
+    clippy::fn_params_excessive_bools,
+    reason = "the role attributes, validity, membership, and database ACL are independent \
+              security assertions; each boolean mirrors one `pg_roles` attribute the server \
+              reports on its own"
 )]
 async fn assert_role(
     admin: &Client,
@@ -272,14 +277,18 @@ fn run_plane_fixture() -> String {
     );
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         if relation == "wirings" {
-            ddl.push_str(&format!(
+            write!(
+                ddl,
                 " CREATE TABLE catalog.\"{relation}\" ({columns});",
                 columns = column_ddl(&wiring_columns),
-            ));
+            )
+            .expect("writing to a String cannot fail");
         } else {
-            ddl.push_str(&format!(
+            write!(
+                ddl,
                 " CREATE TABLE catalog.\"{relation}\" (id bigint);"
-            ));
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     ddl

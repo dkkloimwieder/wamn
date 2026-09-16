@@ -34,7 +34,7 @@ use read::DevRuntimeEndpoint;
 
 // Cold local builds may take longer than edits. Metadata probes have their own
 // smaller bound; neither kind can prevent cooperative shutdown indefinitely.
-const PREPARATION_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+const PREPARATION_TIMEOUT: Duration = Duration::from_mins(45);
 const INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 async fn execute_preparation(
@@ -581,6 +581,12 @@ mod tests {
         invoked: Vec<DevStage>,
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevStageRunner` declares its stage seam as `async fn` because a production \
+                  stage does I/O; this test runner answers from memory and still has to \
+                  match the trait"
+    )]
     impl DevStageRunner for NoticingRunner {
         type Error = Infallible;
 
@@ -628,6 +634,12 @@ mod tests {
         assert!(result.notices().is_empty());
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevStageRunner` declares its stage seam as `async fn` because a production \
+                  stage does I/O; this test runner answers from memory and still has to \
+                  match the trait"
+    )]
     impl DevStageRunner for RecordingRunner {
         type Error = SyntheticStageError;
 
@@ -655,6 +667,12 @@ mod tests {
         fail_at: DevStage,
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevStageRunner` declares its stage seam as `async fn` because a production \
+                  stage does I/O; this test runner answers from memory and still has to \
+                  match the trait"
+    )]
     impl DevStageRunner for LifecycleRunner {
         type Error = SyntheticStageError;
 
@@ -711,6 +729,12 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevInvalidationSource` declares `async fn` because the production source \
+                  waits on a watcher; this test source answers from a queue and still \
+                  has to match the trait"
+    )]
     impl DevInvalidationSource for FakeSource {
         type Error = Infallible;
 
@@ -758,6 +782,12 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevStageRunner` declares its stage seam as `async fn` because a production \
+                  stage does I/O; this test runner answers from memory and still has to \
+                  match the trait"
+    )]
     impl DevStageRunner for WatchRunner {
         type Error = SyntheticStageError;
 
@@ -853,6 +883,12 @@ mod tests {
         refuse_preparation: bool,
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevStageRunner` declares its stage seam as `async fn` because a production \
+                  stage does I/O; this test runner answers from memory and still has to \
+                  match the trait"
+    )]
     impl DevStageRunner for DisposableTargetRunner {
         type Error = SyntheticStageError;
 
@@ -878,6 +914,12 @@ mod tests {
         unchanged: Option<DevStage>,
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevStageRunner` declares its stage seam as `async fn` because a production \
+                  stage does I/O; this test runner answers from memory and still has to \
+                  match the trait"
+    )]
     impl DevStageRunner for SkippingRunner {
         type Error = SyntheticStageError;
 

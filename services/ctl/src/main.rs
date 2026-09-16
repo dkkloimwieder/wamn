@@ -115,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
         Command::AuthorWiring(args) => release_verbs::author(args).await,
         Command::PublishRelease(args) => release_verbs::publish(args).await,
         Command::PrintReleaseEnv(args) => delivery_verbs::print_release_env(args).await,
-        Command::PrintPlatformPrincipals(args) => print_platform_principals::run(args),
+        Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),
         Command::Promote(args) => release_verbs::promote(args).await,
         Command::ReconcileReplicaIdentity(args) => {
             package_verbs::reconcile_replica_identity(args).await

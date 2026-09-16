@@ -24,7 +24,7 @@ const READ_ROLES: &str = "SELECT r.role_name FROM app_system.users u \
       AND u.status = 'active' ORDER BY r.role_name";
 
 fn psql(url: &str, script: &str) -> (bool, String, String) {
-    let mut public_url = Url::parse(url).ok().expect("fixture URL");
+    let mut public_url = Url::parse(url).expect("fixture URL");
     // Use the existing URL decoder without turning literal user-info '+' or
     // '&' bytes into form separators. The credential stays out of argv.
     let encoded = format!(

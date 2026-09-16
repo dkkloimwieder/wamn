@@ -1,6 +1,8 @@
 //! Real HTTPS transport with independently controlled cache-evidence clocks.
 #![cfg(feature = "test-util")]
 
+use std::fmt::Write as _;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -147,12 +149,12 @@ impl Server {
                                 .pop_front().expect("each HTTP request must have an explicit reply");
                             let mut headers = format!("HTTP/1.1 {} Fixture\r\nConnection: close\r\nContent-Type: application/json\r\n", reply.status);
                             for (name, value) in &reply.headers {
-                                headers.push_str(&format!("{name}: {value}\r\n"));
+                                writeln!(headers, "{name}: {value}\r").expect("writing to a String cannot fail");
                             }
                             if reply.chunked {
                                 headers.push_str("Transfer-Encoding: chunked\r\n\r\n");
                             } else {
-                                headers.push_str(&format!("Content-Length: {}\r\n\r\n", reply.body.len()));
+                                writeln!(headers, "Content-Length: {}\r\n\r", reply.body.len()).expect("writing to a String cannot fail");
                             }
                             if stream.write_all(headers.as_bytes()).await.is_err() { return; }
                             if let Some(entered) = reply.entered.take() { let _ = entered.send(()); }

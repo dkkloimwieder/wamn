@@ -35,7 +35,6 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     let url = url.to_string();
     let (admin, driver) = connect(&url)
         .await
-        .ok()
         .expect("connect the disposable database");
     let safe: bool = admin.query_one(
         "SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int \
@@ -58,7 +57,6 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .expect("create private test directory");
     provision_journey_control(&url, admin.as_ref())
         .await
-        .ok()
         .expect(
             "provision system authority; it requires a built wamn-identity binary beside wamn-ctl or named by WAMN_IDENTITY_BINARY",
         );
@@ -84,7 +82,6 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         Some(&files.0.join("management-author-pat.json")),
     )
     .await
-    .ok()
     .expect("mint first PATs through the native identity service");
     let writers = admin
         .query(

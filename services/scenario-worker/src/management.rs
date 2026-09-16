@@ -725,8 +725,9 @@ async fn route(
             return json(
                 StatusCode::SERVICE_UNAVAILABLE,
                 &serde_json::json!({
-                    "kind": unavailable.code(),
-                    "config-key": unavailable.config_key(),
+                    "kind": crate::store::admission::AdmissionEndpointUnavailable::code(),
+                    "config-key":
+                        crate::store::admission::AdmissionEndpointUnavailable::config_key(),
                     "endpoint": unavailable.endpoint(),
                 }),
             );

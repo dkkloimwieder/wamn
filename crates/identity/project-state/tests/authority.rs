@@ -20,6 +20,8 @@
 //! process lock, because it changes cluster-wide roles — the `tests/schema.rs`
 //! live-apply convention.
 
+use std::fmt::Write as _;
+
 use std::path::Path;
 
 use wamn_control_provision::{
@@ -95,7 +97,8 @@ fn prelude(url: &str) -> (String, String) {
     );
     script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
     script.push_str(&app_schema_sql());
-    script.push_str(&format!(
+    writeln!(
+        script,
         r#"
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
@@ -104,9 +107,9 @@ INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('{TENANT}','ad
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
 INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','admin','receipts:read');
 INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
-INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);
-"#
-    ));
+INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);"#
+    )
+    .expect("writing to a String cannot fail");
     (app_generation, script)
 }
 
@@ -156,8 +159,9 @@ fn author_sql_cannot_write_the_relations_that_authorize_it() {
     let url = test_database.url().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
-    script.push_str(&format!(
-        r#"
+    writeln!(
+        script,
+        r"
 DO $$
 DECLARE relation text; operation text;
 BEGIN
@@ -213,9 +217,9 @@ BEGIN
   END LOOP;
 END $$;
 
-ROLLBACK;
-"#
-    ));
+ROLLBACK;"
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);
     run(&url, &script);
 }
@@ -233,7 +237,8 @@ fn a_project_still_owns_its_own_configuration() {
     let url = test_database.url().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
-    script.push_str(&format!(
+    writeln!(
+        script,
         r#"
 DO $$
 DECLARE operation text;
@@ -274,9 +279,9 @@ DO $$ BEGIN
     'each configurations write of the App generation appends one entry';
 END $$;
 
-ROLLBACK;
-"#
-    ));
+ROLLBACK;"#
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);
     run(&url, &script);
 }
@@ -338,8 +343,9 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
         ),
     ]
     .join(",\n    ");
-    script.push_str(&format!(
-        r#"
+    writeln!(
+        script,
+        r"
 DO $$
 DECLARE history text; operation text;
 BEGIN
@@ -390,9 +396,9 @@ BEGIN
   END LOOP;
 END $$;
 
-ROLLBACK;
-"#
-    ));
+ROLLBACK;"
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);
     run(&url, &script);
 }

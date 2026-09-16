@@ -562,12 +562,12 @@ async fn load_wirings(
     .await
     .context("read source package wirings")?
     .into_iter()
-    .map(|row| decode_wiring(row, scope, components))
+    .map(|row| decode_wiring(&row, scope, components))
     .collect()
 }
 
 fn decode_wiring(
-    row: Row,
+    row: &Row,
     scope: &ComponentPackageScope,
     components: &[AdmittedComponent],
 ) -> anyhow::Result<PortableWiring> {
@@ -613,11 +613,11 @@ async fn load_requirements(
         .await
         .context("read portable component requirements")?
         .into_iter()
-        .map(decode_requirement)
+        .map(|row| decode_requirement(&row))
         .collect()
 }
 
-fn decode_requirement(row: Row) -> anyhow::Result<PortableRequirement> {
+fn decode_requirement(row: &Row) -> anyhow::Result<PortableRequirement> {
     let component_digest: String = row.get(0);
     let store_alias: String = row.get(1);
     let requirement_json: String = row.get(2);
@@ -677,7 +677,7 @@ async fn promote_target(
         .context("claim target promotion tenant")?;
     match verify_target_packages(&tx, &args.tenant, &source.packages).await? {
         PromotionAction::CopyPortableFacts => {
-            copy_portable_facts(&tx, source, &args.tenant).await?
+            copy_portable_facts(&tx, source, &args.tenant).await?;
         }
     }
 

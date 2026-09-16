@@ -92,7 +92,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::MembershipTest(args) => membership_test::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::ServeEcho(args) => trace_test::serve_echo(args).await,
-        Command::SocketTest(args) => socket_test::run(args).await,
+        Command::SocketTest(args) => socket_test::run(args),
         Command::TraceTest(args) => trace_test::run(args).await,
         Command::DashboardTest(args) => dashboard_test::run(args).await,
     };

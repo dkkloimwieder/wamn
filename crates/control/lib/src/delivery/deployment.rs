@@ -20,7 +20,7 @@ use crate::push_release_manifest::PushReleaseManifestRequest;
 
 const SELECT_HEAD: &str = "SELECT effective_release_id FROM catalog.effective_release_heads WHERE tenant_id = $1 AND environment = $2 FOR UPDATE";
 const SELECT_RELEASE: &str = "INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, environment) DO UPDATE SET effective_release_id = EXCLUDED.effective_release_id, updated_at = now()";
-const DEPLOYMENT_TIMEOUT: Duration = Duration::from_secs(900);
+const DEPLOYMENT_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// Exact Kubernetes inputs of one deployment into an explicitly named environment.
 #[derive(Clone, Debug)]
@@ -195,7 +195,18 @@ pub async fn deploy_release(
     let mut connection = tokio::spawn(connection);
     let result = tokio::select! {
         result = tokio::time::timeout(DEPLOYMENT_TIMEOUT,
-            deploy(&mut client, &qualification, &snapshot, request, &documents, body, expected, token.trim())) =>
+            deploy(
+                &mut client,
+                &qualification,
+                &snapshot,
+                request,
+                DeploymentPayload {
+                    documents: &documents,
+                    request: body,
+                    expected,
+                    token: token.trim(),
+                },
+            )) =>
             result.context("the deployment exceeded its time bound").and_then(|result| result),
         _ = &mut connection => Err(anyhow::anyhow!("the deployment database connection ended; activation was canceled")),
     };
@@ -203,16 +214,27 @@ pub async fn deploy_release(
     result
 }
 
+/// The activation body one deployment posts, and the credential it posts with.
+struct DeploymentPayload<'a> {
+    documents: &'a [Value],
+    request: Vec<u8>,
+    expected: Value,
+    token: &'a str,
+}
+
 async fn deploy(
     client: &mut Client,
     qualification: &Qualification,
     snapshot: &ReleaseSnapshot,
     args: &DeployRequest,
-    documents: &[Value],
-    request: Vec<u8>,
-    expected: Value,
-    token: &str,
+    payload: DeploymentPayload<'_>,
 ) -> anyhow::Result<DeployedRelease> {
+    let DeploymentPayload {
+        documents,
+        request,
+        expected,
+        token,
+    } = payload;
     let transaction = client.transaction().await?;
     claim(&transaction, &snapshot.manifest.release).await?;
     require_selected(&transaction, &snapshot.manifest.release).await?;
@@ -635,7 +657,7 @@ fn require_released_route(
                         .and_then(Value::as_str)
                         == Some(host)
                     && wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
-                        .is_some_and(|policy| policy.allows_pat())
+                        .is_some_and(wamn_catalog::AttachmentAuthPolicy::allows_pat)
                     && attachment.registered_operation.is_some()
             ),
         "the authenticated interaction must target a PAT operation in the selected release"

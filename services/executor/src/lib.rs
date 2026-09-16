@@ -521,14 +521,16 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let result = {
         let serving = serve_queue(stopping, &liveness, async || {
-            drain_one(
+            // Boxed: the whole drain is one large future, and the queue loop
+            // holds it across every await.
+            Box::pin(drain_one(
                 driver.as_ref(),
                 &postgres,
                 &jetstream,
                 &scope,
                 lease_ttl_ms,
                 &liveness,
-            )
+            ))
             .await
         });
         tokio::pin!(serving);
@@ -692,20 +694,23 @@ async fn drain_one(
                     tracestate: None,
                 }),
             };
-            drive_claim(
-                driver,
-                postgres,
-                jetstream,
-                &package_id,
-                &run_id,
-                lease_generation,
-                lease_ttl_ms,
-                liveness,
-                durable_caller_attached,
-                result_only,
-                request,
+            // Boxed: driving one claim is a large future the queue loop holds.
+            Box::pin(
+                drive_claim(
+                    driver,
+                    postgres,
+                    jetstream,
+                    &package_id,
+                    &run_id,
+                    lease_generation,
+                    lease_ttl_ms,
+                    liveness,
+                    durable_caller_attached,
+                    result_only,
+                    request,
+                )
+                .instrument(queue_span),
             )
-            .instrument(queue_span)
             .await?;
             Ok(true)
         }

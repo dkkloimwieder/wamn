@@ -257,6 +257,8 @@ async fn exact_grants(
     role: &str,
     expected: Grants,
 ) -> anyhow::Result<()> {
+    const PAT_RETURN_COLUMNS: [&str; 3] = ["id", "label", "created_at"];
+
     let rows = client
         .query(sql::role_database_grants_sql(), &[&role])
         .await?;
@@ -270,7 +272,6 @@ async fn exact_grants(
     // The foundation and session exchange shipped two exact prior surfaces.
     // Recognize either complete old surface only at preparation preflight;
     // a partial upgrade or any extra grant remains unexpected drift.
-    const PAT_RETURN_COLUMNS: [&str; 3] = ["id", "label", "created_at"];
     let foundation = matches!(expected, Grants::StableBeforePrepare)
         && rows.len() == 1 + IDENTITY_ISSUER_TABLES.len() * 4;
     let current_count = schemas.len()
@@ -485,8 +486,8 @@ async fn prepare(
             "prepared identity credential has an unexpected state");
         exact_grants(admin, &role, Grants::Generation).await?;
         let mut url = Url::parse(&args.system_database_url).expect("administrator URL was checked before I/O");
-        url.set_username(&role).map_err(|_| anyhow::anyhow!("cannot encode identity credential user"))?;
-        url.set_password(Some(&password)).map_err(|_| anyhow::anyhow!("cannot encode identity credential password"))?;
+        url.set_username(&role).map_err(|()| anyhow::anyhow!("cannot encode identity credential user"))?;
+        url.set_password(Some(&password)).map_err(|()| anyhow::anyhow!("cannot encode identity credential password"))?;
         let checked = parse_identity_issuer_url(url.as_str(), &args.issuer)?;
         let document = json!({
             "apiVersion": "v1", "kind": "Secret", "type": "Opaque",

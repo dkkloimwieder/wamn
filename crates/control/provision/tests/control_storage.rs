@@ -13,6 +13,10 @@
 //!   checkpoint), on a test database of the test PostgreSQL server (a superuser
 //!   URL — the harness provisions the `wamn_system` owner role).
 
+use std::fmt::Write as _;
+use std::io::Write as _;
+use std::process::{Command as Proc, Stdio};
+
 use std::path::Path;
 
 use wamn_control_registry::{SCHEMA_VERSION, Template};
@@ -615,7 +619,8 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the
     // same id must collapse to ONE row (the second refreshing the placement),
     // checking `ON CONFLICT (id) DO UPDATE`.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "PREPARE up (text,text,text) AS {upsert};\n\
          EXECUTE up('demo','pooled','wamn-pg');\n\
          EXECUTE up('demo','dedicated',NULL);\n\
@@ -627,17 +632,20 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
            ASSERT (SELECT pool_cluster FROM registry.orgs WHERE id='demo') IS NULL,\n\
              'the second (dedicated) upsert cleared the pool cluster';\n\
          END $$;\n\
-         DEALLOCATE up;\n",
+         DEALLOCATE up;",
         upsert = wamn_control_registry::sql::upsert_org_sql(),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     // Exercise the REAL template stamp (8df.4) against the 'demo' org: stamp the
     // trials policy set with the model's values, customize one row, re-stamp, and
     // assert the customization SURVIVES (insert-if-absent — a DO UPDATE mutant
     // would clobber it back to template values and fail here).
-    script.push_str(&format!(
-        "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text,text) AS {stamp};\n",
+    writeln!(
+        script,
+        "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text,text) AS {stamp};",
         stamp = wamn_control_registry::sql::stamp_env_policy_sql(),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(&stamp_statements("demo", &Template::trials()));
     script.push_str(
         "UPDATE registry.env_policies SET storage='42Gi' WHERE org='demo' AND name='dev';\n",
@@ -656,7 +664,8 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     );
     // Exercise the REAL project / project-env builders against the 'demo' org just
     // stamped. env 'dev' resolves demo's own policy row (the composite FK holds).
-    script.push_str(&format!(
+    writeln!(
+        script,
         "PREPARE upp (text,text) AS {up_project};\n\
          PREPARE upe (text,text,text,text,text,text,boolean) AS {up_env};\n\
          EXECUTE upp('demo','app');\n\
@@ -689,14 +698,16 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
                       AND column_meta.attname='disposable') = 'false',\n\
              'an environment nobody marked disposable must default to durable';\n\
          END $$;\n\
-         DEALLOCATE upp; DEALLOCATE upe;\n",
+         DEALLOCATE upp; DEALLOCATE upe;",
         up_project = wamn_control_registry::sql::upsert_project_sql(),
         up_env = wamn_control_registry::sql::upsert_project_env_sql(),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     // Exercise the REAL env-policy read via `CREATE TABLE AS EXECUTE` — provision-
     // project-env reads one of the ORG's policies to derive the cluster owner; a
     // different org's key returns nothing (org-scoped, never cross-org).
-    script.push_str(&format!(
+    writeln!(
+        script,
         "PREPARE getpol (text,text) AS {get};\n\
          CREATE TEMP TABLE policy_probe AS EXECUTE getpol('demo','dev');\n\
          CREATE TEMP TABLE policy_probe_other AS EXECUTE getpol('ghost','dev');\n\
@@ -708,16 +719,18 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
            ASSERT (SELECT count(*) FROM policy_probe_other)=0,\n\
              'select_env_policy_sql never returns another org''s policy (org-keyed)';\n\
          END $$;\n\
-         DROP TABLE policy_probe; DROP TABLE policy_probe_other; DEALLOCATE getpol;\n",
+         DROP TABLE policy_probe; DROP TABLE policy_probe_other; DEALLOCATE getpol;",
         get = wamn_control_registry::sql::select_env_policy_sql(),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     // Exercise the REAL CDC reader-registration builders (wamn-l5i9.9) against
     // the demo/app/dev project-env provisioned above: upsert twice (the second
     // refreshes slot/enabled — ON CONFLICT DO UPDATE), read it back via the real
     // select, reject a registration for an UNPROVISIONED env (the project-env
     // FK — enable-cdc is an overlay on an already-provisioned env), and check that
     // the whole-org cascade drops the registration.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "PREPARE uper (text,text,text,text,text,text,text,text,boolean) AS {upsert};\n\
          PREPARE geter (text,text,text) AS {select};\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
@@ -748,16 +761,15 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
            ASSERT (SELECT count(*) FROM registry.event_readers WHERE org='demo')=0,\n\
              'deleting an org cascades its CDC registrations (through project_envs)';\n\
          END $$;\n\
-         DEALLOCATE uper; DEALLOCATE geter;\n",
+         DEALLOCATE uper; DEALLOCATE geter;",
         upsert = wamn_control_registry::sql::upsert_event_reader_sql(),
         select = wamn_control_registry::sql::select_event_reader_sql(),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     script.push_str("DROP SCHEMA registry CASCADE;\n");
     script.push_str("DROP SCHEMA provisioning CASCADE;\n");
     script.push_str("RESET ROLE;\n");
 
-    use std::io::Write;
-    use std::process::{Command as Proc, Stdio};
     let mut child = Proc::new("psql")
         .arg(&url)
         .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
@@ -789,9 +801,10 @@ fn stamp_statements(org: &str, template: &Template) -> String {
     let mut s = String::new();
     for p in &template.policies {
         let recovery = serde_json::to_string(&p.recovery_domain).expect("recovery json");
-        s.push_str(&format!(
+        writeln!(
+            s,
             "EXECUTE stamp('{org}','{name}','{recovery}',{rank},{inst},\
-             '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}','{durability}');\n",
+             '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}','{durability}');",
             name = p.name,
             rank = p.promotion_rank,
             inst = p.instances,
@@ -803,7 +816,8 @@ fn stamp_statements(org: &str, template: &Template) -> String {
             wal = p.wal_retention,
             hib = p.hibernation,
             durability = p.durability_class.as_sql(),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     s
 }

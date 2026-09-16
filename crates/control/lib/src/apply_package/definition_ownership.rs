@@ -319,10 +319,6 @@ pub(super) fn definition_error(
     )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the arguments preserve exact refusal context at the effect boundary"
-)]
 fn definition_error_for_parts(
     kind: ApplyPackageErrorKind,
     coordinate: &str,

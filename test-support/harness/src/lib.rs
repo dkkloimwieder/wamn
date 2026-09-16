@@ -23,8 +23,12 @@ pub fn percentile(sorted: &[Duration], p: f64) -> Duration {
     if sorted.is_empty() {
         return Duration::ZERO;
     }
-    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
-    sorted[idx]
+    // `Duration` carries the rounding back into the integer domain, so the
+    // index is chosen without a float-to-integer cast.
+    let last = u32::try_from(sorted.len() - 1).unwrap_or(u32::MAX);
+    let idx = Duration::try_from_secs_f64((f64::from(last) * p).round())
+        .map_or(0, |position| position.as_secs());
+    sorted[usize::try_from(idx).unwrap_or(0).min(sorted.len() - 1)]
 }
 
 /// Print a check line and fold it into the running pass flag.

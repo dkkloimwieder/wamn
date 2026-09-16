@@ -37,7 +37,7 @@ async fn register(
     Ok(inserted)
 }
 
-fn refusal(error: anyhow::Error, kind: PackageMigrationErrorKind) {
+fn refusal(error: &anyhow::Error, kind: PackageMigrationErrorKind) {
     let error = error.downcast_ref::<PackageMigrationError>().unwrap();
     assert_eq!(error.kind(), kind);
     assert!(error.context().starts_with(kind.as_str()));
@@ -71,13 +71,13 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
             timestamp
         );
         refusal(
-            register(&mut second, "1.0.0", &other_hash, None)
+            &register(&mut second, "1.0.0", &other_hash, None)
                 .await
                 .unwrap_err(),
             PackageMigrationErrorKind::CoordinateContentConflict,
         );
         refusal(
-            register(&mut second, "1.0.0", &hash, Some("0.9.0"))
+            &register(&mut second, "1.0.0", &hash, Some("0.9.0"))
                 .await
                 .unwrap_err(),
             PackageMigrationErrorKind::CoordinatePredecessorConflict,
@@ -127,7 +127,7 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
             tx.commit().await.unwrap();
             let outcome = pending.await;
             if let Some(kind) = expected {
-                refusal(outcome.unwrap_err(), kind);
+                refusal(&outcome.unwrap_err(), kind);
             } else {
                 assert!(!outcome.unwrap());
             }

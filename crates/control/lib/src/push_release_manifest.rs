@@ -496,7 +496,6 @@ fn verify_manifest_layout<'a>(
 
 fn artifact_is_absent(error: &OciDistributionError) -> bool {
     match error {
-        OciDistributionError::ImageManifestNotFoundError(_) => true,
         OciDistributionError::RegistryError { envelope, .. } => {
             !envelope.errors.is_empty()
                 && envelope.errors.iter().all(|error| {
@@ -508,7 +507,8 @@ fn artifact_is_absent(error: &OciDistributionError) -> bool {
                     )
                 })
         }
-        OciDistributionError::ServerError { code: 404, .. } => true,
+        OciDistributionError::ImageManifestNotFoundError(_)
+        | OciDistributionError::ServerError { code: 404, .. } => true,
         _ => false,
     }
 }

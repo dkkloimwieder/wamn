@@ -49,7 +49,7 @@ struct DevArgs {
 #[derive(Debug, Subcommand)]
 enum DevEnvironmentCommand {
     /// Stand up the disposable environment the loop runs against, and hold it.
-    Up(wamn_ctl::dev::up::DevUpArgs),
+    Up(Box<wamn_ctl::dev::up::DevUpArgs>),
     /// Reset this environment's idle disposable application target.
     Reset(wamn_ctl::dev::target_database::DevResetArgs),
     /// Execute selected correctness cases through the shared owned-fixture runner.
@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Ui(args) => wamn_ctl::ui::run(args).await,
         Command::Dev(dev) => match dev.environment {
-            Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(args).await,
+            Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(*args).await,
             Some(DevEnvironmentCommand::Reset(args)) => {
                 wamn_ctl::dev::target_database::reset(args).await
             }

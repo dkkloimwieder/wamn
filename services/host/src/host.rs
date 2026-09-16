@@ -1041,7 +1041,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             "wamn-host loaded its release"
         ),
         None => {
-            tracing::info!("wamn-host carries no release; no release-gated interface is served")
+            tracing::info!("wamn-host carries no release; no release-gated interface is served");
         }
     }
     let mut probe_tasks = tokio::task::JoinSet::new();
@@ -1102,7 +1102,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => Err(error),
             () = ingress_stopped(ingress_connections.as_ref()) => anyhow::bail!("native HTTP ingress stopped unexpectedly"),
             task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
-                Err(probe_listener_failure(task))
+                Err(probe_listener_failure(task.as_ref()))
             }
         }
     };
@@ -1208,7 +1208,7 @@ async fn load_local_workload(
     })
 }
 
-fn probe_listener_failure(task: Option<Result<(), tokio::task::JoinError>>) -> anyhow::Error {
+fn probe_listener_failure(task: Option<&Result<(), tokio::task::JoinError>>) -> anyhow::Error {
     anyhow::anyhow!("native probe listener stopped unexpectedly: {task:?}")
 }
 
@@ -1284,6 +1284,8 @@ mod tests {
 
     #[test]
     fn materializer_binding_keeps_credentials_and_grants_host_owned() {
+        use plugin::HostPlugin as _;
+
         let config: HashMap<String, String> = [
             ("servers", "nats://event-broker.invalid:4222"),
             ("username", "materializer"),
@@ -1299,7 +1301,6 @@ mod tests {
         let declared = bindings.for_plugin(plugin::wasmcloud_nats::PLUGIN_NATS_ID);
         let schema = plugin::wasmcloud_nats::binding_schema();
         let native = plugin::wasmcloud_nats::WasmcloudNats::new();
-        use plugin::HostPlugin as _;
         native.validate_bindings(&declared).unwrap();
         let narrows = |key: &str, ceiling: &str, value: &str| native.narrows(key, ceiling, value);
         let resolve = |name: &str, overrides: &HashMap<String, String>| {
@@ -1421,7 +1422,7 @@ mod tests {
                 async {
                     let task = tasks.join_next().await;
                     assert!(task.as_ref().unwrap().as_ref().unwrap_err().is_cancelled());
-                    Err(probe_listener_failure(task))
+                    Err(probe_listener_failure(task.as_ref()))
                 },
                 async {
                     cleanup_polled.store(true, Ordering::Relaxed);
@@ -1503,7 +1504,7 @@ mod tests {
                 AuthorityClass::ExecutorPlatform => PLATFORM,
                 AuthorityClass::CallableHttp => ADMITTER,
                 AuthorityClass::EventMaterializer => MATERIALIZER,
-                _ => GUEST,
+                AuthorityClass::GuestSql => GUEST,
             };
             assert_eq!(
                 credentials.url(class),

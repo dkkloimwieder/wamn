@@ -145,7 +145,7 @@ SELECT EXISTS (\
 /// Project-side result of parsing and compatibility-checking one publication.
 #[derive(Debug)]
 pub(crate) enum PreparePublishResult {
-    Ready(PreparedWiringPublication),
+    Ready(Box<PreparedWiringPublication>),
     InvalidDocument {
         detail: String,
     },
@@ -207,12 +207,12 @@ impl AdmissionEndpointUnavailable {
     }
 
     /// Configuration key that owns the endpoint.
-    pub(crate) const fn config_key(&self) -> &'static str {
+    pub(crate) const fn config_key() -> &'static str {
         MANAGEMENT_ADMISSION_DATABASE_URL_KEY
     }
 
     /// Stable service-level refusal code.
-    pub(crate) const fn code(&self) -> &'static str {
+    pub(crate) const fn code() -> &'static str {
         MANAGEMENT_ADMISSION_UNAVAILABLE
     }
 }
@@ -222,8 +222,8 @@ impl fmt::Display for AdmissionEndpointUnavailable {
         write!(
             formatter,
             "{} at config key {:?} ({}) after {ADMISSION_CONNECT_ATTEMPTS} attempts",
-            self.code(),
-            self.config_key(),
+            Self::code(),
+            Self::config_key(),
             self.endpoint
         )
     }
@@ -244,6 +244,18 @@ impl Drop for AdmissionConnection {
 }
 
 /// One running management surface's reconnectable project admission endpoint.
+/// Names the endpoint only: the probe holds the explicit credential this
+/// surface reconnects with, and that must not reach a log.
+impl fmt::Debug for AdmissionSurface {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AdmissionSurface")
+            .field("sanitized_endpoint", &self.sanitized_endpoint)
+            .field("tenant_id", &self.tenant_id)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct AdmissionSurface {
     /// The explicit credential and exact server-side predicates are retained so
     /// every replacement physical connection is checked identically.
@@ -526,7 +538,7 @@ impl AdmissionSurface {
         }
         let graph_json = serde_json::to_string(&document)
             .context("serialize the validated wiring document for storage")?;
-        Ok(PreparePublishResult::Ready(PreparedWiringPublication {
+        Ok(PreparePublishResult::Ready(Box::new(PreparedWiringPublication {
             tenant_id: self.tenant_id.clone(),
             package_id: package_id.into(),
             package_version: package_version.into(),
@@ -534,7 +546,7 @@ impl AdmissionSurface {
             stored_version,
             graph_json,
             wiring_hash: wiring_hash.into(),
-        }))
+        })))
     }
 
     /// Append one validated publication after the management verb's green-report
@@ -654,11 +666,11 @@ fn connection_was_lost(error: &tokio_postgres::Error) -> bool {
 }
 
 fn decode_component_json<T: DeserializeOwned>(
-    stored: String,
+    stored: &str,
     component: &str,
     field: &'static str,
 ) -> anyhow::Result<T> {
-    serde_json::from_str(&stored)
+    serde_json::from_str(stored)
         .with_context(|| format!("component {component:?} stores unreadable {field}"))
 }
 
@@ -1020,8 +1032,14 @@ mod tests {
         let refusal = AdmissionEndpointUnavailable {
             endpoint: sanitized_postgres_endpoint(&config),
         };
-        assert_eq!(refusal.code(), MANAGEMENT_ADMISSION_UNAVAILABLE);
-        assert_eq!(refusal.config_key(), MANAGEMENT_ADMISSION_DATABASE_URL_KEY);
+        assert_eq!(
+            AdmissionEndpointUnavailable::code(),
+            MANAGEMENT_ADMISSION_UNAVAILABLE
+        );
+        assert_eq!(
+            AdmissionEndpointUnavailable::config_key(),
+            MANAGEMENT_ADMISSION_DATABASE_URL_KEY
+        );
         assert_eq!(
             refusal.endpoint(),
             "postgresql://[::1]:6543/project_verification"

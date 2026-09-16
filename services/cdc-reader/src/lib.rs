@@ -2151,30 +2151,30 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`AckPublisher` declares `async fn` because the production implementation talks \
+                  to JetStream; this scripted fake answers from memory and still has to match \
+                  the trait"
+    )]
     impl AckPublisher for FakePublisher {
         type Ack = usize;
-        fn send(
-            &self,
-            msg: &PreparedMsg,
-        ) -> impl std::future::Future<Output = anyhow::Result<usize>> {
+        async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<usize> {
             let idx: usize = msg.id.parse().unwrap();
             self.log.borrow_mut().push(format!("send:{idx}"));
-            std::future::ready(Ok(idx))
+            Ok(idx)
         }
-        fn settle(
-            &self,
-            ack: usize,
-        ) -> impl std::future::Future<Output = anyhow::Result<PublishAcknowledgment>> {
+        async fn settle(&self, ack: usize) -> anyhow::Result<PublishAcknowledgment> {
             let idx = ack;
             if self.settle_fails.borrow()[idx] > 0 {
                 self.settle_fails.borrow_mut()[idx] -= 1;
                 self.log.borrow_mut().push(format!("settlefail:{idx}"));
-                return std::future::ready(Err(anyhow::anyhow!("scripted ack failure at {idx}")));
+                return Err(anyhow::anyhow!("scripted ack failure at {idx}"));
             }
             self.log.borrow_mut().push(format!("settle:{idx}"));
-            std::future::ready(Ok(PublishAcknowledgment {
+            Ok(PublishAcknowledgment {
                 duplicate: self.duplicate.borrow()[idx],
-            }))
+            })
         }
     }
 

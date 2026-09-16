@@ -65,7 +65,10 @@ fn synth_component(import_names: &[&str]) -> Vec<u8> {
     }
     let mut imports = ComponentImportSection::new();
     for (i, name) in import_names.iter().enumerate() {
-        imports.import(*name, ComponentTypeRef::Instance(i as u32));
+        imports.import(
+            *name,
+            ComponentTypeRef::Instance(u32::try_from(i).expect("the fixture import count fits a u32")),
+        );
     }
 
     let mut component = Component::new();
@@ -87,7 +90,7 @@ fn screen(
     Ok(analyze(&imports, PolicyProfile::FirstParty, label).map(|_| ()))
 }
 
-pub async fn run(args: SocketTestArgs) -> anyhow::Result<()> {
+pub fn run(args: SocketTestArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
     println!("# wamn-gates socket-test — E13a publish-time egress guard (hermetic)");
@@ -102,39 +105,33 @@ pub async fn run(args: SocketTestArgs) -> anyhow::Result<()> {
     // NEGATIVE — the socket-importing world must be refused, naming the offense.
     for (abi, imports) in [("P2", P2_ATTACKER_IMPORTS), ("P3", P3_ATTACKER_IMPORTS)] {
         println!("\n## negative — a {abi} wasi:sockets importer is refused at publish");
-        match screen(&engine, imports, &format!("socket-importer-{abi}.wasm"))? {
-            Err(e) => {
-                println!("    PASS: refused — {e}");
-                checks.insert(
-                    abi.to_owned(),
-                    serde_json::json!({"refused":true,"reason":e.to_string()}),
-                );
-            }
-            Ok(()) => {
-                println!(
-                    "    FAIL: a {abi} wasi:sockets importer was ADMITTED — the DB-path bypass is open"
-                );
-                checks.insert(abi.to_owned(), serde_json::json!({"refused":false}));
-                pass = false;
-            }
+        if let Err(e) = screen(&engine, imports, &format!("socket-importer-{abi}.wasm"))? {
+            println!("    PASS: refused — {e}");
+            checks.insert(
+                abi.to_owned(),
+                serde_json::json!({"refused":true,"reason":e.to_string()}),
+            );
+        } else {
+            println!(
+                "    FAIL: a {abi} wasi:sockets importer was ADMITTED — the DB-path bypass is open"
+            );
+            checks.insert(abi.to_owned(), serde_json::json!({"refused":false}));
+            pass = false;
         }
     }
 
     // POSITIVE control — a standard world must still publish.
     println!("\n## positive control — a standard workload still publishes");
-    match screen(&engine, STANDARD_IMPORTS, "standard.wasm")? {
-        Ok(()) => {
-            println!("    PASS: admitted — no raw-socket surface");
-            checks.insert("standard".to_owned(), serde_json::json!({"admitted":true}));
-        }
-        Err(e) => {
-            println!("    FAIL: a standard workload was REFUSED — {e}");
-            checks.insert(
-                "standard".to_owned(),
-                serde_json::json!({"admitted":false,"reason":e.to_string()}),
-            );
-            pass = false;
-        }
+    if let Err(e) = screen(&engine, STANDARD_IMPORTS, "standard.wasm")? {
+        println!("    FAIL: a standard workload was REFUSED — {e}");
+        checks.insert(
+            "standard".to_owned(),
+            serde_json::json!({"admitted":false,"reason":e.to_string()}),
+        );
+        pass = false;
+    } else {
+        println!("    PASS: admitted — no raw-socket surface");
+        checks.insert("standard".to_owned(), serde_json::json!({"admitted":true}));
     }
 
     println!("\nsocket-test complete — overall PASS: {pass}");

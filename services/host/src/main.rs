@@ -56,7 +56,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
-        Command::Host(args) => host::run(*args).await,
+        Command::Host(args) => Box::pin(host::run(*args)).await,
     };
 
     wamn_runtime::lifecycle::finish(result).await

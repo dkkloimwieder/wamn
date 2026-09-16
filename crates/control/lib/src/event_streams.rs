@@ -102,7 +102,7 @@ pub(crate) fn validate_inputs(
             scope.env.as_str()
         ]
         .into_iter()
-        .all(|value| token(value)),
+        .all(&token),
         "event coordinates must be nonempty broker tokens"
     );
     ensure!(
@@ -164,7 +164,7 @@ mod tests {
             Duration::from_secs(30),
             5,
         );
-        validate_inputs(&scope, 3, Duration::from_secs(120), &[expected.clone()]).unwrap();
+        validate_inputs(&scope, 3, Duration::from_secs(120), std::slice::from_ref(&expected)).unwrap();
         for filter in [
             "evt.acme.wms.dev.receipt.>",
             "evt.acme.receiving.prod.receipt.>",

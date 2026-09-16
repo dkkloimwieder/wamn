@@ -22,7 +22,7 @@ const RECEIVING_SCHEMAS: &[(&str, &str)] = &[
     ("client_acme_receiving", "receiving"),
 ];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
 const TEST_WORKSPACES: &[&str] = &["", "apps"];
 
@@ -97,7 +97,7 @@ fn application(candidate: &Candidate) -> anyhow::Result<Application> {
         .release
         .packages
         .iter()
-        .map(|package| package.package_id())
+        .map(wamn_catalog::PackageCoordinate::package_id)
         .collect();
     if packages.contains(&"wamn_wms") && !packages.contains(&"wamn_receiving") {
         Ok(Application {
@@ -184,7 +184,7 @@ pub async fn qualify(request: QualifyReleaseRequest) -> anyhow::Result<()> {
     };
     let run = qualify_candidate(&request, &repository_root, &mut result).await;
     if run.is_ok() {
-        result.result = "pass".to_owned();
+        "pass".clone_into(&mut result.result);
     }
     if let Err(error) = &run {
         result.checks.push(CheckResult {

@@ -640,9 +640,9 @@ mod tests {
                 serde_json::to_vec(&manifest).unwrap(),
             )
             .unwrap();
-            let packages = operator_packages(&[root.clone()]).expect("read declared components");
+            let packages = operator_packages(std::slice::from_ref(&root)).expect("read declared components");
             assert_eq!(packages.len(), names.len());
-            let selected = select_component(&[root.clone()], "receiving").unwrap();
+            let selected = select_component(std::slice::from_ref(&root), "receiving").unwrap();
             assert_eq!(
                 selected.manifest_path,
                 root.join("generated/receiving-tui/Cargo.toml")
@@ -661,7 +661,7 @@ mod tests {
                 serde_json::to_vec(&manifest).unwrap(),
             )
             .unwrap();
-            assert!(operator_packages(&[root.clone()]).is_err());
+            assert!(operator_packages(std::slice::from_ref(&root)).is_err());
         }
         std::fs::remove_dir_all(root).expect("remove fixture");
     }
@@ -889,14 +889,14 @@ dependencies = ["wamn-generated-receiving-tui"]
 "#,
         )
         .unwrap();
-        let selected = select_component(&[app.clone()], "receiving").unwrap();
+        let selected = select_component(std::slice::from_ref(&app), "receiving").unwrap();
         let metadata = read_metadata(&selected.manifest_path, false).await.unwrap();
         assert_eq!(metadata.workspace_root, app);
         let target = operator_target(&selected, &metadata).unwrap();
         assert_eq!(target.cargo_package, "warehouse-desk");
         assert_eq!(target.binary, "dock-screen");
         assert_eq!(target.manifest_path, ui.join("Cargo.toml"));
-        let executables = build(&[app.clone()])
+        let executables = build(std::slice::from_ref(&app))
             .await
             .expect("build the independent app");
         assert!(executables["receiving"].is_file());

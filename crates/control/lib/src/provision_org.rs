@@ -235,7 +235,7 @@ async fn record_org_rows(
 fn fmt_issues(issues: &[wamn_control_registry::Issue]) -> String {
     issues
         .iter()
-        .map(|i| i.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>()
         .join("; ")
 }

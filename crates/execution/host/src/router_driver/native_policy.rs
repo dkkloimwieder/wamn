@@ -257,7 +257,7 @@ impl NativePolicy {
                     .get_or_insert(error);
                 trap
             }
-            None => nested_host_error(error),
+            None => nested_host_error(&error),
         }
     }
 

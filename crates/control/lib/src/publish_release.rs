@@ -565,7 +565,7 @@ pub async fn mint_local(
     let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
     let components = admissions
         .iter()
-        .map(|admission| admission.facts())
+        .map(super::push_component::ComponentAdmission::facts)
         .filter(|fact| {
             manifest
                 .components
@@ -1066,24 +1066,23 @@ pub async fn attest_deployment(
             .query_opt(statement.sql.as_str(), &params)
             .await
             .map_err(storage)?;
-        let winner: chrono::DateTime<chrono::Utc> = match inserted {
-            Some(row) => row.try_get(0).map_err(storage)?,
-            None => {
-                // Read after INSERT waits, so a concurrent winner is visible.
-                let row = transaction
-                    .query_one(
-                        wamn_schema_control::attestation::read_attestation_sql(),
-                        &params[..6],
-                    )
-                    .await
-                    .map_err(storage)?;
-                wamn_schema_control::attestation::check_attestation(
-                    &attestation,
-                    row.try_get(0).map_err(storage)?,
-                    row.try_get(1).map_err(storage)?,
-                )?;
-                row.try_get(2).map_err(storage)?
-            }
+        let winner: chrono::DateTime<chrono::Utc> = if let Some(row) = inserted {
+            row.try_get(0).map_err(storage)?
+        } else {
+            // Read after INSERT waits, so a concurrent winner is visible.
+            let row = transaction
+                .query_one(
+                    wamn_schema_control::attestation::read_attestation_sql(),
+                    &params[..6],
+                )
+                .await
+                .map_err(storage)?;
+            wamn_schema_control::attestation::check_attestation(
+                &attestation,
+                row.try_get(0).map_err(storage)?,
+                row.try_get(1).map_err(storage)?,
+            )?;
+            row.try_get(2).map_err(storage)?
         };
         transaction.commit().await.map_err(storage)?;
         Ok(winner.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
@@ -1494,11 +1493,11 @@ pub async fn load_component_facts(
 }
 
 fn decode_json<T: DeserializeOwned>(
-    stored: String,
+    stored: &str,
     component: &str,
     field: &'static str,
 ) -> Result<T, MintManifestError> {
-    serde_json::from_str(&stored).map_err(|error| {
+    serde_json::from_str(stored).map_err(|error| {
         MintManifestError::with_source(
             MintManifestErrorKind::Component,
             format!("component {component:?} stores unreadable {field}"),
@@ -1689,13 +1688,13 @@ fn project_wiring_document(
 ) -> Result<String, MintManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
     let resolved = resolve_wiring_components(
-        &document,
+        document,
         scope,
         component_facts,
         package_manifests.get(&target.package_id),
         rule,
     )?;
-    validate_resolved_wiring_compatibility(&document, &resolved).map_err(|error| {
+    validate_resolved_wiring_compatibility(document, &resolved).map_err(|error| {
         MintManifestError::with_source(
             MintManifestErrorKind::Component,
             format!(
@@ -1706,8 +1705,8 @@ fn project_wiring_document(
         )
     })?;
     let component_closure = resolve_component_dependency_closure(&resolved, component_facts, rule)?;
-    validate_anonymous_wiring_closure(request.attachments, target, &document, &resolved)?;
-    let entry_operation = resolved_wiring_entry_operation(&document, &resolved)?;
+    validate_anonymous_wiring_closure(request.attachments, target, document, &resolved)?;
+    let entry_operation = resolved_wiring_entry_operation(document, &resolved)?;
     wirings.insert(ServingWiring {
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),

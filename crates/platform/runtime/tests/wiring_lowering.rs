@@ -176,7 +176,7 @@ fn first_routed_call(wiring: &Wiring) -> NodeCall {
     target
 }
 
-fn stored_single_node_document(terminal: Option<Value>) -> WiringDocument {
+fn stored_single_node_document(terminal: Option<&Value>) -> WiringDocument {
     WiringDocument::parse(&json!({
         "format-version": "0.1",
         "wiring-id": "stored-terminal",
@@ -198,7 +198,7 @@ fn stored_single_node_document(terminal: Option<Value>) -> WiringDocument {
 fn drive_stored_single_node(
     document: &WiringDocument,
     caller_attached: bool,
-    output: Value,
+    output: &Value,
 ) -> (WalkStatus, Option<Verdict>) {
     let wiring = lower(document, &operations()).expect("stored wiring lowers");
     let mut walk = wiring.start(Delivery {
@@ -228,10 +228,10 @@ fn drive_stored_single_node(
 
 #[test]
 fn stored_respond_terminal_reaches_the_router_verdict() {
-    let document = stored_single_node_document(Some(json!("respond")));
+    let document = stored_single_node_document(Some(&json!("respond")));
     let output = json!({"answer": 42});
 
-    let (status, verdict) = drive_stored_single_node(&document, true, output.clone());
+    let (status, verdict) = drive_stored_single_node(&document, true, &output);
 
     assert_eq!(status, WalkStatus::Completed);
     assert_eq!(
@@ -245,12 +245,12 @@ fn stored_respond_terminal_reaches_the_router_verdict() {
 
 #[test]
 fn stored_emit_terminal_reaches_the_router_verdict() {
-    let document = stored_single_node_document(Some(json!({
+    let document = stored_single_node_document(Some(&json!({
         "emit": {"entity": "orders", "operation": "insert"}
     })));
     let output = json!({DEDUP_ID_FIELD: "stored-terminal:1:entry", "order": 42});
 
-    let (status, verdict) = drive_stored_single_node(&document, false, output.clone());
+    let (status, verdict) = drive_stored_single_node(&document, false, &output);
 
     assert_eq!(status, WalkStatus::Completed);
     assert_eq!(
@@ -268,7 +268,7 @@ fn stored_emit_terminal_reaches_the_router_verdict() {
 fn stored_non_terminal_reaches_the_router_discard_verdict() {
     let document = stored_single_node_document(None);
 
-    let (status, verdict) = drive_stored_single_node(&document, false, json!({"handled": true}));
+    let (status, verdict) = drive_stored_single_node(&document, false, &json!({"handled": true}));
 
     assert_eq!(status, WalkStatus::Completed);
     assert_eq!(verdict, Some(Verdict::Discard));

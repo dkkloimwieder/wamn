@@ -293,6 +293,13 @@ impl CandidateBindingWorld {
 
 /// One transactionally consistent set of admitted HTTP effect facts.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the four booleans are four separate admission facts one query read in one \
+              transaction (the node is permitted, the binding is active, the binding is valid, \
+              the instance is enabled); each is decided by its own column, and a faithful copy \
+              of the row is what makes the authorization auditable"
+)]
 pub struct ConnectionEffectSnapshot {
     pub wiring_hash: String,
     pub component: Option<String>,

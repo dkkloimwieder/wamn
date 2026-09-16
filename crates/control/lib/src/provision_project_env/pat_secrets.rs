@@ -18,7 +18,7 @@ pub struct IssuedPatSecret {
 }
 
 /// Provisioning PATs retain their existing 30-day lifetime.
-pub(super) const PAT_TTL: Duration = Duration::from_secs(2_592_000);
+pub(super) const PAT_TTL: Duration = Duration::from_hours(720);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PatPurpose {

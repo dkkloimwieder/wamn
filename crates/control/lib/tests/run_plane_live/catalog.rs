@@ -192,7 +192,8 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         converge.actions
     );
     // THE PLANE LINE. No action may name the other plane's relation.
-    for plan in [&converge] {
+    {
+        let plan = &converge;
         assert!(
             !plan
                 .actions
@@ -333,7 +334,7 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
         )
         .await
         .expect_err("post-admission capture mutation refused");
-    assert_db_code(immutable, "55000", "capture mode is admission-immutable");
+    assert_db_code(&immutable, "55000", "capture mode is admission-immutable");
     let invalid = su
         .execute(
             &format!(
@@ -347,7 +348,7 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
         )
         .await
         .expect_err("published full capture refused");
-    assert_db_code(invalid, "23514", "only direct draft rows may capture full");
+    assert_db_code(&invalid, "23514", "only direct draft rows may capture full");
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
@@ -395,7 +396,7 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
             .execute(&refused, &[])
             .await
             .expect_err(&format!("{label} must be refused"));
-        assert_db_code(denied, "42501", label);
+        assert_db_code(&denied, "42501", label);
     }
     let readable: i64 = app
         .query_one(

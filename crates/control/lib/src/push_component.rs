@@ -462,13 +462,15 @@ pub async fn project_admitted_component_for_verification(
         .context("parse verification-project database URL")?;
     persist_plane(
         &verification_config,
-        ProjectionPlane::SourceProject,
-        &admission.component,
-        &admission.requirements,
-        &admission.manifest_sha256,
-        &admission.projection_hash,
-        &admission.directory,
-        &admission.package_path,
+        &PlaneProjection {
+            plane: ProjectionPlane::SourceProject,
+            component: &admission.component,
+            requirements: &admission.requirements,
+            manifest_sha256: &admission.manifest_sha256,
+            projection_hash: &admission.projection_hash,
+            directory: &admission.directory,
+            package_path: &admission.package_path,
+        },
     )
     .await
     .map(|_| ())
@@ -524,13 +526,15 @@ pub async fn publish_admitted_component(
 
     let control = persist_plane(
         &control_config,
-        ProjectionPlane::Control,
-        admitted,
-        &admission.requirements,
-        &admission.manifest_sha256,
-        &admission.projection_hash,
-        &admission.directory,
-        &admission.package_path,
+        &PlaneProjection {
+            plane: ProjectionPlane::Control,
+            component: admitted,
+            requirements: &admission.requirements,
+            manifest_sha256: &admission.manifest_sha256,
+            projection_hash: &admission.projection_hash,
+            directory: &admission.directory,
+            package_path: &admission.package_path,
+        },
     )
     .await?;
     if project.manifest_sha256 != control.manifest_sha256
@@ -1053,9 +1057,9 @@ fn read_package_owned_file(
 ) -> Result<Vec<u8>, ComponentProjectionError> {
     let path = Path::new(relative_path);
     if path.as_os_str().is_empty()
-        || !path
+        || path
             .extension()
-            .is_some_and(|observed| observed == extension)
+            .is_none_or(|observed| observed != extension)
         || relative_path.contains('\\')
         || !path
             .components()
@@ -1261,6 +1265,7 @@ async fn require_exact_verification_projection(
     verified
 }
 
+#[cfg(test)]
 async fn verify_source_package_with_client(
     client: &mut PgClient,
     component: &AdmittedComponent,
@@ -1411,32 +1416,28 @@ async fn require_exact_verification_projection_with_client(
     })
 }
 
+/// One component projection's inputs for a single plane.
+struct PlaneProjection<'a> {
+    plane: ProjectionPlane,
+    component: &'a AdmittedComponent,
+    requirements: &'a [ComponentConnectionRequirement],
+    manifest_sha256: &'a str,
+    projection_hash: &'a str,
+    directory: &'a PackageDirectory,
+    package_path: &'a std::path::Path,
+}
+
 async fn persist_plane(
     database_config: &PgConfig,
-    plane: ProjectionPlane,
-    component: &AdmittedComponent,
-    requirements: &[ComponentConnectionRequirement],
-    manifest_sha256: &str,
-    projection_hash: &str,
-    directory: &PackageDirectory,
-    package_path: &std::path::Path,
+    projection: &PlaneProjection<'_>,
 ) -> anyhow::Result<ProjectionOutcome> {
+    let plane = projection.plane;
     let (mut client, connection) = database_config
         .connect(NoTls)
         .await
         .with_context(|| format!("connect to {plane} database"))?;
     let connection_task = tokio::spawn(connection);
-    let stored = persist_with_client(
-        &mut client,
-        plane,
-        component,
-        requirements,
-        manifest_sha256,
-        projection_hash,
-        directory,
-        package_path,
-    )
-    .await;
+    let stored = persist_with_client(&mut client, projection).await;
     drop(client);
     if stored.is_err() {
         connection_task.abort();
@@ -1451,14 +1452,17 @@ async fn persist_plane(
 
 async fn persist_with_client(
     client: &mut PgClient,
-    plane: ProjectionPlane,
-    component: &AdmittedComponent,
-    requirements: &[ComponentConnectionRequirement],
-    manifest_sha256: &str,
-    projection_hash: &str,
-    directory: &PackageDirectory,
-    package_path: &std::path::Path,
+    projection: &PlaneProjection<'_>,
 ) -> anyhow::Result<ProjectionOutcome> {
+    let PlaneProjection {
+        plane,
+        component,
+        requirements,
+        manifest_sha256,
+        projection_hash,
+        directory,
+        package_path,
+    } = *projection;
     let package = plan_package_migrations(directory, None)
         .context("validate package identity before component projection")?;
     ensure_component_package_matches(component, &package.coordinate)?;
@@ -1557,13 +1561,13 @@ async fn persist_with_client(
     // One transaction per plane: a library fact without its connection facts,
     // or the reverse, is never visible inside that plane.
     for requirement in requirements {
-        requirements_inserted += append_or_verify_requirement(
+        requirements_inserted += usize::from(append_or_verify_requirement(
             &transaction,
             &component.scope.tenant_id,
             environment_instance.as_deref(),
             requirement,
         )
-        .await? as usize;
+        .await?);
     }
     verify_requirements(
         &transaction,
@@ -2769,13 +2773,15 @@ mod tests {
             .expect("commit extra control-plane requirement");
         let extra = persist_plane(
             &control_config,
-            ProjectionPlane::Control,
-            &component,
-            &requirements,
-            &package.manifest_sha256,
-            &projection_hash,
-            &directory,
-            &package_path,
+            &PlaneProjection {
+                plane: ProjectionPlane::Control,
+                component: &component,
+                requirements: &requirements,
+                manifest_sha256: &package.manifest_sha256,
+                projection_hash: &projection_hash,
+                directory: &directory,
+                package_path: &package_path,
+            },
         )
         .await
         .expect_err("a plane carrying an extra alias/hash requirement refuses");
@@ -2880,13 +2886,15 @@ mod tests {
             async move {
                 persist_plane(
                     &control_config,
-                    ProjectionPlane::Control,
-                    &component,
-                    &requirements,
-                    &manifest_sha256,
-                    &projection_hash,
-                    &directory,
-                    &package_path,
+                    &PlaneProjection {
+                        plane: ProjectionPlane::Control,
+                        component: &component,
+                        requirements: &requirements,
+                        manifest_sha256: &manifest_sha256,
+                        projection_hash: &projection_hash,
+                        directory: &directory,
+                        package_path: &package_path,
+                    },
                 )
                 .await
             }

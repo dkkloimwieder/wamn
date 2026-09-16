@@ -60,7 +60,7 @@ pub async fn execute(
                 _ = interrupt.recv() => "the owned repository command was interrupted",
                 _ = terminate.recv() => "the owned repository command was terminated",
                 _ = hangup.recv() => "the owned repository command lost its session",
-                _ = tokio::time::sleep(run_timeout) => "the owned repository command exceeded its time limit",
+                () = tokio::time::sleep(run_timeout) => "the owned repository command exceeded its time limit",
             };
             let _ = kill_process_group(group.0, Signal::TERM);
             if let Ok(status) = tokio::time::timeout(termination_grace, &mut waited).await {

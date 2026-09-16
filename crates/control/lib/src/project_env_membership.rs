@@ -125,7 +125,8 @@ mod tests {
 
     #[test]
     fn malformed_scope_or_principal_is_refused_before_connecting() {
-        let fields: [(fn(&mut ProjectEnvMembershipRequest, &str), &str); 4] = [
+        type SetField = fn(&mut ProjectEnvMembershipRequest, &str);
+        let fields: [(SetField, &str); 4] = [
             (|request, value| request.org = value.to_owned(), "Bad-org"),
             (
                 |request, value| request.project = value.to_owned(),

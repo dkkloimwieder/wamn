@@ -215,6 +215,18 @@ pub struct ControlAuthoringScope {
 /// It owns a dedicated CONTROL-database author connection, a fixed tenant, and
 /// a validated run-plane schema.
 /// The private capability token is never returned to callers.
+/// Names the tenant and schema only: the client and its connection task hold
+/// database credentials that must not reach a log.
+impl std::fmt::Debug for InternalAuthoringBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InternalAuthoringBackend")
+            .field("tenant_id", &self.tenant_id)
+            .field("source_schema", &self.source_schema)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct InternalAuthoringBackend {
     authority: InternalDevAdmin,
     client: Client,

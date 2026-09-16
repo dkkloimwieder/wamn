@@ -347,7 +347,7 @@ impl TargetLease {
             Ok(()) => {
                 self.client
                     .batch_execute(if apply { "COMMIT" } else { "ROLLBACK" })
-                    .await?
+                    .await?;
             }
             Err(error) => {
                 self.client
@@ -840,7 +840,7 @@ mod tests {
         };
         let prepared_instance = wamn_control::bind_connection::read_local_instance(&input)?;
         let requirement = wamn_catalog::ComponentConnectionRequirement::new(
-            &format!("sha256:{}", "7".repeat(64)),
+            format!("sha256:{}", "7".repeat(64)),
             "objects",
             wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
         );

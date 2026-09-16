@@ -148,16 +148,16 @@ fn local_configuration_files(config: &DevConfig) -> Vec<PathBuf> {
     if let Some(path) = &local.bindings {
         files.push(path.clone());
         // Watches identify input files; the coordinator owns strict interpretation.
-        if let Ok(bytes) = std::fs::read(path) {
-            if let Ok(serde_json::Value::Array(selections)) = serde_json::from_slice(&bytes) {
-                files.extend(
-                    selections
-                        .iter()
-                        .filter_map(|selection| selection["instance"]["definition"].as_str())
-                        .map(PathBuf::from)
-                        .filter(|path| path.is_absolute()),
-                );
-            }
+        if let Ok(bytes) = std::fs::read(path)
+            && let Ok(serde_json::Value::Array(selections)) = serde_json::from_slice(&bytes)
+        {
+            files.extend(
+                selections
+                    .iter()
+                    .filter_map(|selection| selection["instance"]["definition"].as_str())
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute()),
+            );
         }
     }
     files
@@ -741,6 +741,12 @@ mod tests {
 
     struct QueueSource(VecDeque<DevInvalidation>);
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`DevInvalidationSource` declares `async fn` because the production source \
+                  waits on a watcher; this test source answers from a queue and still \
+                  has to match the trait"
+    )]
     impl DevInvalidationSource for QueueSource {
         type Error = Infallible;
 

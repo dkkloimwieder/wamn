@@ -844,10 +844,10 @@ fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
         let source = read(&root, file);
         for document in documents(&source) {
             let declared_object = object(&document, file);
-            if let Some(Object { kind, name, .. }) = &declared_object {
-                if kind == "Secret" {
-                    declared.insert(name.clone());
-                }
+            if let Some(Object { kind, name, .. }) = &declared_object
+                && kind == "Secret"
+            {
+                declared.insert(name.clone());
             }
             // A Certificate does not MOUNT the Secret it names — it DECLARES
             // it, and cert-manager writes the bytes. Recording that here is

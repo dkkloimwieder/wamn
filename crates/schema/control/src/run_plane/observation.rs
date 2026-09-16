@@ -4,6 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Security attributes observed for the host-only scenario author role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the seven fields mirror the seven `pg_roles` attribute columns one for one \
+              (rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolreplication, \
+              rolbypassrls); PostgreSQL reports them as booleans and a faithful copy of what the \
+              server says is worth more here than a state machine"
+)]
 pub struct ScenarioAuthorRoleObservation {
     pub can_login: bool,
     pub is_superuser: bool,
@@ -49,6 +56,13 @@ pub struct RowSecurityObservation {
 /// per-database `catalog` metadata schema). Everything here is a read — the
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each boolean is one independent fact the driver read from the live database \
+              (a role membership, a granted authority, a present role, a present function, a \
+              present schema); they are observations, not a state machine, and grouping them \
+              would hide which single query answered which"
+)]
 pub struct RunPlaneObservation {
     /// Total immutable rows across the three effect tables that exist.
     /// Any nonzero value makes an incompatible structural cutover refuse.

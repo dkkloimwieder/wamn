@@ -17,6 +17,8 @@
 //! The verbs underneath are the shared truth. Nothing here reimplements
 //! provisioning; it only names the arguments and the order.
 
+use std::fmt::Write as _;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
@@ -322,12 +324,14 @@ pub async fn provision_route(
         .to_owned();
     admin
         .batch_execute(
-            &std::fs::read_to_string(root.join("roles.sql")).context("read emitted role SQL")?,
+            std::fs::read_to_string(root.join("roles.sql"))
+                .context("read emitted role SQL")?
+                .as_str(),
         )
         .await
         .context("apply emitted role SQL")?;
     admin
-        .batch_execute(&wamn_schema_control::ensure_scenario_author_role_sql())
+        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
         .await
         .context("ensure the catalog author role")?;
     admin
@@ -493,11 +497,13 @@ async fn render_database_acl(admin: &Client, database: &str) -> anyhow::Result<S
         if grantee == "-" {
             continue;
         }
-        sql.push_str(&format!(
-            "GRANT {privilege} ON DATABASE {quoted} TO {}{};\n",
+        writeln!(
+            sql,
+            "GRANT {privilege} ON DATABASE {quoted} TO {}{};",
             Identifier::new(grantee)?.quoted(),
             if grantable { " WITH GRANT OPTION" } else { "" }
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     Ok(sql)
 }

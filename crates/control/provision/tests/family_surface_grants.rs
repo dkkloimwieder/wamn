@@ -28,6 +28,8 @@
 //! Each gate takes its own test database on the test PostgreSQL server and holds
 //! the process lock, because it rebuilds cluster-wide roles.
 
+use std::fmt::Write as _;
+
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
@@ -182,14 +184,16 @@ fn reset(admin_url: &str, database: &str) {
          DROP SCHEMA IF EXISTS wamn_authority CASCADE;\n",
     );
     for role in roles {
-        script.push_str(&format!(
+        writeln!(
+            script,
             "DO $reset$ BEGIN \
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
                  EXECUTE 'DROP ROLE \"{role}\"'; \
                END IF; \
-             END $reset$;\n"
-        ));
+             END $reset$;"
+        )
+        .expect("writing to a String cannot fail");
     }
     script.push_str(
         "CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;\n\
@@ -499,14 +503,16 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
              'the runs_tkey expression index makes this EXECUTE load bearing for UPDATE'; \n"
     );
     for relation in sql::EXECUTOR_PLATFORM_CATALOG_RELATIONS {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT has_table_privilege(r, 'catalog.{relation}', 'SELECT'), \
                'cannot read catalog.{relation}'; \
              ASSERT NOT has_table_privilege(r, 'catalog.{relation}', 'INSERT') \
                AND NOT has_table_privilege(r, 'catalog.{relation}', 'UPDATE') \
                AND NOT has_table_privilege(r, 'catalog.{relation}', 'DELETE'), \
-               'the executor writes nothing in the catalog plane'; \n"
-        ));
+               'the executor writes nothing in the catalog plane'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     // The catalog relations it must NOT reach at all, and the run-plane
     // relations that belong to other families.
@@ -524,10 +530,12 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "wamn_run.effect_attempt_outcomes",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-            probes.push_str(&format!(
+            writeln!(
+                probes,
                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
-                   'the executor holds {privilege} on {relation}'; \n"
-            ));
+                   'the executor holds {privilege} on {relation}'; "
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     probes.push_str(
@@ -550,11 +558,13 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     // TRUE for a column reachable through a TABLE-level grant, so the FALSE arms
     // are what show the UPDATE never became blanket.
     for column in sql::EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
                'the executor cannot write runs.{column}, which one of its six \
-                UPDATE statements sets'; \n"
-        ));
+                UPDATE statements sets'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     for column in [
         "input_json",
@@ -573,17 +583,21 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "invocation_context",
         "run_deadline_at",
     ] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
                'the executor can rewrite runs.{column}: the admission pins and the \
-                frozen wiring identity are not a claim''s to move'; \n"
-        ));
+                frozen wiring identity are not a claim''s to move'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     for column in sql::EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
-               'the executor cannot write run_queue.{column}'; \n"
-        ));
+               'the executor cannot write run_queue.{column}'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     for column in [
         "available_at",
@@ -592,11 +606,13 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "max_attempts",
         "enqueued_at",
     ] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
                'the executor can move run_queue.{column}: the FIFO position and the \
-                crash budget belong to admission'; \n"
-        ));
+                crash budget belong to admission'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     probes.push_str("END $probe$;\n");
     run_admin(&admin, "the effective-privilege probes", &probes);
@@ -759,24 +775,28 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              'a pure reader forms no index entry, so the tkey derivation is not its'; \n"
     );
     for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT has_table_privilege(r, 'catalog.{relation}', 'SELECT'), \
                'cannot read catalog.{relation}, which its one statement joins'; \
              ASSERT NOT has_table_privilege(r, 'catalog.{relation}', 'INSERT') \
                AND NOT has_table_privilege(r, 'catalog.{relation}', 'UPDATE') \
                AND NOT has_table_privilege(r, 'catalog.{relation}', 'DELETE'), \
-               'the callable-HTTP admitter writes nothing anywhere'; \n"
-        ));
+               'the callable-HTTP admitter writes nothing anywhere'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     for relation in ["users", "user_roles"] {
-        probes.push_str(&format!(
+        writeln!(
+            probes,
             "  ASSERT has_table_privilege(r, 'app_system.{relation}', 'SELECT'), \
                'cannot read the human permission relation app_system.{relation}'; \
              ASSERT NOT has_table_privilege(r, 'app_system.{relation}', 'INSERT') \
                AND NOT has_table_privilege(r, 'app_system.{relation}', 'UPDATE') \
                AND NOT has_table_privilege(r, 'app_system.{relation}', 'DELETE'), \
-               'the callable-HTTP admitter writes human permission authority'; \n"
-        ));
+               'the callable-HTTP admitter writes human permission authority'; "
+        )
+        .expect("writing to a String cannot fail");
     }
     for relation in [
         "wamn_run.runs",
@@ -789,10 +809,12 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         "catalog.release_manifest_v3_snapshots",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-            probes.push_str(&format!(
+            writeln!(
+                probes,
                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
-                   'the callable-HTTP admitter holds {privilege} on {relation}'; \n"
-            ));
+                   'the callable-HTTP admitter holds {privilege} on {relation}'; "
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     probes.push_str("END $probe$;\n");

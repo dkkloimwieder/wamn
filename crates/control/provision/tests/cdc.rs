@@ -107,7 +107,7 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
     run_ok(
         &db_url,
         &format!(
-            r#"
+            r"
 CREATE TABLE {schema}.receipts (id uuid PRIMARY KEY, qty numeric(8,3));
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM pg_publication WHERE pubname = '{cdc}') = 1,
@@ -143,7 +143,7 @@ DO $$ BEGIN
   ASSERT has_table_privilege('{cdc}', '{schema}.wamn_cdc_exclusions'::regclass, 'SELECT'),
     'the role reads the explicit CDC-exclusion map';
 END $$;
-"#,
+",
         ),
     );
 

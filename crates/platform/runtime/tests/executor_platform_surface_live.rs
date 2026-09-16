@@ -113,6 +113,8 @@ async fn begin_claimed(client: &Client) -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn executor_platform_surface_live() -> anyhow::Result<()> {
+    const COMPONENT: &str = "executor-authority-test";
+
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let admin_url = test_database.url();
@@ -712,7 +714,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         statement_timeout_ms: 10_000,
         row_limit: 10_000,
     })?;
-    const COMPONENT: &str = "executor-authority-test";
     plugin.set_tenant(COMPONENT, TENANT)?;
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;

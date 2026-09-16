@@ -284,7 +284,7 @@ fn existing_text_tenant_rule_accepts_t1_and_refuses_invalid_inputs() {
         );
     }
     for tenant in [
-        "".to_owned(),
+        String::new(),
         "a".repeat(65),
         "t.1".to_owned(),
         "t 1".to_owned(),

@@ -488,10 +488,10 @@ pub async fn reconcile(
         plan.actions.as_slice(),
         [action] if action.kind == RunPlaneActionKind::RetireNodeRuns
     );
-    if !retires_node_runs {
-        if let Some(action) = dispatch_reader_read_surface_action(schema, &obs, !plan.is_noop()) {
-            plan.actions.push(action);
-        }
+    if !retires_node_runs
+        && let Some(action) = dispatch_reader_read_surface_action(schema, &obs, !plan.is_noop())
+    {
+        plan.actions.push(action);
     }
     if apply {
         let mut applied = 0;

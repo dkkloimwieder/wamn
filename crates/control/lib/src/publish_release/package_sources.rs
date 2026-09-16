@@ -2,15 +2,15 @@
 
 use super::{BTreeMap, MintManifestError, MintManifestErrorKind, PathBuf, sha256};
 
+/// Every package's parsed manifest, and every package's manifest digest.
+pub(super) type PackageManifestSources = (
+    BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    BTreeMap<String, String>,
+);
+
 pub(super) fn read_package_manifests(
     paths: &[PathBuf],
-) -> Result<
-    (
-        BTreeMap<String, wamn_schema_generator::PackageManifest>,
-        BTreeMap<String, String>,
-    ),
-    MintManifestError,
-> {
+) -> Result<PackageManifestSources, MintManifestError> {
     let mut manifests = BTreeMap::new();
     let mut hashes = BTreeMap::new();
     for path in paths {

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use serde_json::{Value, json};
@@ -119,7 +118,7 @@ impl Fixture {
     }
 }
 
-fn candidate<'a>(definition: &'a Value) -> StagedConnectionGeneration<'a> {
+fn candidate(definition: &Value) -> StagedConnectionGeneration<'_> {
     StagedConnectionGeneration {
         requirement_type: HTTP_CONNECTION_TYPE,
         contract: HTTP_CONNECTION_CONTRACT,

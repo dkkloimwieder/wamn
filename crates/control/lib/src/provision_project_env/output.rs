@@ -72,7 +72,7 @@ fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
             .open(&temp_path)
         {
             Ok(file) => return Ok((temp_path, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => {
                 return Err(error).with_context(|| {
                     format!("create credential output beside {}", path.display())

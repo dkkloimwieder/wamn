@@ -265,9 +265,10 @@ async fn acceptance(admin: &Client, admin_url: &str, component: &Path) -> anyhow
 #[ignore = "requires: WAMN_SQLX_TRANSACTION_COMPONENT"]
 async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
     wamn_test_postgres::require_prerequisites(&["WAMN_SQLX_TRANSACTION_COMPONENT"]);
-    let component = std::env::var(COMPONENT_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| panic!("set {COMPONENT_ENV} to the built sqlx-command component"));
+    let component = std::env::var(COMPONENT_ENV).map_or_else(
+        |_| panic!("set {COMPONENT_ENV} to the built sqlx-command component"),
+        PathBuf::from,
+    );
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let admin_url = test_database.url();

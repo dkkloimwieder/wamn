@@ -67,7 +67,7 @@ fn cluster_is_derived_by_placement_and_policy() {
 #[test]
 fn pat_literals_and_secret_documents_are_exact() {
     let triple = Triple::new("acme", "billing", "dev");
-    assert_eq!(PAT_TTL, Duration::from_secs(2_592_000));
+    assert_eq!(PAT_TTL, Duration::from_hours(720));
     assert_eq!(
         MANAGEMENT_AUTHOR.subject(&triple).unwrap(),
         "wamn-management-author-acme--billing--dev"

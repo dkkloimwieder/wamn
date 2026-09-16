@@ -346,6 +346,8 @@ RESET ROLE;
 
 #[test]
 fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
+    const PASSWORD: &str = "control-author-live-test";
+
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -364,7 +366,6 @@ fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
         &database,
         wamn_control_provision::CredentialGeneration::B,
     );
-    const PASSWORD: &str = "control-author-live-test";
     let mut generations = String::new();
     for role in [&author_a, &author_b] {
         generations.push_str(
@@ -433,7 +434,7 @@ RESET ROLE;
         &as_role(&url, &author_a, PASSWORD),
         "check tenant-a author authority",
         &format!(
-            r#"
+            r"
 DO $identity$ BEGIN
   ASSERT session_user = '{author_a}';
   ASSERT current_user = session_user;
@@ -499,7 +500,7 @@ DO $denied$ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 END
 $denied$;
-"#
+"
         ),
     );
 
@@ -507,7 +508,7 @@ $denied$;
         &as_role(&url, &author_b, PASSWORD),
         "check tenant-b author isolation",
         &format!(
-            r#"
+            r"
 SET app.tenant = 'tenant-b';
 DO $second$ BEGIN
   ASSERT session_user = '{author_b}';
@@ -517,7 +518,7 @@ DO $second$ BEGIN
   ASSERT (SELECT count(*) FROM wamn_run.gate_reports) = 0;
 END
 $second$;
-"#
+"
         ),
     );
 
@@ -565,7 +566,7 @@ fn deployment_attestation_rust_binding_holds_on_postgres() {
         &url,
         "deployment attestation binding",
         &format!(
-            r#"
+            r"
 SET ROLE wamn_system;
 SET app.tenant = 'tenant-a';
 {project};
@@ -597,7 +598,7 @@ DO $binding$ BEGIN
   END;
 END $binding$;
 RESET ROLE;
-"#,
+",
             project = render(&project),
             prepared = write.sql,
             write = render(&write)

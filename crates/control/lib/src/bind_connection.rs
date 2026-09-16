@@ -126,25 +126,23 @@ pub fn validate_definition(
         match object.get(*coordinate) {
             Some(Value::String(value)) if !value.is_empty() => {}
             Some(Value::String(_)) => bail!(
-                "the generation definition's {coordinate} is empty; {:?} needs it",
-                requirement_type
+                "the generation definition's {coordinate} is empty; {requirement_type:?} needs it"
             ),
             Some(_) => bail!(
-                "the generation definition's {coordinate} must be a string; {:?} reads it as one",
-                requirement_type
+                "the generation definition's {coordinate} must be a string; \
+                 {requirement_type:?} reads it as one"
             ),
             None => bail!(
-                "the generation definition lacks {coordinate}; {:?} reads it at resolve time",
-                requirement_type
+                "the generation definition lacks {coordinate}; \
+                 {requirement_type:?} reads it at resolve time"
             ),
         }
     }
     for key in object.keys() {
         ensure!(
             requirement_type.coordinates().contains(&key.as_str()),
-            "the generation definition carries {key}, which {:?} never reads; \
-             a coordinate nobody reads is a coordinate nobody validates",
-            requirement_type
+            "the generation definition carries {key}, which {requirement_type:?} never reads; \
+             a coordinate nobody reads is a coordinate nobody validates"
         );
     }
     Ok(())
@@ -291,13 +289,13 @@ async fn bind_in(
 mod tests {
     use super::*;
 
-    fn blobstore(definition: Value) -> anyhow::Result<()> {
-        validate_definition(RequirementType::Blobstore, &definition)
+    fn blobstore(definition: &Value) -> anyhow::Result<()> {
+        validate_definition(RequirementType::Blobstore, definition)
     }
 
     #[test]
     fn a_blobstore_definition_needs_exactly_the_coordinates_the_plugin_reads() {
-        blobstore(serde_json::json!({
+        blobstore(&serde_json::json!({
             "endpoint": "http://10.0.0.7:9000", "container": "labels", "prefix": "wms/"
         }))
         .expect("the three coordinates the plugin reads are a complete definition");
@@ -305,14 +303,14 @@ mod tests {
 
     #[test]
     fn a_missing_coordinate_is_refused_by_name() {
-        let error = blobstore(serde_json::json!({"endpoint": "http://x", "container": "c"}))
+        let error = blobstore(&serde_json::json!({"endpoint": "http://x", "container": "c"}))
             .expect_err("prefix is read at resolve time");
         assert!(format!("{error:#}").contains("lacks prefix"), "{error:#}");
     }
 
     #[test]
     fn an_empty_coordinate_is_refused_by_name() {
-        let error = blobstore(serde_json::json!({"endpoint": "", "container": "c", "prefix": "p"}))
+        let error = blobstore(&serde_json::json!({"endpoint": "", "container": "c", "prefix": "p"}))
             .expect_err("an empty endpoint is not an endpoint");
         assert!(
             format!("{error:#}").contains("endpoint is empty"),
@@ -322,7 +320,7 @@ mod tests {
 
     #[test]
     fn a_coordinate_nobody_reads_is_refused_by_name() {
-        let error = blobstore(serde_json::json!({
+        let error = blobstore(&serde_json::json!({
             "endpoint": "http://x", "container": "c", "prefix": "p", "region": "eu-3"
         }))
         .expect_err("a key the plugin never reads is a key nobody validates");
@@ -334,7 +332,7 @@ mod tests {
         // The control library's ConnectionGenerationDefinition is the HTTP
         // shape. Handing it to a blobstore descriptor is the mismatch the
         // ruling made unconstructible.
-        let error = blobstore(serde_json::json!({
+        let error = blobstore(&serde_json::json!({
             "primary-authority": "https://erp.example", "failover-authorities": [],
             "tls-policy": "verify-authority", "redirect-policy": "same-authority"
         }))
@@ -344,7 +342,7 @@ mod tests {
 
     #[test]
     fn a_non_object_definition_is_refused() {
-        let error = blobstore(serde_json::json!(["endpoint"])).expect_err("not an object");
+        let error = blobstore(&serde_json::json!(["endpoint"])).expect_err("not an object");
         assert!(
             format!("{error:#}").contains("must be a JSON object"),
             "{error:#}"
@@ -457,7 +455,7 @@ pub async fn prepare_local_instance(
         environment,
         instance_id,
         &descriptor,
-        &definition,
+        definition,
         &input.credential_handle,
     )
     .await

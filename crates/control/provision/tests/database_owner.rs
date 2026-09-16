@@ -156,7 +156,7 @@ fn project_env_database_ownership_and_connect_are_scoped() {
     run_ok(
         &url,
         &format!(
-            r#"
+            r"
 DO $$ BEGIN
   -- 1. Ownership sits on the NOLOGIN title role, on BOTH databases.
   ASSERT (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '{first}')
@@ -230,7 +230,7 @@ DO $$ BEGIN
   ASSERT (SELECT datallowconn FROM pg_database WHERE datname = '{canary}'),
     'the sibling canary is connectable, so the scope discrimination is real';
 END $$;
-"#
+"
         ),
     );
 

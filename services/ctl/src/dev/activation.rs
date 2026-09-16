@@ -348,6 +348,12 @@ impl NativeActivationBackend {
     }
 }
 
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "`ActivationBackend` declares `async fn` because another implementation \
+              talks to NATS; the verbs this backend answers without awaiting \
+              still have to match the trait"
+)]
 impl ActivationBackend for NativeActivationBackend {
     type Error = NativeBackendError;
 
@@ -1428,6 +1434,12 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "`ActivationBackend` declares `async fn` because the native backend talks \
+                  to NATS; this fake answers from memory and still has to match \
+                  the trait"
+    )]
     impl ActivationBackend for FakeBackend {
         type Error = FakeError;
 

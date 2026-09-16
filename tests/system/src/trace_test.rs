@@ -35,6 +35,8 @@
 //!
 //! [`ConnectionHttp::send`]: wamn_runtime::plugins::connection_http::ConnectionHttp
 
+use std::fmt::Write as _;
+
 use anyhow::{Context, bail};
 use clap::Args;
 use opentelemetry::trace::{
@@ -155,11 +157,11 @@ pub async fn run(args: TraceTestArgs) -> anyhow::Result<()> {
     // A unique, valid W3C traceparent we control. `01` = sampled.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let trace_id = format!("{nanos:032x}"); // 32 hex chars
     let trace_id = trace_id[trace_id.len() - 32..].to_string();
-    let sent_span = format!("{:016x}", nanos as u64 | 1); // 16 hex, non-zero
+    // The low 64 bits are what a span id is; the truncation is the point.
+    let sent_span = format!("{:016x}", u64::try_from(nanos & u128::from(u64::MAX)).unwrap_or(u64::MAX) | 1);
     let sent_tp = format!("00-{trace_id}-{sent_span}-01");
     println!("controlled parent traceparent = {sent_tp}");
 
@@ -306,7 +308,7 @@ fn capture_effect_traceparent(parent: &opentelemetry::Context) -> anyhow::Result
 /// Extract field `idx` (0=version,1=trace-id,2=parent-id,3=flags) of a W3C
 /// `traceparent`.
 fn w3c_field(tp: &str, idx: usize) -> Option<String> {
-    tp.split('-').nth(idx).map(|s| s.to_string())
+    tp.split('-').nth(idx).map(std::string::ToString::to_string)
 }
 
 /// Hand-rolled HTTP/1.1 GET with extra headers, returning the declared response
@@ -331,7 +333,7 @@ async fn http_get_with_headers(url: &str, extra: &[(String, String)]) -> anyhow:
         .with_context(|| format!("connect {conn_host}:{port}"))?;
     let mut req = format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
     for (k, v) in extra {
-        req.push_str(&format!("{k}: {v}\r\n"));
+        writeln!(req, "{k}: {v}\r").expect("writing to a String cannot fail");
     }
     req.push_str("\r\n");
     stream.write_all(req.as_bytes()).await?;

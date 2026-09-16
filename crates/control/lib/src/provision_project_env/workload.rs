@@ -21,6 +21,12 @@ use super::{
 const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the booleans mirror the `pg_roles` attribute columns and the exactness checks \
+              beside them one for one; PostgreSQL reports each as its own boolean, and a \
+              faithful copy of what the server says is what makes the drift check auditable"
+)]
 struct WorkloadRoleState {
     login: bool,
     superuser: bool,
