@@ -97,15 +97,15 @@ mod tests {
     use super::{Expect, ExpectErrorKind, ExpectedOutcome};
     use crate::status::WiringFailureKind;
 
-    fn round_trip(expect: Expect, wire: Value) {
-        assert_eq!(serde_json::to_value(&expect).unwrap(), wire);
-        assert_eq!(serde_json::from_value::<Expect>(wire).unwrap(), expect);
+    fn round_trip(expect: &Expect, wire: Value) {
+        assert_eq!(serde_json::to_value(expect).unwrap(), wire);
+        assert_eq!(&serde_json::from_value::<Expect>(wire).unwrap(), expect);
     }
 
     #[test]
     fn the_one_wire_shape_round_trips() {
         round_trip(
-            Expect {
+            &Expect {
                 outcome: ExpectedOutcome::Responded,
                 status: Some(201),
                 body_subset: Some(json!({"created": true})),
@@ -118,7 +118,7 @@ mod tests {
             }),
         );
         round_trip(
-            Expect {
+            &Expect {
                 outcome: ExpectedOutcome::Failed,
                 status: None,
                 body_subset: None,
@@ -127,7 +127,7 @@ mod tests {
             json!({"outcome": "failed", "failure-code": "invalid-input"}),
         );
         round_trip(
-            Expect {
+            &Expect {
                 outcome: ExpectedOutcome::Responded,
                 status: None,
                 body_subset: None,

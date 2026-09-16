@@ -1,5 +1,7 @@
 //! Thin HTTP adapter from a released attachment to inline router delivery.
 
+use std::fmt::Write as _;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -306,7 +308,7 @@ async fn try_handle(
         .map_err(|code| error_response(404, code))?;
     let caller = backend
         .authenticate(&matched.definition.attachment_id, &head.headers)
-        .map_err(rejection_response)?;
+        .map_err(|rejection| rejection_response(&rejection))?;
 
     let body_limit = matched.definition.body_limit.min(limits.body_bytes);
     let raw_body = read_bounded(body, body_limit).await?;
@@ -448,7 +450,7 @@ fn percent_encode_segment(value: &str) -> String {
             encoded.push(char::from(byte));
         } else {
             encoded.push('%');
-            encoded.push_str(&format!("{byte:02X}"));
+            write!(encoded, "{byte:02X}").expect("writing to String cannot fail");
         }
     }
     encoded
@@ -669,7 +671,7 @@ fn trace_context(headers: &[Header]) -> Option<TraceContext> {
         })
 }
 
-fn rejection_response(rejection: AuthRejection) -> HttpResponse {
+fn rejection_response(rejection: &AuthRejection) -> HttpResponse {
     error_response(rejection.status, &rejection.code)
 }
 

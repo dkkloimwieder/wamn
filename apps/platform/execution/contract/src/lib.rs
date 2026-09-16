@@ -93,9 +93,10 @@ mod tests {
 
     #[test]
     fn durable_identity_bytes_cover_ordering_and_numeric_edges() {
-        let left = json!({"z": -0.0, "large": 1e30, "small": 0.000001, "nested": {"b": 2, "a": 1}});
+        let left =
+            json!({"z": -0.0, "large": 1e30, "small": 0.000_001, "nested": {"b": 2, "a": 1}});
         let reordered =
-            json!({"nested": {"a": 1, "b": 2}, "small": 0.000001, "large": 1e30, "z": -0.0});
+            json!({"nested": {"a": 1, "b": 2}, "small": 0.000_001, "large": 1e30, "z": -0.0});
         let bytes = canonical_json_bytes(&left);
 
         assert_eq!(bytes, canonical_json_bytes(&reordered));

@@ -48,8 +48,9 @@ fn at_root(ast: &Ast, root: bool) -> bool {
     match ast {
         Ast::Field { name, .. } => root && name == "old",
         // The rhs evaluates against the lhs's RESULT — no longer the root.
-        Ast::Subexpr { lhs, rhs, .. } => at_root(lhs, root) || at_root(rhs, false),
-        Ast::Projection { lhs, rhs, .. } => at_root(lhs, root) || at_root(rhs, false),
+        Ast::Subexpr { lhs, rhs, .. } | Ast::Projection { lhs, rhs, .. } => {
+            at_root(lhs, root) || at_root(rhs, false)
+        }
         // Both sides evaluate against the CURRENT context.
         Ast::Comparison { lhs, rhs, .. } | Ast::And { lhs, rhs, .. } | Ast::Or { lhs, rhs, .. } => {
             at_root(lhs, root) || at_root(rhs, root)
