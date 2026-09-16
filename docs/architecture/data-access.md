@@ -450,9 +450,13 @@ On those paths, the triggers exist and every writer binds its executing principa
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 No production code writes a person row today, so a human write refuses with `actor-required`.
 Beads `wamn-0h0g.9.18` owns the person rows.
-A principal with no users row still writes, and its write records an actor that names no row.
-There is no write-time lookup and no foreign key.
-Beads `wamn-0h0g.9.19` owns that refusal, by owner ruling at the point of use.
+A principal with no users row cannot write in the tenant.
+The invocation bind refuses it.
+`WamnPostgres::bind_session_claims` reads `app_system.users` in the tenant and refuses a principal that owns no row.
+The caller sees `permission-denied`.
+The bind reads once per invocation.
+A row removed during an invocation stays accepted until the next bind.
+There is still no foreign key on a stamp column.
 Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution and `app.operation`.
 Within its tenant, a guest can insert a `configurations_history` entry directly, because it holds `INSERT` on the entry columns.
 Record history gives no tamper resistance against modified application code or administrative SQL.
