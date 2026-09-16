@@ -1817,6 +1817,148 @@ fn overlay_manifest() -> Value {
     manifest
 }
 
+/// One declared delete, in the shape the closed error-detail set requires.
+///
+/// The fixture relation carries no inbound foreign key, so no constraint code
+/// belongs in the set.
+fn delete_operation() -> Value {
+    json!({
+        "permission": "purchase_order.delete",
+        "error_details": {
+            "invalid_input": {"required": ["field"]},
+            "not_found": {"required": ["field", "id"]},
+            "concurrency_conflict": {
+                "required": ["expected_row_version", "observed_row_version"]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {"required": ["operation"]},
+            "internal_error": {}
+        },
+        "revision_field": "row_version",
+        "result": "one"
+    })
+}
+
+fn deleting_manifest(mode: &str) -> Value {
+    let mut manifest = manifest();
+    manifest["models"]["purchase_order"]["delete_mode"] = json!(mode);
+    manifest["models"]["purchase_order"]["operations"]["delete"] = delete_operation();
+    manifest
+}
+
+fn tombstone_catalog() -> CatalogIr {
+    catalog_with_columns(&[
+        ("deleted_at", ColumnType::Timestamptz, true),
+        ("deleted_by", ColumnType::Uuid, true),
+    ])
+}
+
+fn statement(package: &wamn_schema_generator::GeneratedPackage, path: &str) -> String {
+    std::str::from_utf8(package.file(path).unwrap().bytes())
+        .unwrap()
+        .to_owned()
+}
+
+/// Owner rulings 1 and 3: the declared mode decides the statement, and only a
+/// hard delete can meet an inbound key.
+#[test]
+fn a_hard_delete_removes_the_row_and_a_tombstone_marks_it() {
+    let hard = run(&catalog(false), &deleting_manifest("hard"), &QUERY_SOURCES)
+        .expect("a hard delete generates");
+    let removal = statement(&hard, "generated/sql/purchase_order/delete.sql");
+    assert!(
+        removal.contains("DELETE FROM purchase_order AS model"),
+        "{removal}"
+    );
+    assert!(!removal.contains("deleted_at"), "{removal}");
+    assert!(
+        !statement(&hard, "generated/sql/purchase_order/get.sql").contains("deleted_at"),
+        "a hard delete adds no predicate to a read"
+    );
+
+    let soft = run(
+        &tombstone_catalog(),
+        &deleting_manifest("tombstone"),
+        &QUERY_SOURCES,
+    )
+    .expect("a tombstone delete generates");
+    let marking = statement(&soft, "generated/sql/purchase_order/delete.sql");
+    assert!(
+        marking.contains("UPDATE purchase_order AS model"),
+        "{marking}"
+    );
+    assert!(
+        marking.contains("deleted_at = transaction_timestamp()"),
+        "{marking}"
+    );
+    assert!(
+        marking.contains("deleted_by = NULLIF(current_setting('app.user_id', true), '')::uuid"),
+        "{marking}"
+    );
+    assert!(!marking.contains("DELETE FROM"), "{marking}");
+    for path in [
+        "generated/sql/purchase_order/get.sql",
+        "generated/sql/purchase_order/update.sql",
+    ] {
+        assert!(
+            statement(&soft, path).contains("deleted_at IS NULL"),
+            "{path} must hide a tombstoned row"
+        );
+    }
+}
+
+/// Owner ruling 4: authored SQL deletes only from a hard-delete model.
+///
+/// The admitted case is refused further down the pipeline, by the access
+/// declaration rather than by the delete rule. An authored DELETE derives no
+/// privilege on the relation it deletes from, so that relation can be declared
+/// with neither empty access nor any access. wamn-cy2q.5 owns the gap. The
+/// three messages differ, which is what separates "the delete rule admitted
+/// this" from "the delete rule refused this".
+#[test]
+fn authored_sql_deletes_only_from_a_hard_delete_model() {
+    let authored = AuthoredSql::new(
+        "query/quality_purchase_order_detail.sql",
+        b"WITH removed AS (\n    DELETE FROM purchase_order WHERE id = $1 RETURNING id\n)\nSELECT removed.id FROM removed;\n",
+    );
+    let mut operation = projection_operation();
+    operation["statements"]["load_purchase_order_detail"]["row"] =
+        json!([{"name": "id", "type": "uuid", "nullable": false}]);
+    operation["result"]["fields"] = json!([{"path": "id", "type": "uuid", "nullable": false}]);
+    operation["relations"][0]["select_fields"] = json!(["id"]);
+    let mut sources = QUERY_SOURCES.to_vec();
+    sources.push(authored);
+
+    let refusal = |manifest: &Value, catalog: &CatalogIr| {
+        let mut with_operation = manifest.clone();
+        with_operation["custom_operations"]["quality.load_purchase_order_detail"] =
+            operation.clone();
+        run(catalog, &with_operation, &sources)
+            .expect_err("no authored delete generates today")
+            .to_string()
+    };
+
+    let admitted = refusal(&deleting_manifest("hard"), &catalog(false));
+    assert!(
+        admitted.contains("privilege declaration does not match verified SQL"),
+        "a hard delete passes the delete rule and stops at the access gap: {admitted}"
+    );
+    assert!(!admitted.contains("delete_mode"), "{admitted}");
+
+    let marked = refusal(&deleting_manifest("tombstone"), &tombstone_catalog());
+    assert!(
+        marked.contains("delete_mode: tombstone"),
+        "a tombstone removes no row: {marked}"
+    );
+
+    let undeclared = refusal(&manifest(), &catalog(false));
+    assert!(
+        undeclared.contains("declares no delete_mode"),
+        "a model with no mode deletes nothing: {undeclared}"
+    );
+}
+
 #[test]
 fn a_delete_mode_travels_with_its_delete_and_its_marker_columns() {
     let mut mode_without_delete = manifest();

@@ -718,13 +718,27 @@ fn derive_data_access_overlay_for_manifest(
                 // the two reserved marker columns, which no caller writes, so
                 // the shape is column UPDATE on that pair and no DELETE.
                 CrudAction::Delete => match model.delete_mode {
-                    Some(DeleteMode::Hard) => relation.delete = true,
+                    // Both delete statements open with the same locking read of
+                    // the id and the revision, so both need the read and the
+                    // lock that an update needs. `FOR UPDATE` is checked as the
+                    // UPDATE privilege, which the revision column supplies for a
+                    // hard delete and the marker pair supplies for a tombstone.
+                    Some(DeleteMode::Hard) => {
+                        relation.select_all();
+                        relation
+                            .update
+                            .extend(operation.revision_field.iter().cloned());
+                        relation.lock = true;
+                        relation.delete = true;
+                    }
                     Some(DeleteMode::Tombstone) => {
+                        relation.select_all();
                         relation.update.extend(
                             TombstoneColumn::ALL
                                 .into_iter()
                                 .map(|column| column.as_str().to_owned()),
                         );
+                        relation.lock = true;
                     }
                     None => {
                         return Err(GenerateError::new(

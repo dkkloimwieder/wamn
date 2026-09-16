@@ -727,13 +727,19 @@ fn validate_tombstone_columns(
                 TombstoneColumn::DeletedAt => ColumnType::Timestamptz,
                 TombstoneColumn::DeletedBy => ColumnType::Uuid,
             };
-            require_column(
-                GenerateErrorKind::InvalidModel,
-                &context,
-                table,
-                reserved.as_str(),
-                ty,
-            )?;
+            let name = reserved.as_str();
+            // A marker is NULL on a live row, so it is the one reserved pair
+            // that must be nullable. A record-history stamp always has a value
+            // and is refused when it is nullable.
+            let valid = column(table, name)
+                .is_some_and(|column| column.column_type() == ty && column.nullable());
+            if !valid {
+                return Err(GenerateError::for_object(
+                    GenerateErrorKind::InvalidModel,
+                    format!("{context} must carry nullable {name} {}", ty.as_str()),
+                    format!("{}.{}.{name}", table.schema(), table.name()),
+                ));
+            }
         }
         return Ok(());
     }
