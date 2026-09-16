@@ -27,13 +27,12 @@
 //! at once, and an owner ruling refuted that for three of them on 2026-08-26:
 //! DECLARING a field here is one edit, but FILLING it is one per surface, and
 //! only a surface that can SOURCE the claim may fill it. So [`EffectWiring`] is
-//! declared here once and filled by `wamn.connection_http` alone
-//! (`wamn-0h0g.24.12`), the one surface holding a host-bound
-//! `ConnectionInvocation`. The rest are separate beads with separate owners:
-//! `wamn.jetstream` is `wamn-0h0g.24.15` (it holds a wiring id only as a
-//! router-tap subject, and no node id at all), and `wamn:postgres` is
-//! `wamn-0h0g.24.14`, blocked until `wamn-0h0g.7.9` builds the guest-to-host
-//! run-context contract those coordinates would reach it through.
+//! declared here once and filled surface by surface, each on its own bead.
+//! `wamn.connection_http` (`wamn-0h0g.24.12`), `wamn.blobstore` and
+//! `wamn:postgres` (`wamn-0h0g.24.14`) each read back a host-bound
+//! `ConnectionInvocation` and fill all eight keys. `wamn.jetstream`
+//! (`wamn-0h0g.24.15`) holds a wiring position on one of its four operations
+//! and no invocation at all, so four of its eight keys stay empty even there.
 //!
 //! # The vocabulary
 //!
@@ -58,8 +57,13 @@
 //!   (`wamn-b2m6.7`).
 //! - `wamn.run_id` / `wamn.requirement` — declared `Empty`,
 //!   filled by [`record_run`] on the surfaces whose contract carries run
-//!   coordinates. Nothing constructs an [`EffectRun`] on any surface today; the
-//!   contract that would is `wamn-0h0g.7.9`.
+//!   coordinates. `wamn:postgres` is the one that holds them: the router driver
+//!   binds the run's causation onto the plugin before the pooled instance runs,
+//!   and the effect reads it back (`wamn-0h0g.7.9`, `wamn-0h0g.24.14`). It
+//!   records `wamn.requirement` empty, because a DB call is admitted by its
+//!   statement set and not by a named connection requirement. A surface that
+//!   passes `None` records neither key, which is [`record_run`]'s own
+//!   convention and not [`record_wiring`]'s.
 //! - `effect.outcome` — what the platform says happened to the effect. One of
 //!   six words and never a seventh, declared `Empty` and filled by
 //!   [`EffectOutcomeGuard`] on the surfaces that run their effect through it.
@@ -79,18 +83,19 @@
 //!
 //! # What is deliberately absent
 //!
-//! Three of the four surfaces still carry no wiring or node identity of their
-//! own. They are not orphaned: an effect raised inside a node runs under
+//! `wamn.jetstream` is the one surface that reads back no invocation of its
+//! own. It is not orphaned: an effect raised inside a node runs under
 //! `wamn.component.invoke`, the span
 //! `crates/execution/host/src/router_driver.rs` instruments each `Step::Invoke`
 //! with, which already carries `wamn.wiring_id`, `wamn.wiring_version`,
 //! `wamn.node_id`, `wamn.component_digest` and `wamn.operation` — the spelling
-//! [`EffectWiring`] reuses rather than forking. `wamn.connection_http` copies
-//! them down so that one effect span is self-describing without a parent walk
-//! (`wamn-0h0g.24.12`); `wamn.jetstream` (`wamn-0h0g.24.15`) and `wamn:postgres`
-//! (`wamn-0h0g.24.14`, itself blocked on `wamn-0h0g.7.9`) cannot source the
-//! coordinates yet and leave the block empty. `wamn-0h0g.24.2` landed the
-//! invocation span itself and covered none of them.
+//! [`EffectWiring`] reuses rather than forking. `wamn.connection_http`
+//! (`wamn-0h0g.24.12`), `wamn.blobstore` and `wamn:postgres`
+//! (`wamn-0h0g.24.14`) copy them down so that one effect span is
+//! self-describing without a parent walk. `wamn.jetstream` stands at no wiring
+//! node on three of its four operations, and on the fourth its native callers
+//! hand down a position but no per-visit invocation (`wamn-0h0g.24.15`).
+//! `wamn-0h0g.24.2` landed the invocation span itself and covered none of them.
 //! (`wamn_router::NodeInvoker` has only test implementors because its `invoke`
 //! is synchronous; `RouterDriver` drives `wiring.next` / `Step::Invoke` directly
 //! and is the production driver.)

@@ -14,7 +14,9 @@ use tracing::Instrument as _;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::Resource;
 
-use crate::plugins::effect_span::{EffectIdentity, effect_span, record_effect_ms};
+use crate::plugins::effect_span::{
+    EffectIdentity, EffectRun, EffectWiring, effect_span, record_effect_ms, record_wiring,
+};
 
 use super::claims::{OneShotResult, refuse_unattributed_statement, reject_claim_mutation};
 use super::pool::destroy_connection;
@@ -369,9 +371,17 @@ fn record_query_ms(op: &'static str, project: &str, elapsed: std::time::Duration
 /// span name — while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///
-/// `run_id`/`node_id` enrichment awaits a guest→host run-context contract; the
-/// trusted HTTP effect is the one surface whose WIT carries those coordinates
-/// today.
+/// The run and the wiring position come from the two claim registries the
+/// router driver binds before the pooled instance runs: `set_current_run` for
+/// the run, `bind_invocation` for the node (`wamn-0h0g.7.9`). Both are
+/// host-attested, so this span says which run and which node raised the call
+/// without walking its `wamn.component.invoke` parent (`wamn-0h0g.24.14`).
+///
+/// A call outside a node walk — a platform read, or a pooled instance between
+/// invocations — holds neither, and records the keys empty. `wamn.requirement`
+/// is empty on every postgres span: it names the connection requirement an
+/// HTTP effect was admitted under, and a DB call is admitted by its statement
+/// set instead, so this surface holds no such claim.
 fn db_span(plugin: &WamnPostgres, component_id: &str, op: &'static str) -> tracing::Span {
     let project = plugin.project_for(component_id);
     db_span_for_project(plugin, component_id, &project, op)
@@ -384,17 +394,36 @@ fn db_span_for_project(
     op: &'static str,
 ) -> tracing::Span {
     let tenant = plugin.tenant_for(component_id).unwrap_or_default();
-    effect_span!(
+    let run = plugin.current_run_for(component_id);
+    let span = effect_span!(
         "wamn.postgres",
         EffectIdentity {
             tenant: &tenant,
             project,
             component: component_id,
         },
-        None,
+        run.as_ref().map(|run| EffectRun {
+            run_id: &run.run,
+            requirement: "",
+        }),
         db.system = "postgresql",
         db.operation = op,
-    )
+    );
+    let invocation = plugin.invocation(component_id);
+    record_wiring(
+        &span,
+        invocation.as_ref().map(|invocation| EffectWiring {
+            package_id: &invocation.package_id,
+            wiring_id: &invocation.wiring_id,
+            wiring_version: invocation.wiring_version,
+            node_id: &invocation.node_id,
+            occurrence: invocation.occurrence,
+            component_digest: &invocation.component_digest,
+            component_name: &invocation.component,
+            operation: &invocation.operation,
+        }),
+    );
+    span
 }
 
 async fn begin_transaction(
@@ -1295,7 +1324,142 @@ async fn finish_statement_txn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::wamn_postgres::{ContractMismatch, ContractPart, ValueShape};
+    use crate::plugins::connection_http::{
+        ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
+    };
+    use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
+    use crate::plugins::wamn_postgres::{
+        ContractMismatch, ContractPart, ValueShape, WamnPostgresConfig,
+    };
+    use wamn_event_wire::Causation;
+
+    const COMPONENT_ID: &str = "component-store-7";
+    const COMPONENT_DIGEST: &str = "sha256:aaaa";
+
+    /// A plugin that opens no connection, so a span test needs no database.
+    fn offline_plugin() -> WamnPostgres {
+        let plugin = WamnPostgres::new(WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1,
+            statement_timeout_ms: 1,
+            row_limit: 1,
+        })
+        .expect("an offline postgres plugin opens no connection");
+        plugin
+            .set_tenant(COMPONENT_ID, "tenant-a")
+            .expect("the tenant claim is valid");
+        plugin
+    }
+
+    /// The invocation the router driver binds before the pooled instance runs.
+    fn invocation() -> ConnectionInvocation {
+        ConnectionInvocation {
+            origin: ConnectionOrigin {
+                wiring_package_id: "package_a".to_string(),
+                package_id: "package_a".to_string(),
+                component_digest: COMPONENT_DIGEST.to_string(),
+                component: "orders".to_string(),
+                interface_version: "1.0.0".to_string(),
+                operation: "orders:notify/dispatch@1.0.0".to_string(),
+            },
+            package_id: "package_a".to_string(),
+            wiring_id: "orders".to_string(),
+            wiring_version: 3,
+            node_id: "record".to_string(),
+            occurrence: 2,
+            component_digest: COMPONENT_DIGEST.to_string(),
+            component: "recorder".to_string(),
+            operation: "orders:notify/dispatch@1.0.0".to_string(),
+            closure: ConnectionExecutionClosure::Released,
+            effects: None,
+        }
+    }
+
+    /// A DB call inside a node walk names its run and its node on the span
+    /// itself. A mutant that drops either registry read fails here.
+    #[test]
+    fn a_db_call_inside_a_node_walk_carries_its_run_and_node_identity() {
+        let plugin = offline_plugin();
+        plugin.set_current_run(
+            COMPONENT_ID,
+            Some(Causation {
+                run: "run-42".to_string(),
+                root: "root-1".to_string(),
+                depth: 1,
+            }),
+        );
+        plugin
+            .bind_invocation(COMPONENT_ID, invocation())
+            .expect("the fresh registry accepts its first invocation");
+
+        let harness = SpanHarness::install("postgres-node-walk-span-test");
+        drop(db_span_for_project(
+            &plugin,
+            COMPONENT_ID,
+            "project-a",
+            "query",
+        ));
+
+        assert_eq!(
+            harness.attributes("wamn.postgres"),
+            expected_attributes(&[
+                ("db.system", "postgresql"),
+                ("db.operation", "query"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", COMPONENT_ID),
+                ("wamn.package_id", "package_a"),
+                ("wamn.wiring_id", "orders"),
+                ("wamn.wiring_version", "3"),
+                ("wamn.node_id", "record"),
+                ("wamn.occurrence", "2"),
+                ("wamn.component_digest", COMPONENT_DIGEST),
+                ("wamn.component_name", "recorder"),
+                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
+                ("wamn.run_id", "run-42"),
+                // A DB call is admitted by its statement set, not by a named
+                // connection requirement, so this surface holds no such claim.
+                ("wamn.requirement", ""),
+            ]),
+        );
+    }
+
+    /// A call outside a node walk holds neither claim. The wiring keys are
+    /// still emitted, empty, so "raised outside a walk" never reads as "the
+    /// enrichment was dropped".
+    #[test]
+    fn a_db_call_outside_a_node_walk_records_the_wiring_keys_empty() {
+        let plugin = offline_plugin();
+
+        let harness = SpanHarness::install("postgres-no-walk-span-test");
+        drop(db_span_for_project(
+            &plugin,
+            COMPONENT_ID,
+            "project-a",
+            "query",
+        ));
+
+        assert_eq!(
+            harness.attributes("wamn.postgres"),
+            expected_attributes(&[
+                ("db.system", "postgresql"),
+                ("db.operation", "query"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", COMPONENT_ID),
+                ("wamn.package_id", ""),
+                ("wamn.wiring_id", ""),
+                ("wamn.wiring_version", "0"),
+                ("wamn.node_id", ""),
+                ("wamn.occurrence", "0"),
+                ("wamn.component_digest", ""),
+                ("wamn.component_name", ""),
+                ("wamn.operation", ""),
+            ]),
+        );
+    }
 
     fn mismatch() -> StatementError {
         StatementError::StatementContractMismatch(ContractMismatch {
