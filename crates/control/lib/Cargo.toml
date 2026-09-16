@@ -8,12 +8,13 @@ license.workspace = true
 [features]
 default = []
 # The operational verbs that ship in the separate `wamn-ctl-ops` binary.
-ops = ["wamn-control-provision/ops"]
+ops = ["dep:wamn-event-wire", "wamn-control-provision/ops"]
 
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 chrono = { workspace = true, features = ["clock"] }
+clap = { workspace = true, features = ["derive", "env"] }
 hex = { workspace = true }
 oci-client = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
@@ -28,6 +29,8 @@ wamn-catalog = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-reg = { workspace = true }
+# The retained delivery advisory wire type the `ops` event-advisories verb decodes.
+wamn-event-wire = { workspace = true, optional = true }
 wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-platform-identity = { workspace = true }
@@ -41,6 +44,7 @@ wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 
 [dev-dependencies]
+futures-util = { workspace = true }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }

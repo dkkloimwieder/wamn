@@ -17,7 +17,7 @@ pub mod dev;
 #[cfg(feature = "ops")]
 pub mod dump_project_env;
 #[cfg(feature = "ops")]
-pub mod event_advisories;
+pub use wamn_control::event_advisories;
 pub mod identity_verbs;
 #[cfg(feature = "ops")]
 mod ops_schema;

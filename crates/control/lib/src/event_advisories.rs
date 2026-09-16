@@ -284,22 +284,22 @@ mod tests {
                 2,
             ),
         ];
-        wamn_control::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers)
+        crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers)
             .await?;
         let source = jetstream.get_stream(&source_name).await?;
         let mut advisories = jetstream.get_stream(&advisory_name).await?;
         let result: anyhow::Result<()> = async {
-            wamn_control::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await?;
+            crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await?;
             let declared_source = source_stream_config(&scope, 1, duplicate_window);
             jetstream.update_stream(async_nats::jetstream::stream::Config {
                 max_messages: 1,
                 ..declared_source.clone()
             }).await?;
-            ensure!(wamn_control::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await.is_err(), "changed stream configuration was accepted");
+            ensure!(crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await.is_err(), "changed stream configuration was accepted");
             ensure!(jetstream.get_stream(&source_name).await?.cached_info().config.max_messages == 1, "activation changed the stored stream configuration");
             jetstream.update_stream(declared_source).await?;
             source.update_consumer(PullConfig { max_deliver: 3, ..consumers[0].clone() }).await?;
-            ensure!(wamn_control::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await.is_err(), "changed consumer configuration was accepted");
+            ensure!(crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await.is_err(), "changed consumer configuration was accepted");
             ensure!(source.consumer_info("exhausted").await?.config.max_deliver == 3, "activation changed the stored consumer configuration");
             source.update_consumer(consumers[0].clone()).await?;
             let exhausted = source.get_consumer::<PullConfig>("exhausted").await.map_err(anyhow::Error::from_boxed)?;
@@ -449,7 +449,7 @@ mod tests {
         tokio::sync::mpsc::UnboundedReceiver<async_nats::ServerError>,
     )> {
         let (errors, received) = tokio::sync::mpsc::unbounded_channel();
-        let client = wamn_control::event_streams::connection_options(
+        let client = crate::event_streams::connection_options(
             &credentials.username,
             &credentials.password_file,
         )?
@@ -507,7 +507,7 @@ mod tests {
             .await?
             .sequence;
         let (closed, mut closure) = tokio::sync::mpsc::unbounded_channel();
-        let first_client = wamn_control::event_streams::connection_options(
+        let first_client = crate::event_streams::connection_options(
             &credentials.username,
             &credentials.password_file,
         )?
@@ -1008,8 +1008,8 @@ mod tests {
             for (scope, broker) in scopes.iter().zip(&brokers) {
                 let manager = async_nats::jetstream::new(event_broker::connect(&broker.provisioning, &server).await?);
                 let (_, _, _, consumers) = &declarations[managers.len()];
-                wamn_control::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), consumers).await?;
-                wamn_control::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), consumers).await?;
+                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), consumers).await?;
+                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), consumers).await?;
                 managers.push(manager);
             }
             let broker = &brokers[0];
@@ -1125,7 +1125,7 @@ mod tests {
             manager.update_stream(source.clone()).await?;
             let stream = manager.get_stream(&source.name).await?;
             stream.update_consumer(PullConfig { max_deliver: 3, ..consumer.clone() }).await?;
-            ensure!(wamn_control::event_streams::provision(manager, &scopes[0], 1, Duration::from_secs(120), std::slice::from_ref(consumer)).await.is_err(), "provisioning accepted changed consumer configuration");
+            ensure!(crate::event_streams::provision(manager, &scopes[0], 1, Duration::from_secs(120), std::slice::from_ref(consumer)).await.is_err(), "provisioning accepted changed consumer configuration");
             ensure!(stream.consumer_info("registered").await?.config.max_deliver == 3, "provisioning reconfigured the consumer");
             stream.update_consumer(consumer.clone()).await?;
             active().activate_events().await.map_err(|error| anyhow::anyhow!("restored activation failed: {error:?}"))?;

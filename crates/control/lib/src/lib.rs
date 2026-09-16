@@ -10,6 +10,8 @@ pub mod author_wiring;
 pub mod component_declaration;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
+#[cfg(feature = "ops")]
+pub mod event_advisories;
 pub mod event_streams;
 pub mod ident;
 pub mod identity_issuer;
