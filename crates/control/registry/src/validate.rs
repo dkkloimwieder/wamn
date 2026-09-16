@@ -645,7 +645,7 @@ mod tests {
         assert!(r.is_valid(), "{:?}", r.issues());
         // Empty is its own, earlier code (charset check skipped).
         let mut r = minimal();
-        r.orgs[0].id = "".into();
+        r.orgs[0].id = String::new();
         let c = codes(&r);
         assert!(c.contains(&"empty-org-id"));
         assert!(!c.contains(&"invalid-org-id"));

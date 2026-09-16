@@ -24,8 +24,7 @@ fn main() {
         let package = forbidden.replace('_', "-");
         assert!(
             !manifest.contains(&package),
-            "system tests must not declare forbidden service package `{}`",
-            package
+            "system tests must not declare forbidden service package `{package}`"
         );
     }
     // wamn-hopk R5: a recursive source scan for forbidden `use` lines stood

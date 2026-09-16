@@ -178,7 +178,7 @@ fn declared_columns(sql: &str, table: &str) -> Option<Vec<String>> {
                     "PRIMARY" | "FOREIGN" | "CONSTRAINT" | "CHECK" | "UNIQUE" | "EXCLUDE" | "LIKE"
                 )
             })
-            .map(|token| token.to_string())
+            .map(std::string::ToString::to_string)
             .collect(),
     )
 }

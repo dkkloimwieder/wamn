@@ -338,14 +338,13 @@ impl OwnedPostgres {
                     .is_none(),
                 "the owned PostgreSQL process exited before readiness"
             );
-            if let Ok(pid) = fs::read_to_string(self.directory.join("data/postmaster.pid")) {
-                if pid
+            if let Ok(pid) = fs::read_to_string(self.directory.join("data/postmaster.pid"))
+                && pid
                     .lines()
                     .nth(7)
                     .is_some_and(|state| state.trim() == "ready")
-                {
-                    break;
-                }
+            {
+                break;
             }
             ensure!(
                 Instant::now() < deadline,
@@ -476,7 +475,7 @@ mod tests {
                 "WAMN_TEST_PREREQUISITE_NEVER_SET",
                 "sh",
                 "wamn-test-program-never-installed",
-            ])
+            ]);
         })
         .unwrap_err();
         assert_eq!(

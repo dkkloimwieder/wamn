@@ -707,7 +707,7 @@ mod tests {
         let e = Env::new("prod");
         assert_eq!(e.as_str(), "prod");
         assert_eq!(e.to_string(), "prod");
-        assert!(e == "prod");
+        assert_eq!(e, "prod");
         assert_eq!(ClusterRef::new(format!("acme-{e}")).name, "acme-prod");
     }
 }
