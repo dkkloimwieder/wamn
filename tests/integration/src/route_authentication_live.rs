@@ -10,9 +10,9 @@ use anyhow::Context as _;
 use tokio_postgres::Client;
 use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
-use wamn_ctl::project_env_membership::{self, ProjectEnvMembershipArgs};
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_execution_host::{authorize_attachment_for_test};
 use wamn_platform_identity::{PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat, resolve_subject, revoke_pat, route_caller_subject};
@@ -361,7 +361,7 @@ async fn assert_human_environment_membership(
     )
     .await?;
     let authorization = format!("Bearer {}", token.token());
-    let membership = |org: &str, env: &str, principal_id: &str| ProjectEnvMembershipArgs {
+    let membership = |org: &str, env: &str, principal_id: &str| ProjectEnvMembershipRequest {
         org: org.to_owned(),
         project: PROJECT.to_owned(),
         env: env.to_owned(),

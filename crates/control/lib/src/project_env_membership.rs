@@ -4,7 +4,6 @@
 //! They change membership only and do not create users, roles, or tokens.
 
 use anyhow::Context as _;
-use clap::Args;
 use tokio_postgres::NoTls;
 use crate::provision_project_env::provisioning_transaction;
 use wamn_control_provision::validate_project_env;
@@ -12,27 +11,22 @@ use wamn_platform_identity::{
     PrincipalId, grant_project_env_membership, revoke_project_env_membership,
 };
 
-/// Arguments that name one existing human and one existing project environment.
-#[derive(Debug, Args)]
-pub struct ProjectEnvMembershipArgs {
+/// Inputs that name one existing human and one existing project environment.
+#[derive(Debug)]
+pub struct ProjectEnvMembershipRequest {
     /// Organization that owns the project environment.
-    #[arg(long)]
     pub org: String,
 
     /// Project within the organization.
-    #[arg(long)]
     pub project: String,
 
     /// Exact environment within the project.
-    #[arg(long)]
     pub env: String,
 
     /// Existing human principal UUID from the system database.
-    #[arg(long)]
     pub principal_id: String,
 
     /// Provisioning administrator URL for the system database.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: String,
 }
 
@@ -43,22 +37,22 @@ enum Action {
 }
 
 /// Grant membership without changing an existing grant.
-pub async fn grant(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
+pub async fn grant(args: ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
     run(args, Action::Grant).await
 }
 
 /// Revoke membership without failing if the grant is absent.
-pub async fn revoke(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
+pub async fn revoke(args: ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
     run(args, Action::Revoke).await
 }
 
-fn validate_args(args: &ProjectEnvMembershipArgs) -> anyhow::Result<PrincipalId> {
+fn validate_args(args: &ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
     validate_project_env(&args.org, &args.project, &args.env)
         .context("invalid --org, --project, or --env")?;
     args.principal_id.parse().context("invalid --principal-id")
 }
 
-async fn run(args: ProjectEnvMembershipArgs, action: Action) -> anyhow::Result<()> {
+async fn run(args: ProjectEnvMembershipRequest, action: Action) -> anyhow::Result<PrincipalId> {
     let principal_id = validate_args(&args)?;
     let (mut client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)
         .await
@@ -104,92 +98,49 @@ async fn run(args: ProjectEnvMembershipArgs, action: Action) -> anyhow::Result<(
     drop(client);
     let _ = connection_task.await;
     result?;
-    let state = match action {
-        Action::Grant => "granted",
-        Action::Revoke => "revoked",
-    };
-    println!(
-        "membership {state} principal_id={principal_id} org={} project={} env={}",
-        args.org, args.project, args.env
-    );
-    Ok(())
+    Ok(principal_id)
 }
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory as _, Parser};
+    use super::{ProjectEnvMembershipRequest, validate_args};
 
-    use super::{ProjectEnvMembershipArgs, validate_args};
-
-    #[derive(Parser)]
-    struct TestCli {
-        #[command(flatten)]
-        args: ProjectEnvMembershipArgs,
-    }
-
-    fn arguments() -> [&'static str; 11] {
-        [
-            "membership",
-            "--org",
-            "acme",
-            "--project",
-            "billing",
-            "--env",
-            "dev",
-            "--principal-id",
-            "00112233-4455-6677-8899-aabbccddeeff",
-            "--system-database-url",
-            "postgres://admin:secret@localhost/wamn_system",
-        ]
+    fn request() -> ProjectEnvMembershipRequest {
+        ProjectEnvMembershipRequest {
+            org: "acme".to_owned(),
+            project: "billing".to_owned(),
+            env: "dev".to_owned(),
+            principal_id: "00112233-4455-6677-8899-aabbccddeeff".to_owned(),
+            system_database_url: "postgres://admin:secret@localhost/wamn_system".to_owned(),
+        }
     }
 
     #[test]
-    fn exact_membership_arguments_parse() {
-        let args = TestCli::try_parse_from(arguments()).unwrap().args;
-        assert_eq!(args.org, "acme");
-        assert_eq!(args.project, "billing");
-        assert_eq!(args.env, "dev");
+    fn an_exact_membership_request_names_its_principal() {
         assert_eq!(
-            validate_args(&args).unwrap().as_str(),
+            validate_args(&request()).unwrap().as_str(),
             "00112233-4455-6677-8899-aabbccddeeff"
         );
     }
 
     #[test]
-    fn every_membership_argument_is_required() {
-        let command = TestCli::command();
-        for name in [
-            "org",
-            "project",
-            "env",
-            "principal_id",
-            "system_database_url",
-        ] {
-            let argument = command
-                .get_arguments()
-                .find(|argument| argument.get_id() == name)
-                .unwrap();
-            assert!(argument.is_required_set(), "{name} must be required");
-        }
-        let database = command
-            .get_arguments()
-            .find(|argument| argument.get_id() == "system_database_url")
-            .unwrap();
-        assert_eq!(database.get_env().unwrap(), "WAMN_SYSTEM_ADMIN_URL");
-    }
-
-    #[test]
     fn malformed_scope_or_principal_is_refused_before_connecting() {
-        for (index, value) in [
-            (2, "Bad-org"),
-            (4, "wamn-reserved"),
-            (6, "dev--prod"),
-            (8, "not-a-principal-id"),
-        ] {
-            let mut arguments = arguments();
-            arguments[index] = value;
-            let args = TestCli::try_parse_from(arguments).unwrap().args;
-            assert!(validate_args(&args).is_err(), "{value} must be refused");
+        let fields: [(fn(&mut ProjectEnvMembershipRequest, &str), &str); 4] = [
+            (|request, value| request.org = value.to_owned(), "Bad-org"),
+            (
+                |request, value| request.project = value.to_owned(),
+                "wamn-reserved",
+            ),
+            (|request, value| request.env = value.to_owned(), "dev--prod"),
+            (
+                |request, value| request.principal_id = value.to_owned(),
+                "not-a-principal-id",
+            ),
+        ];
+        for (set, value) in fields {
+            let mut request = request();
+            set(&mut request, value);
+            assert!(validate_args(&request).is_err(), "{value} must be refused");
         }
     }
 }

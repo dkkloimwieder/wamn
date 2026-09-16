@@ -133,7 +133,7 @@ pub(super) async fn prepare_session_host_fixture(
         "Session host test",
     )
     .await?;
-    project_env_membership::grant(ProjectEnvMembershipArgs {
+    project_env_membership::grant(ProjectEnvMembershipRequest {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
@@ -435,7 +435,7 @@ pub(super) async fn assert_nested_session(
         "Nested session test",
     )
     .await?;
-    project_env_membership::grant(ProjectEnvMembershipArgs {
+    project_env_membership::grant(ProjectEnvMembershipRequest {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
@@ -798,7 +798,7 @@ pub(super) async fn assert_nested_session(
                 &[&TENANT, &human.id().as_str(), &ROLE],
             )
             .await?;
-        project_env_membership::revoke(ProjectEnvMembershipArgs {
+        project_env_membership::revoke(ProjectEnvMembershipRequest {
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             env: ENVIRONMENT.to_owned(),

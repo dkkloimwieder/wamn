@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::Command;
+use wamn_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
 use wamn_control::provision_project_env::{
     self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
 };
@@ -52,7 +53,7 @@ pub(super) async fn prepare(
         .context("the session gates image is built")?;
     image_loaded(cluster, gates_image, "gates", true).await?;
     let identity_secret = resources.work.join("session-identity-db.json");
-    wamn_ctl::identity_issuer::run(wamn_ctl::identity_issuer::IdentityIssuerArgs {
+    provision_identity_issuer(IdentityIssuerRequest {
         issuer: issuer.clone(),
         system_database_url: cluster.inputs.system_pg_url.clone(),
         prepare_generation: Some(CredentialGeneration::A),

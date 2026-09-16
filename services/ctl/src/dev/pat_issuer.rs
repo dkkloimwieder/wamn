@@ -17,11 +17,10 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 use tokio::process::{Child, Command};
 use url::Url;
+use wamn_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::provision_project_env::secret_value;
 use wamn_control_provision::CredentialGeneration;
-
-use crate::identity_issuer::{self, IdentityIssuerArgs};
 
 // These bounds match the identity service's existing I/O timeout. The local
 // certificates cover startup only and are deleted when provisioning ends.
@@ -58,13 +57,13 @@ impl Bootstrap {
             .context("disposable identity shutdown timed out")?
             .context("stop the disposable identity process")?;
         }
-        identity_issuer::run(self.generation_args(false)).await?;
+        provision_identity_issuer(self.generation_args(false)).await?;
         std::fs::remove_dir_all(&self.files.0)
             .context("remove the private identity bootstrap files")
     }
 
-    fn generation_args(&self, prepare: bool) -> IdentityIssuerArgs {
-        IdentityIssuerArgs {
+    fn generation_args(&self, prepare: bool) -> IdentityIssuerRequest {
+        IdentityIssuerRequest {
             issuer: self.issuer.clone(),
             system_database_url: self.system_url.clone(),
             prepare_generation: prepare.then_some(CredentialGeneration::A),
@@ -195,7 +194,7 @@ async fn start_with(
         secret_name: secret_name.to_owned(),
         files,
     };
-    identity_issuer::run(bootstrap.generation_args(true)).await?;
+    provision_identity_issuer(bootstrap.generation_args(true)).await?;
     // A competing bind fails startup. Never retry with another authority or
     // fall back to direct database minting.
     drop(socket);

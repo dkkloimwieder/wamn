@@ -10,7 +10,6 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use chrono::{SecondsFormat, Utc};
-use clap::{ArgGroup, Args};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::json;
 use tokio_postgres::{Client, Config, GenericClient, NoTls, Row};
@@ -25,40 +24,29 @@ use wamn_control_provision::identity_issuer::{
 use wamn_control_provision::sql;
 
 /// Provisioning inputs for one identity authority, not a project environment.
-#[derive(Args)]
-#[command(group(ArgGroup::new("identity_generation_action").required(true).multiple(false)
-    .args(["prepare_generation", "retire_generation", "abort_generation"])))]
-pub struct IdentityIssuerArgs {
+pub struct IdentityIssuerRequest {
     /// Exact HTTPS issuer configured on wamn-identity.
-    #[arg(long)]
     pub issuer: String,
     /// Administrator URL for the wamn_system database.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: String,
     /// Prepare an inactive A/B credential slot.
-    #[arg(long, requires = "emit_secret")]
     pub prepare_generation: Option<CredentialGeneration>,
     /// Retire a slot after its replacement has a live session.
-    #[arg(long)]
     pub retire_generation: Option<CredentialGeneration>,
     /// Abort an unused prepared slot that has no live sessions.
-    #[arg(long)]
     pub abort_generation: Option<CredentialGeneration>,
     /// Write the prepared credential Secret atomically with mode 0600.
-    #[arg(long, requires = "prepare_generation")]
     pub emit_secret: Option<PathBuf>,
     /// Namespace for the emitted Secret.
-    #[arg(long, default_value = "wamn-system")]
     pub namespace: String,
     /// Name for the emitted Secret, matching the identity chart.
-    #[arg(long, default_value = "wamn-identity-db")]
     pub secret_name: String,
 }
 
-impl fmt::Debug for IdentityIssuerArgs {
+impl fmt::Debug for IdentityIssuerRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("IdentityIssuerArgs")
+            .debug_struct("IdentityIssuerRequest")
             .field("system_database_url", &"[REDACTED]")
             .field("prepare_generation", &self.prepare_generation)
             .field("retire_generation", &self.retire_generation)
@@ -67,7 +55,27 @@ impl fmt::Debug for IdentityIssuerArgs {
     }
 }
 
-fn admin_config(args: &IdentityIssuerArgs) -> anyhow::Result<Config> {
+/// The generation action the request selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityIssuerAction {
+    /// An inactive slot became a live credential.
+    Prepared,
+    /// A live slot was retired behind its replacement.
+    Retired,
+    /// An unused prepared slot was aborted.
+    Aborted,
+}
+
+/// What one identity credential provisioning run did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdentityIssuerOutcome {
+    /// The action that completed.
+    pub action: IdentityIssuerAction,
+    /// The credential generation the action ran on.
+    pub generation: CredentialGeneration,
+}
+
+fn admin_config(args: &IdentityIssuerRequest) -> anyhow::Result<Config> {
     validate_identity_issuer(&args.issuer)?;
     let url = Url::parse(&args.system_database_url)
         .map_err(|_| anyhow::anyhow!("system administrator credential must be a URL"))?;
@@ -139,8 +147,10 @@ async fn connect(
 }
 
 /// Run a provisioning action without reading or minting session signing keys.
-pub async fn run(args: IdentityIssuerArgs) -> anyhow::Result<()> {
-    let config = admin_config(&args)?;
+pub async fn provision_identity_issuer(
+    request: IdentityIssuerRequest,
+) -> anyhow::Result<IdentityIssuerOutcome> {
+    let config = admin_config(&request)?;
     let (mut admin, connection) = connect(&config).await?;
     let result = async {
         let row = admin
@@ -156,30 +166,33 @@ pub async fn run(args: IdentityIssuerArgs) -> anyhow::Result<()> {
         admin
             .query_one(sql::workload_scope_lock_sql(), &[&IDENTITY_ISSUER_ROLE])
             .await?;
-        if let Some(generation) = args.prepare_generation {
-            prepare(&mut admin, &config, &args, generation).await?;
-            println!(
-                "prepared identity database generation {}",
-                generation.as_str()
-            );
+        if let Some(generation) = request.prepare_generation {
+            prepare(&mut admin, &config, &request, generation).await?;
+            Ok(IdentityIssuerOutcome {
+                action: IdentityIssuerAction::Prepared,
+                generation,
+            })
         } else {
-            let (generation, abort) = if let Some(generation) = args.retire_generation {
+            let (generation, abort) = if let Some(generation) = request.retire_generation {
                 (generation, false)
             } else {
                 (
-                    args.abort_generation
+                    request
+                        .abort_generation
                         .context("identity generation action is required")?,
                     true,
                 )
             };
-            retire(&mut admin, &args.issuer, generation, abort).await?;
-            println!(
-                "{} identity database generation {}",
-                if abort { "aborted" } else { "retired" },
-                generation.as_str()
-            );
+            retire(&mut admin, &request.issuer, generation, abort).await?;
+            Ok(IdentityIssuerOutcome {
+                action: if abort {
+                    IdentityIssuerAction::Aborted
+                } else {
+                    IdentityIssuerAction::Retired
+                },
+                generation,
+            })
         }
-        Ok::<_, anyhow::Error>(())
     }
     .await;
     drop(admin);
@@ -413,7 +426,7 @@ async fn public_floor(client: &(impl GenericClient + Sync)) -> anyhow::Result<()
 async fn prepare(
     admin: &mut Client,
     config: &Config,
-    args: &IdentityIssuerArgs,
+    args: &IdentityIssuerRequest,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
     let role = identity_issuer_generation_role(&args.issuer, generation)?;
@@ -554,65 +567,45 @@ async fn retire(
 
 #[cfg(test)]
 mod tests {
-    use super::{IdentityIssuerArgs, admin_config};
-    use clap::Parser;
+    use super::{CredentialGeneration, IdentityIssuerRequest, admin_config};
 
-    #[derive(Parser)]
-    struct Cli {
-        #[command(flatten)]
-        args: IdentityIssuerArgs,
-    }
-
-    fn args() -> Vec<&'static str> {
-        vec![
-            "issuer",
-            "--issuer",
-            "https://identity.wamn-system.svc",
-            "--system-database-url",
-            "postgres://admin:hidden-value@sysdb/wamn_system",
-            "--prepare-generation",
-            "a",
-            "--emit-secret",
-            "identity.json",
-        ]
+    fn request() -> IdentityIssuerRequest {
+        IdentityIssuerRequest {
+            issuer: "https://identity.wamn-system.svc".to_owned(),
+            system_database_url: "postgres://admin:hidden-value@sysdb/wamn_system".to_owned(),
+            prepare_generation: Some(CredentialGeneration::A),
+            retire_generation: None,
+            abort_generation: None,
+            emit_secret: Some("identity.json".into()),
+            namespace: "wamn-system".to_owned(),
+            secret_name: "wamn-identity-db".to_owned(),
+        }
     }
 
     #[test]
-    fn scoped_prepare_arguments_parse_and_redact_admin_credentials() {
-        let args = Cli::try_parse_from(args()).unwrap().args;
-        assert!(admin_config(&args).is_ok());
-        assert_eq!(args.namespace, "wamn-system");
-        assert_eq!(args.secret_name, "wamn-identity-db");
-        assert!(!format!("{args:?}").contains("hidden-value"));
+    fn a_scoped_prepare_request_is_accepted_and_redacts_admin_credentials() {
+        let request = request();
+        assert!(admin_config(&request).is_ok());
+        assert!(!format!("{request:?}").contains("hidden-value"));
     }
 
     #[test]
     fn actions_and_secret_output_are_not_ambiguous() {
-        for extra in [
-            vec!["--retire-generation", "b"],
-            vec!["--abort-generation", "b"],
-            vec!["--org", "acme"],
-        ] {
-            let mut values = args();
-            values.extend(extra);
-            assert!(Cli::try_parse_from(values).is_err());
-        }
-        let mut values = args();
-        values.truncate(7);
-        assert!(Cli::try_parse_from(values.iter().copied()).is_err());
-        values.truncate(5);
-        assert!(Cli::try_parse_from(values.iter().copied()).is_err());
-        values.extend(["--retire-generation", "a"]);
-        assert!(Cli::try_parse_from(values).is_ok());
+        let mut request = request();
+        request.retire_generation = Some(CredentialGeneration::B);
+        assert!(admin_config(&request).is_err());
+        request.retire_generation = None;
+        request.emit_secret = None;
+        assert!(admin_config(&request).is_err());
     }
 
     #[test]
     fn wrong_admin_database_and_issuer_are_refused_before_io() {
-        let mut args = Cli::try_parse_from(args()).unwrap().args;
-        args.system_database_url = "postgres://admin:hidden-value@sysdb/postgres".into();
-        let error = admin_config(&args).unwrap_err();
+        let mut request = request();
+        request.system_database_url = "postgres://admin:hidden-value@sysdb/postgres".into();
+        let error = admin_config(&request).unwrap_err();
         assert!(!format!("{error:?}").contains("hidden-value"));
-        args.issuer = "http://identity".into();
-        assert!(admin_config(&args).is_err());
+        request.issuer = "http://identity".into();
+        assert!(admin_config(&request).is_err());
     }
 }

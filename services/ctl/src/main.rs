@@ -6,8 +6,8 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    bind_connection, component_verbs, delivery, identity_issuer, package_verbs, print_release_env,
-    project_env_membership, provision_org, provisioning_verbs, release_verbs,
+    bind_connection, component_verbs, delivery, identity_verbs, package_verbs, print_release_env,
+    provision_org, provisioning_verbs, release_verbs,
 };
 
 #[derive(Parser)]
@@ -41,11 +41,11 @@ enum Command {
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
     ProvisionProjectEnv(provisioning_verbs::ProvisionProjectEnvArgs),
     /// Provision the scoped database credential for the identity service.
-    ProvisionIdentityIssuer(identity_issuer::IdentityIssuerArgs),
+    ProvisionIdentityIssuer(identity_verbs::IdentityIssuerArgs),
     /// Grant one human access to one project environment.
-    GrantProjectEnvMembership(project_env_membership::ProjectEnvMembershipArgs),
+    GrantProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Revoke one human's access to one project environment.
-    RevokeProjectEnvMembership(project_env_membership::ProjectEnvMembershipArgs),
+    RevokeProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(provisioning_verbs::EnableCdcProjectEnvArgs),
     /// Apply one exact package-owned migration stream to a project database.
@@ -102,9 +102,9 @@ async fn main() -> anyhow::Result<()> {
         Command::QualifyRelease(args) => delivery::qualification::qualify(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
-        Command::ProvisionIdentityIssuer(args) => identity_issuer::run(args).await,
-        Command::GrantProjectEnvMembership(args) => project_env_membership::grant(args).await,
-        Command::RevokeProjectEnvMembership(args) => project_env_membership::revoke(args).await,
+        Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
+        Command::GrantProjectEnvMembership(args) => identity_verbs::grant(args).await,
+        Command::RevokeProjectEnvMembership(args) => identity_verbs::revoke(args).await,
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::BindConnection(args) => bind_connection::run(args).await,

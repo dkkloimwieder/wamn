@@ -18,13 +18,12 @@ pub mod dev;
 pub mod dump_project_env;
 #[cfg(feature = "ops")]
 pub mod event_advisories;
-pub use wamn_control::identity_issuer;
+pub mod identity_verbs;
 #[cfg(feature = "ops")]
 mod ops_schema;
 mod owned_command;
 pub mod package_verbs;
 pub mod print_release_env;
-pub use wamn_control::project_env_membership;
 pub mod provision_org;
 pub mod provisioning_verbs;
 #[cfg(feature = "ops")]
