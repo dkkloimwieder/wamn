@@ -18,6 +18,8 @@ use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_sche
 use wamn_event_wire::Causation;
 use wamn_run_state::AuthorityClass;
 
+use crate::plugins::connection_http::ConnectionInvocation;
+
 use super::pool::{
     ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
     StaticCredentialProvider, WamnPostgresConfig,
@@ -124,6 +126,21 @@ pub struct WamnPostgres {
     /// plugin opens for that component, which the CDC reader (l5i9.12.1)
     /// stitches onto the txn's row events.
     current_run: std::sync::RwLock<HashMap<String, Causation>>,
+    /// component id → the host-attested invocation the pooled instance serves:
+    /// the wiring, node position, occurrence and component tuple this checkout
+    /// runs under (`wamn-0h0g.7.9`). The driver binds it before `handler.run`
+    /// and revokes it before returning the instance to the pool, exactly as the
+    /// HTTP and blobstore surfaces do. Absent (the default) ⇒ this plugin holds
+    /// no wiring position, which is what every non-router path (S2..S6, the
+    /// gateway, benches) carries.
+    ///
+    /// Its OWN registry rather than a read of the HTTP plugin's, for the reason
+    /// `wamn_blobstore::plugin` records in its module doc: a second reader on
+    /// one plugin's registry couples siblings over something neither owns.
+    /// Nothing authorizes against it — it is the host-attested half of the
+    /// coordinates an effect span names, and the run half is
+    /// [`current_run_for`](Self::current_run_for).
+    invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
     /// Verified SQL facts bound by operation plus the one invocation-active
     /// scope. The active scope is host-selected; a guest can only name a digest
     /// inside it.
@@ -714,6 +731,7 @@ impl WamnPostgres {
             operations: std::sync::RwLock::new(HashMap::new()),
             release_identities: std::sync::RwLock::new(HashMap::new()),
             current_run: std::sync::RwLock::new(HashMap::new()),
+            invocations: std::sync::RwLock::new(HashMap::new()),
             statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
@@ -1064,6 +1082,48 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Bind the exact invocation facts before entering one pooled component
+    /// (`wamn-0h0g.7.9`), so a postgres effect can name the wiring and node
+    /// position it was raised under.
+    ///
+    /// A still-bound owner refuses rather than silently replacing leaked
+    /// state — the rule the HTTP and blobstore registries hold, for the same
+    /// reason: a stale invocation would label the next guest's effects with the
+    /// previous one's wiring position.
+    pub fn bind_invocation(
+        &self,
+        component_id: &str,
+        invocation: ConnectionInvocation,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!component_id.is_empty(), "component id must be present");
+        let mut invocations = self
+            .invocations
+            .write()
+            .map_err(|_| anyhow::anyhow!("postgres invocation registry is poisoned"))?;
+        anyhow::ensure!(
+            !invocations.contains_key(component_id),
+            "component {component_id} still holds a bound postgres invocation"
+        );
+        invocations.insert(component_id.to_owned(), invocation);
+        Ok(())
+    }
+
+    /// Release the invocation when the instance returns to the pool.
+    pub fn revoke_invocation(&self, component_id: &str) {
+        if let Ok(mut invocations) = self.invocations.write() {
+            invocations.remove(component_id);
+        }
+    }
+
+    /// The invocation currently bound to one pooled instance.
+    #[must_use]
+    pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
+        self.invocations
+            .read()
+            .ok()
+            .and_then(|invocations| invocations.get(component_id).cloned())
+    }
+
     /// Bind EVERY per-component-id claim registry this plugin keeps to one
     /// identity, for the length of one execution checkout (wamn-0h0g.17.7).
     ///
@@ -1249,8 +1309,9 @@ impl WamnPostgres {
     /// statement registry this plugin keeps for a workload
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the executing operation, the carried
-    /// release identity, and the causation run context — all set at
-    /// workload bind (or via the runner channel) and keyed by component id.
+    /// release identity, the causation run context, and the bound invocation —
+    /// all set at workload bind (or via the runner or driver channel) and keyed
+    /// by component id.
     /// Without this a stale claim
     /// survives unbind, the maps grow across workload churn, and a rebound
     /// component id inherits the prior claim. The lifecycle pool maps are
@@ -1301,6 +1362,9 @@ impl WamnPostgres {
             .write()
             .expect("current_run lock poisoned")
             .retain(|c, _| retain(c));
+        if let Ok(mut invocations) = self.invocations.write() {
+            invocations.retain(|c, _| retain(c));
+        }
         self.clear_statement_bindings(workload_id);
     }
 

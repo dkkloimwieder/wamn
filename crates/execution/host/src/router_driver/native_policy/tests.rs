@@ -202,6 +202,9 @@ struct Observation {
     native_identity: bool,
     claims: Option<SessionClaims>,
     invocation: Option<ConnectionInvocation>,
+    /// The same host-attested coordinates as seen from the postgres surface,
+    /// which binds its own registry (`wamn-0h0g.7.9`).
+    postgres_invocation: Option<ConnectionInvocation>,
     logging: Option<(String, String)>,
     caller: Option<wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller>,
     deadline: Option<Instant>,
@@ -261,6 +264,7 @@ impl HostPlugin for Observe {
                         .contains_key(&scope);
                     let claims = policy.resources.postgres.session_claims(&scope);
                     let invocation = policy.resources.blobstore.invocation(&scope);
+                    let postgres_invocation = policy.resources.postgres.invocation(&scope);
                     let logging = policy.resources.logging.claim_snapshot(&scope);
                     let _effect = invocation
                         .as_ref()
@@ -286,6 +290,7 @@ impl HostPlugin for Observe {
                         native_identity,
                         claims,
                         invocation,
+                        postgres_invocation,
                         logging,
                         caller,
                         deadline,
@@ -653,6 +658,14 @@ impl Fixture {
             assert!(
                 self.policy
                     .resources
+                    .postgres
+                    .invocation(&event.scope)
+                    .is_none(),
+                "revoke releases the postgres invocation with every other registry"
+            );
+            assert!(
+                self.policy
+                    .resources
                     .logging
                     .claim_snapshot(&event.scope)
                     .is_none()
@@ -761,6 +774,7 @@ async fn run_case(case: Case) {
             );
             assert!(event.claims.is_none());
             assert!(event.invocation.is_none());
+            assert!(event.postgres_invocation.is_none());
             assert!(event.logging.is_none());
         } else {
             assert!(
@@ -792,6 +806,13 @@ async fn run_case(case: Case) {
                 .expect("execution has host authority");
             assert_eq!(invocation.wiring_id, "trusted-wiring");
             assert_eq!(invocation.node_id, "trusted-node");
+            // The postgres surface reaches the SAME node and wiring
+            // coordinates, from its own registry, for the whole invocation.
+            assert_eq!(
+                event.postgres_invocation.as_ref(),
+                Some(invocation),
+                "a postgres effect can name the node that raised it"
+            );
             assert_eq!(
                 invocation.operation, ROOT,
                 "refused child never gains an execution scope"

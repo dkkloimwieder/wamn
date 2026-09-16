@@ -4,6 +4,7 @@ use super::super::statements::{StatementField, StatementValueType};
 use super::super::{SqlValue, StatementError};
 use super::transactions::{CLAIM_SQL, causation_emit_sql};
 use super::*;
+use crate::plugins::connection_http::{ConnectionExecutionClosure, ConnectionOrigin};
 use tokio_postgres::NoTls;
 
 fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
@@ -563,6 +564,58 @@ fn set_and_clear_current_run_is_per_component() {
     assert!(pg.current_run_for("c1").is_none());
 }
 
+/// One host-attested invocation, as the router driver binds it.
+fn invocation(node_id: &str) -> ConnectionInvocation {
+    ConnectionInvocation {
+        origin: ConnectionOrigin {
+            wiring_package_id: "package_a".to_string(),
+            package_id: "package_a".to_string(),
+            component_digest: format!("sha256:{}", "a".repeat(64)),
+            component: "receiver".to_string(),
+            interface_version: "0.1.0".to_string(),
+            operation: "wamn-receiving:purchase-order/update@1.0.0".to_string(),
+        },
+        package_id: "package_a".to_string(),
+        wiring_id: "orders".to_string(),
+        wiring_version: 3,
+        node_id: node_id.to_string(),
+        occurrence: 1,
+        component_digest: format!("sha256:{}", "a".repeat(64)),
+        component: "receiver".to_string(),
+        operation: "wamn-receiving:purchase-order/update@1.0.0".to_string(),
+        closure: ConnectionExecutionClosure::Released,
+        effects: None,
+    }
+}
+
+// wamn-0h0g.7.9 — the node and wiring half of a postgres effect's coordinates.
+// Bound per component id, refused while one is still bound, and released by
+// revoke; the run half is `current_run_for`, set beside it by the same driver.
+#[test]
+fn bind_and_revoke_invocation_is_per_component() {
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+    assert!(pg.invocation("c1").is_none());
+    pg.bind_invocation("c1", invocation("receive"))
+        .expect("a fresh component accepts its invocation");
+    assert_eq!(pg.invocation("c1").unwrap().node_id, "receive");
+    // A still-bound owner refuses rather than inheriting the next node's position.
+    assert!(pg.bind_invocation("c1", invocation("ship")).is_err());
+    assert_eq!(pg.invocation("c1").unwrap().node_id, "receive");
+    // A second component is independent.
+    assert!(pg.invocation("c2").is_none());
+    pg.bind_invocation("c2", invocation("ship"))
+        .expect("a second component binds its own invocation");
+    // An empty component id names no pooled instance.
+    assert!(pg.bind_invocation("", invocation("receive")).is_err());
+    pg.revoke_invocation("c1");
+    assert!(pg.invocation("c1").is_none());
+    assert_eq!(pg.invocation("c2").unwrap().node_id, "ship");
+    // Revoke is idempotent; rebinding a released scope succeeds.
+    pg.revoke_invocation("c1");
+    pg.bind_invocation("c1", invocation("ship"))
+        .expect("a revoked scope rebinds");
+}
+
 // R31 — unbind reaps every per-component claim registry plus the closed
 // workload-authority discriminator while leaving another workload's
 // component untouched; the project-keyed `pools` map is never touched here.
@@ -591,6 +644,8 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
                 depth: 0,
             }),
         );
+        pg.bind_invocation(c, invocation("receive"))
+            .expect("each component binds its invocation");
     }
 
     // Unbinding an UNKNOWN workload clears nothing.
@@ -613,6 +668,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     assert_eq!(pg.user_id_for("wl-a-component-0"), None);
     assert_eq!(pg.operation_for("wl-a-component-0"), None);
     assert!(pg.current_run_for("wl-a-component-0").is_none());
+    assert!(pg.invocation("wl-a-component-0").is_none());
 
     // The other workload's component is untouched across the board.
     assert_eq!(pg.tenant_for("wl-b-component-0").as_deref(), Some("acme"));
@@ -639,6 +695,10 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
         Some("wamn-receiving:purchase-order/update@1.0.0")
     );
     assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
+    assert_eq!(
+        pg.invocation("wl-b-component-0").unwrap().node_id,
+        "receive"
+    );
 }
 
 // ------------------------------------------------------------------

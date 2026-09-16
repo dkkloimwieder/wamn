@@ -173,6 +173,12 @@ impl NativePolicy {
         resources
             .postgres
             .set_current_run(scope, acquisition.causation.clone());
+        // The run half of a postgres effect's coordinates is `set_current_run`
+        // above; this is the node and wiring half (`wamn-0h0g.7.9`). Both are
+        // host-attested, and the surface that reads them is the plugin's.
+        resources
+            .postgres
+            .bind_invocation(scope, acquisition.invocation.clone())?;
         resources
             .postgres
             .bind_prepared_statement_operation(scope, operation, statement_set)?;
@@ -235,6 +241,7 @@ impl NativePolicy {
         self.resources.blobstore.revoke_invocation(scope);
         self.resources.connection_http.revoke_invocation(scope);
         self.resources.logging.clear_claim(scope);
+        self.resources.postgres.revoke_invocation(scope);
         self.resources.postgres.revoke_session_claims(scope);
         self.resources.postgres.clear_statement_scope(scope);
     }
