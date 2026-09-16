@@ -193,6 +193,10 @@ COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
 COPY apps /build/apps
+# The apps workspace declares wamn-test-postgres by path. Cargo reads every
+# workspace member's manifest before it builds one guest, so this stage needs
+# the directory even though no guest links it (wamn-i9rg).
+COPY test-support /build/test-support
 WORKDIR /build/apps
 
 FROM component-toolchain AS component-builder
