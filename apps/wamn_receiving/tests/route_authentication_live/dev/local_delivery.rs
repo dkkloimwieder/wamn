@@ -20,13 +20,17 @@ use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
 
 const CODE: &str = "apps/wamn_receiving/component/src/lib.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
-const SCHEMA: &str = "apps/wamn_receiving/migrations/0001_initial.sql";
+const MANIFEST: &str = "apps/wamn_receiving/wamn.json";
+const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
+const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
+const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
 const CODE_BEFORE: &str =
     "invoke_operation(wamn_receiving_data_access::operation::location_list(&input))";
 const CODE_AFTER: &str = "invoke_operation(wamn_receiving_data_access::operation::location_list(&input.replace(\"timing-original\", \"timing-edited\")))";
-const SCHEMA_BEFORE: &str = "location_code text NOT NULL CONSTRAINT";
-const SCHEMA_AFTER: &str =
-    "location_code text NOT NULL DEFAULT 'delivery-reset' CONSTRAINT";
+const MANIFEST_BEFORE: &str = "\"table\": \"location\",\n      \"owner\": \"wamn_receiving\",\n      \"server_owned_fields\": [\n        \"id\"\n      ],";
+const MANIFEST_AFTER: &str = "\"table\": \"location\",\n      \"owner\": \"wamn_receiving\",\n      \"server_owned_fields\": [\n        \"id\",\n        \"note\"\n      ],";
+const OWNER_BEFORE: &str = "\"id\",\n        \"note\"\n      ],";
+const OWNER_AFTER: &str = "\"id\",\n        \"note\"\n      ],\n      \"field_owners\": {\n        \"note\": \"wamn_receiving\"\n      },";
 
 #[tokio::test]
 #[ignore = "requires: WAMN_LOCAL_DEV_EDIT_ROOT, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
@@ -160,14 +164,25 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         let repaired = watch.served().await?;
         repaired.retained(&sql, &["migrate", "introspect"])?;
 
-        original.replace(SCHEMA, SCHEMA_BEFORE, SCHEMA_AFTER)?;
+        fs::write(repository.join(APPENDED), APPENDED_SQL)?;
+        let appended = watch.served().await?;
+        appended.retained(&repaired, &[])?;
+        ensure!(!appended.skipped.contains("migrate"), "an appended migration must reach the kept target");
+        ensure!(location_note(&environment.route.database_url).await?, "the kept target lacks the appended column");
+        appended.locations(token, "timing-edited", &["DOCK-2", "DOCK-1"]).await?;
+        require_revision(&environment.route.database_url).await?;
+
+        original.replace(MANIFEST, MANIFEST_BEFORE, MANIFEST_AFTER)?;
+        let declared = watch.served().await?;
+        declared.retained(&appended, &[])?;
+        declared.locations(token, "timing-edited", &["DOCK-2", "DOCK-1"]).await?;
+        require_revision(&environment.route.database_url).await?;
+
+        original.replace(MANIFEST, OWNER_BEFORE, OWNER_AFTER)?;
         let reset = watch.served().await?;
-        ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a schema edit must create a new target instance");
+        ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a declared definition owner must create a new target instance");
         reset.locations(token, "timing-edited", &[]).await?;
-        let (project, task) = connect(&environment.route.database_url).await?;
-        let applied: bool = project.query_one("SELECT column_default = '''delivery-reset''::text' FROM information_schema.columns WHERE table_schema = 'receiving' AND table_name = 'location' AND column_name = 'location_code'", &[]).await?.get(0);
-        task.abort();
-        ensure!(applied, "the recreated target lacks the actual schema edit");
+        ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
         ensure!(current_database_acl(admin.as_ref()).await? == system_acl, "the local loop changed the system database ACL");
         Ok::<_, anyhow::Error>(())
@@ -209,6 +224,13 @@ async fn require_revision(url: &str) -> anyhow::Result<()> {
         "a compatible save lost or replayed the authenticated mutation"
     );
     Ok(())
+}
+
+async fn location_note(url: &str) -> anyhow::Result<bool> {
+    let (client, task) = connect(url).await?;
+    let present: bool = client.query_one("SELECT count(*) = 1 FROM information_schema.columns WHERE table_schema = 'receiving' AND table_name = 'location' AND column_name = 'note'", &[]).await?.get(0);
+    task.abort();
+    Ok(present)
 }
 
 async fn require_local_facts(
@@ -597,10 +619,18 @@ impl SavedSource {
     fn capture(repository: &Path) -> anyhow::Result<Self> {
         let mut files = BTreeMap::new();
         let mut directories = BTreeMap::new();
-        for relative in [CODE, SQL, SCHEMA] {
+        for relative in [CODE, SQL, MANIFEST] {
             capture_file(repository, &repository.join(relative), &mut files)?;
         }
         let mut outputs = Vec::new();
+        // The appended migration is a new file, so restore owns the whole directory.
+        capture_tree(
+            repository,
+            &repository.join(MIGRATIONS),
+            &mut files,
+            &mut directories,
+        )?;
+        outputs.push(PathBuf::from(MIGRATIONS));
         for package in ["wamn_receiving", "client_acme_receiving"] {
             for output in ["generated", "tests/.sqlx"] {
                 let relative = PathBuf::from("apps").join(package).join(output);
