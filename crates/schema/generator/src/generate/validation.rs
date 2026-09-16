@@ -1062,6 +1062,38 @@ fn validate_constraint_error_mappings(
     Ok(())
 }
 
+/// Admit one reported DELETE target, or refuse it with the reason.
+///
+/// A DELETE FROM removes the row, so only a model that declares
+/// `delete_mode: hard` admits one. A tombstone delete is an UPDATE and removes
+/// no row, and a relation that no model declares carries no delete authority at
+/// all. The lexer reports the target; this decides it against the manifest.
+fn validate_delete_target(
+    manifest: &PackageManifest,
+    schemas: &BTreeSet<&str>,
+    operation: &str,
+    path: &str,
+    target: &str,
+) -> Result<(), GenerateError> {
+    let model = manifest
+        .models
+        .values()
+        .find(|model| model.table == target && schemas.contains(model.schema.as_str()));
+    let refusal = match model.map(|model| model.delete_mode) {
+        Some(Some(DeleteMode::Hard)) => return Ok(()),
+        Some(Some(DeleteMode::Tombstone)) => {
+            "declares delete_mode: tombstone, and a tombstone delete is an UPDATE that removes no row"
+        }
+        Some(None) => "declares no delete_mode",
+        None => "is not a declared model",
+    };
+    Err(GenerateError::for_path(
+        GenerateErrorKind::InvalidOperation,
+        format!("{operation} SQL deletes from {target}, which {refusal}"),
+        path,
+    ))
+}
+
 fn validate_static_sql_relation_access(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
@@ -1119,6 +1151,16 @@ fn validate_static_sql_relation_access(
                     statement.path.as_str(),
                 )
             })?;
+        let deleted = crate::sql_lex::delete_targets(source.bytes).map_err(|detail| {
+            GenerateError::for_path(
+                GenerateErrorKind::InvalidOperation,
+                format!("{}: {detail}", statement.path),
+                statement.path.as_str(),
+            )
+        })?;
+        for target in &deleted {
+            validate_delete_target(manifest, &schemas, operation, &statement.path, target)?;
+        }
         for (table, observed) in statement_access {
             let aggregate = actual.entry(table).or_default();
             aggregate.select_fields.extend(observed.select_fields);

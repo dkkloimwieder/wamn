@@ -503,8 +503,6 @@ fn push_returning(pieces: &mut Vec<Piece>, columns: &[&'static str], label: bool
 /// A statement the lexer must refuse. Every variant is a distinct refusal path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Forbidden {
-    DeleteFrom,
-    DeleteInsideCte,
     UnsupportedEffect(&'static str),
     SelectStar,
     ReturningStar,
@@ -523,8 +521,6 @@ impl Forbidden {
     /// Every refusal path, committed as cases rather than sampled.
     pub(crate) fn all() -> Vec<Self> {
         let mut cases = vec![
-            Self::DeleteFrom,
-            Self::DeleteInsideCte,
             Self::SelectStar,
             Self::ReturningStar,
             Self::TupleAssignment,
@@ -547,17 +543,6 @@ impl Forbidden {
 
     pub(crate) fn pieces(self) -> Vec<Piece> {
         match self {
-            Self::DeleteFrom => idents(&["delete", "from", "item"]),
-            Self::DeleteInsideCte => {
-                let mut pieces = idents(&["with", "removed", "as"]);
-                pieces.push(Piece::LeftParen);
-                pieces.extend(idents(&["delete", "from", "item", "returning", "id"]));
-                pieces.push(Piece::RightParen);
-                pieces.extend(idents(&["select", "removed"]));
-                pieces.push(Piece::Dot);
-                pieces.extend(idents(&["id", "from", "removed"]));
-                pieces
-            }
             Self::UnsupportedEffect(effect) => vec![Piece::Ident(effect), Piece::Ident("item")],
             Self::SelectStar => {
                 let mut pieces = idents(&["select"]);
@@ -627,6 +612,22 @@ impl Forbidden {
             ]),
         }
     }
+}
+
+/// The DELETE shapes the lexer reports rather than refuses: a top-level one and
+/// one inside a CTE. Both delete from `item`; the manifest decides them.
+pub(crate) fn delete_shapes() -> [Vec<Piece>; 2] {
+    let cte = {
+        let mut pieces = idents(&["with", "removed", "as"]);
+        pieces.push(Piece::LeftParen);
+        pieces.extend(idents(&["delete", "from", "item", "returning", "id"]));
+        pieces.push(Piece::RightParen);
+        pieces.extend(idents(&["select", "removed"]));
+        pieces.push(Piece::Dot);
+        pieces.extend(idents(&["id", "from", "removed"]));
+        pieces
+    };
+    [idents(&["delete", "from", "item"]), cte]
 }
 
 fn idents(words: &[&'static str]) -> Vec<Piece> {

@@ -45,7 +45,8 @@ pub(crate) fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> b
 /// authored by the Receiving POC: SELECT, INSERT, UPDATE, CTEs, qualified
 /// relation references, and explicit row-lock clauses. Bind and result shapes
 /// remain owned by the two-sibling verifier; this pass joins the verified SQL
-/// to the manifest's relation authority declaration.
+/// to the manifest's relation authority declaration. A DELETE FROM derives no
+/// privilege here; [`delete_targets`] reports it for the manifest to decide.
 pub(crate) fn relation_access(
     sql: &[u8],
     relations: &BTreeMap<String, BTreeSet<String>>,
@@ -154,6 +155,31 @@ pub(crate) fn relation_access(
 
     access.retain(|_, privileges| privileges != &RelationAccess::default());
     Ok(access)
+}
+
+/// Report every relation one authored SQL artifact deletes rows from.
+///
+/// The lexer holds no manifest, so it decides nothing here: a DELETE FROM is a
+/// reported fact. `validate_static_sql_relation_access` holds the manifest and
+/// admits a target only when its model declares `delete_mode: hard`. The scan
+/// is flat over the token stream, so it reaches a DELETE inside a CTE exactly
+/// as it reaches a top-level one.
+pub(crate) fn delete_targets(sql: &[u8]) -> Result<BTreeSet<String>, &'static str> {
+    let tokens = tokens(sql);
+    let mut targets = BTreeSet::new();
+    for index in 0..tokens.len() {
+        if identifier(&tokens[index]) != Some("delete")
+            || tokens.get(index + 1).and_then(identifier) != Some("from")
+        {
+            continue;
+        }
+        let target = tokens
+            .get(index + 2)
+            .and_then(identifier)
+            .ok_or("DELETE FROM must name its target relation")?;
+        targets.insert(target.to_owned());
+    }
+    Ok(targets)
 }
 
 fn depths(tokens: &[Token]) -> Result<Vec<usize>, &'static str> {
@@ -374,13 +400,10 @@ fn parse_returning(
 }
 
 fn refuse_unsupported_effects(tokens: &[Token]) -> Result<(), &'static str> {
-    for (index, token) in tokens.iter().enumerate() {
+    for token in tokens {
         let Some(keyword) = identifier(token) else {
             continue;
         };
-        if keyword == "delete" && tokens.get(index + 1).and_then(identifier) == Some("from") {
-            return Err("DELETE authority is not admitted by the command manifest");
-        }
         if matches!(
             keyword,
             "alter"
@@ -778,7 +801,7 @@ mod tests {
     use proptest::prelude::ProptestConfig;
     use proptest::{prop_assert, prop_assert_eq, proptest};
 
-    use super::grammar::{Forbidden, Piece, Statement, Style, catalog, render};
+    use super::grammar::{Forbidden, Piece, Statement, Style, catalog, delete_shapes, render};
     use super::*;
 
     /// Derive the access of one rendered piece list against the grammar catalog.
@@ -879,6 +902,22 @@ mod tests {
             let sql = render(&statement.pieces(), &style);
             prop_assert!(!contains_schema_qualified_reference(sql.as_bytes(), "sched"), "{sql}");
         }
+
+        /// LEX-6: a DELETE FROM is a reported target, not a refusal. The
+        /// manifest owns the decision, so no rendering may hide the relation a
+        /// DELETE names, and no inert body may invent one.
+        #[test]
+        fn a_delete_target_is_reported_under_every_rendering(style: Style) {
+            for pieces in delete_shapes() {
+                let sql = render(&pieces, &style);
+                prop_assert_eq!(
+                    delete_targets(sql.as_bytes()),
+                    Ok(["item".to_owned()].into_iter().collect()),
+                    "{}",
+                    sql
+                );
+            }
+        }
     }
 
     /// The refusal paths as committed cases, so the set is enumerated rather
@@ -957,6 +996,24 @@ mod tests {
     }
 
     #[test]
+    fn a_delete_reports_its_target_and_derives_no_privilege() {
+        let cte = b"WITH removed AS (DELETE FROM item RETURNING id) SELECT removed.id FROM removed";
+        let item = ["item".to_owned()].into_iter().collect::<BTreeSet<_>>();
+        assert_eq!(relation_access(cte, &relations()).unwrap(), BTreeMap::new());
+        assert_eq!(delete_targets(cte).unwrap(), item);
+        assert_eq!(
+            delete_targets(b"DELETE FROM item WHERE item.id = $1").unwrap(),
+            item
+        );
+        assert!(
+            delete_targets(b"SELECT item.id FROM item")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(delete_targets(b"DELETE FROM").is_err());
+    }
+
+    #[test]
     fn row_image_reads_every_column_of_the_relation_it_names() {
         let every_column = RelationAccess {
             select_fields: ["id".to_owned(), "status".to_owned()].into_iter().collect(),
@@ -975,14 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_effect_and_opaque_returning_refuse() {
-        assert!(
-            relation_access(
-                b"WITH removed AS (DELETE FROM item RETURNING id) SELECT removed.id FROM removed",
-                &relations(),
-            )
-            .is_err()
-        );
+    fn opaque_returning_and_tuple_assignment_refuse() {
         assert!(
             relation_access(
                 b"INSERT INTO item (id, status) VALUES ($1, $2) RETURNING *",
