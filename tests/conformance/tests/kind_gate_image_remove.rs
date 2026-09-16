@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 const TOOL: &str = "tools/kind-gate-image-remove";
+/// The tool requires an explicit cluster and refuses the frozen name
+/// `wamn`, so every case here names its own disposable cluster.
+const CLUSTER: &str = "gate-conformance";
 const SELECTED: &str = "wamn-gates:cf-wave1-0123456789abcdef";
 const CANONICAL: &str = "docker.io/library/wamn-gates:cf-wave1-0123456789abcdef";
 const SECOND_SELECTED: &str = "wamn-gates:cf-wave2-fedcba9876543210";
@@ -26,7 +29,7 @@ set -euo pipefail
 printf 'kind' >>"$FAKE_CALLS"
 printf '\t%q' "$@" >>"$FAKE_CALLS"
 printf '\n' >>"$FAKE_CALLS"
-[[ "$*" == "get nodes --name wamn" ]] || exit 64
+[[ "$*" == "get nodes --name gate-conformance" ]] || exit 64
 if [[ "${FAKE_SCENARIO:-}" != no-nodes ]]; then
   printf 'node-a\nnode-b\n'
 fi
@@ -220,6 +223,12 @@ fn add_second_selected_tag(directory: &TestDirectory) {
 }
 
 fn run(directory: &TestDirectory, scenario: &str, arguments: &[&str]) -> Output {
+    let mut named = vec!["--cluster", CLUSTER];
+    named.extend_from_slice(arguments);
+    run_exact(directory, scenario, &named)
+}
+
+fn run_exact(directory: &TestDirectory, scenario: &str, arguments: &[&str]) -> Output {
     Command::new("bash")
         .arg(repository_root().join(TOOL))
         .args(arguments)
@@ -251,7 +260,7 @@ fn dry_run_plans_every_node_without_mutation() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("SUMMARY mode=dry-run cluster=wamn nodes=2 selected=1"));
+    assert!(stdout.contains("SUMMARY mode=dry-run cluster=gate-conformance nodes=2 selected=1"));
     assert_eq!(stdout.matches("remove-image=").count(), 6);
     assert!(image_state(&directory, "node-a").contains(CANONICAL));
     assert!(!calls(&directory).contains("images\trm"));
@@ -372,6 +381,35 @@ fn malformed_workload_list_fails_closed() {
             .contains("failed to parse Kubernetes workload image references")
     );
     assert!(!calls(&directory).contains("docker\texec"));
+}
+
+/// The frozen cluster is never a fixture, and a default made it one keystroke
+/// away. The journey lifecycle scripts already refuse the name (wamn-edsx).
+#[test]
+fn the_frozen_cluster_and_an_absent_cluster_are_refused_before_any_call() {
+    let directory = setup(false, &[]);
+
+    let frozen = run_exact(
+        &directory,
+        "",
+        &["--cluster", "wamn", "--image", SELECTED, "--apply"],
+    );
+
+    assert_eq!(frozen.status.code(), Some(64));
+    assert_eq!(
+        String::from_utf8_lossy(&frozen.stderr),
+        "The kind-wamn cluster is frozen.\n"
+    );
+    assert_eq!(calls(&directory), "", "the refused run reached a CLI");
+
+    let absent = run_exact(&directory, "", &["--image", SELECTED, "--apply"]);
+
+    assert_eq!(absent.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&absent.stderr).contains("--cluster NAME"),
+        "the refusal must name the missing input"
+    );
+    assert_eq!(calls(&directory), "", "the refused run reached a CLI");
 }
 
 #[test]

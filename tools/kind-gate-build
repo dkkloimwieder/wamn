@@ -5,10 +5,10 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: kind-gate-build --image REF --cache-ref REF [options]
+usage: kind-gate-build --image REF --cache-ref REF --cluster NAME [options]
   --image REF       Exact wamn-gates tag to build and load
   --cache-ref REF   Stable caller-owned OCI reference for BuildKit cache
-  --cluster NAME    kind cluster name (default: wamn)
+  --cluster NAME    kind cluster name (required; the name wamn is refused)
   --builder NAME    Explicit buildx builder (default: current builder)
   --context DIR     Docker build context (default: repository root)
 
@@ -21,7 +21,7 @@ EOF
 
 image=
 cache_ref=
-cluster=wamn
+cluster=
 builder=
 context=
 
@@ -37,10 +37,11 @@ while (($#)); do
   esac
 done
 
-if [[ -z "$image" || -z "$cache_ref" ]]; then
+if [[ -z "$image" || -z "$cache_ref" || -z "$cluster" ]]; then
   usage
   exit 2
 fi
+case "$cluster" in wamn) printf 'The kind-wamn cluster is frozen.\n' >&2; exit 64 ;; esac
 if [[ ! "$image" =~ ^(docker\.io/library/)?wamn-gates:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
   echo "--image must be an exact wamn-gates tag: $image" >&2
   exit 2

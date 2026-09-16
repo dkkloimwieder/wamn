@@ -5,8 +5,8 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: kind-gate-image-remove --image REF [--image REF ...] [options]
-  --cluster NAME                  kind cluster name (default: wamn)
+usage: kind-gate-image-remove --image REF [--image REF ...] --cluster NAME [options]
+  --cluster NAME                  kind cluster name (required; wamn is refused)
   --image REF                     Exact wamn-gates tag to remove; repeatable
   --apply                         Perform the planned removals (default: dry-run)
   --remove-orphaned-containers    Remove exited CRI containers whose Pod is gone
@@ -17,7 +17,7 @@ unselected tag or referenced by a Kubernetes workload.
 EOF
 }
 
-cluster=wamn
+cluster=
 apply=false
 remove_orphaned_containers=false
 declare -a requested_images=()
@@ -33,6 +33,11 @@ while (($#)); do
   esac
 done
 
+if [[ -z "$cluster" ]]; then
+  usage
+  exit 2
+fi
+case "$cluster" in wamn) printf 'The kind-wamn cluster is frozen.\n' >&2; exit 64 ;; esac
 if [[ ! "$cluster" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
   echo "invalid --cluster value: $cluster" >&2
   exit 2
