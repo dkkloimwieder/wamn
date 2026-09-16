@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_ctl::delivery::Candidate;
+use wamn_control::delivery::Candidate;
 use wamn_test_infrastructure::rendering::kubernetes_documents;
 
 use super::super::{ORG, PROJECT, RELEASE_ID, TENANT};
@@ -81,7 +81,7 @@ async fn exercise(
         &cluster.artifacts.target.join("debug/wamn-scenario-worker"),
     )
     .await?;
-    let carrier = wamn_ctl::print_release_env::lookup_release_carrier(
+    let carrier = wamn_control::print_release_env::lookup_release_carrier(
         &route.database_url,
         TENANT,
         RELEASE_ID,
@@ -383,7 +383,7 @@ fn artifact(cluster: &ReceivingCluster, name: &str, value: &Value) -> anyhow::Re
 
 fn executor(
     cluster: &ReceivingCluster,
-    carrier: &wamn_ctl::print_release_env::ReleaseCarrier,
+    carrier: &wamn_control::print_release_env::ReleaseCarrier,
     image: &str,
 ) -> anyhow::Result<Value> {
     let mut document = kubernetes_documents(&fs::read(
@@ -474,7 +474,7 @@ async fn step(
         .current_dir(&cluster.resources.repository)
         .kill_on_drop(true);
     let output =
-        wamn_ctl::delivery::qualification::execute_owned(command, Duration::from_secs(3 * 60 * 60))
+        wamn_control::delivery::qualification::execute_owned(command, Duration::from_secs(3 * 60 * 60))
             .await
             .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
             .with_context(|| format!("execute owned delivery {name}"))?;

@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_jetstream::{
 };
 
 use super::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
-use crate::print_release_env::ReleaseCarrier;
+use wamn_control::print_release_env::ReleaseCarrier;
 
 /// Number of stages in one development-loop run.
 pub const DEV_STAGE_COUNT: usize = DEV_STAGE_ORDER.len();

@@ -23,7 +23,7 @@ pub(super) async fn components_and_tools(
     evidence: &Path,
     standard_images: bool,
 ) -> anyhow::Result<Artifacts> {
-    let candidate = wamn_ctl::delivery::Candidate::from_env()?;
+    let candidate = wamn_control::delivery::Candidate::from_env()?;
     let target = candidate
         .as_ref()
         .map(|candidate| candidate.target_directory.clone())

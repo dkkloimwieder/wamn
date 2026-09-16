@@ -317,7 +317,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         Ok(result) => match (result, cleanup) {
             (Ok(()), Ok(())) => {
                 if let Some((candidate, manifest)) = &candidate {
-                    wamn_ctl::delivery::report_candidate_success(candidate, manifest)?;
+                    wamn_control::delivery::report_candidate_success(candidate, manifest)?;
                 }
                 Ok(())
             }
@@ -452,7 +452,7 @@ async fn run_created(
     drop(source_observed);
     drop(advisory_observed);
     drop(context);
-    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         if let Some(image) = &candidate.executor_image {
             let binary = crate::delivery::executor_launcher(work, image, &format!("{cluster}-executor"))?;
             wamn_test_infrastructure::executor::assert_idle_lifecycle(

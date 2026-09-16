@@ -25,7 +25,7 @@ use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
 use wamn_ctl::dev::environment::{JourneyCredentials, connect};
-use wamn_ctl::print_release_env::{self, ReleaseCarrier};
+use wamn_control::print_release_env::{self, ReleaseCarrier};
 use wamn_ctl::provision_org::{self, TemplateArg};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
@@ -472,7 +472,7 @@ pub async fn publish(
         package_manifests: vec![root.join("wamn.json")],
     })
     .await?;
-    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let (project, task) = connect(&route.database_url).await?;
         let snapshot = project.query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",

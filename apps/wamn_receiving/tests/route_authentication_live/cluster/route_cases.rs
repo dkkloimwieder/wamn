@@ -258,7 +258,7 @@ pub(super) async fn finish(
     )?;
     result?;
     if let Some((candidate, manifest)) = &cluster.resources.candidate {
-        wamn_ctl::delivery::report_candidate_success(candidate, manifest)?;
+        wamn_control::delivery::report_candidate_success(candidate, manifest)?;
     }
     Ok(())
 }

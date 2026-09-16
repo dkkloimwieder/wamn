@@ -16,7 +16,7 @@ pub(super) async fn build(
     generated_terminal: bool,
     delivery: bool,
 ) -> anyhow::Result<()> {
-    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         candidate.artifact_hashes()?;
         for name in [
             "wamn-ctl",

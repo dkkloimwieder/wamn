@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_ctl::print_release_env::lookup_release_carrier;
+use wamn_control::print_release_env::lookup_release_carrier;
 use wamn_test_infrastructure::workload;
 
 use super::{deployment, install_host, provision, route_cases, session_cluster, start};

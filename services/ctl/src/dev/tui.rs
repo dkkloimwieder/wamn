@@ -551,7 +551,7 @@ mod tests {
         dev_read_channel,
     };
     use crate::dev::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
-    use crate::print_release_env::ReleaseCarrier;
+    use wamn_control::print_release_env::ReleaseCarrier;
 
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 

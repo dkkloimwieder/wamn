@@ -38,7 +38,7 @@ pub(super) async fn run_selected(
     evidence: &std::path::Path,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        wamn_ctl::delivery::Candidate::from_env()?.is_none()
+        wamn_control::delivery::Candidate::from_env()?.is_none()
             || matches!(base, BaseCandidate::Baseline),
         "supplied-artifact execution supports only the baseline Receiving and Acme installation"
     );
@@ -72,7 +72,7 @@ pub(super) async fn run_selected(
     )?;
     result?;
     if let Some((candidate, manifest)) = &cluster.resources.candidate {
-        wamn_ctl::delivery::report_candidate_success(candidate, manifest)?;
+        wamn_control::delivery::report_candidate_success(candidate, manifest)?;
     }
     Ok(())
 }

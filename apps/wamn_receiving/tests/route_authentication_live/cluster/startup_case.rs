@@ -11,7 +11,7 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::process::Child;
-use wamn_ctl::print_release_env::ReleaseCarrier;
+use wamn_control::print_release_env::ReleaseCarrier;
 
 use super::{ReceivingCluster, checked, kubectl, write_private};
 

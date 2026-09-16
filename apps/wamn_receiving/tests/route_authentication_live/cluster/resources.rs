@@ -28,7 +28,7 @@ pub(super) struct Resources {
     pub host_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
-    pub candidate: Option<(wamn_ctl::delivery::Candidate, wamn_catalog::ServingManifest)>,
+    pub candidate: Option<(wamn_control::delivery::Candidate, wamn_catalog::ServingManifest)>,
     pub reader: Option<(
         pg_walstream::CancellationToken,
         tokio::task::JoinHandle<anyhow::Result<()>>,

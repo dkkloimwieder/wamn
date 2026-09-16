@@ -2,7 +2,7 @@
 
 use anyhow::{Context as _, ensure};
 use wamn_catalog::ServingManifest;
-use wamn_ctl::delivery::Candidate;
+use wamn_control::delivery::Candidate;
 
 pub(crate) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>> {
     let Some(candidate) = Candidate::from_env()? else {

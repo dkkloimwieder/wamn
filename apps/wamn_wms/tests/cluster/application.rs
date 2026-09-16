@@ -32,7 +32,7 @@ pub(super) async fn prepare_application(
     mint_only: bool,
 ) -> anyhow::Result<(
     wamn_control::provision_project_env::ProvisionedRoute,
-    wamn_ctl::print_release_env::ReleaseCarrier,
+    wamn_control::print_release_env::ReleaseCarrier,
 )> {
     crate::environment::install_control(admin_url, &inputs.system_pg_url).await?;
     let issuer = wamn_ctl::dev::pat_issuer::start_for_issuer(
@@ -155,7 +155,7 @@ pub(super) fn render_host(
             )),
         },
     )?;
-    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         rendered.base = crate::delivery::host_values(
             &rendered.base,
             &crate::delivery::image_reference(&candidate.host_image)?,

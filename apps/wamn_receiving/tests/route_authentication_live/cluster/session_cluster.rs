@@ -16,7 +16,7 @@ use wamn_control::provision_project_env::{
     self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
 };
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, workload_secret_name};
-use wamn_ctl::print_release_env::ReleaseCarrier;
+use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 use wamn_test_infrastructure::workload;
 

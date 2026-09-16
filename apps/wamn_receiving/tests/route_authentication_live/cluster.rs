@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
-use wamn_ctl::print_release_env::{ReleaseCarrier, lookup_release_carrier};
+use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,

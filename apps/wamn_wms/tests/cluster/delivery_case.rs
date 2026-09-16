@@ -8,8 +8,8 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_control::provision_project_env::ProvisionedRoute;
-use wamn_ctl::delivery::Candidate;
-use wamn_ctl::print_release_env::ReleaseCarrier;
+use wamn_control::delivery::Candidate;
+use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::kubernetes_documents;
 use wamn_test_infrastructure::{event_broker::EventBroker, platform};
@@ -379,7 +379,7 @@ async fn step(
         .collect::<Vec<_>>();
     command.current_dir(repository).kill_on_drop(true);
     let output =
-        wamn_ctl::delivery::qualification::execute_owned(command, Duration::from_secs(3 * 60 * 60))
+        wamn_control::delivery::qualification::execute_owned(command, Duration::from_secs(3 * 60 * 60))
             .await
             .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
             .with_context(|| format!("execute owned delivery {name}"))?;

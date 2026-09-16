@@ -8,19 +8,22 @@
 //! lifecycle and reporting verbs require the `ops` feature and ship in the
 //! separate `wamn-ctl-ops` binary.
 
+// `dev/coordinator.rs` still reaches the delivery SQLx helpers and the release
+// carrier through `crate::`. Session wamn-52 holds that file, so this private
+// alias stands in until it can name `wamn_control` itself.
+#[cfg(target_os = "linux")]
+use wamn_control::{delivery, print_release_env};
+
 pub mod bind_connection;
 pub mod component_verbs;
-pub use wamn_control::delivery;
 pub mod delivery_verbs;
 pub mod dev;
 pub mod identity_verbs;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
 pub mod package_verbs;
-pub use wamn_control::print_release_env;
 pub mod provision_org;
 pub mod provisioning_verbs;
-pub use wamn_control::push_release_manifest;
 pub mod release_verbs;
 #[cfg(target_os = "linux")]
 pub mod ui;

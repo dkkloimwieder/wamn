@@ -573,7 +573,7 @@ pub(super) async fn mint_journey_release(
         .await
         .context("read the production-minted release digest")?
         .get(0);
-    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let bytes: Vec<u8> = project.query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
             &[&TENANT, &(release_id as i32)],

@@ -23,7 +23,7 @@ use tokio::time::{Instant, timeout, timeout_at};
 use wash_runtime::washlet::{OPERATOR_API_PREFIX, rpc_subject, types::v2};
 
 use super::config::DevConfig;
-use crate::print_release_env::ReleaseCarrier;
+use wamn_control::print_release_env::ReleaseCarrier;
 
 /// Bound for connecting to the already-running development scheduler.
 pub const SCHEDULER_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
