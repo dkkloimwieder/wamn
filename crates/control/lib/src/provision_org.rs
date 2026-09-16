@@ -132,8 +132,19 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
         // Dedicated: render one cluster per recovery-domain owner, sized by the
         // org's policy for the owner env.
         wamn_control_registry::Placement::Dedicated => Some(
-            wamn_control_provision::org::render_org_cluster_set(&org, &policies)
-                .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?,
+            wamn_control_provision::org::render_org_cluster_set(&org, &policies).map_err(|e| {
+                // The org row is already written here, and the caller prints
+                // only after this function returns, so the error is the one
+                // place that can still say the org exists.
+                if stamped_policies.is_some() {
+                    anyhow::anyhow!(
+                        "recorded org {} in the registry, but rendering its clusters failed: {e}",
+                        org.id
+                    )
+                } else {
+                    anyhow::anyhow!("render org clusters: {e}")
+                }
+            })?,
         ),
     };
 
