@@ -306,9 +306,7 @@ impl ComponentArtifactSource {
     /// rejected configuration with a warning and a wholly default client, which
     /// drops the trust roots, the protocol and the timeouts and turns an
     /// unusable CA bundle into a confusing TLS failure on the first pull.
-    pub fn new(
-        config: ComponentArtifactSourceConfig,
-    ) -> Result<Self, ComponentArtifactFetchError> {
+    pub fn new(config: ComponentArtifactSourceConfig) -> Result<Self, ComponentArtifactFetchError> {
         let protocol = if config.insecure_registry {
             ClientProtocol::HttpsExcept(vec![config.base.registry().to_owned()])
         } else {

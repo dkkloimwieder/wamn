@@ -1594,7 +1594,9 @@ fn target_structure_digest(packages: &[PackageInput], config: &DevConfig) -> Str
 /// The package identity, the models with their definition owners, and the internal relations.
 ///
 /// A kept target takes appended migrations, enum_fields, server_owned_fields,
-/// and audit_log in place, so they are not structure.
+/// and audit_log in place, so they are not structure. delete_mode IS
+/// structure: a tombstone needs two columns the target may not carry, and the
+/// mode decides both the emitted statement and the table grant.
 fn package_structure_inputs(manifest: &PackageManifest) -> Value {
     let models = manifest
         .models
@@ -1610,6 +1612,7 @@ fn package_structure_inputs(manifest: &PackageManifest) -> Value {
                 server_owned_fields: _,
                 enum_fields: _,
                 audit_log: _,
+                delete_mode,
                 operations: _,
             } = model;
             (
@@ -1621,6 +1624,7 @@ fn package_structure_inputs(manifest: &PackageManifest) -> Value {
                     "client_field_extensible": client_field_extensible,
                     "field_owners": field_owners,
                     "constraint_owners": constraint_owners,
+                    "delete_mode": delete_mode,
                 }),
             )
         })

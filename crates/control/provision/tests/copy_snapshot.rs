@@ -26,7 +26,8 @@ fn copy_snapshot_round_trips_a_seeded_database() {
     let scratch_database = wamn_test_postgres::database();
     let src = src_database.url().to_owned();
     let scratch = scratch_database.url().to_owned();
-    let dump_dir = std::env::temp_dir().join(format!("wamn-copy-snapshot-gate-{}", std::process::id()));
+    let dump_dir =
+        std::env::temp_dir().join(format!("wamn-copy-snapshot-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dump_dir);
 
     // Seed the source with a table carrying an exact-decimal column (the no-float

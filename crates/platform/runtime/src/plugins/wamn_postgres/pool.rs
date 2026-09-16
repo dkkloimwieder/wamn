@@ -308,9 +308,10 @@ impl StaticCredentialProvider {
         text: &str,
         base: &WamnPostgresConfig,
     ) -> anyhow::Result<HashMap<String, ProjectConfig>> {
-        let v: serde_json::Value =
-            serde_json::from_str(text).context("parse projects json")?;
-        let obj = v.as_object().context("projects json must be a JSON object")?;
+        let v: serde_json::Value = serde_json::from_str(text).context("parse projects json")?;
+        let obj = v
+            .as_object()
+            .context("projects json must be a JSON object")?;
         let mut out = HashMap::new();
         for (name, entry) in obj {
             anyhow::ensure!(

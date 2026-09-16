@@ -205,6 +205,13 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
 }
 
 /// Project-env data copy arguments.
+///
+/// The flags are independent operator switches, not a state machine, so they
+/// stay separate booleans.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent operator switch on one verb"
+)]
 #[derive(Debug, Args)]
 pub struct CopyProjectEnvArgs {
     /// Source org id.

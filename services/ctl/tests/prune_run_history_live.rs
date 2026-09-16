@@ -245,7 +245,7 @@ async fn assert_authority(credential: &Client) {
         .await
         .expect_err("the trigger refuses a raw non-terminal delete");
     assert_eq!(
-        error.as_db_error().map(|error| error.message()),
+        error.as_db_error().map(tokio_postgres::error::DbError::message),
         Some("run-delete-nonterminal"),
         "the refusal of the raw non-terminal delete: {error:?}"
     );

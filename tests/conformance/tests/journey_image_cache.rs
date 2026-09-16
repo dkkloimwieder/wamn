@@ -99,7 +99,14 @@ fn git(repository: &Path, arguments: &[&str]) {
 fn source_repository(directory: &TestDirectory) -> PathBuf {
     let repository = directory.path("source");
     fs::create_dir_all(repository.join(".cargo")).expect("create .cargo");
-    for name in ["crates", "apps", "services", "test-support", "tests", "deploy"] {
+    for name in [
+        "crates",
+        "apps",
+        "services",
+        "test-support",
+        "tests",
+        "deploy",
+    ] {
         let path = repository.join(name);
         fs::create_dir_all(&path).expect("create copied directory");
         fs::write(path.join("kept.txt"), "one\n").expect("write copied file");
@@ -117,7 +124,10 @@ fn source_repository(directory: &TestDirectory) -> PathBuf {
     fs::write(repository.join("docs/note.md"), "one\n").expect("write uncopied file");
 
     git(&repository, &["init", "--quiet"]);
-    git(&repository, &["config", "user.email", "test@example.invalid"]);
+    git(
+        &repository,
+        &["config", "user.email", "test@example.invalid"],
+    );
     git(&repository, &["config", "user.name", "test"]);
     git(&repository, &["add", "."]);
     git(&repository, &["commit", "--quiet", "-m", "one"]);
@@ -196,7 +206,9 @@ fn a_second_run_of_one_source_relabels_instead_of_building() {
 
     let built = run(
         &directory,
-        &["ensure", source, "host", "host", HEAD_LABEL, CLUSTER, CLUSTER],
+        &[
+            "ensure", source, "host", "host", HEAD_LABEL, CLUSTER, CLUSTER,
+        ],
     );
     assert!(
         built.status.success(),
@@ -227,7 +239,9 @@ fn a_second_run_of_one_source_relabels_instead_of_building() {
     fs::write(directory.path("calls"), "").expect("reset the call log");
     let reused = run(
         &directory,
-        &["ensure", source, "host", "host", HEAD_LABEL, CLUSTER, CLUSTER],
+        &[
+            "ensure", source, "host", "host", HEAD_LABEL, CLUSTER, CLUSTER,
+        ],
     );
 
     assert!(
@@ -289,8 +303,14 @@ fn retention_keeps_three_identities_and_never_a_leased_one() {
             "a retained identity was removed: {log}"
         );
     }
-    assert!(used.join("a").exists(), "a leased identity keeps its record");
-    assert!(!used.join("b").exists(), "a removed identity keeps a record");
+    assert!(
+        used.join("a").exists(),
+        "a leased identity keeps its record"
+    );
+    assert!(
+        !used.join("b").exists(),
+        "a removed identity keeps a record"
+    );
 
     let released = run(&directory, &["release", CLUSTER]);
     assert!(released.status.success());

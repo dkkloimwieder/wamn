@@ -176,18 +176,16 @@ pub async fn copy_project_env(
         crate::provision_project_env::read_project_env_instance(system_url, &dst).await?;
     let src_db = project_env_database_name(&src.org, &src.project, src.env.as_str(), &src_instance);
     let dst_db = project_env_database_name(&dst.org, &dst.project, dst.env.as_str(), &dst_instance);
-    let saga_id = request.saga_id.clone().unwrap_or_else(|| {
-        format!(
-            "copy-{src_db}-to-{dst_db}-{}",
-            unix_seconds()
-        )
-    });
+    let saga_id = request
+        .saga_id
+        .clone()
+        .unwrap_or_else(|| format!("copy-{src_db}-to-{dst_db}-{}", unix_seconds()));
 
     let r = SagaRecorder::connect(system_url, &saga_id)
         .await
         .context("system db connect (saga recording)")?;
-    r.create(&format!("{src} -> {dst}"), steps.len() as i32)
-        .await?;
+    let step_count = i32::try_from(steps.len()).context("step count exceeds PostgreSQL integer")?;
+    r.create(&format!("{src} -> {dst}"), step_count).await?;
     tracing::info!("recording saga {saga_id:?} ({} steps)", steps.len());
     let recorder = Some(r);
 
@@ -203,7 +201,7 @@ pub async fn copy_project_env(
     };
 
     let mut executed = 0usize;
-    let result = execute_steps(&mut ctx, &steps, &recorder, &mut executed).await;
+    let result = execute_steps(&mut ctx, &steps, recorder.as_ref(), &mut executed).await;
     match result {
         Ok(()) => {
             if let Some(r) = &recorder {
@@ -238,7 +236,7 @@ pub async fn copy_project_env(
 async fn execute_steps(
     ctx: &mut ExecCtx<'_>,
     steps: &[CopyStep],
-    recorder: &Option<SagaRecorder>,
+    recorder: Option<&SagaRecorder>,
     executed: &mut usize,
 ) -> anyhow::Result<()> {
     for (i, step) in steps.iter().enumerate() {
@@ -246,7 +244,7 @@ async fn execute_steps(
         match step {
             CopyStep::Quiesce { .. } => exec_quiesce(ctx).await?,
             CopyStep::Snapshot { src } => exec_snapshot(ctx, src, recorder).await?,
-            CopyStep::RestoreData { .. } => exec_restore_data(ctx).await?,
+            CopyStep::RestoreData { .. } => exec_restore_data(ctx)?,
             CopyStep::Verify { src, dst } => exec_verify(ctx, src, dst).await?,
             CopyStep::Cutover { src, dst } => {
                 // THE GATE (cjv.7): refuse unless every prior step — quiesce and
@@ -255,7 +253,7 @@ async fn execute_steps(
                     .as_ref()
                     .context("cutover without a saga recorder (unreachable: gated upfront)")?;
                 let (status, step_no, total) = r.state().await?;
-                if step_no < i as i32 {
+                if step_no < i32::try_from(i).context("step index exceeds PostgreSQL integer")? {
                     bail!(
                         "refusing cutover: saga {:?} records {step_no}/{} steps (status {status}) \
                          — quiesce and verify are not durably recorded",
@@ -263,7 +261,7 @@ async fn execute_steps(
                         total.map_or_else(|| "?".into(), |t| t.to_string()),
                     );
                 }
-                exec_cutover(ctx, src, dst)?;
+                exec_cutover(ctx, src, dst);
             }
             CopyStep::DeprovisionOld { .. } => exec_deprovision_old(ctx).await?,
         }
@@ -345,7 +343,7 @@ async fn exec_quiesce(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
 async fn exec_snapshot(
     ctx: &mut ExecCtx<'_>,
     src: &Triple,
-    recorder: &Option<SagaRecorder>,
+    recorder: Option<&SagaRecorder>,
 ) -> anyhow::Result<()> {
     let timestamp = unix_seconds().to_string();
     let out = ctx.request.dump_root.join(&timestamp);
@@ -359,9 +357,7 @@ async fn exec_snapshot(
 
     let object_key = dump_object_key(src, &timestamp);
     if let Some(r) = recorder {
-        let byte_size: Option<i64> = dir_size(&out)
-            .map(|b| b as i64)
-            .ok();
+        let byte_size: Option<i64> = dir_size(&out).ok().and_then(|b| i64::try_from(b).ok());
         let env = src.env.as_str();
         r.client
             .execute(
@@ -385,7 +381,7 @@ async fn exec_snapshot(
 
 /// `pg_restore --data-only --disable-triggers` the snapshot into the dst data
 /// schema. A restore replays state; no trigger may fire per restored row.
-async fn exec_restore_data(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
+fn exec_restore_data(ctx: &ExecCtx<'_>) -> anyhow::Result<()> {
     let dump_dir = ctx
         .dump_dir
         .as_ref()
@@ -439,7 +435,7 @@ async fn exec_verify(ctx: &mut ExecCtx<'_>, _src: &Triple, _dst: &Triple) -> any
 
 /// The repoint: gated upstream (the saga check), here the operator-facing
 /// runbook — the credential seam is a K8s Secret only `kubectl` can apply.
-fn exec_cutover(ctx: &mut ExecCtx<'_>, src: &Triple, dst: &Triple) -> anyhow::Result<()> {
+fn exec_cutover(ctx: &ExecCtx<'_>, src: &Triple, dst: &Triple) {
     tracing::info!(
         "  cutover recorded: repoint the serving identity {src} -> {dst}:\n    \
          1. apply the dst credential Secret (provision-project-env --emit-secret) / update \
@@ -449,7 +445,6 @@ fn exec_cutover(ctx: &mut ExecCtx<'_>, src: &Triple, dst: &Triple) -> anyhow::Re
          (--deprovision-old --confirm, or the printed DROP).",
         ctx.src_db
     );
-    Ok(())
 }
 
 /// Drop the retained src database (confirm-gated; the plan appends this step
@@ -613,8 +608,7 @@ fn swap_db(url: &str, db: &str) -> String {
 fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Total byte size of a directory tree, the snapshot's size on disk.

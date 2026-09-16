@@ -144,6 +144,9 @@ mod tests {
             canonical_http_route_template("/{receipt}"),
             canonical_http_route_template("/{id}")
         );
-        assert_eq!(canonical_http_route_template("/files/{*rest}"), "/files/{*}");
+        assert_eq!(
+            canonical_http_route_template("/files/{*rest}"),
+            "/files/{*}"
+        );
     }
 }
