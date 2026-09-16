@@ -15,7 +15,10 @@ use crate::{CrudAction, GenerateError, GenerateErrorKind, PackageManifest};
 /// Package-relative canonical data-access evidence artifact.
 pub const DATA_ACCESS_OVERLAY_PATH: &str = "generated/platform-policy/data-access.json";
 /// Stable PostgreSQL group role inherited by prepared App generations.
-pub const DATA_ACCESS_ROLE: &str = "wamn_app";
+///
+/// The catalog reader skips the ACL entries of this role, so the generated
+/// grants and the reader read one name.
+pub use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 
 /// Strict generated evidence consumed by the post-apply reconciliation step.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -265,10 +265,19 @@ fn relation_is_excluded(excluded_relations: &[(&str, &str)], schema: &str, table
             })
 }
 
+/// Group role that the package data-access reconcile grants from the declaration.
+///
+/// `wamn_schema_generator::DATA_ACCESS_ROLE` re-exports this name, so the
+/// generated grants and the skipped grantees below cannot drift apart.
+pub const DATA_ACCESS_ROLE: &str = "wamn_app";
+
+/// Platform roles whose ACL entries the catalog reader skips by name.
+const PLATFORM_GRANTEES: [&str; 2] = [AUDIT_RETENTION_ROLE, DATA_ACCESS_ROLE];
+
 // Each `has_acl` column reads whether an ACL holds an entry for a grantee other
-// than the object owner and the `$2` audit retention role. The audit retention
-// grants are a record history platform fixture, so their grantee name alone
-// skips them.
+// than the object owner and the `$2` platform roles. The audit retention grants
+// are a record history platform fixture and the application role grants come
+// from the package declaration, so their grantee names alone skip them.
 const SCHEMAS_SQL: &str = r"
 WITH configured(schema_name) AS (
     SELECT unnest($1::text[])
@@ -279,7 +288,8 @@ SELECT configured.schema_name,
            SELECT FROM pg_catalog.aclexplode(namespace.nspacl) AS entry
             WHERE entry.grantee <> namespace.nspowner
               AND entry.grantee NOT IN (
-                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role
+                   WHERE role.rolname = ANY($2::text[])
               )
        ) AS has_acl
   FROM configured
@@ -300,7 +310,8 @@ SELECT namespace.nspname::text AS schema_name,
            SELECT FROM pg_catalog.aclexplode(relation.relacl) AS entry
             WHERE entry.grantee <> relation.relowner
               AND entry.grantee NOT IN (
-                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role
+                   WHERE role.rolname = ANY($2::text[])
               )
        ) AS has_acl,
        EXISTS (
@@ -381,7 +392,8 @@ SELECT namespace.nspname::text AS schema_name,
            SELECT FROM pg_catalog.aclexplode(catalog_type.typacl) AS entry
             WHERE entry.grantee <> catalog_type.typowner
               AND entry.grantee NOT IN (
-                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role
+                   WHERE role.rolname = ANY($2::text[])
               )
        ) AS has_acl,
        relation.relkind::text AS relation_kind,
@@ -434,7 +446,8 @@ SELECT namespace.nspname::text AS schema_name,
            SELECT FROM pg_catalog.aclexplode(attribute.attacl) AS entry
             WHERE entry.grantee <> relation.relowner
               AND entry.grantee NOT IN (
-                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role
+                   WHERE role.rolname = ANY($2::text[])
               )
        ) AS has_acl
   FROM pg_catalog.pg_attribute AS attribute
@@ -709,7 +722,7 @@ async fn validate_schemas(
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
     let rows = client
-        .query(SCHEMAS_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
+        .query(SCHEMAS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
         .await
         .map_err(|error| database_error("query configured schemas", error))?;
 
@@ -740,7 +753,7 @@ async fn load_relations(
     schemas: &[String],
 ) -> Result<Vec<RelationRow>, PostgresIntrospectionError> {
     client
-        .query(RELATIONS_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
+        .query(RELATIONS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
         .await
         .map_err(|error| database_error("query configured-schema relations", error))
         .map(|rows| rows.iter().map(relation_row).collect())
@@ -1005,7 +1018,7 @@ async fn validate_types(
     excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
     let rows = client
-        .query(TYPES_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
+        .query(TYPES_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
         .await
         .map_err(|error| database_error("query configured-schema types", error))?;
 
@@ -1088,7 +1101,7 @@ async fn load_columns(
     schemas: &[String],
 ) -> Result<Vec<ColumnRow>, PostgresIntrospectionError> {
     client
-        .query(COLUMNS_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
+        .query(COLUMNS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
         .await
         .map_err(|error| database_error("query configured-schema columns", error))
         .map(|rows| rows.iter().map(column_row).collect())

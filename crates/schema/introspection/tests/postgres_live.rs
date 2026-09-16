@@ -20,7 +20,7 @@ use wamn_schema_introspection::migration_policy::{
     validate_migration_bytes_for_schemas, validate_migration_file,
 };
 use wamn_schema_introspection::postgres::{
-    PostgresIntrospectionError, PostgresIntrospectionErrorKind, read_catalog,
+    DATA_ACCESS_ROLE, PostgresIntrospectionError, PostgresIntrospectionErrorKind, read_catalog,
     read_catalog_excluding_relations,
 };
 
@@ -1076,52 +1076,50 @@ async fn assert_record_history_fixtures_are_skipped(admin: &Client, reader: &Cli
     );
 }
 
-/// Introspection skips the ACL entries of the audit retention role by name. A
-/// grant to any other role still refuses.
-async fn assert_audit_retention_grants_are_skipped(
-    admin: &Client,
-    reader: &Client,
-    other_role: &str,
-) {
+/// Introspection skips the ACL entries of the platform roles by name. A grant
+/// to any other role still refuses.
+async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, other_role: &str) {
     let before = read_catalog(reader, &[APPLICATION_SCHEMA])
         .await
-        .expect("read the catalog before the audit retention grants");
-    admin
-        .batch_execute(&format!(
-            "DO $role$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{AUDIT_RETENTION_ROLE}') THEN \
-                 CREATE ROLE {AUDIT_RETENTION_ROLE} NOLOGIN; \
-               END IF; \
-             END $role$; \
-             GRANT USAGE ON SCHEMA receiving TO {AUDIT_RETENTION_ROLE}; \
-             GRANT SELECT ON receiving.purchase_order TO {AUDIT_RETENTION_ROLE}; \
-             GRANT SELECT (id) ON receiving.purchase_order_line TO {AUDIT_RETENTION_ROLE}"
-        ))
-        .await
-        .expect("apply the audit retention grants");
-    let granted = admin
-        .query_one(
-            "SELECT has_schema_privilege($1, 'receiving', 'USAGE'), \
-                    has_table_privilege($1, 'receiving.purchase_order', 'SELECT'), \
-                    has_column_privilege($1, 'receiving.purchase_order_line', 'id', 'SELECT')",
-            &[&AUDIT_RETENTION_ROLE],
-        )
-        .await
-        .expect("read the audit retention grants");
-    for column in 0..3 {
-        assert!(
-            granted.get::<_, bool>(column),
-            "audit retention grant {column} is held"
+        .expect("read the catalog before the platform grants");
+    for role in [AUDIT_RETENTION_ROLE, DATA_ACCESS_ROLE] {
+        admin
+            .batch_execute(&format!(
+                "DO $role$ BEGIN \
+                   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role}') THEN \
+                     CREATE ROLE {role} NOLOGIN; \
+                   END IF; \
+                 END $role$; \
+                 GRANT USAGE ON SCHEMA receiving TO {role}; \
+                 GRANT SELECT ON receiving.purchase_order TO {role}; \
+                 GRANT SELECT (id) ON receiving.purchase_order_line TO {role}"
+            ))
+            .await
+            .expect("apply the platform grants");
+        let granted = admin
+            .query_one(
+                "SELECT has_schema_privilege($1, 'receiving', 'USAGE'), \
+                        has_table_privilege($1, 'receiving.purchase_order', 'SELECT'), \
+                        has_column_privilege($1, 'receiving.purchase_order_line', 'id', 'SELECT')",
+                &[&role],
+            )
+            .await
+            .expect("read the platform grants");
+        for column in 0..3 {
+            assert!(
+                granted.get::<_, bool>(column),
+                "{role} grant {column} is held"
+            );
+        }
+        let catalog = read_catalog(reader, &[APPLICATION_SCHEMA])
+            .await
+            .expect("introspection skips the platform grants");
+        assert_eq!(
+            catalog.canonical_json_bytes(),
+            before.canonical_json_bytes(),
+            "the {role} grants do not change the catalog IR"
         );
     }
-    let catalog = read_catalog(reader, &[APPLICATION_SCHEMA])
-        .await
-        .expect("introspection skips the audit retention grants");
-    assert_eq!(
-        catalog.canonical_json_bytes(),
-        before.canonical_json_bytes(),
-        "the audit retention grants do not change the catalog IR"
-    );
 
     let other_role = identifier(other_role);
     admin
@@ -1177,7 +1175,7 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
     assert_additive_columns(&migration).await;
     assert_refusal_matrix(&target_admin, &migration).await;
     assert_record_history_fixtures_are_skipped(&target_admin, &migration).await;
-    assert_audit_retention_grants_are_skipped(
+    assert_platform_grants_are_skipped(
         &target_admin,
         &migration,
         &format!("{}_grantee", fixture.role),
