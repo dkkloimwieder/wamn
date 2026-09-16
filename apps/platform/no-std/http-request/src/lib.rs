@@ -4,7 +4,6 @@
 
 extern crate alloc;
 
-use alloc::borrow::ToOwned as _;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString as _};
@@ -13,16 +12,22 @@ use alloc::vec::Vec;
 #[path = "../../guest_runtime.rs"]
 mod guest_runtime;
 
-use exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
-use wamn::connection::http::{ConnectionError, Header, Request, Response};
-use wamn::node::types::{ErrorDetail, RateLimitDetail};
+use bindings::exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
+use bindings::wamn::connection::http::{ConnectionError, Header, Request, Response};
+use bindings::wamn::node::types::{ErrorDetail, RateLimitDetail};
 
-wit_bindgen::generate!({
-    world: "http-request",
-    path: "wit",
-    generate_all,
-    std_feature,
-});
+#[allow(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.44 emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "http-request",
+        path: "wit",
+        generate_all,
+        std_feature,
+    });
+}
 
 struct Component;
 
@@ -61,7 +66,7 @@ impl Guest for Component {
                 context.delivery_id, context.node_id, context.occurrence
             )),
         };
-        match wamn::connection::http::send(&request) {
+        match bindings::wamn::connection::http::send(&request) {
             Ok(response) => classify_response(response),
             Err(error) => Err(classify_connection_error(error)),
         }
@@ -72,7 +77,7 @@ fn required_string(config: &serde_json::Value, field: &str) -> Result<String, No
     config
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .map(|value| value.to_owned())
+        .map(alloc::borrow::ToOwned::to_owned)
         .ok_or_else(|| terminal("invalid-config", format!("{field} must be a string")))
 }
 
@@ -204,4 +209,4 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
     })
 }
 
-export!(Component);
+bindings::export!(Component with_types_in bindings);

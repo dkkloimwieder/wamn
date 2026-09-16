@@ -10,15 +10,21 @@ use alloc::string::{String, ToString as _};
 #[path = "../../guest_runtime.rs"]
 mod guest_runtime;
 
-wit_bindgen::generate!({
-    world: "transform",
-    path: "wit",
-    generate_all,
-    std_feature,
-});
+#[allow(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.44 emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "transform",
+        path: "wit",
+        generate_all,
+        std_feature,
+    });
+}
 
-use exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
-use wamn::node::types::ErrorDetail;
+use bindings::exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
+use bindings::wamn::node::types::ErrorDetail;
 
 struct Component;
 
@@ -62,4 +68,4 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
     })
 }
 
-export!(Component);
+bindings::export!(Component with_types_in bindings);
