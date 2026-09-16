@@ -6,7 +6,7 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    bind_connection, component_verbs, delivery, identity_verbs, package_verbs, print_release_env,
+    bind_connection, component_verbs, delivery_verbs, identity_verbs, package_verbs,
     provision_org, provisioning_verbs, release_verbs,
 };
 
@@ -25,17 +25,17 @@ struct Cli {
 enum Command {
     /// Publish only the release that passed required qualification.
     #[command(alias = "push-release-manifest")]
-    PublishQualifiedRelease(delivery::publication::PublishArgs),
+    PublishQualifiedRelease(delivery_verbs::PublishArgs),
     /// Select one published release for its environment.
-    SelectRelease(delivery::deployment::SelectArgs),
+    SelectRelease(delivery_verbs::SelectArgs),
     /// Deploy exact qualified artifacts while the selection remains current.
-    DeployRelease(delivery::deployment::DeployArgs),
+    DeployRelease(delivery_verbs::DeployArgs),
     /// Capture a minted release and exact artifact locations for qualification.
-    PrepareRelease(delivery::PrepareReleaseArgs),
+    PrepareRelease(delivery_verbs::PrepareReleaseArgs),
     /// Execute selected existing tests before integration.
-    CheckChanges(delivery::qualification::CheckChangesArgs),
+    CheckChanges(delivery_verbs::CheckChangesArgs),
     /// Qualify the exact release artifacts from a clean selected revision.
-    QualifyRelease(delivery::qualification::QualifyReleaseArgs),
+    QualifyRelease(delivery_verbs::QualifyReleaseArgs),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
     ProvisionOrg(provision_org::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
@@ -64,7 +64,7 @@ enum Command {
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(release_verbs::PublishReleaseArgs),
     /// Print the release lines a pod template carries for one minted release (wamn-duyl)
-    PrintReleaseEnv(print_release_env::PrintReleaseEnvArgs),
+    PrintReleaseEnv(delivery_verbs::PrintReleaseEnvArgs),
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
     /// Promote one verified format-1 release into a target environment
@@ -94,12 +94,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        Command::PublishQualifiedRelease(args) => delivery::publication::run(args).await,
-        Command::SelectRelease(args) => delivery::deployment::select(args).await,
-        Command::DeployRelease(args) => delivery::deployment::run(args).await,
-        Command::PrepareRelease(args) => delivery::prepare(args).await,
-        Command::CheckChanges(args) => delivery::qualification::check_changes(args).await,
-        Command::QualifyRelease(args) => delivery::qualification::qualify(args).await,
+        Command::PublishQualifiedRelease(args) => delivery_verbs::publish(args).await,
+        Command::SelectRelease(args) => delivery_verbs::select(args).await,
+        Command::DeployRelease(args) => delivery_verbs::deploy(args).await,
+        Command::PrepareRelease(args) => delivery_verbs::prepare(args).await,
+        Command::CheckChanges(args) => delivery_verbs::check_changes(args).await,
+        Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
         Command::PushComponent(args) => component_verbs::push(args).await,
         Command::AuthorWiring(args) => release_verbs::author(args).await,
         Command::PublishRelease(args) => release_verbs::publish(args).await,
-        Command::PrintReleaseEnv(args) => print_release_env::run(args).await,
+        Command::PrintReleaseEnv(args) => delivery_verbs::print_release_env(args).await,
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(args),
         Command::Promote(args) => release_verbs::promote(args).await,
         Command::ReconcileReplicaIdentity(args) => {

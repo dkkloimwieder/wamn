@@ -27,7 +27,7 @@ use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
 use wamn_ctl::dev::environment::{JourneyCredentials, connect};
 use wamn_ctl::print_release_env::{self, ReleaseCarrier};
 use wamn_ctl::provision_org::{self, TemplateArg};
-use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
+use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_test_infrastructure::declarations::{
     GateInput, gate_document, render_component_declaration,
@@ -507,7 +507,8 @@ pub async fn publish(
     })
     .await?;
     if !mint_only {
-        push_release_manifest::run(PushReleaseManifestArgs {
+        push_release_manifest::push_release_manifest(
+            &PushReleaseManifestRequest {
         database_url: route.database_url.clone(),
         control_database_url: inputs.system_pg_url.clone(),
         org: ORG.into(),
@@ -518,7 +519,9 @@ pub async fn publish(
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
         oci_ca_paths: Vec::new(),
-    })
+    },
+            None,
+        )
         .await?;
     }
     print_release_env::lookup_release_carrier(

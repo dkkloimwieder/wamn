@@ -593,18 +593,21 @@ pub(super) async fn publish_journey_release(
     let control = target.control;
     let release_id = target.release_id;
     let digest = mint_journey_release(inputs, target).await?;
-    push_release_manifest::run(PushReleaseManifestArgs {
-        database_url: project_url.to_owned(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        tenant: TENANT.to_owned(),
-        effective_release_id: release_id,
-        artifact_base: inputs.release_artifact_base.clone(),
-        registry_auth_file: inputs.registry_auth_file.clone(),
-        insecure_registry: true,
-        oci_ca_paths: Vec::new(),
-        control_database_url: system_url.to_owned(),
-    })
+    push_release_manifest::push_release_manifest(
+        &PushReleaseManifestRequest {
+            database_url: project_url.to_owned(),
+            org: ORG.to_owned(),
+            project: PROJECT.to_owned(),
+            tenant: TENANT.to_owned(),
+            effective_release_id: release_id,
+            artifact_base: inputs.release_artifact_base.clone(),
+            registry_auth_file: inputs.registry_auth_file.clone(),
+            insecure_registry: true,
+            oci_ca_paths: Vec::new(),
+            control_database_url: system_url.to_owned(),
+        },
+        None,
+    )
     .await
     .context("push and attest the production Receiving release")?;
     let serving: String = control

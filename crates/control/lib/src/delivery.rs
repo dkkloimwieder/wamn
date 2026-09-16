@@ -5,7 +5,6 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use serde::{Deserialize, Serialize};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
 
@@ -14,60 +13,56 @@ pub mod publication;
 pub mod qualification;
 pub mod sqlx;
 
-/// Capture the existing minted release and explicit artifact locations for qualification.
-#[derive(Debug, Args)]
-pub struct PrepareReleaseArgs {
-    #[command(flatten)]
-    pub release: crate::print_release_env::PrintReleaseEnvArgs,
-    #[arg(long)]
+/// Exact minted release and explicit artifact locations captured for qualification.
+#[derive(Clone, Debug)]
+pub struct PrepareReleaseRequest {
+    /// URL to the database holding the minted release snapshot.
+    pub database_url: String,
+    /// Tenant claim carried by the minted release snapshot.
+    pub tenant: String,
+    /// Integer identity of the minted effective release snapshot.
+    pub effective_release_id: u32,
+    /// The `<registry>/<repository>` the release manifest was pushed to.
+    pub artifact_base: String,
     pub target_directory: PathBuf,
-    #[arg(long)]
     pub manifest_output: PathBuf,
-    #[arg(long)]
     pub candidate_output: PathBuf,
-    #[arg(long)]
     pub host_image: String,
-    #[arg(long)]
     pub gates_image: Option<String>,
-    #[arg(long)]
     pub identity_image: Option<String>,
-    #[arg(long)]
     pub executor_image: Option<String>,
-    #[arg(long)]
     pub native_registry_endpoint: Option<String>,
-    #[arg(long, requires = "native_registry_endpoint")]
     pub native_registry_insecure: bool,
-    #[arg(long = "deployment-file")]
     pub deployment_files: Vec<PathBuf>,
 }
 
 /// Write machine inputs from an immutable snapshot without qualifying or publishing it.
-pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
+pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
     ensure!(
-        args.manifest_output.is_absolute() && args.candidate_output.is_absolute(),
+        request.manifest_output.is_absolute() && request.candidate_output.is_absolute(),
         "candidate output paths must be absolute"
     );
     ensure!(
-        !args.manifest_output.exists() && !args.candidate_output.exists(),
+        !request.manifest_output.exists() && !request.candidate_output.exists(),
         "candidate output paths must be unused"
     );
     let snapshot = crate::print_release_env::lookup_release_snapshot(
-        &args.release.database_url,
-        &args.release.tenant,
-        args.release.effective_release_id,
-        &args.release.artifact_base,
+        &request.database_url,
+        &request.tenant,
+        request.effective_release_id,
+        &request.artifact_base,
     )
     .await?;
     let candidate = Candidate {
-        manifest_path: args.manifest_output,
-        target_directory: fs::canonicalize(args.target_directory)?,
-        host_image: args.host_image,
-        gates_image: args.gates_image,
-        identity_image: args.identity_image,
-        executor_image: args.executor_image,
-        deployment_files: args.deployment_files,
-        native_registry_endpoint: args.native_registry_endpoint,
-        native_registry_insecure: args.native_registry_insecure,
+        manifest_path: request.manifest_output,
+        target_directory: fs::canonicalize(request.target_directory)?,
+        host_image: request.host_image,
+        gates_image: request.gates_image,
+        identity_image: request.identity_image,
+        executor_image: request.executor_image,
+        deployment_files: request.deployment_files,
+        native_registry_endpoint: request.native_registry_endpoint,
+        native_registry_insecure: request.native_registry_insecure,
     };
     let mut manifest = OpenOptions::new()
         .create_new(true)
@@ -78,7 +73,7 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
     let output = OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(args.candidate_output)?;
+        .open(request.candidate_output)?;
     serde_json::to_writer_pretty(output, &candidate).context("write the candidate artifact inputs")
 }
 

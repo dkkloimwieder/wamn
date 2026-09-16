@@ -6,9 +6,8 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use rustix::process::{Pid, Signal, kill_process_group};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use tokio_postgres::{Client, NoTls, Transaction};
@@ -17,67 +16,59 @@ use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::{Qualification, publication};
 use crate::print_release_env::ReleaseSnapshot;
-use crate::push_release_manifest::PushReleaseManifestArgs;
+use crate::push_release_manifest::PushReleaseManifestRequest;
 
 const SELECT_HEAD: &str = "SELECT effective_release_id FROM catalog.effective_release_heads WHERE tenant_id = $1 AND environment = $2 FOR UPDATE";
 const SELECT_RELEASE: &str = "INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, environment) DO UPDATE SET effective_release_id = EXCLUDED.effective_release_id, updated_at = now()";
 const DEPLOYMENT_TIMEOUT: Duration = Duration::from_secs(900);
 
-/// Select a published release without rebuilding or activating its workloads.
-#[derive(Debug, Args)]
-pub struct SelectArgs {
-    #[arg(long)]
-    pub qualification: PathBuf,
-    #[command(flatten)]
-    pub release: PushReleaseManifestArgs,
-}
-
-/// Deploy exact qualified Kubernetes inputs to one explicitly named environment.
-#[derive(Debug, Args)]
-pub struct DeployArgs {
-    #[arg(long)]
-    pub qualification: PathBuf,
-    #[command(flatten)]
-    pub release: PushReleaseManifestArgs,
-    #[arg(long)]
+/// Exact Kubernetes inputs of one deployment into an explicitly named environment.
+#[derive(Clone, Debug)]
+pub struct DeployRequest {
     pub kubeconfig: PathBuf,
-    #[arg(long)]
     pub context: String,
-    #[arg(long)]
     pub namespace: String,
     /// Existing HTTP WorkloadDeployment that must become ready before the application request.
-    #[arg(long)]
     pub http_workload: Option<String>,
     /// Existing rendered native Kubernetes Deployment JSON for the host.
-    #[arg(long)]
     pub host_deployment: PathBuf,
     /// Required when the qualified candidate includes an executor image.
-    #[arg(long)]
     pub executor_deployment: Option<PathBuf>,
-    #[arg(long)]
     pub identity_deployment: Option<PathBuf>,
-    #[arg(long)]
     pub principal: String,
     /// A released POST route reached through this deployment's ingress.
-    #[arg(long)]
     pub interaction_url: String,
-    #[arg(long)]
     pub route_host: String,
-    #[arg(long)]
     pub request_body: PathBuf,
-    #[arg(long)]
     pub expected_response: PathBuf,
     /// Private credential file, excluded from qualified artifacts and output.
-    #[arg(long)]
     pub bearer_file: PathBuf,
 }
 
-pub async fn select(args: SelectArgs) -> anyhow::Result<()> {
-    let qualification = Qualification::read(&args.qualification)?;
-    let snapshot = publication::checked_snapshot(&qualification, &args.release).await?;
-    publication::require_published(&qualification, &snapshot, &args.release).await?;
-    let (mut client, connection) =
-        tokio_postgres::connect(&args.release.database_url, NoTls).await?;
+/// Release one environment now selects, with the digest that selection names.
+#[derive(Clone, Debug)]
+pub struct SelectedRelease {
+    pub release: ServingRelease,
+    pub manifest_digest: String,
+}
+
+/// Release one environment now serves, with the source that qualified it.
+#[derive(Clone, Debug)]
+pub struct DeployedRelease {
+    pub source_commit: String,
+    pub release: ServingRelease,
+    pub manifest_digest: String,
+}
+
+/// Select one published release for its environment without deploying it.
+pub async fn select(
+    qualification: &Path,
+    release: &PushReleaseManifestRequest,
+) -> anyhow::Result<SelectedRelease> {
+    let qualification = Qualification::read(qualification)?;
+    let snapshot = publication::checked_snapshot(&qualification, release).await?;
+    publication::require_published(&qualification, &snapshot, release).await?;
+    let (mut client, connection) = tokio_postgres::connect(&release.database_url, NoTls).await?;
     let connection = tokio::spawn(connection);
     let result = async {
         let transaction = client.transaction().await?;
@@ -87,35 +78,43 @@ pub async fn select(args: SelectArgs) -> anyhow::Result<()> {
             .execute(
                 SELECT_RELEASE,
                 &[
-                    &args.release.tenant,
+                    &release.tenant,
                     &snapshot.manifest.release.environment,
-                    &i32::try_from(args.release.effective_release_id)?,
+                    &i32::try_from(release.effective_release_id)?,
                 ],
             )
             .await?;
         transaction.commit().await?;
-        println!(
-            "{}",
-            json!({"selected_release":snapshot.manifest.release,
-            "manifest_digest":snapshot.carrier.manifest_digest.as_str(),"result":"pass"})
-        );
-        Ok(())
+        Ok(SelectedRelease {
+            release: snapshot.manifest.release.clone(),
+            manifest_digest: snapshot.carrier.manifest_digest.as_str().to_owned(),
+        })
     }
     .await;
     connection.abort();
     result
 }
 
-pub async fn run(args: DeployArgs) -> anyhow::Result<()> {
+/// Deploy exact qualified artifacts while the selection remains current.
+///
+/// Cancellation is the caller's: this future holds the selection row lock, so
+/// dropping it rolls the whole deployment transaction back.
+pub async fn deploy_release(
+    qualification: &Path,
+    release: &PushReleaseManifestRequest,
+    request: &DeployRequest,
+) -> anyhow::Result<DeployedRelease> {
     ensure!(
-        args.kubeconfig.is_absolute() && args.kubeconfig.is_file(),
+        request.kubeconfig.is_absolute() && request.kubeconfig.is_file(),
         "deployment requires an explicit existing kubeconfig"
     );
     ensure!(
-        !args.context.is_empty() && !args.namespace.is_empty() && !args.principal.is_empty(),
+        !request.context.is_empty()
+            && !request.namespace.is_empty()
+            && !request.principal.is_empty(),
         "deployment requires context, namespace, and principal"
     );
-    if let Some(workload) = &args.http_workload {
+    if let Some(workload) = &request.http_workload {
         ensure!(
             !workload.is_empty()
                 && workload
@@ -124,15 +123,15 @@ pub async fn run(args: DeployArgs) -> anyhow::Result<()> {
             "the HTTP workload must be a Kubernetes resource name"
         );
     }
-    let qualification = Qualification::read(&args.qualification)?;
-    let snapshot = publication::checked_snapshot(&qualification, &args.release).await?;
-    publication::require_published(&qualification, &snapshot, &args.release).await?;
+    let qualification = Qualification::read(qualification)?;
+    let snapshot = publication::checked_snapshot(&qualification, release).await?;
+    publication::require_published(&qualification, &snapshot, release).await?;
     let source = ReleaseManifestSource::new(
-        &args.release.artifact_base,
-        args.release.insecure_registry,
-        &args.release.registry_auth_file,
+        &release.artifact_base,
+        release.insecure_registry,
+        &release.registry_auth_file,
     )?
-    .with_ca_paths(&args.release.oci_ca_paths)?;
+    .with_ca_paths(&release.oci_ca_paths)?;
     let pulled = source
         .pull_verified(snapshot.carrier.manifest_digest.as_str())
         .await?;
@@ -142,8 +141,8 @@ pub async fn run(args: DeployArgs) -> anyhow::Result<()> {
     );
     let mut documents = vec![deployment_document(
         &qualification,
-        &args.host_deployment,
-        &args,
+        &request.host_deployment,
+        request,
         &snapshot,
         &qualification.candidate.host_image,
         "host",
@@ -152,19 +151,19 @@ pub async fn run(args: DeployArgs) -> anyhow::Result<()> {
         (
             "executor",
             &qualification.candidate.executor_image,
-            &args.executor_deployment,
+            &request.executor_deployment,
         ),
         (
             "identity",
             &qualification.candidate.identity_image,
-            &args.identity_deployment,
+            &request.identity_deployment,
         ),
     ] {
         match (image, path) {
             (Some(image), Some(path)) => documents.push(deployment_document(
                 &qualification,
                 path,
-                &args,
+                request,
                 &snapshot,
                 image,
                 role,
@@ -174,11 +173,11 @@ pub async fn run(args: DeployArgs) -> anyhow::Result<()> {
             _ => anyhow::bail!("{role} deployment and qualified image must be supplied together"),
         }
     }
-    let request = pinned_bytes(&qualification, &args.request_body)?;
+    let body = pinned_bytes(&qualification, &request.request_body)?;
     let expected: Value =
-        serde_json::from_slice(&pinned_bytes(&qualification, &args.expected_response)?)?;
-    require_released_route(&snapshot.manifest, &args.interaction_url, &args.route_host)?;
-    let token = fs::read_to_string(&args.bearer_file)
+        serde_json::from_slice(&pinned_bytes(&qualification, &request.expected_response)?)?;
+    require_released_route(&snapshot.manifest, &request.interaction_url, &request.route_host)?;
+    let token = fs::read_to_string(&request.bearer_file)
         .context("read the private deployment caller credential")?;
     ensure!(
         !token.trim().is_empty(),
@@ -187,23 +186,18 @@ pub async fn run(args: DeployArgs) -> anyhow::Result<()> {
     ensure!(
         !qualification
             .artifact_hashes
-            .contains_key(&args.bearer_file),
+            .contains_key(&request.bearer_file),
         "caller credentials must not be qualified artifacts"
     );
-    let (mut client, connection) = tokio_postgres::connect(&args.release.database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&release.database_url, NoTls)
         .await
         .context("connect to the selected deployment database")?;
     let mut connection = tokio::spawn(connection);
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let result = tokio::select! {
         result = tokio::time::timeout(DEPLOYMENT_TIMEOUT,
-            deploy(&mut client, &qualification, &snapshot, &args, &documents, request, expected, token.trim())) =>
+            deploy(&mut client, &qualification, &snapshot, request, &documents, body, expected, token.trim())) =>
             result.context("the deployment exceeded its time bound").and_then(|result| result),
         _ = &mut connection => Err(anyhow::anyhow!("the deployment database connection ended; activation was canceled")),
-        result = tokio::signal::ctrl_c() => result.context("listen for deployment interruption").and_then(|()| Err(anyhow::anyhow!("deployment interrupted; no automatic mutation retry"))),
-        _ = terminate.recv() => Err(anyhow::anyhow!("deployment terminated; no automatic mutation retry")),
-        _ = hangup.recv() => Err(anyhow::anyhow!("deployment connection closed; no automatic mutation retry")),
     };
     connection.abort();
     result
@@ -213,12 +207,12 @@ async fn deploy(
     client: &mut Client,
     qualification: &Qualification,
     snapshot: &ReleaseSnapshot,
-    args: &DeployArgs,
+    args: &DeployRequest,
     documents: &[Value],
     request: Vec<u8>,
     expected: Value,
     token: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<DeployedRelease> {
     let transaction = client.transaction().await?;
     claim(&transaction, &snapshot.manifest.release).await?;
     require_selected(&transaction, &snapshot.manifest.release).await?;
@@ -287,12 +281,11 @@ async fn deploy(
     require_selected(&transaction, &snapshot.manifest.release).await?;
     activate(&transaction, &snapshot.manifest, &args.principal).await?;
     transaction.commit().await?;
-    println!(
-        "{}",
-        json!({"source_commit":qualification.source_commit,"deployed_release":snapshot.manifest.release,
-        "manifest_digest":snapshot.carrier.manifest_digest.as_str(),"result":"pass"})
-    );
-    Ok(())
+    Ok(DeployedRelease {
+        source_commit: qualification.source_commit.clone(),
+        release: snapshot.manifest.release.clone(),
+        manifest_digest: snapshot.carrier.manifest_digest.as_str().to_owned(),
+    })
 }
 
 async fn claim(transaction: &Transaction<'_>, release: &ServingRelease) -> anyhow::Result<()> {
@@ -472,7 +465,7 @@ fn pinned_bytes(qualification: &Qualification, path: &Path) -> anyhow::Result<Ve
 fn deployment_document(
     qualification: &Qualification,
     path: &Path,
-    args: &DeployArgs,
+    args: &DeployRequest,
     snapshot: &ReleaseSnapshot,
     image: &str,
     role: &str,
@@ -682,7 +675,7 @@ async fn authenticated_interaction(
 }
 
 async fn kubectl(
-    args: &DeployArgs,
+    args: &DeployRequest,
     arguments: &[&str],
     input: Option<Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {

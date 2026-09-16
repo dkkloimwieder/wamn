@@ -53,7 +53,7 @@ enum DevEnvironmentCommand {
     /// Reset this environment's idle disposable application target.
     Reset(wamn_ctl::dev::target_database::DevResetArgs),
     /// Execute selected correctness cases through the shared owned-fixture runner.
-    CleanCheck(wamn_ctl::delivery::qualification::CheckChangesArgs),
+    CleanCheck(wamn_ctl::delivery_verbs::CheckChangesArgs),
 }
 
 #[cfg(target_os = "linux")]
@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
                 wamn_ctl::dev::target_database::reset(args).await
             }
             Some(DevEnvironmentCommand::CleanCheck(args)) => {
-                wamn_ctl::delivery::qualification::check_changes(args).await
+                wamn_ctl::delivery_verbs::check_changes(args).await
             }
             None => {
                 let run = dev

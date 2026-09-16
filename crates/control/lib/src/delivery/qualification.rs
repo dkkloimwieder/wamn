@@ -6,7 +6,6 @@ use std::process::Output;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use serde::Serialize;
 use tokio::process::Command;
 
@@ -27,37 +26,28 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 /// Workspace directories, from the repository root, whose members change checks can select.
 const TEST_WORKSPACES: &[&str] = &["", "apps"];
 
-/// Qualify a clean selected revision through the existing application cases.
-#[derive(Debug, Args)]
-pub struct QualifyReleaseArgs {
-    #[arg(long, default_value = ".")]
+/// Exact inputs for qualifying a clean selected revision through the existing
+/// application cases.
+#[derive(Clone, Debug)]
+pub struct QualifyReleaseRequest {
     pub repository: PathBuf,
     /// Integrated main, a release tag, or an explicitly selected revision.
-    #[arg(long, default_value = "main")]
     pub revision: String,
-    #[arg(long)]
     pub candidate: PathBuf,
     /// Fresh temporary result file outside tracked source.
-    #[arg(long)]
     pub result: PathBuf,
 }
 
-/// Run explicitly selected existing behavior checks before integration.
-#[derive(Debug, Args)]
-pub struct CheckChangesArgs {
-    #[arg(long, default_value = ".")]
+/// Exact selected existing behavior checks to run before integration.
+#[derive(Clone, Debug)]
+pub struct CheckChangesRequest {
     pub repository: PathBuf,
     /// A member of the root or apps workspace.
-    #[arg(long)]
     pub package: String,
     /// Omit for the library test target.
-    #[arg(long)]
     pub test: Option<String>,
-    #[arg(long = "case", required = true)]
     pub cases: Vec<String>,
-    #[arg(long)]
     pub include_ignored: bool,
-    #[arg(long)]
     pub result: PathBuf,
 }
 
@@ -173,14 +163,14 @@ pub(super) fn require_complete_checks(result: &Qualification) -> anyhow::Result<
 }
 
 /// Execute fresh required checks and write one machine result, including failures.
-pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
+pub async fn qualify(request: QualifyReleaseRequest) -> anyhow::Result<()> {
     let output_file = OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(&args.result)
+        .open(&request.result)
         .context("create a fresh qualification result file")?;
-    let candidate = Candidate::read(&fs::canonicalize(&args.candidate)?)?;
-    let repository_root = discover_repository_root(&args.repository).await?;
+    let candidate = Candidate::read(&fs::canonicalize(&request.candidate)?)?;
+    let repository_root = discover_repository_root(&request.repository).await?;
     let snapshot = read_status(&repository_root).await?;
     let (manifest, digest) = candidate.manifest()?;
     let mut result = Qualification {
@@ -192,7 +182,7 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    let run = qualify_candidate(&args, &repository_root, &mut result).await;
+    let run = qualify_candidate(&request, &repository_root, &mut result).await;
     if run.is_ok() {
         result.result = "pass".to_owned();
     }
@@ -208,7 +198,7 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
 }
 
 async fn qualify_candidate(
-    args: &QualifyReleaseArgs,
+    request: &QualifyReleaseRequest,
     repository_root: &Path,
     result: &mut Qualification,
 ) -> anyhow::Result<()> {
@@ -223,7 +213,7 @@ async fn qualify_candidate(
         .args([
             "rev-parse",
             "--verify",
-            &format!("{}^{{commit}}", args.revision),
+            &format!("{}^{{commit}}", request.revision),
         ])
         .output()
         .await?;
@@ -310,7 +300,7 @@ async fn qualify_candidate(
     let temporary = TemporaryResults::create()?;
     for (index, case) in app.cases.iter().enumerate() {
         ensure!(
-            Candidate::read(&args.candidate)? == result.candidate,
+            Candidate::read(&request.candidate)? == result.candidate,
             "candidate inputs changed during qualification"
         );
         let case_result = temporary.0.join(format!("case-{index}.json"));
@@ -318,7 +308,7 @@ async fn qualify_candidate(
         env.extend([
             (
                 "WAMN_DELIVERY_CANDIDATE".to_owned(),
-                fs::canonicalize(&args.candidate)?.display().to_string(),
+                fs::canonicalize(&request.candidate)?.display().to_string(),
             ),
             (
                 "WAMN_DELIVERY_RESULT".to_owned(),
@@ -460,13 +450,13 @@ fn schema_database_prefix(root: &Path, target: &Path, package: &str, schema: &st
 }
 
 /// Execute exact selected tests and distinguish executed success from a skip.
-pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
+pub async fn check_changes(request: CheckChangesRequest) -> anyhow::Result<()> {
     let output = OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(&args.result)
+        .open(&request.result)
         .context("create a fresh change result file")?;
-    let snapshot = read_status(&discover_repository_root(&args.repository).await?).await?;
+    let snapshot = read_status(&discover_repository_root(&request.repository).await?).await?;
     let mut result = ChangeResult {
         source_commit: snapshot.source_commit().to_owned(),
         source_dirty: snapshot.state() == GitSourceState::Dirty,
@@ -475,16 +465,16 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
     };
     let checked = async {
         let root = snapshot.repository_root();
-        let workspace = package_workspace(root, &args.package, &mut result.checks).await?;
+        let workspace = package_workspace(root, &request.package, &mut result.checks).await?;
         let binary = compile_tests(
             &workspace,
-            &args.package,
-            args.test.as_deref(),
+            &request.package,
+            request.test.as_deref(),
             &[],
             &mut result.checks,
         )
         .await?;
-        for case in &args.cases {
+        for case in &request.cases {
             ensure!(
                 !case.trim().is_empty(),
                 "a required case name cannot be empty"
@@ -496,7 +486,7 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
                 "--nocapture".to_owned(),
                 "--test-threads=1".to_owned(),
             ];
-            if args.include_ignored {
+            if request.include_ignored {
                 command.push("--include-ignored".to_owned());
             }
             require_one_case(&run(&workspace, &command, &[], &mut result.checks).await?)?;

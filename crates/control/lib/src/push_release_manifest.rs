@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use clap::Args;
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::OciImageManifest;
@@ -24,7 +23,7 @@ use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
 use crate::publish_release::{
     DeploymentCoordinate, read_release_snapshot, report_deployment_coordinate,
 };
-use wamn_runtime::component_artifact_source::{OCI_CA_PATHS_ENV, read_ca_bundles};
+use wamn_runtime::component_artifact_source::read_ca_bundles;
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
@@ -143,46 +142,36 @@ pub struct PublishedReleaseManifest {
     pub release: ServingRelease,
 }
 
-/// Arguments for the release-manifest distribution copy.
-#[derive(Debug, Args)]
-pub struct PushReleaseManifestArgs {
+/// Exact inputs of one release-manifest distribution copy.
+#[derive(Clone, Debug)]
+pub struct PushReleaseManifestRequest {
     /// Owner URL to the database holding the minted release snapshot.
-    #[arg(long)]
     pub database_url: String,
 
     /// Registry organization the release is deployed into. Required in both
     /// byte sources: the manifest fixes the rest of the attestation key, but
     /// never its control-plane placement.
-    #[arg(long)]
     pub org: String,
 
     /// Registry project the release is deployed into.
-    #[arg(long)]
     pub project: String,
 
     /// Tenant claim carried by the minted release snapshot.
-    #[arg(long)]
     pub tenant: String,
 
     /// Integer identity of the minted effective release snapshot.
-    #[arg(long)]
     pub effective_release_id: u32,
 
     /// Explicit `<registry>/<repository>` base for release manifests.
-    #[arg(long)]
     pub artifact_base: String,
 
     /// Projected `.dockerconfigjson` file carrying the push credential.
-    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
     pub registry_auth_file: PathBuf,
 
-    /// Use plain HTTP for exactly the registry in `--artifact-base`.
-    #[arg(long, default_value_t = false)]
+    /// Use plain HTTP for exactly the registry in `artifact_base`.
     pub insecure_registry: bool,
 
-    /// PEM CA bundle trusted for the registry, on top of the compiled-in
-    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
-    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in roots.
     pub oci_ca_paths: Vec<PathBuf>,
 
     /// Owner URL to the CONTROL database this deployment is attested in
@@ -192,48 +181,38 @@ pub struct PushReleaseManifestArgs {
     /// RELEASED rather than a candidate (`wamn-0h0g.13.54`), so a push that
     /// could not reach the control plane must refuse rather than leave bytes in
     /// a registry that no fact says were deployed.
-    #[arg(long)]
     pub control_database_url: String,
 }
 
-impl PushReleaseManifestArgs {
+impl PushReleaseManifestRequest {
     /// Key the published bytes for attestation under this invocation's placement.
-    fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
+    pub fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
         DeploymentCoordinate::new(&self.org, &self.project, release)
     }
 }
 
-/// Publish one canonical release manifest and print its content digest.
-pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
-    run_with_provenance(args, None).await
-}
-
-/// Publish one canonical release manifest attributed to one clean source commit.
-pub async fn run_with_source_commit(
-    args: PushReleaseManifestArgs,
-    source_commit: &str,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
-        "source commit must be one nonempty value"
-    );
-    run_with_provenance(args, Some(source_commit)).await
-}
-
-async fn run_with_provenance(
-    args: PushReleaseManifestArgs,
+/// Publish one canonical release manifest, optionally attributed to one clean
+/// source commit, and return its verified identity.
+pub async fn push_release_manifest(
+    request: &PushReleaseManifestRequest,
     source_commit: Option<&str>,
-) -> anyhow::Result<()> {
-    let canonical_bytes = canonical_release_bytes(&args).await?;
+) -> anyhow::Result<PublishedReleaseManifest> {
+    if let Some(source_commit) = source_commit {
+        anyhow::ensure!(
+            !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
+            "source commit must be one nonempty value"
+        );
+    }
+    let canonical_bytes = canonical_release_bytes(request).await?;
     let published = publish_release_manifest(
         &canonical_bytes,
-        &args.artifact_base,
-        args.insecure_registry,
-        &args.oci_ca_paths,
-        &args.registry_auth_file,
+        &request.artifact_base,
+        request.insecure_registry,
+        &request.oci_ca_paths,
+        &request.registry_auth_file,
     )
     .await?;
-    let coordinate = args.deployment_coordinate(&published.release);
+    let coordinate = request.deployment_coordinate(&published.release);
     report_deployment_coordinate(&coordinate, &published.digest);
     // wamn-0h0g.8.27: the OCI push IS the deployment event this attestation
     // records (wamn-0h0g.8.21's own stated trigger), so the write lands here and
@@ -241,26 +220,27 @@ async fn run_with_provenance(
     // never projected — bytes that reached a registry without ever being minted
     // cannot be attested into existence.
     crate::publish_release::attest_deployment(
-        &args.control_database_url,
+        &request.control_database_url,
         &coordinate,
         &published.digest,
         source_commit,
     )
     .await?;
-    println!("{}", published.digest);
-    Ok(())
+    Ok(published)
 }
 
 /// Read the bytes to publish from the release that minted them.
-async fn canonical_release_bytes(args: &PushReleaseManifestArgs) -> anyhow::Result<Vec<u8>> {
-    let effective_release_id = i32::try_from(args.effective_release_id)
+async fn canonical_release_bytes(
+    request: &PushReleaseManifestRequest,
+) -> anyhow::Result<Vec<u8>> {
+    let effective_release_id = i32::try_from(request.effective_release_id)
         .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
 
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to the release snapshot database")?;
     let connection_task = tokio::spawn(connection);
-    let read = select_snapshot(&mut client, &args.tenant, effective_release_id).await;
+    let read = select_snapshot(&mut client, &request.tenant, effective_release_id).await;
     match read {
         Ok(canonical_bytes) => {
             drop(client);
@@ -543,38 +523,10 @@ fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPubl
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser as _;
+    use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
     use wamn_runtime::release_manifest_artifact::RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE;
 
     use super::*;
-
-    /// Host command for the flattened argument surface under test.
-    #[derive(Debug, clap::Parser)]
-    struct PushProbe {
-        #[command(flatten)]
-        args: PushReleaseManifestArgs,
-    }
-
-    const DESTINATION: [&str; 6] = [
-        "--artifact-base",
-        "registry.example/wamn/releases",
-        "--registry-auth-file",
-        "auth.json",
-        // wamn-0h0g.8.27: the control database the push attests into. A
-        // separate URL on purpose — the two planes are two databases.
-        "--control-database-url",
-        "postgres://control.invalid/store",
-    ];
-
-    const PLACEMENT: [&str; 4] = ["--org", "acme", "--project", "billing"];
-
-    fn parse(source: &[&str]) -> Result<PushReleaseManifestArgs, clap::Error> {
-        let mut argv = vec!["push-release-manifest"];
-        argv.extend_from_slice(source);
-        argv.extend_from_slice(&DESTINATION);
-        argv.extend_from_slice(&PLACEMENT);
-        PushProbe::try_parse_from(argv).map(|probe| probe.args)
-    }
 
     const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":1,"registrations":{},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}"#;
 
@@ -599,111 +551,6 @@ mod tests {
         assert_eq!(coordinate.effective_release_id, 3);
         assert_eq!(coordinate.triple.org, "acme");
         assert_eq!(coordinate.triple.project, "billing");
-    }
-
-    #[test]
-    fn minted_snapshot_does_not_publish_without_its_control_plane_placement() {
-        let source = [
-            "--database-url",
-            "postgres://release.invalid/env",
-            "--tenant",
-            "tenant-a",
-            "--effective-release-id",
-            "3",
-        ];
-        for placement in [vec!["--org", "acme"], vec!["--project", "billing"], vec![]] {
-            let mut argv = vec!["push-release-manifest"];
-            argv.extend_from_slice(&source);
-            argv.extend_from_slice(&DESTINATION);
-            argv.extend_from_slice(&placement);
-            assert!(
-                PushProbe::try_parse_from(argv).is_err(),
-                "published with placement {placement:?}"
-            );
-        }
-
-        let mut argv = vec!["push-release-manifest"];
-        argv.extend_from_slice(&source);
-        argv.extend_from_slice(&[
-            "--artifact-base",
-            "registry.example/wamn/releases",
-            "--registry-auth-file",
-            "auth.json",
-        ]);
-        argv.extend_from_slice(&PLACEMENT);
-        assert!(
-            PushProbe::try_parse_from(argv).is_err(),
-            "published with no control database to attest into"
-        );
-
-        let placed = parse(&source).expect("a placed minted snapshot parses");
-        assert_eq!(placed.org, "acme");
-        assert_eq!(placed.project, "billing");
-        assert_eq!(
-            placed.control_database_url,
-            "postgres://control.invalid/store"
-        );
-    }
-
-    #[test]
-    fn the_parsed_placement_reaches_the_attestation_key() {
-        // The link the surface exists for: what the operator typed on the
-        // command line, not some other string in scope, is what keys the write.
-        let args = parse(&[
-            "--database-url",
-            "postgres://release.invalid/env",
-            "--tenant",
-            "tenant-a",
-            "--effective-release-id",
-            "3",
-        ])
-        .expect("the minted snapshot source parses");
-        let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-1 bytes");
-        let coordinate = args.deployment_coordinate(&manifest.release);
-
-        assert_eq!(coordinate.triple.org, "acme");
-        assert_eq!(coordinate.triple.project, "billing");
-        assert_eq!(coordinate.triple.env.as_str(), "prod");
-        assert_eq!(coordinate.tenant_id, "tenant-a");
-    }
-
-    #[test]
-    fn a_release_publishes_only_from_its_minted_snapshot() {
-        let snapshot = parse(&[
-            "--database-url",
-            "postgres://release.invalid/env",
-            "--tenant",
-            "tenant-a",
-            "--effective-release-id",
-            "3",
-        ])
-        .expect("the minted-snapshot source parses");
-        assert_eq!(snapshot.database_url, "postgres://release.invalid/env");
-        assert_eq!(snapshot.tenant, "tenant-a");
-        assert_eq!(snapshot.effective_release_id, 3);
-
-        assert!(
-            parse(&["--manifest", "manifest.json"]).is_err(),
-            "caller-supplied bytes must not mint deployment evidence"
-        );
-    }
-
-    #[test]
-    fn a_complete_minted_snapshot_coordinate_is_required() {
-        let refusals: [Vec<&str>; 3] = [
-            vec![],
-            vec![
-                "--database-url",
-                "postgres://release.invalid/env",
-                "--tenant",
-                "tenant-a",
-            ],
-            vec!["--tenant", "tenant-a", "--effective-release-id", "3"],
-        ];
-        for refused in refusals {
-            assert!(parse(&refused).is_err(), "accepted {refused:?}");
-        }
     }
 
     #[test]

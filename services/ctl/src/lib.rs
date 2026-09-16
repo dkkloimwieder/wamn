@@ -11,6 +11,7 @@
 pub mod bind_connection;
 pub mod component_verbs;
 pub use wamn_control::delivery;
+pub mod delivery_verbs;
 pub mod dev;
 pub mod identity_verbs;
 #[cfg(feature = "ops")]

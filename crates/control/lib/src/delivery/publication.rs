@@ -1,38 +1,37 @@
 //! Publish only the immutable release that completed repository qualification.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use tokio_postgres::NoTls;
 use wamn_catalog::ServingManifest;
 
 use super::Qualification;
 use crate::print_release_env::{ReleaseSnapshot, lookup_release_snapshot};
-use crate::push_release_manifest::{self, PushReleaseManifestArgs};
+use crate::push_release_manifest::{
+    self, PublishedReleaseManifest, PushReleaseManifestRequest,
+};
 
 /// Publish an already qualified candidate through the existing OCI publisher.
-#[derive(Debug, Args)]
-pub struct PublishArgs {
-    #[arg(long)]
-    pub qualification: PathBuf,
-    #[command(flatten)]
-    pub publication: PushReleaseManifestArgs,
-}
-
-pub async fn run(args: PublishArgs) -> anyhow::Result<()> {
-    let qualification = Qualification::read(&args.qualification)?;
-    checked_snapshot(&qualification, &args.publication).await?;
+pub async fn publish(
+    qualification: &Path,
+    publication: &PushReleaseManifestRequest,
+) -> anyhow::Result<PublishedReleaseManifest> {
+    let qualification = Qualification::read(qualification)?;
+    checked_snapshot(&qualification, publication).await?;
     // The existing publisher rereads the sealed snapshot, preserves exact
     // retries, and records its upload with the same source attribution.
     qualification.assert_artifacts()?;
-    push_release_manifest::run_with_source_commit(args.publication, &qualification.source_commit)
-        .await
+    push_release_manifest::push_release_manifest(
+        publication,
+        Some(&qualification.source_commit),
+    )
+    .await
 }
 
 pub(super) async fn checked_snapshot(
     qualification: &Qualification,
-    args: &PushReleaseManifestArgs,
+    args: &PushReleaseManifestRequest,
 ) -> anyhow::Result<ReleaseSnapshot> {
     qualification.require_pass()?;
     let (expected, _) = qualification.candidate.manifest()?;
@@ -67,7 +66,7 @@ fn require_same_manifest(
 pub(super) async fn require_published(
     qualification: &Qualification,
     snapshot: &ReleaseSnapshot,
-    args: &PushReleaseManifestArgs,
+    args: &PushReleaseManifestRequest,
 ) -> anyhow::Result<()> {
     let (mut client, connection) = tokio_postgres::connect(&args.control_database_url, NoTls)
         .await

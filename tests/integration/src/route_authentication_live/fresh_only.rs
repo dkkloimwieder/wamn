@@ -16,7 +16,7 @@ use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedC
 use wamn_ctl::dev::environment::{
     ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
 };
-use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
+use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
@@ -245,18 +245,21 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         package_manifests: manifests,
     })
     .await?;
-    push_release_manifest::run(PushReleaseManifestArgs {
-        database_url: test.project_url.to_owned(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        tenant: TENANT.to_owned(),
-        effective_release_id: 4,
-        artifact_base: test.inputs.release_artifact_base.clone(),
-        registry_auth_file: test.inputs.registry_auth_file.clone(),
-        insecure_registry: true,
-        oci_ca_paths: Vec::new(),
-        control_database_url: test.inputs.system_pg_url.clone(),
-    })
+    push_release_manifest::push_release_manifest(
+        &PushReleaseManifestRequest {
+            database_url: test.project_url.to_owned(),
+            org: ORG.to_owned(),
+            project: PROJECT.to_owned(),
+            tenant: TENANT.to_owned(),
+            effective_release_id: 4,
+            artifact_base: test.inputs.release_artifact_base.clone(),
+            registry_auth_file: test.inputs.registry_auth_file.clone(),
+            insecure_registry: true,
+            oci_ca_paths: Vec::new(),
+            control_database_url: test.inputs.system_pg_url.clone(),
+        },
+        None,
+    )
     .await?;
     let digest: String = test
         .project
