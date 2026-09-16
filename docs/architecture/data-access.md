@@ -446,8 +446,10 @@ The guarantee is bounded historical state:
 
 Stamps and log entries are correct for writes through the supported platform paths.
 On those paths, the triggers exist and every writer binds its executing principal and its operation.
-No production code applies `app-schema.sql` or writes person, service, or platform rows today.
-Beads `wamn-0h0g.9` owns that production application, the person and service rows, and the refusal of a credential for a principal without a users row.
+`reconcile-run-plane` applies `app-schema.sql` to the project database and writes its platform rows and a service row for each service principal of the project.
+It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
+No production code writes a person row today, so a human write refuses with `actor-required`.
+Beads `wamn-0h0g.9.18` owns the person rows and the refusal of a credential for a human principal without a users row.
 Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution and `app.operation`.
 Within its tenant, a guest can insert a `configurations_history` entry directly, because it holds `INSERT` on the entry columns.
 Record history gives no tamper resistance against modified application code or administrative SQL.

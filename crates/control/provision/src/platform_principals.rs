@@ -74,6 +74,10 @@ pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
 /// carries no transaction control, so the caller runs it inside one
 /// transaction. The binding ends with that transaction.
 ///
+/// Each insert keeps a row that is already there. Running the SQL twice, or
+/// running it against a tenant that holds part of the list, writes the rest
+/// and changes nothing else (`wamn-0h0g.9.15`).
+///
 /// # Errors
 ///
 /// Returns [`PlatformDomainError`] when `platform_domain` is not a valid
@@ -93,7 +97,7 @@ pub fn platform_principals_sql(
     for component in components {
         writeln!(
             sql,
-            "INSERT INTO {} (tenant_id, id, type, email, display_name) VALUES ({tenant}, {}, {}, {}, {});",
+            "INSERT INTO {} (tenant_id, id, type, email, display_name) VALUES ({tenant}, {}, {}, {}, {}) ON CONFLICT (tenant_id, id) DO NOTHING;",
             USERS.qualified(),
             quote_literal(&component.principal_id().to_string()),
             quote_literal(UserType::Platform.as_str()),
@@ -157,6 +161,18 @@ mod tests {
                     PlatformComponent::Provisioning
                 )),
             "the platform rows are written as wamn:provisioning"
+        );
+    }
+
+    #[test]
+    fn a_platform_row_that_is_already_there_is_kept() {
+        let sql = platform_principals_sql("t1", "example.invalid").expect("a domain name renders");
+        assert_eq!(
+            sql.matches("ON CONFLICT (tenant_id, id) DO NOTHING")
+                .count(),
+            PlatformComponent::ALL.len(),
+            "every insert keeps a row that is already there, so a tenant holding part of the \
+             list converges to the whole list"
         );
     }
 

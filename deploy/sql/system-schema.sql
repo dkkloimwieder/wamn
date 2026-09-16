@@ -99,10 +99,26 @@ CREATE SCHEMA identity AUTHORIZATION wamn_system;
 -- aligned with crates/control/registry SCHEMA_VERSION; additive-within-major per the
 -- 0.1.x freeze. A single-row table (the `id` boolean PK + CHECK forbids a second
 -- row) — the registry is not a versioned per-row document like the catalog.
+--
+-- `platform_domain` is the deployment's platform principal email domain: every
+-- tenant's `app_system.users` platform row carries `<component>@<domain>`
+-- (wamn-0h0g.9.15). It belongs to the deployment and not to an org, so it sits
+-- on this singleton. It starts NULL because static SQL cannot read deployment
+-- configuration; the bootstrap that applies this file sets it, and
+-- `reconcile-run-plane` refuses to create a tenant's platform rows while it is
+-- unset. The CHECK carries the same shape and the same two length limits that
+-- `wamn_control_provision::validate_platform_domain` enforces: dot-separated
+-- labels of lowercase letters, digits and inner hyphens, each label at most 63
+-- bytes and the whole name at most 253.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.meta (
-    id             boolean PRIMARY KEY DEFAULT true CHECK (id),
-    schema_version text NOT NULL
+    id              boolean PRIMARY KEY DEFAULT true CHECK (id),
+    schema_version  text NOT NULL,
+    platform_domain text,
+    CONSTRAINT meta_platform_domain_check
+        CHECK (platform_domain IS NULL
+               OR (octet_length(platform_domain) <= 253
+                   AND platform_domain ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'))
 );
 INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 

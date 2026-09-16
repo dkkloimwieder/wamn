@@ -47,9 +47,17 @@ Activation compares declared configuration with the provisioned resources and re
 It does not grant runtime credentials permission to reconfigure streams.
 
 Every tenant database needs its platform principal rows before any stamped write.
-`wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints their SQL.
-Pipe that SQL into `psql --single-transaction` against the tenant database after `record-history.sql`, `record-history-app-grants.sql`, and `app-schema.sql`.
-Production provisioning does not run this step yet, as the [record history limits](../architecture/data-access.md#limits) state.
+`wamn-ctl reconcile-run-plane` writes them, together with `app-schema.sql` and a service row for each service principal of the project.
+It takes the email domain of those rows from `registry.meta.platform_domain` in the system database.
+Set that value once per deployment, in the same step that applies `deploy/sql/system-schema.sql`:
+
+```sql
+UPDATE registry.meta SET platform_domain = 'example.invalid';
+```
+
+If the value is unset, `reconcile-run-plane` refuses with `platform-domain-unset`.
+`wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints the same SQL for an operator who applies it by hand.
+Person rows are not written yet, as the [record history limits](../architecture/data-access.md#limits) state.
 
 Apply the selected package migrations to a fresh target with `wamn-ctl apply-package`.
 apply-package owns the grants of the `wamn_audit_retention` role on history tables.
@@ -73,6 +81,7 @@ wamn-ctl reconcile-run-plane \
 `publish-release` refuses an absent or mismatched environment policy.
 The reconciler requires the registry-derived target and administrative database authority.
 Its `--dry-run` form prints the proposed changes without applying them.
+The same run installs `app-schema.sql` and the tenant identity rows, after the catalog schema that carries the record-history functions their triggers call.
 Existing reconciliation code does not establish support for post-install application schema upgrades.
 That design remains in [upgrades](../plan/upgrades.md).
 

@@ -53,7 +53,8 @@ use anyhow::Context as _;
 use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
-    DISPATCH_READER_ROLE, project_env_database_name, sql, validate_project_env,
+    APP_SCHEMA_SQL, DISPATCH_READER_ROLE, PlatformComponent, bind_platform_principal_sql,
+    platform_principals_sql, project_env_database_name, sql, validate_project_env,
 };
 use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
@@ -166,6 +167,8 @@ pub struct ReconcileRunPlaneOutcome {
     pub policy_changed: bool,
     /// Durability class of the source environment policy.
     pub durability_class: DurabilityClass,
+    /// What the tenant's `app_system` schema and identity rows needed.
+    pub tenant_identity: TenantIdentityOutcome,
 }
 
 /// Stable class for a run-plane target-identity refusal.
@@ -284,7 +287,7 @@ pub async fn reconcile_run_plane(
             })?;
     let expected_database =
         project_env_database_name(&args.org, &args.project, &args.env, &instance);
-    let (client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
+    let (mut client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
         .await
         .map_err(|source| {
             ReconcileTargetError::with_source(
@@ -338,17 +341,272 @@ pub async fn reconcile_run_plane(
             !args.dry_run,
         )
         .await?;
-        Ok::<_, anyhow::Error>((plan, policy_changed, durability_class))
+        // After the catalog schema, because app-schema.sql's stamp triggers
+        // call the record-history function that composition installs.
+        let identity_source =
+            read_tenant_identity_source(&args.system_database_url, &args.org, &args.project)
+                .await?;
+        let tenant_identity =
+            converge_tenant_identity(&mut client, &args.tenant, &identity_source, !args.dry_run)
+                .await?;
+        Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, tenant_identity))
     }
     .await;
     drop(client);
     let _ = conn_task.await;
-    let (plan, policy_changed, durability_class) = result?;
+    let (plan, policy_changed, durability_class, tenant_identity) = result?;
     Ok(ReconcileRunPlaneOutcome {
         plan,
         policy_changed,
         durability_class,
+        tenant_identity,
     })
+}
+
+/// One service principal that holds a role in the project being reconciled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServicePrincipal {
+    id: String,
+    subject: String,
+    display_name: String,
+}
+
+/// The deployment and registry facts a tenant's identity rows are built from.
+///
+/// Both come from the system registry, never from the tenant database, so a
+/// tenant cannot name its own platform rows or invent a service principal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TenantIdentitySource {
+    /// `registry.meta.platform_domain`, absent until the bootstrap sets it.
+    platform_domain: Option<String>,
+    services: Vec<ServicePrincipal>,
+}
+
+/// Every service principal holding a role in one project, with the deployment
+/// platform domain that names the platform rows.
+const TENANT_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.display_name \
+     FROM identity.project_roles AS r \
+     JOIN identity.principals AS p ON p.id = r.principal_id \
+     WHERE r.org = $1 AND r.project = $2 \
+       AND p.kind = 'service' AND p.status = 'active' \
+     GROUP BY p.id, p.subject, p.display_name \
+     ORDER BY p.subject";
+
+async fn read_tenant_identity_source(
+    system_database_url: &str,
+    org: &str,
+    project: &str,
+) -> anyhow::Result<TenantIdentitySource> {
+    let (client, connection) = tokio_postgres::connect(system_database_url, NoTls)
+        .await
+        .context("connect to the system registry for tenant identity")?;
+    let connection_task = tokio::spawn(connection);
+    let read = async {
+        client
+            .batch_execute("SET ROLE wamn_system")
+            .await
+            .context("assume the system registry owner")?;
+        let platform_domain: Option<String> = client
+            .query_one("SELECT platform_domain FROM registry.meta", &[])
+            .await
+            .context("read the deployment platform domain")?
+            .get(0);
+        let services = client
+            .query(TENANT_IDENTITY_SOURCE_SQL, &[&org, &project])
+            .await
+            .context("read the project's service principals")?
+            .into_iter()
+            .map(|row| ServicePrincipal {
+                id: row.get(0),
+                subject: row.get(1),
+                display_name: row.get(2),
+            })
+            .collect();
+        Ok::<_, anyhow::Error>(TenantIdentitySource {
+            platform_domain,
+            services,
+        })
+    }
+    .await;
+    drop(client);
+    let _ = connection_task.await;
+    read
+}
+
+/// What one tenant-identity convergence did, or would do under a dry run.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TenantIdentityOutcome {
+    /// `deploy/sql/app-schema.sql` was absent and was installed.
+    pub app_schema_installed: bool,
+    /// Platform rows written, out of the closed component list.
+    pub platform_rows_written: usize,
+    /// Service rows written for principals holding a role in this project.
+    pub service_rows_written: usize,
+}
+
+/// Install the tenant's `app_system` schema and its identity rows
+/// (`wamn-0h0g.9.15`).
+///
+/// This is the production application of `deploy/sql/app-schema.sql` and of the
+/// platform principal rows. Both were manual `psql` steps that
+/// `docs/operations/deployment.md` told an operator to run, and a tenant that
+/// skipped them refused every stamped write with `actor-required`.
+///
+/// It runs here and not in `provision-project-env` because this verb already
+/// holds an administrative connection to the exact project-env database, and
+/// because the record-history functions the stamp triggers call arrive with the
+/// catalog schema this same run installs.
+///
+/// A service row is written for every service principal holding a role in the
+/// project. Its email is `<subject>@<platform-domain>`: a service is not a
+/// person, so it carries the deployment's own domain, like a platform row, and
+/// the subject keeps it unique inside the tenant. Person rows are not written
+/// here, and `wamn-0h0g.9.18` owns them with the operator flow that needs them.
+///
+/// `apply=false` observes only and writes nothing.
+async fn converge_tenant_identity(
+    client: &mut tokio_postgres::Client,
+    tenant_id: &str,
+    source: &TenantIdentitySource,
+    apply: bool,
+) -> anyhow::Result<TenantIdentityOutcome> {
+    anyhow::ensure!(!tenant_id.is_empty(), "tenant must not be empty");
+    let mut outcome = TenantIdentityOutcome::default();
+    let app_schema_present: bool = client
+        .query_one(
+            "SELECT EXISTS ( SELECT FROM pg_namespace WHERE nspname = 'app_system' )",
+            &[],
+        )
+        .await
+        .context("probe the app_system schema")?
+        .get(0);
+
+    // Every relation app-schema.sql creates has a stamp trigger, so the
+    // record-history function has to exist before the file runs. The catalog
+    // composition carries it, and this same reconcile installs that. A tenant
+    // whose catalog predates record-history reaches here without it, and the
+    // failure is clearer here than inside a CREATE TRIGGER.
+    let stamp_function_present: bool = client
+        .query_one(
+            "SELECT EXISTS ( SELECT FROM pg_proc AS p \
+               JOIN pg_namespace AS n ON n.oid = p.pronamespace \
+              WHERE n.nspname = 'wamn_history' AND p.proname = 'stamp_row' )",
+            &[],
+        )
+        .await
+        .context("probe the record-history stamp function")?
+        .get(0);
+
+    let missing_platform: Vec<PlatformComponent> = if app_schema_present {
+        let present: BTreeSet<String> = client
+            .query(
+                "SELECT id::text FROM app_system.users \
+                  WHERE tenant_id = $1 AND type = 'platform'",
+                &[&tenant_id],
+            )
+            .await
+            .context("read the tenant's platform rows")?
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect();
+        PlatformComponent::ALL
+            .into_iter()
+            .filter(|component| !present.contains(&component.principal_id().to_string()))
+            .collect()
+    } else {
+        PlatformComponent::ALL.into_iter().collect()
+    };
+
+    let missing_services: Vec<&ServicePrincipal> = if app_schema_present {
+        let present: BTreeSet<String> = client
+            .query(
+                "SELECT id::text FROM app_system.users WHERE tenant_id = $1",
+                &[&tenant_id],
+            )
+            .await
+            .context("read the tenant's users rows")?
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect();
+        source
+            .services
+            .iter()
+            .filter(|service| !present.contains(&service.id))
+            .collect()
+    } else {
+        source.services.iter().collect()
+    };
+
+    outcome.app_schema_installed = !app_schema_present;
+    outcome.platform_rows_written = missing_platform.len();
+    outcome.service_rows_written = missing_services.len();
+    if !apply || (app_schema_present && missing_platform.is_empty() && missing_services.is_empty())
+    {
+        return Ok(outcome);
+    }
+    anyhow::ensure!(
+        stamp_function_present,
+        "record-history-absent: this database has no wamn_history.stamp_row function, which every \
+         app_system stamp trigger calls. deploy/sql/record-history.sql arrives with the catalog \
+         schema, so reconcile the catalog schema before the tenant identity rows"
+    );
+    let Some(platform_domain) = source.platform_domain.as_deref() else {
+        anyhow::bail!(
+            "platform-domain-unset: registry.meta.platform_domain names the domain of the \
+             platform principal emails, and this deployment has not set it. Set it once against \
+             the system database, for example UPDATE registry.meta SET platform_domain = \
+             'example.invalid'"
+        );
+    };
+    let platform_rows = platform_principals_sql(tenant_id, platform_domain)
+        .map_err(|source| anyhow::anyhow!("{source}"))?;
+
+    let transaction = client
+        .transaction()
+        .await
+        .context("open the tenant identity transaction")?;
+    if !app_schema_present {
+        transaction
+            .batch_execute(APP_SCHEMA_SQL)
+            .await
+            .context("install deploy/sql/app-schema.sql")?;
+    }
+    // Every write below stamps `wamn:provisioning`, and its own row stamps
+    // itself, because the bind comes first and lasts for this transaction.
+    transaction
+        .batch_execute(&platform_rows)
+        .await
+        .context("write the tenant's platform principal rows")?;
+    if !missing_services.is_empty() {
+        transaction
+            .batch_execute(&bind_platform_principal_sql(
+                PlatformComponent::Provisioning,
+            ))
+            .await
+            .context("bind wamn:provisioning for the service rows")?;
+        for service in &missing_services {
+            transaction
+                .execute(
+                    "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                     VALUES ($1, $2::text::uuid, 'service', $3, $4)",
+                    &[
+                        &tenant_id,
+                        &service.id,
+                        &format!("{}@{platform_domain}", service.subject),
+                        &service.display_name,
+                    ],
+                )
+                .await
+                .with_context(|| {
+                    format!("write the service row of principal {:?}", service.subject)
+                })?;
+        }
+    }
+    transaction
+        .commit()
+        .await
+        .context("commit the tenant identity rows")?;
+    Ok(outcome)
 }
 
 /// Converge one source-attested environment policy into the project-local

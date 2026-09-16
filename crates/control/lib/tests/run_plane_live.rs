@@ -172,7 +172,45 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
     )
     .await
     .expect("seed recorded project-env target");
+    su.batch_execute(SYSTEM_IDENTITY_FIXTURE_SQL)
+        .await
+        .expect("create the system identity fixture");
 }
+
+/// The deployment platform domain and the identity relations the reconciler
+/// reads to build a tenant's `app_system.users` rows (`wamn-0h0g.9.15`).
+///
+/// The shapes are the columns this reader uses, in the simplified style the
+/// rest of this fixture keeps. `deploy/sql/system-schema.sql` owns the real
+/// relations, with their record-history columns and their CHECKs.
+const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCADE; \
+     CREATE SCHEMA identity AUTHORIZATION wamn_system; \
+     SET ROLE wamn_system; \
+     CREATE TABLE registry.meta ( \
+       id boolean PRIMARY KEY DEFAULT true CHECK (id), \
+       schema_version text NOT NULL, platform_domain text); \
+     INSERT INTO registry.meta (schema_version, platform_domain) \
+       VALUES ('0.1', 'example.invalid'); \
+     CREATE TABLE identity.principals ( \
+       id uuid PRIMARY KEY, kind text NOT NULL, subject text NOT NULL, \
+       display_name text NOT NULL, status text NOT NULL DEFAULT 'active'); \
+     CREATE TABLE identity.project_roles ( \
+       principal_id uuid NOT NULL REFERENCES identity.principals (id), \
+       org text NOT NULL, project text NOT NULL, role text NOT NULL, \
+       PRIMARY KEY (principal_id, org, project, role)); \
+     INSERT INTO identity.principals (id, kind, subject, display_name) VALUES \
+       ('11111111-1111-4111-8111-111111111111', 'service', \
+        'wamn-management-author-acme--billing--dev', \
+        'WAMN management author acme/billing/dev'), \
+       ('22222222-2222-4222-8222-222222222222', 'human', \
+        'person@example.invalid', 'A person'); \
+     INSERT INTO identity.project_roles (principal_id, org, project, role) VALUES \
+       ('11111111-1111-4111-8111-111111111111', 'acme', 'billing', 'project-author'), \
+       ('22222222-2222-4222-8222-222222222222', 'acme', 'billing', 'project-author'); \
+     RESET ROLE";
+
+/// The one service principal the fixture gives project `acme/billing`.
+const FIXTURE_SERVICE_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 async fn seed_pre_durability_system_env_policy(su: &Client) {
     su.batch_execute(
@@ -202,6 +240,80 @@ async fn seed_pre_durability_system_env_policy(su: &Client) {
     )
     .await
     .expect("create pre-durability system env-policy fixture");
+    su.batch_execute(SYSTEM_IDENTITY_FIXTURE_SQL)
+        .await
+        .expect("create the system identity fixture");
+}
+
+/// The tenant identity rows one reconcile installs (`wamn-0h0g.9.15`).
+///
+/// `reconcile-run-plane` is the production application of
+/// `deploy/sql/app-schema.sql` and of the platform principal rows, which
+/// `docs/operations/deployment.md` told an operator to pipe into `psql` by
+/// hand. Every row is written as `wamn:provisioning`, and the
+/// `wamn:provisioning` row stamps itself.
+///
+/// The fixture's human principal holds the same project role as its service
+/// principal and gets NO row: person rows are `wamn-0h0g.9.18`.
+///
+/// Called after each apply in this leg, so a second run writing a second time
+/// fails here.
+async fn tenant_identity_leg(su: &Client) {
+    let rows: Vec<(String, String, String, String)> = su
+        .query(
+            "SELECT id::text, type, email, created_by::text FROM app_system.users \
+              WHERE tenant_id = 't1' ORDER BY email",
+            &[],
+        )
+        .await
+        .expect("read the tenant identity rows")
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect();
+    let provisioning = "770df186-ac15-579e-b46b-c297cae2011b";
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "7695180f-4b9a-581f-84ef-d7e9cdbd2b77".to_string(),
+                "platform".to_string(),
+                "apply-package@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
+            (
+                "34cbd151-990e-5800-93be-4fba8878b943".to_string(),
+                "platform".to_string(),
+                "audit-retention@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
+            (
+                "d318d033-29ea-5cb0-ab56-24340413fbcc".to_string(),
+                "platform".to_string(),
+                "executor@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
+            (
+                "968bd0cc-e612-5d29-9d6c-af1993b8df0a".to_string(),
+                "platform".to_string(),
+                "materializer@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
+            (
+                provisioning.to_string(),
+                "platform".to_string(),
+                "provisioning@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
+            (
+                FIXTURE_SERVICE_ID.to_string(),
+                "service".to_string(),
+                "wamn-management-author-acme--billing--dev@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
+        ],
+        "the tenant carries its five platform rows and one service row, each stamped by \
+         wamn:provisioning, and no person row",
+    );
 }
 
 fn schema() -> BareSchemaName {
@@ -1001,6 +1113,8 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     .await
     .expect("reconcile-run-plane applies");
 
+    tenant_identity_leg(su).await;
+
     let projected: String = su
         .query_one(
             &format!(
@@ -1065,6 +1179,8 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     })
     .await
     .expect("reconcile changed environment policy");
+    // A second apply writes no second copy of any identity row.
+    tenant_identity_leg(su).await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \

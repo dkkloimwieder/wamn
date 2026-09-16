@@ -1,8 +1,9 @@
 use super::{
     CLI_ENV, CLI_INSTANCE, CLI_ORG, CLI_PROJECT, Client, RECONCILE_TARGET_REFUSAL_PREFIX,
-    ReconcileRunPlaneRequest, ReconcileTargetError, ReconcileTargetErrorKind, SCHEMA, connect,
-    database_url, drop_database, locked_database, project_env_database_name,
-    project_environment_policy, reconcile_run_plane, recreate_database, reset, schema,
+    ReconcileRunPlaneRequest, ReconcileTargetError, ReconcileTargetErrorKind, SCHEMA,
+    SYSTEM_IDENTITY_FIXTURE_SQL, connect, database_url, drop_database, locked_database,
+    project_env_database_name, project_environment_policy, reconcile_run_plane, recreate_database,
+    reset, schema,
 };
 
 async fn seed_target_guard_registry(su: &Client) {
@@ -36,6 +37,11 @@ async fn seed_target_guard_registry(su: &Client) {
     )
     .await
     .expect("seed target-identity registry fixture");
+    // The reconciler reads the deployment platform domain and the project's
+    // service principals on every run, including a dry run (`wamn-0h0g.9.15`).
+    su.batch_execute(SYSTEM_IDENTITY_FIXTURE_SQL)
+        .await
+        .expect("seed the target-identity system identity fixture");
 }
 
 async fn target_guard_system_snapshot(su: &Client) -> String {

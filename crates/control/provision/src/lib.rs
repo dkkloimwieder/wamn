@@ -170,6 +170,16 @@ pub const CONTROL_PORTABLE_STORE_SQL: &str = concat!(
 /// floor while silently omitting the control authoring/release store.
 pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL];
 
+/// The per-tenant authorization and configuration schema, applied to a project
+/// database after its catalog schema.
+///
+/// Every relation it creates carries a stamp trigger that calls
+/// `wamn_history.stamp_row()`, so the applier installs
+/// `deploy/sql/record-history.sql` first. `CATALOG_SCHEMA_SQL` carries that
+/// file, so an applier that applied the catalog schema already holds it
+/// (`wamn-0h0g.9.15`).
+pub const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+
 /// Operations persistence extension, installed after the core system schema.
 #[cfg(feature = "ops")]
 pub const OPS_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/ops-schema.sql");
