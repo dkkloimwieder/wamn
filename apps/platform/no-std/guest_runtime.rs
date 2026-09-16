@@ -57,7 +57,13 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 /// The compiler-generated caller must provide two readable regions of at least
 /// `length` bytes. This has the same contract as C `memcmp`.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn memcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
+unsafe extern "C" fn memcmp(
+    left: *const core::ffi::c_void,
+    right: *const core::ffi::c_void,
+    length: usize,
+) -> i32 {
+    let left = left.cast::<u8>();
+    let right = right.cast::<u8>();
     for offset in 0..length {
         // SAFETY: the function's C ABI contract makes both regions readable
         // for every offset strictly below `length`.
