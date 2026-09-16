@@ -124,7 +124,12 @@ pub fn decide(
 fn parse_scale(body: &str) -> anyhow::Result<Scale> {
     let v: serde_json::Value = serde_json::from_str(body).context("parse Scale JSON")?;
     Ok(Scale {
-        spec_replicas: v["spec"]["replicas"].as_i64().unwrap_or(0) as i32,
+        // An absent or out-of-range replica count reads as zero, exactly as a
+        // scaled-down Deployment does.
+        spec_replicas: v["spec"]["replicas"]
+            .as_i64()
+            .and_then(|replicas| i32::try_from(replicas).ok())
+            .unwrap_or(0),
     })
 }
 
@@ -356,12 +361,12 @@ pub async fn run(args: WakeArgs) -> anyhow::Result<()> {
 
     loop {
         tokio::select! {
-            hint = hints.next() => match hint {
-                Some(msg) => handle_hint(&scale, &mappings, &msg.subject).await,
-                None => {
+            hint = hints.next() => {
+                let Some(msg) = hint else {
                     tracing::warn!("waker: all doorbell subscriptions closed; exiting");
                     return Ok(());
-                }
+                };
+                handle_hint(&scale, &mappings, &msg.subject).await;
             },
             _ = rx.changed() => {
                 if *rx.borrow() {
@@ -397,13 +402,13 @@ async fn connect_nats(
         opts = opts.request_timeout(Some(timeout));
     }
     if let Some(ca_path) = options.tls_ca {
-        opts = opts.add_root_certificates(ca_path)
+        opts = opts.add_root_certificates(ca_path);
     }
     if options.tls_first {
         opts = opts.tls_first();
     }
     if let (Some(cert_path), Some(key_path)) = (options.tls_cert, options.tls_key) {
-        opts = opts.add_client_certificate(cert_path, key_path)
+        opts = opts.add_client_certificate(cert_path, key_path);
     }
     opts.connect(addr)
         .await

@@ -279,9 +279,13 @@ async fn dial(spec: &ProjectSpec) -> anyhow::Result<(Client, tokio::task::JoinHa
     });
     let mut session = String::new();
     if let Some(s) = &spec.schema {
-        session.push_str(&format!("SET search_path TO {s}; "));
+        session.push_str("SET search_path TO ");
+        session.push_str(s);
+        session.push_str("; ");
     }
-    session.push_str(&format!("SET app.tenant TO '{}';", spec.tenant));
+    session.push_str("SET app.tenant TO '");
+    session.push_str(&spec.tenant);
+    session.push_str("';");
     client
         .batch_execute(&session)
         .await
@@ -290,10 +294,12 @@ async fn dial(spec: &ProjectSpec) -> anyhow::Result<(Client, tokio::task::JoinHa
 }
 
 /// A project's pinned connection and adaptive-cadence state.
+#[derive(Debug)]
 pub struct ProjectState {
     pub spec: ProjectSpec,
     client: Client,
-    _conn: tokio::task::JoinHandle<()>,
+    /// Drives the pinned connection; held so the connection outlives the dial.
+    conn: tokio::task::JoinHandle<()>,
     /// Adaptive sweep interval (tightens on work, decays while idle).
     pub interval_ms: i64,
     pub last_sweep_ms: i64,
@@ -315,6 +321,7 @@ impl TickReport {
     }
 }
 
+#[derive(Debug)]
 pub struct DispatcherConfig {
     /// The validated adaptive poll cadence: an inverted `min > max` band is
     /// rejected at [`Cadence::new`], so the dispatcher's interval math can never
@@ -349,6 +356,7 @@ fn next_reconcile(last_sweep_ms: i64, interval_ms: i64) -> i64 {
 /// The dispatcher: per-project state + the optional doorbell client + the
 /// cadence config. One instance is one replica; running several is safe because
 /// sweeps are read-only and downstream claims arbitrate duplicate hints.
+#[derive(Debug)]
 pub struct Dispatcher {
     pub projects: Vec<ProjectState>,
     nats: Option<async_nats::Client>,
@@ -380,7 +388,7 @@ impl Dispatcher {
             projects.push(ProjectState {
                 spec: spec.clone(),
                 client,
-                _conn: handle,
+                conn: handle,
                 interval_ms: cfg.cadence.min(),
                 last_sweep_ms: 0,
             });
@@ -418,7 +426,7 @@ impl Dispatcher {
             let (client, handle) = dial(&spec).await?;
             let p = &mut self.projects[idx];
             p.client = client;
-            p._conn = handle;
+            p.conn = handle;
             tracing::info!(project = %spec.name, "dispatcher: reconnected project");
         }
 
@@ -468,7 +476,9 @@ impl Dispatcher {
     ) -> anyhow::Result<()> {
         // Generous per-sweep deadline: wedge protection against hours-long
         // black holes, far above any healthy sweep.
-        let sweep_deadline = Duration::from_millis((2 * self.cfg.cadence.max()).max(5_000) as u64);
+        let sweep_deadline_ms = (2 * self.cfg.cadence.max()).max(5_000);
+        // The floor above makes this positive, so the width change is exact.
+        let sweep_deadline = Duration::from_millis(sweep_deadline_ms.cast_unsigned());
         loop {
             let now = epoch_ms();
             for i in 0..self.projects.len() {
@@ -506,9 +516,12 @@ impl Dispatcher {
                 .map(|p| next_reconcile(p.last_sweep_ms, p.interval_ms))
                 .min()
                 .unwrap_or(now + self.cfg.cadence.max());
-            let sleep_ms = (next - now).clamp(10, self.cfg.cadence.max()) as u64;
+            // The clamp floor makes this positive, so the width change is exact.
+            let sleep_ms = (next - now)
+                .clamp(10, self.cfg.cadence.max())
+                .cast_unsigned();
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
+                () = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
                 _ = shutdown.changed() => {
                     if *shutdown.borrow() {
                         return Ok(());
@@ -546,8 +559,7 @@ pub fn register_queue_depth_gauge(meter: &Meter, depth: &DepthRegistry) {
 pub fn epoch_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// The one message a dispatcher with no project source dies on. Named so the
@@ -762,13 +774,13 @@ async fn connect_nats(
         opts = opts.request_timeout(Some(timeout));
     }
     if let Some(ca_path) = options.tls_ca {
-        opts = opts.add_root_certificates(ca_path)
+        opts = opts.add_root_certificates(ca_path);
     }
     if options.tls_first {
         opts = opts.tls_first();
     }
     if let (Some(cert_path), Some(key_path)) = (options.tls_cert, options.tls_key) {
-        opts = opts.add_client_certificate(cert_path, key_path)
+        opts = opts.add_client_certificate(cert_path, key_path);
     }
     opts.connect(addr)
         .await
