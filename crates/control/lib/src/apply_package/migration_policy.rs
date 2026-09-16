@@ -12,8 +12,8 @@ use wamn_schema_introspection::migration_policy::{
 };
 
 use super::definition_ownership::{
-    PlannedDefinitionMutation, definition_error, definition_present, load_definition_owner,
-    model_for_relation,
+    PlannedDefinitionMutation, StoredDefinitionOwner, definition_error, definition_present,
+    load_definition_owner, model_for_relation,
 };
 use super::error::{ApplyPackageErrorKind, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL};
 
@@ -163,16 +163,29 @@ pub(super) async fn validate_definition_ownership_before_apply(
     mutations: &[&PlannedDefinitionMutation],
 ) -> anyhow::Result<()> {
     validate_manifest_definition_owners(manifest)?;
+    // One apply runs every pending migration in one transaction and records the
+    // definition owners after them. A stream that creates a relation and then
+    // adds to it therefore reads the owner this apply is about to record.
+    let mut created = Vec::new();
     for planned in mutations {
         let mutation = &planned.mutation;
         match mutation.action() {
             DefinitionAction::Create => {
                 preflight_create_relation(tx, tenant, coordinate, package_id, manifest, planned)
                     .await?;
+                created.push((mutation.schema(), mutation.relation()));
             }
             DefinitionAction::Add => {
-                preflight_add_definition(tx, tenant, coordinate, package_id, manifest, planned)
-                    .await?;
+                preflight_add_definition(
+                    tx,
+                    tenant,
+                    coordinate,
+                    package_id,
+                    manifest,
+                    planned,
+                    created.contains(&(mutation.schema(), mutation.relation())),
+                )
+                .await?;
             }
             DefinitionAction::Alter | DefinitionAction::Drop => {
                 preflight_existing_definition_mutation(tx, tenant, coordinate, package_id, planned)
@@ -289,9 +302,10 @@ async fn preflight_add_definition(
     package_id: &str,
     manifest: &PackageManifest,
     planned: &PlannedDefinitionMutation,
+    created_by_this_apply: bool,
 ) -> anyhow::Result<()> {
     let mutation = &planned.mutation;
-    let Some(relation_owner) = load_definition_owner(
+    let stored = load_definition_owner(
         tx,
         tenant,
         mutation.schema(),
@@ -299,16 +313,31 @@ async fn preflight_add_definition(
         DefinitionKind::Relation,
         mutation.relation(),
     )
-    .await?
-    else {
-        return Err(definition_error(
-            ApplyPackageErrorKind::DefinitionOwnerConflict,
-            coordinate,
-            planned,
-            None,
-            "the target relation has no durable definition owner",
-        )
-        .into());
+    .await?;
+    // An earlier migration of this apply creates the relation, and the apply
+    // records the same owner row that this branch reads.
+    let relation_owner = match stored {
+        Some(owner) => owner,
+        None if created_by_this_apply => StoredDefinitionOwner {
+            package_id: package_id.to_owned(),
+            client_field_extensible: model_for_relation(
+                manifest,
+                mutation.schema(),
+                mutation.relation(),
+            )
+            .filter(|model| model.owner == package_id)
+            .is_some_and(|model| model.client_field_extensible),
+        },
+        None => {
+            return Err(definition_error(
+                ApplyPackageErrorKind::DefinitionOwnerConflict,
+                coordinate,
+                planned,
+                None,
+                "the target relation has no durable definition owner",
+            )
+            .into());
+        }
     };
 
     if relation_owner.package_id != package_id {

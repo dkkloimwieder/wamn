@@ -2389,3 +2389,49 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
         .expect("clean local target reuse schemas");
     std::fs::remove_dir_all(package).expect("remove local target reuse package fixture");
 }
+
+/// One apply takes a stream that creates a relation and then adds a column to
+/// it, which is the shape a package has after a column edit is committed.
+#[tokio::test]
+async fn one_apply_takes_a_created_relation_and_its_later_column() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    install(&client).await;
+    let package = fixture_root().with_file_name(format!(
+        "apply-package-created-then-added-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&package);
+    std::fs::write(
+        package.join("migrations/0002_location_note.sql"),
+        "ALTER TABLE receiving.location ADD COLUMN note text;\n",
+    )
+    .expect("append a migration to the stream");
+    let outcome = apply(&url, &package)
+        .await
+        .expect("apply a stream that creates a relation and then adds to it");
+    assert_eq!(outcome.migrations_applied, 2);
+    let owned: bool = client
+        .query_one(
+            "SELECT count(*) = 1 FROM catalog.package_definition_owners \
+             WHERE relation_name = 'location' AND definition_kind = 'field' \
+               AND definition_name = 'note' AND owner_package_id = 'wamn_receiving'",
+            &[],
+        )
+        .await
+        .expect("read the recorded field owner")
+        .get(0);
+    assert!(owned, "the appended column records its definition owner");
+
+    client
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
+        )
+        .await
+        .expect("clean created-then-added schemas");
+    std::fs::remove_dir_all(package).expect("remove created-then-added package fixture");
+}
