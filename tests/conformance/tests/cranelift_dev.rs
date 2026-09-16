@@ -239,7 +239,7 @@ fn cranelift_toolchain_is_isolated_to_one_leaf_developer_stage() {
         .iter()
         .find(|stage| stage.name == "cranelift-dev")
         .expect("Dockerfile must define cranelift-dev");
-    assert_eq!(developer.parent, "chef");
+    assert_eq!(developer.parent, "toolchain");
     assert_eq!(
         stages.last().map(|stage| stage.name.as_str()),
         Some("cranelift-dev")

@@ -8,185 +8,117 @@
 #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
 #   docker build --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
-# Later invocations reuse one cargo-chef recipe and shared, locked BuildKit
-# registry, Git, and target caches. Each retained native image cooks and builds
-# only its top-level package closure. The
+# Later invocations reuse shared BuildKit registry and Git caches and one
+# locked target cache per build stage, so the stages no longer wait on each
+# other. Each retained native image builds only its top-level package. The
 # washlet artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
 # IDENTICAL host stage so Jobs exercise the same host lib code they verify.
-FROM rust:1.98-trixie AS chef
+FROM rust:1.98-trixie AS toolchain
 # libprotobuf-dev carries the well-known types (google/protobuf/*.proto)
 # that protobuf-compiler alone does not ship on Debian.
 RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
-RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-chef-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    cargo install cargo-chef --version 0.1.77 --locked
 
-# The planner may see source changes. The recipe copied into each cook stage
-# changes only when the root workspace manifests or Cargo.lock change, but the
-# cook stages also carry `apps/` below, so a component source change does
-# re-run them.
-FROM chef AS root-planner
+# One source stage feeds every native build stage.
+#
+# There were eight cargo-chef cook stages here. A cook writes its dependency
+# build into the SAME cache mount its build stage reads, not into a layer, so
+# it cached nothing that survived the stage; it only took the one lock every
+# other stage waited on, and deleted the workspace rlibs a neighbour had just
+# written. One target cache per build stage replaces all of it (wamn-szr0).
+FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+# Native packages use shared guest libraries under apps/platform.
 COPY apps ./apps
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
-RUN cargo chef prepare --recipe-path root-recipe.json
-
-FROM chef AS root-recipe
-# The copied .cargo/config.toml carries the clang/mold linker settings the chef
-# stage installs above, and NO rustc-wrapper: this stage, root-source and
-# component-toolchain all inherit this file, and a wrapper naming a binary none
-# of them installs fails the build at `<wrapper> rustc -vV`. Keep sccache a
-# per-developer RUSTC_WRAPPER setting -- see .cargo/config.toml.
-COPY .cargo/config.toml ./.cargo/config.toml
-COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
-# Native packages use shared guest libraries under apps/platform.
-# Those libraries inherit the apps workspace declarations, which cargo-chef
-# does not include in the native recipe. Copy their full workspace here.
-# The shared target cache keeps rebuilds incremental.
-COPY apps ./apps
-
-FROM root-recipe AS cook-host
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
-
-FROM root-recipe AS cook-executor
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-executor
-
-FROM root-recipe AS cook-scenario-worker
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-scenario-worker
-
-FROM root-recipe AS cook-ctl
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-ctl
-
-FROM root-recipe AS cook-dispatcher
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-dispatcher
-
-FROM root-recipe AS cook-waker
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-waker
-
-FROM root-recipe AS cook-cdc-reader
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-cdc-reader
-
-FROM root-recipe AS cook-identity
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-identity
-
-FROM root-planner AS root-source
+# The copied .cargo/config.toml carries the clang/mold linker settings the
+# toolchain stage installs above, and NO rustc-wrapper: this stage and
+# component-toolchain both inherit this file, and a wrapper naming a binary
+# neither of them installs fails the build at `<wrapper> rustc -vV`. Keep
+# sccache a per-developer RUSTC_WRAPPER setting -- see .cargo/config.toml.
 COPY .cargo/config.toml ./.cargo/config.toml
 # The canonical deploy DDL is consumed by the ctl reconcilers and exact package
-# runner — single source of truth, no clones.
+# runner -- single source of truth, no clones.
 COPY deploy ./deploy
 # wash-runtime resolves as a git dependency at the zero-delta fork revision
 # recorded in Cargo.toml and docs/architecture/native-alignment.md;
-# cargo fetches it during the cook/build.
+# cargo fetches it during the build.
 # rust-toolchain.toml is deliberately absent: the base image already ships the
 # pinned Rust line, and copying it would force a rustup download in the image.
 
-FROM cook-host AS build-host
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-host
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-host,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-host \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
 
-FROM cook-executor AS build-executor
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-executor
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-executor,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-executor \
  && install -D -m 0755 target/release/wamn-run-worker /native-output/wamn-run-worker
 
-FROM cook-scenario-worker AS build-scenario-worker
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-scenario-worker
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-scenario-worker,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-scenario-worker \
  && install -D -m 0755 target/release/wamn-scenario-worker /native-output/wamn-scenario-worker
 
-FROM cook-ctl AS build-ctl
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-ctl
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-ctl,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-ctl \
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
  && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops
 
-FROM cook-dispatcher AS build-dispatcher
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-dispatcher
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-dispatcher,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-dispatcher \
  && install -D -m 0755 target/release/wamn-dispatcher /native-output/wamn-dispatcher
 
-FROM cook-waker AS build-waker
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-waker
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-waker,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-waker \
  && install -D -m 0755 target/release/wamn-waker /native-output/wamn-waker
 
-FROM cook-cdc-reader AS build-cdc-reader
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-cdc-reader
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-cdc-reader,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
 
-FROM cook-identity AS build-identity
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+FROM root-source AS build-identity
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-identity,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-identity \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
 
-# The test image is outside the retained MVP image set. It remains a separate,
-# package-scoped build and reuses the same locked caches without adding an
-# additional production cook stage.
+# The test image is outside the retained MVP image set. It remains a
+# separate, package-scoped build with its own target cache.
 FROM root-source AS build-gates
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-gates,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-gates \
  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
 
 # ---- locked component outputs shared by every embedding image --------------
-FROM chef AS component-toolchain
+FROM toolchain AS component-toolchain
 RUN rustup target add --toolchain 1.98.0 wasm32-wasip2 \
  && rustup toolchain install 1.98.0 --profile minimal --target wasm32-wasip2
 COPY .cargo/config.toml /build/.cargo/config.toml
@@ -309,7 +241,7 @@ COPY --from=component-builder /component-output/materializer.wasm /bench/materia
 COPY --from=component-builder /component-output/connection_http_standard.wasm /bench/connection-http-standard.wasm
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
 
-FROM chef AS cranelift-dev
+FROM toolchain AS cranelift-dev
 # Opt-in native debug shell only. No shipping stage inherits this toolchain.
 RUN rustup toolchain install nightly --profile minimal \
  && rustup component add rustc-codegen-cranelift-preview --toolchain nightly

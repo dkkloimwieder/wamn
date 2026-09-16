@@ -24,24 +24,33 @@ fn selected_packages(contents: &str) -> Vec<&str> {
         .collect()
 }
 
-fn assert_shared_locked_caches(contents: &str, owner: &str) {
+/// One target cache per build stage, and the download caches shared.
+///
+/// Seventeen stages used to lock one target cache, so they compiled one at a
+/// time and deleted each other's workspace output. A stage that owns its target
+/// waits for nobody; the registry and Git caches are downloads, which Cargo
+/// already locks per package (wamn-szr0).
+fn assert_stage_caches(contents: &str, owner: &str, stage_name: &str) {
     let mounts: Vec<_> = contents
         .lines()
         .filter(|line| line.contains("--mount=type=cache"))
         .collect();
     assert_eq!(mounts.len(), 3, "{owner} must mount exactly three caches");
-    for id in [
-        "id=wamn-root-cargo-registry",
-        "id=wamn-root-cargo-git",
-        "id=wamn-root-target",
-    ] {
+    for id in ["id=wamn-root-cargo-registry", "id=wamn-root-cargo-git"] {
         assert!(
             mounts
                 .iter()
-                .any(|line| line.contains(id) && line.contains("sharing=locked")),
-            "{owner} lost shared locked cache {id}"
+                .any(|line| line.contains(id) && line.contains("sharing=shared")),
+            "{owner} lost shared download cache {id}"
         );
     }
+    let target = format!("id=wamn-root-target-{stage_name},target=/build/target");
+    assert!(
+        mounts
+            .iter()
+            .any(|line| line.contains(&target) && line.contains("sharing=locked")),
+        "{owner} must own the locked target cache {target}"
+    );
 }
 
 #[test]
@@ -139,7 +148,7 @@ fn every_embedded_component_comes_from_the_locked_builder() {
 }
 
 #[test]
-fn retained_native_images_have_package_scoped_cook_and_build_stages() {
+fn retained_native_images_have_package_scoped_build_stages() {
     let packages = [
         ("host", "wamn-host", "host", &["wamn-host"][..]),
         (
@@ -176,44 +185,25 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
         ),
     ];
 
-    assert_eq!(
-        DOCKERFILE.matches("cargo chef prepare").count(),
-        1,
-        "the native graph must have exactly one shared planner recipe"
-    );
-    assert_eq!(
-        DOCKERFILE.matches("cargo chef cook").count(),
-        packages.len(),
-        "only the eight retained native package cooks may exist"
+    assert!(
+        !DOCKERFILE.contains("cargo chef"),
+        "a cook stage writes its output into the cache mount its build stage \
+         already reads, so it cached nothing and only took the shared lock"
     );
 
     for (stage_name, package, image_stage, outputs) in packages {
-        let cook_name = format!("cook-{stage_name}");
-        let cook = stage(DOCKERFILE, &cook_name);
-        assert!(
-            DOCKERFILE.contains(&format!("FROM root-recipe AS {cook_name}")),
-            "{cook_name} must consume the one shared recipe"
-        );
-        assert_eq!(
-            selected_packages(cook),
-            [package],
-            "{cook_name} must select exactly its top-level package closure"
-        );
-        assert_shared_locked_caches(cook, &cook_name);
-
         let build_name = format!("build-{stage_name}");
         let build = stage(DOCKERFILE, &build_name);
         assert!(
-            DOCKERFILE.contains(&format!("FROM {cook_name} AS {build_name}")),
-            "{build_name} must follow its matching cook"
+            DOCKERFILE.contains(&format!("FROM root-source AS {build_name}")),
+            "{build_name} must build from the one source stage"
         );
-        assert!(build.contains("COPY --from=root-source /build /build"));
         let selected = selected_packages(build);
         assert!(
             !selected.is_empty() && selected.iter().all(|selected| *selected == package),
             "{build_name} may compile only {package}, got {selected:?}"
         );
-        assert_shared_locked_caches(build, &build_name);
+        assert_stage_caches(build, &build_name, stage_name);
 
         let image = stage(DOCKERFILE, image_stage);
         let native_copies: Vec<_> = image
@@ -237,23 +227,33 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
 }
 
 #[test]
-fn build_graph_has_no_shared_or_retired_cook_leg() {
-    assert!(DOCKERFILE.contains("cargo install cargo-chef --version 0.1.77 --locked"));
-    assert!(DOCKERFILE.contains("COPY Cargo.toml Cargo.lock ./"));
-    assert!(stage(DOCKERFILE, "root-planner").contains("COPY apps ./apps"));
-    assert!(
-        DOCKERFILE.contains("COPY --from=root-planner /build/root-recipe.json ./root-recipe.json")
-    );
-    assert!(!DOCKERFILE.contains("component-recipe.json"));
+fn build_graph_has_one_source_stage_and_no_retired_leg() {
+    let source = stage(DOCKERFILE, "root-source");
+    assert!(source.contains("COPY Cargo.toml Cargo.lock ./"));
+    assert!(source.contains("COPY apps ./apps"));
+    assert!(DOCKERFILE.contains("FROM toolchain AS root-source"));
+    assert!(!DOCKERFILE.contains("recipe"));
     assert!(!DOCKERFILE.contains("AS root-cook"));
     assert!(!DOCKERFILE.contains(" AS builder\n"));
     assert!(!DOCKERFILE.contains("--from=builder"));
-    assert!(DOCKERFILE.contains("id=wamn-root-target,target=/build/target"));
     assert!(DOCKERFILE.contains("id=wamn-component-target,target=/build/apps/target"));
 
     let gates = stage(DOCKERFILE, "build-gates");
     assert_eq!(selected_packages(gates), ["wamn-gates"]);
-    assert_shared_locked_caches(gates, "build-gates");
+    assert_stage_caches(gates, "build-gates", "gates");
+
+    // One target cache each, and no stage left holding the old shared one.
+    assert!(!DOCKERFILE.contains("id=wamn-root-target,"));
+    let targets: std::collections::BTreeSet<_> = DOCKERFILE
+        .lines()
+        .filter_map(|line| line.split_once("id=wamn-root-target-"))
+        .map(|(_, rest)| rest.split(',').next().expect("a cache id ends"))
+        .collect();
+    assert_eq!(
+        targets.len(),
+        9,
+        "every native build stage owns one target cache, got {targets:?}"
+    );
 
     // wamn-0h0g.15.139 audited these against the bare-ordinary-English rule and
     // KEPT THEM BARE. `jco` and `wac` are three characters matched over the whole
@@ -385,7 +385,7 @@ fn every_workspace_path_a_build_stage_reads_is_inside_its_copy_set() {
     );
 
     for (manifest, base, stage_name) in [
-        (ROOT_MANIFEST, "", "root-planner"),
+        (ROOT_MANIFEST, "", "root-source"),
         (APPS_MANIFEST, "apps", "component-toolchain"),
     ] {
         let copied = copied_sources(stage(DOCKERFILE, stage_name));
