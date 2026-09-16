@@ -8,6 +8,10 @@
 pub mod apply_package;
 pub mod author_wiring;
 pub mod component_declaration;
+#[cfg(feature = "ops")]
+pub mod copy_project_env;
+#[cfg(feature = "ops")]
+pub mod dump_project_env;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
 #[cfg(feature = "ops")]
@@ -15,6 +19,8 @@ pub mod event_advisories;
 pub mod event_streams;
 pub mod ident;
 pub mod identity_issuer;
+#[cfg(feature = "ops")]
+mod ops_schema;
 pub mod pat_client;
 pub mod project_env_membership;
 pub mod promote;
@@ -28,6 +34,8 @@ pub mod push_component;
 pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
+#[cfg(feature = "ops")]
+pub mod restore_project_env;
 pub mod sql_params;
 pub mod terminalize_effect_uncertain;
 pub mod verification_policy;

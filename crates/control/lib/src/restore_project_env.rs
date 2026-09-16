@@ -34,7 +34,7 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_control::provision_project_env::read_project_env_instance;
+use crate::provision_project_env::read_project_env_instance;
 use wamn_control_provision::{
     pg_restore_argv, project_env_database_name, restore_scratch_db_name, sql, validate_project_env,
     validate_restore_scratch_name,

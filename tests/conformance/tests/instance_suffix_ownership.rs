@@ -61,7 +61,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
     assert!(returned > 0);
     assert!(!registry[stored..].contains("Ok(minted.to_string())"));
 
-    let copy = compact(&source("services/ctl/src/copy_project_env.rs"));
+    let copy = compact(&source("crates/control/lib/src/copy_project_env.rs"));
     assert!(copy.contains("read_project_env_instance(system_url, &src).await?"));
     assert!(copy.contains("read_project_env_instance(system_url, &dst).await?"));
     assert!(copy.contains(
@@ -71,7 +71,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
         "let dst_db = project_env_database_name(&dst.org, &dst.project, dst.env.as_str(), &dst_instance);"
     ));
 
-    let restore = compact(&source("services/ctl/src/restore_project_env.rs"));
+    let restore = compact(&source("crates/control/lib/src/restore_project_env.rs"));
     assert!(restore.contains(
         "let instance = read_project_env_instance(system_url, &triple).await?; restore_in_place(&args, &triple, &instance,"
     ));

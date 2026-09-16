@@ -11,14 +11,12 @@
 pub mod bind_connection;
 pub mod component_verbs;
 #[cfg(feature = "ops")]
-pub mod copy_project_env;
+pub use wamn_control::copy_project_env;
 pub mod delivery;
 pub mod dev;
 #[cfg(feature = "ops")]
-pub mod dump_project_env;
+pub use wamn_control::dump_project_env;
 pub mod identity_verbs;
-#[cfg(feature = "ops")]
-mod ops_schema;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
 mod owned_command;
@@ -29,6 +27,6 @@ pub mod provisioning_verbs;
 pub mod push_release_manifest;
 pub mod release_verbs;
 #[cfg(feature = "ops")]
-pub mod restore_project_env;
+pub use wamn_control::restore_project_env;
 #[cfg(target_os = "linux")]
 pub mod ui;
