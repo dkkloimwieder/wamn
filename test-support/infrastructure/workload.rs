@@ -56,9 +56,23 @@ pub async fn image_ready(
         names.len() == 3,
         "kind must report exactly three distinct nodes"
     );
+    let loaded = loaded_image_digest(lifecycle, image, &names, evidence).await;
+    if loaded.is_err() {
+        capture_node_images(lifecycle, &names, evidence).await;
+    }
+    loaded
+}
+
+/// The one runtime digest that every node reports for this image.
+async fn loaded_image_digest(
+    lifecycle: &Path,
+    image: &str,
+    names: &BTreeSet<String>,
+    evidence: &Path,
+) -> anyhow::Result<String> {
     let mut inspections = Vec::new();
     for node in names {
-        let bytes = checked(Command::new(lifecycle).args(["node-image", &node, image])).await?;
+        let bytes = checked(Command::new(lifecycle).args(["node-image", node, image])).await?;
         fs::write(evidence.join(format!("node-image-{node}.json")), &bytes)?;
         inspections.push((node, bytes));
     }
@@ -81,6 +95,28 @@ pub async fn image_ready(
     }
     save(evidence, "host-image-nodes.json", &json!(rows))?;
     Ok(expected.context("the host image was observed on a node")?.0)
+}
+
+/// Write what each node actually holds, after an image check failed.
+///
+/// A kind load reported success and the first node then reported no such
+/// image. The check aborts at that node, so it writes nothing for the node
+/// that failed and nothing at all for the nodes after it, and the cause stays
+/// unproven. This runs only on the failure path and keeps its own failures out
+/// of the way, because it is evidence and not a check (wamn-y2ml).
+pub async fn capture_node_images(lifecycle: &Path, names: &BTreeSet<String>, evidence: &Path) {
+    for node in names {
+        for (action, file) in [
+            ("node-cri-images", "cri-images.json"),
+            ("node-containerd-images", "containerd-images.txt"),
+        ] {
+            let Ok(output) = Command::new(lifecycle).args([action, node]).output().await else {
+                continue;
+            };
+            let path = evidence.join(format!("failure-{node}-{file}"));
+            let _ = fs::write(path, [output.stdout, output.stderr].concat());
+        }
+    }
 }
 
 /// Where one host-readiness check reads the deployed cluster, and what it expects.

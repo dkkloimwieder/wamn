@@ -511,6 +511,27 @@ async fn image_loaded(
         nodes.len() == 3,
         "the session image must be loaded on three distinct nodes"
     );
+    let loaded = session_image_digest(resources, image, name, &nodes, config_fallback).await;
+    if loaded.is_err() {
+        let nodes = nodes.iter().map(|node| (*node).to_owned()).collect();
+        wamn_test_infrastructure::workload::capture_node_images(
+            &resources.lifecycle,
+            &nodes,
+            &resources.evidence,
+        )
+        .await;
+    }
+    loaded
+}
+
+/// The one digest and config id that every node reports for the session image.
+async fn session_image_digest(
+    resources: &Resources,
+    image: &str,
+    name: &str,
+    nodes: &BTreeSet<&str>,
+    config_fallback: bool,
+) -> anyhow::Result<(String, String)> {
     let mut expected = None;
     let mut rows = Vec::new();
     for node in nodes {
