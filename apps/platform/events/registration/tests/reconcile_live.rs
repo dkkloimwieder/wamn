@@ -35,8 +35,8 @@ fn replay_is_a_no_op_with_base_and_overlay_registrations_applied() {
          CREATE TRIGGER registration_mutation AFTER INSERT OR UPDATE OR DELETE \
            ON catalog.event_registrations FOR EACH ROW \
            EXECUTE FUNCTION catalog.note_registration_mutation(); \
-         PREPARE reconcile_upsert(text, text, text, text, text) AS {upsert}; \
-         PREPARE reconcile_delete(text, text, text[]) AS {delete_stale}; \
+         PREPARE reconcile_upsert(text, text, text, text, text) AS {UPSERT_CATALOG_REGISTRATION_SQL}; \
+         PREPARE reconcile_delete(text, text, text[]) AS {DELETE_STALE_CATALOG_REGISTRATIONS_SQL}; \
          EXECUTE reconcile_upsert( \
            'tenant', 'wamn_receiving', 'base-audit', 'receipt', \
            '{{\"schema-version\":\"0.1\",\"registration-id\":\"base-audit\",\"package-id\":\"wamn_receiving\",\"source-package-id\":\"wamn_receiving\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
@@ -67,8 +67,6 @@ fn replay_is_a_no_op_with_base_and_overlay_registrations_applied() {
                     WHERE package_id = 'client_acme_receiving' \
                       AND registration ->> 'source-package-id' = 'wamn_receiving') = 1; \
          END $$;",
-        upsert = UPSERT_CATALOG_REGISTRATION_SQL,
-        delete_stale = DELETE_STALE_CATALOG_REGISTRATIONS_SQL,
     );
     child
         .stdin

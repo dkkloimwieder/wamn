@@ -35,8 +35,8 @@ pub enum RowTenant<'a> {
 pub fn event_context(envelope: &Envelope) -> Value {
     json!({
         "op": envelope.op.as_str(),
-        "old": envelope.old.clone().map(Value::Object).unwrap_or(Value::Null),
-        "new": envelope.new.clone().map(Value::Object).unwrap_or(Value::Null),
+        "old": envelope.old.clone().map_or(Value::Null, Value::Object),
+        "new": envelope.new.clone().map_or(Value::Null, Value::Object),
     })
 }
 

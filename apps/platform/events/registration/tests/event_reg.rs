@@ -124,7 +124,7 @@ fn source_package_is_independent_from_the_registration_owner() {
 #[test]
 fn an_empty_registration_id_is_rejected() {
     let mut r = reg();
-    r.registration_id = "".into();
+    r.registration_id = String::new();
     let issues = validate(&r, "shop", "shop", &model_keys()).unwrap_err();
     assert!(issues.iter().any(|i| i.code == "empty-registration-id"));
 }

@@ -145,11 +145,10 @@ pub fn decide(
         return Verdict::Refuse(RefuseReason::TenantUnscopable);
     }
     match row_tenant(envelope) {
-        RowTenant::Absent => {}
         RowTenant::Tenant(event_tenant) if event_tenant != tenant => {
             return Verdict::Skip(SkipReason::ForeignTenant);
         }
-        RowTenant::Tenant(_) => {}
+        RowTenant::Absent | RowTenant::Tenant(_) => {}
         RowTenant::Unscopable => return Verdict::Refuse(RefuseReason::TenantUnscopable),
     }
     if registration.condition.is_some() {
