@@ -155,6 +155,10 @@ A ready Pod does not establish successful authenticated application execution.
 Exercise a meaningful operation and inspect its expected state or outcome before reporting deployment success.
 Record the selected source, artifact identity, release identity, command exits, and actual observed outcome in one run directory.
 
+An operator runs `wamn-ctl promote` by hand.
+No deploy manifest runs it, and that is deliberate.
+The verbs that manifests run are `wamn-ctl-ops prune-record-history`, `wamn-ctl-ops prune-run-history`, and `wamn-ctl reconcile-run-plane`.
+
 `wamn-ctl promote` copies portable release facts only after the target's package and migration records match exactly.
 It pulls each component artifact of the source release from the registry and verifies its bytes.
 If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
