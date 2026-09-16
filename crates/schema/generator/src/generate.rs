@@ -21,12 +21,12 @@ use wamn_schema_introspection::ir::{
 use crate::manifest::{
     AccessOperationErrorLiteral, AuthoredSqlDeclaration, CommandIdempotence,
     ContractFieldDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration,
-    CustomOperationKind, CustomOperationResultDeclaration, InheritedClaimDeclaration,
+    CustomOperationKind, CustomOperationResultDeclaration, DeleteMode, InheritedClaimDeclaration,
     ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest,
     PolicyContractRequirement, PolicyContractState, RecordHistoryColumn, ResultClass,
-    SortDeclaration, StateGuardDeclaration, StaticSqlFetch, canonical_operation_identity,
-    custom_artifact_stem, rust_identifier, rust_type_identifier, validate_identifier,
-    validate_operation_vocabulary,
+    SortDeclaration, StateGuardDeclaration, StaticSqlFetch, TombstoneColumn,
+    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
+    validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -794,17 +794,23 @@ fn column<'a>(table: &'a Table, name: &str) -> Option<&'a Column> {
     table.columns().iter().find(|column| column.name() == name)
 }
 
-/// Declared server-owned fields, then every reserved record-history column.
+/// Declared server-owned fields, then every reserved record-history and
+/// tombstone column.
 ///
 /// Validation refuses an unselected reserved-name column on an owned relation.
 /// On an overlay, the base declaration selects every reserved-name base column.
+/// A tombstone marker is set by the delete statement, so no caller writes it.
 fn server_owned_fields<'a>(model: &'a ModelDeclaration, table: &'a Table) -> Vec<&'a str> {
     let mut fields = model
         .server_owned_fields
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    for reserved in RecordHistoryColumn::ALL.map(RecordHistoryColumn::as_str) {
+    let reserved_names = RecordHistoryColumn::ALL
+        .map(RecordHistoryColumn::as_str)
+        .into_iter()
+        .chain(TombstoneColumn::ALL.map(TombstoneColumn::as_str));
+    for reserved in reserved_names {
         if column(table, reserved).is_some() && !fields.contains(&reserved) {
             fields.push(reserved);
         }

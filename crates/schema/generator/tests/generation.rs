@@ -1818,6 +1818,48 @@ fn overlay_manifest() -> Value {
 }
 
 #[test]
+fn a_delete_mode_travels_with_its_delete_and_its_marker_columns() {
+    let mut mode_without_delete = manifest();
+    mode_without_delete["models"]["purchase_order"]["delete_mode"] = json!("hard");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&mode_without_delete))
+            .expect_err("a delete_mode with no delete action")
+            .kind(),
+        GenerateErrorKind::InvalidModel,
+    );
+
+    let mut overlay = overlay_manifest();
+    overlay["models"]["purchase_order"]["delete_mode"] = json!("tombstone");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&overlay))
+            .expect_err("an overlay that declares a delete_mode")
+            .kind(),
+        GenerateErrorKind::InvalidModel,
+    );
+
+    for marker in ["deleted_at", "deleted_by"] {
+        let ty = if marker == "deleted_at" {
+            ColumnType::Timestamptz
+        } else {
+            ColumnType::Uuid
+        };
+        assert_eq!(
+            run(
+                &catalog_with_columns(&[(marker, ty, true)]),
+                &manifest(),
+                &QUERY_SOURCES,
+            )
+            .expect_err(marker)
+            .to_string(),
+            format!(
+                "InvalidModel: purchase_order carries reserved column {marker} without a tombstone delete"
+            ),
+            "{marker}"
+        );
+    }
+}
+
+#[test]
 fn selected_stamp_columns_become_server_owned() {
     let package = run(
         &all_stamps_catalog(),

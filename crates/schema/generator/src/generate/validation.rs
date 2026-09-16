@@ -4,12 +4,13 @@ use super::{
     AccessOperationErrorLiteral, AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet,
     CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN, CURSOR_VERSION, CatalogIr, Column, ColumnDefault,
     ColumnType, Constraint, ConstraintKind, CrudAction, CursorDirection,
-    CustomOperationDeclaration, GenerateError, GenerateErrorKind, GenerationInput,
+    CustomOperationDeclaration, DeleteMode, GenerateError, GenerateErrorKind, GenerationInput,
     ModelDeclaration, OperationDeclaration, POSTGRES_INTERFACE, PackageManifest, QUERY_LIMIT,
-    RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch, Table, column,
-    constraint_error_code, contains_schema_qualified_reference, custom_operation_constraint_origin,
-    logged_history_tables, operation_constraints, operation_exclusions, relation, rust_identifier,
-    server_owned_fields, sql, validate_identifier, validate_operation_vocabulary,
+    RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch, Table, TombstoneColumn,
+    column, constraint_error_code, contains_schema_qualified_reference,
+    custom_operation_constraint_origin, logged_history_tables, operation_constraints,
+    operation_exclusions, relation, rust_identifier, server_owned_fields, sql, validate_identifier,
+    validate_operation_vocabulary,
 };
 use wamn_record_history::HISTORY_COLUMNS;
 
@@ -153,6 +154,7 @@ fn validate_model(
         }
     }
     validate_audit_log_columns(manifest, model_name, model, table)?;
+    validate_tombstone_columns(manifest, model_name, model, table)?;
     for (field, values) in &model.enum_fields {
         let column = validate_field(table, model_name, field)?;
         if column.column_type() != ColumnType::Text || values.is_empty() {
@@ -694,6 +696,49 @@ fn validate_audit_log_columns(
             format!("{context} keeps a log, so its relation must have a primary key"),
             format!("{}.{}", table.schema(), table.name()),
         ));
+    }
+    Ok(())
+}
+
+/// Refuse a relation whose tombstone columns disagree with its delete mode.
+///
+/// A tombstone model carries both reserved columns, and every other model
+/// carries neither. An overlay does not own a base column, so the base
+/// declaration answers for it.
+fn validate_tombstone_columns(
+    manifest: &PackageManifest,
+    model_name: &str,
+    model: &ModelDeclaration,
+    table: &Table,
+) -> Result<(), GenerateError> {
+    let context = format!("{model_name} delete_mode");
+    if model.delete_mode == Some(DeleteMode::Tombstone) {
+        for reserved in TombstoneColumn::ALL {
+            let ty = match reserved {
+                TombstoneColumn::DeletedAt => ColumnType::Timestamptz,
+                TombstoneColumn::DeletedBy => ColumnType::Uuid,
+            };
+            require_column(
+                GenerateErrorKind::InvalidModel,
+                &context,
+                table,
+                reserved.as_str(),
+                ty,
+            )?;
+        }
+        return Ok(());
+    }
+    for reserved in TombstoneColumn::ALL {
+        let name = reserved.as_str();
+        let base_column_under_overlay =
+            model.owner != manifest.package.id && model.field_owner(name) != manifest.package.id;
+        if column(table, name).is_some() && !base_column_under_overlay {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidModel,
+                format!("{model_name} carries reserved column {name} without a tombstone delete"),
+                format!("{}.{}.{name}", table.schema(), table.name()),
+            ));
+        }
     }
     Ok(())
 }

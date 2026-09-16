@@ -479,6 +479,7 @@ pub fn validate_operation_vocabulary(
     for (model_name, model) in &manifest.models {
         validate_identifier(model_name, "operation module")?;
         validate_audit_log(manifest, model_name, model)?;
+        validate_delete_mode(manifest, model_name, model)?;
         artifact_owners.insert(model_name.clone(), format!("model {model_name}"));
         for (action, operation) in &model.operations {
             let identity = format!("{model_name}.{}", action.as_str());
@@ -588,6 +589,40 @@ fn validate_audit_log(
         ));
     }
     Ok(())
+}
+
+/// Refuse a delete declaration whose shape is invalid without a catalog.
+///
+/// The mode and the action travel together, and only the relation owner
+/// declares either one. An overlay package cannot delete a base row.
+fn validate_delete_mode(
+    manifest: &PackageManifest,
+    model_name: &str,
+    model: &ModelDeclaration,
+) -> Result<(), GenerateError> {
+    let refuse =
+        |message: String| Err(GenerateError::new(GenerateErrorKind::InvalidModel, message));
+    let declares_delete = model.operations.contains_key(&CrudAction::Delete);
+    if model.owner != manifest.package.id {
+        if model.delete_mode.is_some() {
+            return refuse(format!(
+                "{model_name} overlays a {} relation and must not declare delete_mode",
+                model.owner
+            ));
+        }
+        if declares_delete {
+            return refuse(format!(
+                "{model_name} overlays a {} relation and must not declare delete",
+                model.owner
+            ));
+        }
+        return Ok(());
+    }
+    match (declares_delete, model.delete_mode) {
+        (true, None) => refuse(format!("{model_name} declares delete without delete_mode")),
+        (false, Some(_)) => refuse(format!("{model_name} declares delete_mode without delete")),
+        _ => Ok(()),
+    }
 }
 
 fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(), GenerateError> {
@@ -2032,7 +2067,43 @@ pub struct ModelDeclaration {
     /// an overlay model inherits the declaration of the relation owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audit_log: Option<AuditLogDeclaration>,
+    /// How a declared `delete` removes a row. Only a relation-owning model
+    /// that declares the action declares the mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_mode: Option<DeleteMode>,
     pub operations: BTreeMap<CrudAction, OperationDeclaration>,
+}
+
+/// Closed delete mode of a model that declares the `delete` action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteMode {
+    /// The row is removed. Its contents survive only in the record history.
+    Hard,
+    /// The row stays and carries the tombstone marker. Every generated read
+    /// hides it.
+    Tombstone,
+}
+
+/// The two reserved tombstone column names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TombstoneColumn {
+    DeletedAt,
+    DeletedBy,
+}
+
+impl TombstoneColumn {
+    /// Both reserved names, time before actor.
+    pub const ALL: [Self; 2] = [Self::DeletedAt, Self::DeletedBy];
+
+    /// Reserved column spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DeletedAt => "deleted_at",
+            Self::DeletedBy => "deleted_by",
+        }
+    }
 }
 
 /// Stamp columns and log retention of one relation-owning model.
