@@ -33,6 +33,18 @@ pub struct WamnCredentials {
     projects: HashMap<String, HashMap<String, String>>,
 }
 
+impl std::fmt::Debug for WamnCredentials {
+    /// Names the shape only. The map holds secret material, so no key or value
+    /// of it reaches a log.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WamnCredentials")
+            .field("has_source", &self.has_source)
+            .field("projects", &self.projects.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl WamnCredentials {
     /// A vault with NO backing source: every lookup is unavailable.
     /// Gates and credential-less deployments use this.

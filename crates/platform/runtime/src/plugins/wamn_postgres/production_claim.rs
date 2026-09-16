@@ -851,7 +851,7 @@ async fn finish_queue_transaction<T>(
         Ok(value) => {
             if let Err(error) = connection.batch_execute("COMMIT").await {
                 postgres.destroy(connection);
-                return Err(storage(commit_operation, error));
+                return Err(storage(commit_operation, &error));
             }
             Ok(value)
         }
@@ -878,7 +878,7 @@ async fn require_executor_authority(
             &[&AuthorityClass::ExecutorPlatform.acl_role()],
         )
         .await
-        .map_err(|error| storage("read executor authority", error))?;
+        .map_err(|error| storage("read executor authority", &error))?;
     let allowed: bool = row_value(&row, 0, "executor authority membership")?;
     if !allowed {
         return Err(ProductionClaimError::new(
@@ -902,14 +902,14 @@ async fn renew_in_transaction(
     let statement = connection
         .prepare_cached(&sql)
         .await
-        .map_err(|error| storage("prepare production lease renewal", error))?;
+        .map_err(|error| storage("prepare production lease renewal", &error))?;
     let renewed = connection
         .query_opt(
             &statement,
             &[&run_id, &runner, &lease_generation, &lease_ttl_ms],
         )
         .await
-        .map_err(|error| storage("renew production lease", error))?;
+        .map_err(|error| storage("renew production lease", &error))?;
     Ok(if renewed.is_some() {
         ProductionLeaseRenewal::Renewed
     } else {
@@ -940,7 +940,7 @@ async fn complete_in_transaction(
         let statement = connection
             .prepare_cached(&sql)
             .await
-            .map_err(|error| storage("prepare production caller release", error))?;
+            .map_err(|error| storage("prepare production caller release", &error))?;
         let row = connection
             .query_one(
                 &statement,
@@ -957,7 +957,7 @@ async fn complete_in_transaction(
                 ],
             )
             .await
-            .map_err(|error| storage("release production caller", error))?;
+            .map_err(|error| storage("release production caller", &error))?;
         let release = decode_caller_release(&row)?;
         match release {
             CallerReleaseResult::Released => {}
@@ -1007,7 +1007,7 @@ async fn complete_in_transaction(
     let statement = connection
         .prepare_cached(&sql)
         .await
-        .map_err(|error| storage("prepare production terminalization", error))?;
+        .map_err(|error| storage("prepare production terminalization", &error))?;
     let row = connection
         .query_one(
             &statement,
@@ -1023,7 +1023,7 @@ async fn complete_in_transaction(
             ],
         )
         .await
-        .map_err(|error| storage("terminalize production run", error))?;
+        .map_err(|error| storage("terminalize production run", &error))?;
     match decode_terminalization(&row)? {
         TerminalizeResult::Terminalized => Ok(ProductionCompletionResult::Terminalized),
         TerminalizeResult::RunTerminal(status) => {
@@ -1115,11 +1115,11 @@ async fn claim_in_transaction(
     let select = connection
         .prepare_cached(&select_sql)
         .await
-        .map_err(|error| storage("prepare production candidate", error))?;
+        .map_err(|error| storage("prepare production candidate", &error))?;
     let Some(row) = connection
         .query_opt(&select, &[&package_ids, &environment])
         .await
-        .map_err(|error| storage("select production candidate", error))?
+        .map_err(|error| storage("select production candidate", &error))?
     else {
         return Ok(ClaimTurn::Claimed(ProductionClaimResult::Empty));
     };
@@ -1149,11 +1149,11 @@ async fn claim_in_transaction(
         let effect_statement = connection
             .prepare_cached(&effect_sql)
             .await
-            .map_err(|error| storage("prepare effect-attempt classification", error))?;
+            .map_err(|error| storage("prepare effect-attempt classification", &error))?;
         let effect_row = connection
             .query_one(&effect_statement, &[&selected.run_id])
             .await
-            .map_err(|error| storage("classify effect-attempt evidence", error))?;
+            .map_err(|error| storage("classify effect-attempt evidence", &error))?;
         row_value(&effect_row, 0, "effect-attempt evidence")?
     } else {
         false
@@ -1174,11 +1174,11 @@ async fn claim_in_transaction(
             let clear = connection
                 .prepare_cached(&clear_sql)
                 .await
-                .map_err(|error| storage("prepare pre-effect state clear", error))?;
+                .map_err(|error| storage("prepare pre-effect state clear", &error))?;
             connection
                 .query_one(&clear, &[&selected.run_id])
                 .await
-                .map_err(|error| storage("clear pre-effect state", error))?;
+                .map_err(|error| storage("clear pre-effect state", &error))?;
         }
         // Nothing to reset here. A never-leased row carries no record, and a
         // queue-parked one had its record cleared by the park that released
@@ -1194,17 +1194,17 @@ async fn claim_in_transaction(
     let advance = connection
         .prepare_cached(&advance_sql)
         .await
-        .map_err(|error| storage("prepare crash-evidence advance", error))?;
+        .map_err(|error| storage("prepare crash-evidence advance", &error))?;
     connection
         .query_one(&advance, &[&selected.run_id])
         .await
-        .map_err(|error| storage("advance crash evidence", error))?;
+        .map_err(|error| storage("advance crash evidence", &error))?;
 
     let grant_sql = grant_production_claim_sql();
     let grant = connection
         .prepare_cached(&grant_sql)
         .await
-        .map_err(|error| storage("prepare production lease grant", error))?;
+        .map_err(|error| storage("prepare production lease grant", &error))?;
     // The pod's own release identity, or NULL for both when it carries none.
     // PostgreSQL compares the effective release id to the immutable admission
     // pin and records only the digest.
@@ -1217,7 +1217,7 @@ async fn claim_in_transaction(
     connection
         .batch_execute("SAVEPOINT wamn_production_grant")
         .await
-        .map_err(|error| storage("open production lease savepoint", error))?;
+        .map_err(|error| storage("open production lease savepoint", &error))?;
     let granted = connection
         .query_opt(
             &grant,
@@ -1236,10 +1236,10 @@ async fn claim_in_transaction(
             connection
                 .batch_execute("ROLLBACK TO SAVEPOINT wamn_production_grant")
                 .await
-                .map_err(|rollback| storage("roll back refused production lease", rollback))?;
+                .map_err(|rollback| storage("roll back refused production lease", &rollback))?;
             return Ok(ClaimTurn::GrantRefused(storage(
                 "grant production lease",
-                error,
+                &error,
             )));
         }
     };
@@ -1275,11 +1275,11 @@ async fn reap_in_transaction(
     let select = connection
         .prepare_cached(&select_sql)
         .await
-        .map_err(|error| storage("prepare exhausted candidate", error))?;
+        .map_err(|error| storage("prepare exhausted candidate", &error))?;
     let Some(row) = connection
         .query_opt(&select, &[&grace_ms, &package_ids, &environment])
         .await
-        .map_err(|error| storage("select exhausted candidate", error))?
+        .map_err(|error| storage("select exhausted candidate", &error))?
     else {
         return Ok(ProductionReapResult::Empty);
     };
@@ -1344,11 +1344,11 @@ async fn reap_in_transaction(
         let effect = connection
             .prepare_cached(&effect_sql)
             .await
-            .map_err(|error| storage("prepare exhausted effect classification", error))?;
+            .map_err(|error| storage("prepare exhausted effect classification", &error))?;
         let row = connection
             .query_one(&effect, &[&selected.run_id])
             .await
-            .map_err(|error| storage("classify exhausted effect evidence", error))?;
+            .map_err(|error| storage("classify exhausted effect evidence", &error))?;
         if row_value(&row, 0, "exhausted effect-attempt evidence")? {
             return Ok(ProductionReapResult::EffectAttempt {
                 run_id: selected.run_id,
@@ -1365,11 +1365,11 @@ async fn reap_in_transaction(
     let terminalize = connection
         .prepare_cached(&terminalize_sql)
         .await
-        .map_err(|error| storage("prepare exhausted terminalization", error))?;
+        .map_err(|error| storage("prepare exhausted terminalization", &error))?;
     let row = connection
         .query_opt(&terminalize, &[&selected.run_id, &body, &body_hash])
         .await
-        .map_err(|error| storage("terminalize exhausted run", error))?
+        .map_err(|error| storage("terminalize exhausted run", &error))?
         .ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Contract,
@@ -1399,7 +1399,7 @@ async fn serialize_effect_intent(
     let statement = connection
         .prepare_cached(&sql)
         .await
-        .map_err(|error| storage("prepare effect-intent fence", error))?;
+        .map_err(|error| storage("prepare effect-intent fence", &error))?;
     connection
         .query_one(&statement, &[&run_id])
         .await
@@ -1436,11 +1436,11 @@ async fn terminalize_effect_uncertain(
     let statement = connection
         .prepare_cached(&sql)
         .await
-        .map_err(|error| storage("prepare effect-uncertain terminalization", error))?;
+        .map_err(|error| storage("prepare effect-uncertain terminalization", &error))?;
     let row = connection
         .query_opt(&statement, &[&selected.run_id, &body, &hash])
         .await
-        .map_err(|error| storage("terminalize effect uncertainty", error))?
+        .map_err(|error| storage("terminalize effect uncertainty", &error))?
         .ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Contract,
@@ -1651,7 +1651,7 @@ where
 /// constraint or trigger name, so every refused claim reads identically in logs
 /// and in a caller's assertion. The database's own text is the whole diagnostic
 /// value of this error, so it is spliced back in here.
-fn storage(operation: &'static str, error: tokio_postgres::Error) -> ProductionClaimError {
+fn storage(operation: &'static str, error: &tokio_postgres::Error) -> ProductionClaimError {
     let detail = match error.as_db_error() {
         Some(db_error) => format!("{error}: {db_error}"),
         None => error.to_string(),

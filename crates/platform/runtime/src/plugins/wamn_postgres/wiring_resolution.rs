@@ -325,7 +325,7 @@ pub struct ResolvedActiveWiring {
 /// Exact outcome of re-reading a frozen candidate before component execution.
 #[derive(Debug)]
 pub enum CandidateWiringResolution {
-    Resolved(ResolvedActiveWiring),
+    Resolved(Box<ResolvedActiveWiring>),
     Missing,
     InvalidDefinition,
     BindingWorldUnavailable,
@@ -564,7 +564,9 @@ impl WamnPostgres {
                                 wiring_id,
                                 &row,
                             ) {
-                                Ok(resolved) => Ok(CandidateWiringResolution::Resolved(resolved)),
+                                Ok(resolved) => {
+                                    Ok(CandidateWiringResolution::Resolved(Box::new(resolved)))
+                                }
                                 Err(_) => Ok(CandidateWiringResolution::InvalidDefinition),
                             }
                         }
@@ -598,10 +600,6 @@ impl WamnPostgres {
     /// call. Otherwise the check shares the driver's existing platform pool and
     /// tenant claim; missing rows, unavailable storage and malformed results are
     /// errors, while an ordinary unbound requirement is `Ok(false)`.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the release scope and selected component set are independent trusted facts"
-    )]
     pub async fn release_component_bindings_ready(
         &self,
         project: &str,
@@ -849,9 +847,10 @@ fn lower_resolved_wiring(
             .nodes
             .get_mut(node_id)
             .expect("the resolved node belongs to the cloned document")
-            .component = runtime_key.clone();
+            .component
+            .clone_from(&runtime_key);
         for mut operation in project_component_operations(component) {
-            operation.component = runtime_key.clone();
+            operation.component.clone_from(&runtime_key);
             if !operations.contains(&operation) {
                 operations.push(operation);
             }

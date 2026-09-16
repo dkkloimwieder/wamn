@@ -53,6 +53,9 @@ mod bindings {
 use bindings::wamn::connection::http::{self, ConnectionError, Header, Request, Response};
 
 pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
+/// The exact contract spelling the conformance test pins against the
+/// descriptor. Only that test reads it.
+#[cfg(test)]
 const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
 const AUTHORITY_SNAPSHOT_UNAVAILABLE: &str = "connection-authority-unavailable";
 /// The transport detail for unavailable client capacity or construction.
@@ -124,6 +127,18 @@ struct ExternallyEnforcedNetworkPolicy;
 impl NetworkPolicy for ExternallyEnforcedNetworkPolicy {
     fn allows(&self, _address: SocketAddr) -> bool {
         true
+    }
+}
+
+/// Names the tenant and project only: the rest carries credential and
+/// transport state that must not reach a log.
+impl std::fmt::Debug for ConnectionHttp {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConnectionHttp")
+            .field("tenant", &self.tenant)
+            .field("project", &self.project)
+            .finish_non_exhaustive()
     }
 }
 
@@ -380,7 +395,7 @@ impl ConnectionHttp {
         require_direct_transport(object)?;
         let proxy = None;
         let authority = parse_http_connection_authority(primary, tls, proxy)
-            .map_err(|error| authority_denied("definition", error))?;
+            .map_err(|error| authority_denied("definition", &error))?;
         let decision = resolve_http_request(
             &authority,
             &target,
@@ -389,7 +404,7 @@ impl ConnectionHttp {
             &TokioDnsResolver,
         )
         .await
-        .map_err(|error| authority_denied("request", error))?;
+        .map_err(|error| authority_denied("request", &error))?;
 
         let handle = snapshot
             .credential_handle
@@ -439,7 +454,7 @@ impl ConnectionHttp {
     }
 }
 
-fn authority_denied(phase: &'static str, error: AuthorityError) -> ConnectionError {
+fn authority_denied(phase: &'static str, error: &AuthorityError) -> ConnectionError {
     tracing::warn!(
         phase,
         kind = ?error.kind(),

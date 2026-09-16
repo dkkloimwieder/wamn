@@ -230,9 +230,10 @@ impl WamnPostgres {
     /// installed (`OTEL_*`).
     pub fn register_pool_metrics(self: &std::sync::Arc<Self>) {
         use opentelemetry::KeyValue;
-        let meter = opentelemetry::global::meter("wamn-postgres");
         type PoolStatus = (usize, usize, usize);
         type MetricSpec = (&'static str, &'static str, fn(&PoolStatus) -> u64);
+
+        let meter = opentelemetry::global::meter("wamn-postgres");
         let specs: [MetricSpec; 3] = [
             (
                 "wamn.postgres.pool.size",

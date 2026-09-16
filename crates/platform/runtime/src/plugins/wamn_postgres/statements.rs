@@ -282,10 +282,11 @@ pub(super) fn validate_statement_result(
 
     for row in &result.rows {
         for (index, (value, expected)) in row.iter().zip(&statement.columns).enumerate() {
-            if matches!(value, SqlValue::Null) && !expected.nullable {
-                if let Some(observed) = observed_types.get_mut(index) {
-                    *observed = "null".to_owned();
-                }
+            if matches!(value, SqlValue::Null)
+                && !expected.nullable
+                && let Some(observed) = observed_types.get_mut(index)
+            {
+                "null".clone_into(observed);
             }
         }
     }
@@ -312,7 +313,10 @@ pub(super) fn validate_prepared_statement(
         .collect();
     if !postgres_types_match(
         &statement.binds,
-        prepared.params().iter().map(|ty| ty.name()),
+        prepared
+            .params()
+            .iter()
+            .map(tokio_postgres::types::Type::name),
     ) {
         return Err(contract_mismatch(
             digest,

@@ -223,9 +223,9 @@ impl ComponentArtifactFetchError {
         reference: &str,
         unavailable: &'static str,
         mismatched: &'static str,
-        source: OciDistributionError,
+        source: &OciDistributionError,
     ) -> Self {
-        let (kind, refusal) = if transport_is_mismatched(&source) {
+        let (kind, refusal) = if transport_is_mismatched(source) {
             (ComponentArtifactFetchErrorKind::Mismatched, mismatched)
         } else {
             (ComponentArtifactFetchErrorKind::Unavailable, unavailable)
@@ -351,7 +351,8 @@ impl ComponentArtifactSource {
                     })?;
                 verify_component_body(
                     &loaded.bytes,
-                    loaded.bytes.len() as i64,
+                    i64::try_from(loaded.bytes.len())
+                        .expect("an admitted component body fits a signed length"),
                     &component.component_digest,
                     &named,
                 )?;
@@ -380,7 +381,7 @@ impl ComponentArtifactSource {
                     &named,
                     "component-artifact-manifest-unavailable",
                     "component-artifact-manifest-invalid",
-                    source,
+                    &source,
                 )
             })?;
         let descriptors = verify_manifest(
@@ -401,7 +402,7 @@ impl ComponentArtifactSource {
                     &named,
                     "component-artifact-body-unavailable",
                     "component-artifact-body-transfer-mismatch",
-                    source,
+                    &source,
                 )
             })?;
         verify_component_body(
@@ -421,7 +422,7 @@ impl ComponentArtifactSource {
                     &named,
                     "component-artifact-config-unavailable",
                     "component-artifact-config-transfer-mismatch",
-                    source,
+                    &source,
                 )
             })?;
         verify_config_body(
@@ -538,6 +539,16 @@ fn verify_config_body(
         ));
     }
     Ok(())
+}
+
+/// Exact local filename for an admitted digest, without path interpretation.
+pub fn local_component_path(
+    directory: &Path,
+    digest: &str,
+) -> Result<PathBuf, ComponentArtifactFetchError> {
+    let tag = component_digest_tag(digest)
+        .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
+    Ok(directory.join(format!("{tag}.wasm")))
 }
 
 #[cfg(test)]
@@ -823,7 +834,7 @@ mod tests {
             "registry.example/wamn/components:tag",
             "component-artifact-manifest-unavailable",
             "component-artifact-manifest-invalid",
-            OciDistributionError::ServerError {
+            &OciDistributionError::ServerError {
                 code: 500,
                 url: "https://user:secret@registry.example/v2/private".to_owned(),
                 message: "registry-controlled-response-body".to_owned(),
@@ -859,14 +870,4 @@ mod tests {
         let rendered = format!("{error:?} {error}");
         assert!(!rendered.contains("private-context"));
     }
-}
-
-/// Exact local filename for an admitted digest, without path interpretation.
-pub fn local_component_path(
-    directory: &Path,
-    digest: &str,
-) -> Result<PathBuf, ComponentArtifactFetchError> {
-    let tag = component_digest_tag(digest)
-        .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
-    Ok(directory.join(format!("{tag}.wasm")))
 }

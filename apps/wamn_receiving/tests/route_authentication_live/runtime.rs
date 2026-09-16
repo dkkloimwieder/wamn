@@ -380,7 +380,7 @@ pub(super) async fn build_journey_runtime(
         Arc::clone(&postgres),
         Arc::new(wamn_runtime::plugins::connection_http::transport::HttpTransport::new()?),
         Arc::new(WamnCredentials::empty()),
-        Arc::new(WamnLogging::new(WamnLoggingConfig::default())?),
+        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
         Arc::from(Vec::<AllowedHost>::new()),
         Arc::clone(&release),
         source,

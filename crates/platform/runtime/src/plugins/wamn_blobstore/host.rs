@@ -78,18 +78,22 @@ impl super::bindings::wasmcloud::blobstore::container::Host for ActiveCtx<'_> {}
 impl super::bindings::wasmcloud::blobstore::blobstore::Host for ActiveCtx<'_> {}
 
 impl HostContainer for ActiveCtx<'_> {
-    async fn drop(&mut self, handle: Resource<Container>) -> wash_runtime::wasmtime::Result<()> {
-        self.table.delete(handle)?;
-        Ok(())
+    fn drop(
+        &mut self,
+        handle: Resource<Container>,
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<()>> {
+        std::future::ready(self.table.delete(handle).map(|_| ()).map_err(Into::into))
     }
 }
 
 impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
-    async fn name(
+    fn name(
         accessor: &Accessor<T, Self>,
         handle: Resource<Container>,
-    ) -> wash_runtime::wasmtime::Result<Result<String, WitError>> {
-        Ok(Ok(container_of(accessor, &handle)?.container().to_owned()))
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<String, WitError>>> {
+        std::future::ready(
+            container_of(accessor, &handle).map(|container| Ok(container.container().to_owned())),
+        )
     }
 
     /// Container metadata is not available from an object store.
@@ -98,15 +102,16 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
     /// `object_store` exposes carries no bucket creation time. Reporting a
     /// fabricated `0` would be a timestamp a guest could reasonably act on, so
     /// this reports unavailability instead.
-    async fn info(
+    fn info(
         _accessor: &Accessor<T, Self>,
         _handle: Resource<Container>,
-    ) -> wash_runtime::wasmtime::Result<Result<ContainerMetadata, WitError>> {
-        Ok(Err(refused(
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<ContainerMetadata, WitError>>>
+    {
+        std::future::ready(Ok(Err(refused(
             "info",
             "an object store exposes no container creation time, and a fabricated one would be \
              a timestamp a guest could act on",
-        )))
+        ))))
     }
 
     async fn get_data(
@@ -261,15 +266,16 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
 }
 
 impl<T: 'static + Send> HostWithStore<T> for SharedCtx {
-    async fn create_container(
+    fn create_container(
         _accessor: &Accessor<T, Self>,
         _name: String,
-    ) -> wash_runtime::wasmtime::Result<Result<Resource<Container>, WitError>> {
-        Ok(Err(refused(
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<Resource<Container>, WitError>>>
+    {
+        std::future::ready(Ok(Err(refused(
             "create-container",
             "the environment owns the container; a guest that could create one would own its own \
              authority",
-        )))
+        ))))
     }
 
     /// `name` is the guest's own declared STORE ALIAS, not a container name.
@@ -292,14 +298,14 @@ impl<T: 'static + Send> HostWithStore<T> for SharedCtx {
         Ok(Ok(handle))
     }
 
-    async fn delete_container(
+    fn delete_container(
         _accessor: &Accessor<T, Self>,
         _name: String,
-    ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
-        Ok(Err(refused(
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<(), WitError>>> {
+        std::future::ready(Ok(Err(refused(
             "delete-container",
             "the environment owns the container; a guest cannot destroy the store it was lent",
-        )))
+        ))))
     }
 
     async fn container_exists(
@@ -309,20 +315,20 @@ impl<T: 'static + Send> HostWithStore<T> for SharedCtx {
         Ok(Ok(resolve_alias(accessor, &name).await.is_ok()))
     }
 
-    async fn copy_object(
+    fn copy_object(
         _accessor: &Accessor<T, Self>,
         _src: ObjectId,
         _dest: ObjectId,
-    ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
-        Ok(Err(refused("copy-object", REFUSED_OBJECT_ID_REASON)))
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<(), WitError>>> {
+        std::future::ready(Ok(Err(refused("copy-object", REFUSED_OBJECT_ID_REASON))))
     }
 
-    async fn move_object(
+    fn move_object(
         _accessor: &Accessor<T, Self>,
         _src: ObjectId,
         _dest: ObjectId,
-    ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
-        Ok(Err(refused("move-object", REFUSED_OBJECT_ID_REASON)))
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<(), WitError>>> {
+        std::future::ready(Ok(Err(refused("move-object", REFUSED_OBJECT_ID_REASON))))
     }
 }
 

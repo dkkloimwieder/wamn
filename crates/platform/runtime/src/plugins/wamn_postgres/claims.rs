@@ -48,6 +48,16 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permissions.permis
     WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active' \
     ORDER BY permissions.permission";
 
+/// Names the shape only: the credential provider and the live pools carry
+/// connection material that must not reach a log.
+impl std::fmt::Debug for WamnPostgres {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WamnPostgres")
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct WamnPostgres {
     pub(super) local_application: Option<Arc<crate::local_application::LocalApplication>>,
     /// Resolves a project id → its database connection + policy.
@@ -675,12 +685,8 @@ impl WamnPostgres {
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
     /// returns `connection-unavailable`.
     pub fn new(cfg: WamnPostgresConfig) -> anyhow::Result<Self> {
-        let default = cfg
-            .credentials
-            .clone()
-            .map(|credentials| ProjectConfig::from_global(credentials, &cfg));
         Ok(Self::with_provider(Arc::new(
-            StaticCredentialProvider::default_only(default),
+            StaticCredentialProvider::default_only(ProjectConfig::from_global_config(cfg)),
         )))
     }
 

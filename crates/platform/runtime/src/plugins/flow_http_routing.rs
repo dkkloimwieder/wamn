@@ -349,10 +349,17 @@ fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
     let mut compiler = Compiler::new();
     compiler.set_default_draft(Draft::V2020_12);
     let mut schemas = Schemas::new();
-    let compiled = compiler
+    // The compile error is boxed as it is produced: it is a large value that
+    // only ever reaches the warning below.
+    let compilation = compiler
         .add_resource(INPUT_SCHEMA_URI, schema)
-        .and_then(|()| compiler.compile(INPUT_SCHEMA_URI, &mut schemas));
-    match compiled {
+        .map_err(Box::new)
+        .and_then(|()| {
+            compiler
+                .compile(INPUT_SCHEMA_URI, &mut schemas)
+                .map_err(Box::new)
+        });
+    match compilation {
         Ok(index) => InputSchemaValidator::Compiled(CompiledInputSchema { schemas, index }),
         Err(error) => {
             tracing::warn!(
@@ -537,7 +544,7 @@ impl std::fmt::Debug for FlowHttpRouting {
             .debug_struct("FlowHttpRouting")
             .field(
                 "release",
-                &self.release.as_deref().map(|loaded_release| loaded_release.release()),
+                &self.release.as_deref().map(LoadedRelease::release),
             )
             .field(
                 "input_schema_count",
@@ -846,7 +853,7 @@ pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
         .any(|(attachment_id, attachment)| {
             route_definition(attachment_id, attachment).is_some()
                 && parse_attachment_auth_policy(&attachment.auth_policy)
-                    .is_some_and(|policy| policy.allows_pat())
+                    .is_some_and(AttachmentAuthPolicy::allows_pat)
         })
 }
 
@@ -859,7 +866,7 @@ pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool
         .any(|(id, attachment)| {
             route_definition(id, attachment).is_some()
                 && parse_attachment_auth_policy(&attachment.auth_policy)
-                    .is_some_and(|policy| policy.allows_session())
+                    .is_some_and(AttachmentAuthPolicy::allows_session)
         })
 }
 
@@ -1012,23 +1019,81 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<FlowHttp
     ctx.try_get_plugin::<FlowHttpRouting>(FLOW_HTTP_ROUTING_ID)
 }
 
+/// The route set a supply call answers with, or the refusal it reports.
+fn supply_routes(
+    ctx: &ActiveCtx<'_>,
+    method: &str,
+    authority: &str,
+) -> wash_runtime::wasmtime::Result<Result<Vec<RouteDefinition>, String>> {
+    let plugin = plugin_of(ctx)?;
+    let _span = tracing::info_span!(
+        target: "wamn::route",
+        "wamn.route.match",
+        wamn.method = %method,
+    )
+    .entered();
+    Ok(plugin.routes(method, authority).map_err(|error| {
+        tracing::warn!(method, authority, error = %error, "flow-http route supply refused");
+        error.to_string()
+    }))
+}
+
+/// The input verdict a validation call answers with.
+fn validate_route_input(
+    ctx: &ActiveCtx<'_>,
+    attachment_id: &str,
+    payload: &str,
+) -> wash_runtime::wasmtime::Result<Result<(), String>> {
+    let plugin = plugin_of(ctx)?;
+    let _span = tracing::info_span!(
+        target: "wamn::route",
+        "wamn.route.validate_input",
+        wamn.attachment_id = %attachment_id,
+        wamn.payload_bytes = payload.len(),
+    )
+    .entered();
+    Ok(plugin.validate_input(attachment_id, payload))
+}
+
+/// One in-flight permit for a known route, or `None` while the route is full.
+fn acquire_route_permit(
+    ctx: &mut ActiveCtx<'_>,
+    attachment_id: &str,
+) -> wash_runtime::wasmtime::Result<Result<Option<Resource<RoutePermit>>, String>> {
+    let plugin = plugin_of(ctx)?;
+    let _span = tracing::info_span!(
+        target: "wamn::route",
+        "wamn.route.permit",
+        wamn.attachment_id = %attachment_id,
+    )
+    .entered();
+    match plugin.carries_route(attachment_id) {
+        Ok(true) => {}
+        Ok(false) => return Ok(Err(UNKNOWN_ROUTE_REFUSAL.to_string())),
+        Err(error) => {
+            tracing::warn!(
+                attachment_id,
+                error = %error,
+                "HTTP route permit refused without a serving release"
+            );
+            return Ok(Err(error.to_string()));
+        }
+    }
+    let Some(permit) = plugin.limiter.try_acquire(attachment_id) else {
+        return Ok(Ok(None));
+    };
+    Ok(Ok(Some(ctx.table.push(permit)?)))
+}
+
 impl routing::Host for ActiveCtx<'_> {
-    async fn routes(
+    fn routes(
         &mut self,
         method: String,
         authority: String,
-    ) -> wash_runtime::wasmtime::Result<Result<Vec<RouteDefinition>, String>> {
-        let plugin = plugin_of(self)?;
-        let _span = tracing::info_span!(
-            target: "wamn::route",
-            "wamn.route.match",
-            wamn.method = %method,
-        )
-        .entered();
-        Ok(plugin.routes(&method, &authority).map_err(|error| {
-            tracing::warn!(method, authority, error = %error, "flow-http route supply refused");
-            error.to_string()
-        }))
+    ) -> impl std::future::Future<
+        Output = wash_runtime::wasmtime::Result<Result<Vec<RouteDefinition>, String>>,
+    > {
+        std::future::ready(supply_routes(self, &method, &authority))
     }
 
     async fn authenticate(
@@ -1047,66 +1112,39 @@ impl routing::Host for ActiveCtx<'_> {
             .transpose()?))
     }
 
-    async fn validate_input(
+    fn validate_input(
         &mut self,
         attachment_id: String,
         payload: String,
-    ) -> wash_runtime::wasmtime::Result<Result<(), String>> {
-        let plugin = plugin_of(self)?;
-        let _span = tracing::info_span!(
-            target: "wamn::route",
-            "wamn.route.validate_input",
-            wamn.attachment_id = %attachment_id,
-            wamn.payload_bytes = payload.len(),
-        )
-        .entered();
-        Ok(plugin.validate_input(&attachment_id, &payload))
+    ) -> impl std::future::Future<Output = wash_runtime::wasmtime::Result<Result<(), String>>> {
+        std::future::ready(validate_route_input(self, &attachment_id, &payload))
     }
 
-    async fn try_acquire(
+    fn try_acquire(
         &mut self,
         attachment_id: String,
-    ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<RoutePermit>>, String>> {
-        let plugin = plugin_of(self)?;
-        let _span = tracing::info_span!(
-            target: "wamn::route",
-            "wamn.route.permit",
-            wamn.attachment_id = %attachment_id,
-        )
-        .entered();
-        match plugin.carries_route(&attachment_id) {
-            Ok(true) => {}
-            Ok(false) => return Ok(Err(UNKNOWN_ROUTE_REFUSAL.to_string())),
-            Err(error) => {
-                tracing::warn!(
-                    attachment_id,
-                    error = %error,
-                    "HTTP route permit refused without a serving release"
-                );
-                return Ok(Err(error.to_string()));
-            }
-        }
-        let Some(permit) = plugin.limiter.try_acquire(&attachment_id) else {
-            return Ok(Ok(None));
-        };
-        Ok(Ok(Some(self.table.push(permit)?)))
+    ) -> impl std::future::Future<
+        Output = wash_runtime::wasmtime::Result<Result<Option<Resource<RoutePermit>>, String>>,
+    > {
+        std::future::ready(acquire_route_permit(self, &attachment_id))
     }
 }
 
 impl routing::HostRoutePermit for ActiveCtx<'_> {
-    async fn drop(&mut self, permit: Resource<RoutePermit>) -> wash_runtime::wasmtime::Result<()> {
-        self.table.delete(permit)?;
-        Ok(())
+    fn drop(
+        &mut self,
+        permit: Resource<RoutePermit>,
+    ) -> impl std::future::Future<Output = wash_runtime::wasmtime::Result<()>> {
+        std::future::ready(self.table.delete(permit).map(|_| ()).map_err(Into::into))
     }
 }
 
 impl routing::HostAuthenticatedCaller for ActiveCtx<'_> {
-    async fn drop(
+    fn drop(
         &mut self,
         caller: Resource<AuthenticatedCaller>,
-    ) -> wash_runtime::wasmtime::Result<()> {
-        self.table.delete(caller)?;
-        Ok(())
+    ) -> impl std::future::Future<Output = wash_runtime::wasmtime::Result<()>> {
+        std::future::ready(self.table.delete(caller).map(|_| ()).map_err(Into::into))
     }
 }
 
@@ -1820,7 +1858,7 @@ mod tests {
     fn route_limit_is_nonzero_and_has_one_chart_default() {
         assert_eq!(RouteInFlightLimit::default().get(), 64);
         assert_eq!(
-            "2".parse::<RouteInFlightLimit>().map(|limit| limit.get()),
+            "2".parse::<RouteInFlightLimit>().map(RouteInFlightLimit::get),
             Ok(2)
         );
         for refused in ["", "0", "-1", "many"] {

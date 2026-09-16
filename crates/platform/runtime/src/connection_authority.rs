@@ -1,6 +1,5 @@
 //! Canonical, fail-closed HTTP connection authority resolution.
 
-use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 
 use hyper::Uri;
@@ -210,7 +209,7 @@ impl DnsResolver for TokioDnsResolver {
         async move {
             tokio::net::lookup_host((host.as_str(), port))
                 .await
-                .map(|addresses| addresses.collect())
+                .map(std::iter::Iterator::collect)
                 .map_err(|error| {
                     AuthorityError::new(
                         AuthorityErrorKind::DnsResolutionFailed,

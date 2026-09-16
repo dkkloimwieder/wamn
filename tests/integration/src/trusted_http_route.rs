@@ -206,7 +206,7 @@ async fn build_with_credentials(
             postgres,
             Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
             Arc::new(credentials),
-            Arc::new(WamnLogging::new(WamnLoggingConfig::default()).context("build wamn:logging")?),
+            Arc::new(WamnLogging::new(&WamnLoggingConfig::default()).context("build wamn:logging")?),
             // The upstream is a loopback origin the test owns; the cluster
             // ceiling is Kubernetes' job, not this fixture's.
             Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
@@ -1196,7 +1196,7 @@ mod tests {
                 PROJECT.to_owned(),
                 HashMap::from([(CREDENTIAL_HANDLE.to_owned(), credential_secret())]),
             )]))),
-            Arc::new(WamnLogging::new(WamnLoggingConfig::default())?),
+            Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
             Arc::from(vec!["*".parse()?]),
             Arc::clone(&release),
             ComponentArtifactSource::new(ComponentArtifactSourceConfig::new(

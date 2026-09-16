@@ -141,7 +141,7 @@ impl WamnLoggingConfig {
 // Counters (exposed to the bench + surfaced as OTel metrics)
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Counters {
     /// Accepted onto the front queue (handed toward the exporter).
     accepted: AtomicU64,
@@ -159,7 +159,7 @@ struct Counters {
 // Claim + record
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Claim {
     tenant: String,
     project: String,
@@ -209,7 +209,7 @@ pub struct CapturedRec {
 
 /// A shared, inspectable capture buffer. Cloneable handle shared between the
 /// plugin's drain task and the gate that reads it.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Capture {
     records: std::sync::Mutex<Vec<CapturedRec>>,
 }
@@ -232,6 +232,7 @@ impl Capture {
 // Plugin
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct WamnLogging {
     /// component id → host-trusted {tenant, project}.
     claims: std::sync::RwLock<HashMap<String, Claim>>,
@@ -244,20 +245,20 @@ pub struct WamnLogging {
 }
 
 impl WamnLogging {
-    pub fn new(cfg: WamnLoggingConfig) -> anyhow::Result<Self> {
+    pub fn new(cfg: &WamnLoggingConfig) -> anyhow::Result<Self> {
         Self::build(cfg, None)
     }
 
     /// Build the plugin with a capture sink attached (the gate seam): the drain
     /// task mirrors every emitted record into the returned [`Capture`], so a
     /// local gate can assert enrichment + attached trace_id without a collector.
-    pub fn new_with_capture(cfg: WamnLoggingConfig) -> anyhow::Result<(Self, Arc<Capture>)> {
+    pub fn new_with_capture(cfg: &WamnLoggingConfig) -> anyhow::Result<(Self, Arc<Capture>)> {
         let capture = Arc::new(Capture::default());
         let plugin = Self::build(cfg, Some(capture.clone()))?;
         Ok((plugin, capture))
     }
 
-    fn build(cfg: WamnLoggingConfig, capture: Option<Arc<Capture>>) -> anyhow::Result<Self> {
+    fn build(cfg: &WamnLoggingConfig, capture: Option<Arc<Capture>>) -> anyhow::Result<Self> {
         let resource = Resource::builder()
             .with_attribute(opentelemetry::KeyValue::new("service.name", "wamn-host"))
             .build();
@@ -313,7 +314,7 @@ impl WamnLogging {
     }
 
     pub fn from_env() -> anyhow::Result<Self> {
-        Self::new(WamnLoggingConfig::from_env())
+        Self::new(&WamnLoggingConfig::from_env())
     }
 
     /// Register the host-trusted claim for a component id. The bench calls this
@@ -504,18 +505,26 @@ impl ParsedContext {
     /// `{"flow":..,"run":..,"node":..,"seq":N,"run_label":..,"traceparent":..}`.
     fn parse(context: &str) -> Self {
         let v: serde_json::Value = serde_json::from_str(context).unwrap_or(serde_json::Value::Null);
-        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let s = |k: &str| {
+            v.get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
         let opt = |k: &str| {
             v.get(k)
-                .and_then(|x| x.as_str())
+                .and_then(serde_json::Value::as_str)
                 .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         };
         Self {
             flow: s("flow"),
             run: s("run"),
             node: s("node"),
-            seq: v.get("seq").and_then(|x| x.as_u64()).map(|n| n as i64),
+            seq: v
+                .get("seq")
+                .and_then(serde_json::Value::as_u64)
+                .map(u64::cast_signed),
             run_label: s("run_label"),
             traceparent: opt("traceparent"),
             tracestate: opt("tracestate"),
@@ -747,7 +756,7 @@ mod tests {
     #[tokio::test]
     async fn ingest_enriches_from_host_claim_over_guest_context() {
         let (plugin, capture) =
-            WamnLogging::new_with_capture(WamnLoggingConfig::default()).expect("plugin");
+            WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
         plugin.set_claim("comp-1", "acme", "receiving");
         // The context carries a SPOOFED tenant the guest must not be able to set.
         let ctx = format!(
@@ -781,7 +790,7 @@ mod tests {
     #[tokio::test]
     async fn clearing_a_claim_returns_the_scope_to_the_unregistered_sentinel() {
         let (plugin, capture) =
-            WamnLogging::new_with_capture(WamnLoggingConfig::default()).expect("plugin");
+            WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
         plugin.set_claim("comp-1", "acme", "receiving");
         plugin.set_claim("comp-2", "globex", "shipping");
 
@@ -812,7 +821,7 @@ mod tests {
     #[tokio::test]
     async fn traceparent_sets_trace_id_on_record() {
         let (plugin, capture) =
-            WamnLogging::new_with_capture(WamnLoggingConfig::default()).expect("plugin");
+            WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
         plugin.set_claim("comp-1", "acme", "receiving");
         let with_tp =
             format!(r#"{{"flow":"f","run":"r","node":"n","seq":0,"traceparent":"{VALID_TP}"}}"#);

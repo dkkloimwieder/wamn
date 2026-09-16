@@ -504,6 +504,7 @@ impl WamnJetstreamConfig {
 // Plugin
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct WamnJetstream {
     nats_url: Option<String>,
     stream_replicas: Option<usize>,
@@ -2081,6 +2082,8 @@ mod tests {
 
     #[test]
     fn registration_consumer_refuses_changed_broker_bounds() {
+        use async_nats::jetstream::consumer::IntoConsumerConfig as _;
+
         let requested = registration::ConsumerConfig {
             stream_name: "EVT_4_acme_4_proj_4_prod".into(),
             durable: "mat_t1_cat_r1".into(),
@@ -2088,7 +2091,6 @@ mod tests {
             ack_wait_ms: 30_000,
             max_deliver: 5,
         };
-        use async_nats::jetstream::consumer::IntoConsumerConfig as _;
         let matching = materializer_consumer_config(
             &requested.durable,
             &requested.filter_subject,

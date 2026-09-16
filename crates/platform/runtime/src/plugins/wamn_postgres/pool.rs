@@ -23,12 +23,18 @@ use crate::engine::MAX_HOST_CALL_DURATION;
 const DEFAULT_GUEST_POOL_MAX_SIZE: usize = 14;
 const DEFAULT_PLATFORM_POOL_MAX_SIZE: usize = 2;
 
+/// The host call ceiling in milliseconds. The constant is well under an hour,
+/// so it fits every width these bounds convert to.
+fn max_host_call_ms() -> u64 {
+    u64::try_from(MAX_HOST_CALL_DURATION.as_millis()).unwrap_or(u64::MAX)
+}
+
 fn bounded_wait_timeout_ms(value: u64) -> u64 {
-    value.clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64)
+    value.clamp(1, max_host_call_ms())
 }
 
 fn bounded_statement_timeout_ms(value: u64) -> u32 {
-    value.clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64) as u32
+    u32::try_from(value.clamp(1, max_host_call_ms())).unwrap_or(u32::MAX)
 }
 
 #[derive(Clone, Debug)]
@@ -168,6 +174,27 @@ pub struct ProjectConfig {
 }
 
 impl ProjectConfig {
+    /// The default project's config, consuming the single-DB
+    /// [`WamnPostgresConfig`]. `None` when it names no credential.
+    pub(super) fn from_global_config(cfg: WamnPostgresConfig) -> Option<Self> {
+        let WamnPostgresConfig {
+            credentials,
+            guest_pool_max_size,
+            platform_pool_max_size,
+            wait_timeout_ms,
+            statement_timeout_ms,
+            row_limit,
+        } = cfg;
+        Some(Self {
+            credentials: credentials?,
+            guest_pool_max_size,
+            platform_pool_max_size,
+            wait_timeout_ms,
+            statement_timeout_ms,
+            row_limit,
+        })
+    }
+
     /// The default project's config, from the single-DB [`WamnPostgresConfig`].
     pub(super) fn from_global(credentials: ClassCredentials, cfg: &WamnPostgresConfig) -> Self {
         Self {
@@ -245,6 +272,7 @@ pub trait CredentialProvider: Send + Sync {
 /// project now FAILS instead of silently borrowing another project's
 /// credential. Silent fallback is the behaviour the parent acceptance forbids:
 /// it made an unprovisioned project indistinguishable from a provisioned one.
+#[derive(Debug)]
 pub struct StaticCredentialProvider {
     projects: HashMap<String, ProjectConfig>,
 }
@@ -295,26 +323,28 @@ impl StaticCredentialProvider {
                  \"guest_pool_max_size\" and \"platform_pool_max_size\" separately"
             );
             let credentials = class_credentials_from_json(name, entry)?;
-            let u64_or = |k: &str, d: u64| entry.get(k).and_then(|n| n.as_u64()).unwrap_or(d);
+            let u64_or = |k: &str, d: u64| entry.get(k).and_then(serde_json::Value::as_u64).unwrap_or(d);
             out.insert(
                 name.clone(),
                 ProjectConfig {
                     credentials,
-                    guest_pool_max_size: u64_or(
+                    guest_pool_max_size: usize::try_from(u64_or(
                         "guest_pool_max_size",
                         base.guest_pool_max_size as u64,
-                    ) as usize,
-                    platform_pool_max_size: u64_or(
+                    ))
+                    .unwrap_or(usize::MAX),
+                    platform_pool_max_size: usize::try_from(u64_or(
                         "platform_pool_max_size",
                         base.platform_pool_max_size as u64,
-                    ) as usize,
+                    ))
+                    .unwrap_or(usize::MAX),
                     wait_timeout_ms: bounded_wait_timeout_ms(u64_or(
                         "wait_timeout_ms",
                         base.wait_timeout_ms,
                     )),
                     statement_timeout_ms: bounded_statement_timeout_ms(u64_or(
                         "statement_timeout_ms",
-                        base.statement_timeout_ms as u64,
+                        u64::from(base.statement_timeout_ms),
                     )),
                     row_limit: u64_or("row_limit", base.row_limit),
                 },
@@ -420,6 +450,7 @@ impl CredentialProvider for StaticCredentialProvider {
 /// layout — defined so the [`CredentialProvider`] wiring is real, but not yet
 /// functional (hence unconstructed in v0).
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct K8sSecretProvider {
     pub namespace: String,
 }
@@ -1184,7 +1215,7 @@ mod tests {
 
     #[test]
     fn configured_database_waits_are_finite_and_nonzero() {
-        let max = MAX_HOST_CALL_DURATION.as_millis() as u64;
+        let max = max_host_call_ms();
         assert_eq!(bounded_wait_timeout_ms(0), 1);
         assert_eq!(bounded_wait_timeout_ms(u64::MAX), max);
         assert_eq!(bounded_statement_timeout_ms(0), 1);

@@ -31,6 +31,7 @@ use super::{
 #[cfg(feature = "wasm_component_model_implements")]
 use super::bindings;
 
+#[derive(Debug)]
 struct TxnState {
     /// Present while the transaction owns a connection. Taken out for the
     /// duration of each call (a std mutex guard cannot be held across await).
@@ -96,6 +97,7 @@ impl Drop for StatementConnectionGuard {
 /// without an explicit finish — guest trap, epoch kill, store teardown — the
 /// connection is destroyed (socket closed, server aborts the transaction),
 /// never repooled.
+#[derive(Debug)]
 pub struct PgTransaction {
     state: SharedTxnState,
     destroyed: Arc<AtomicU64>,
@@ -142,6 +144,7 @@ impl Drop for PgTransaction {
 
 /// Host side of a `wamn:postgres/client.cursor`. Shares the transaction's
 /// connection slot; server-side cursors die with the transaction.
+#[derive(Debug)]
 pub struct PgCursor {
     state: SharedTxnState,
     destroyed: Arc<AtomicU64>,
@@ -667,10 +670,10 @@ async fn txn_query(
             let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
             let t0 = std::time::Instant::now();
             let out = with_txn_conn(&state, &destroyed, |conn| async move {
-                let r = run_query(&conn, &sql, &params, row_limit).await;
-                // run_query maps errors already; re-split for with_txn_conn's
-                // fatal/statement distinction by probing conn liveness.
-                (conn, flatten_mapped(r))
+                // `run_query` maps errors already, so nothing reaching
+                // `with_txn_conn` is a raw error it would judge fatal.
+                let queried = run_query(&conn, &sql, &params, row_limit).await;
+                (conn, Ok(queried))
             })
             .instrument(span)
             .await
@@ -698,8 +701,10 @@ async fn txn_execute(
             let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
             let t0 = std::time::Instant::now();
             let out = with_txn_conn(&state, &destroyed, |conn| async move {
-                let r = run_execute(&conn, &sql, &params).await;
-                (conn, flatten_mapped(r))
+                // `run_execute` maps errors already, so nothing reaching
+                // `with_txn_conn` is a raw error it would judge fatal.
+                let executed = run_execute(&conn, &sql, &params).await;
+                (conn, Ok(executed))
             })
             .instrument(span)
             .await
@@ -797,8 +802,7 @@ async fn txn_drop(
     let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
     let already_finished = state
         .lock()
-        .map(|st| st.finished || st.conn.is_none())
-        .unwrap_or(true);
+        .map_or(true, |st| st.finished || st.conn.is_none());
     if !already_finished {
         let _ = finish_txn(&state, &destroyed, "ROLLBACK").await;
     }
@@ -1021,13 +1025,6 @@ async fn finish_txn(
     }
 }
 
-/// Adapter: our helpers return `Result<T, PgError>` but [`with_txn_conn`]
-/// wants the raw `tokio_postgres::Error` to judge fatality. Statement-level
-/// failures were already mapped, so wrap them back up as an Ok(Err(..)).
-fn flatten_mapped<T>(r: Result<T, PgError>) -> Result<Result<T, PgError>, tokio_postgres::Error> {
-    Ok(r)
-}
-
 impl client::HostCursor for ActiveCtx<'_> {
     async fn fetch(
         &mut self,
@@ -1040,8 +1037,11 @@ impl client::HostCursor for ActiveCtx<'_> {
         cursor_fetch(self, &project, rep, max_rows).await
     }
 
-    async fn drop(&mut self, rep: Resource<PgCursor>) -> wash_runtime::wasmtime::Result<()> {
-        cursor_drop(self, rep)
+    fn drop(
+        &mut self,
+        rep: Resource<PgCursor>,
+    ) -> impl std::future::Future<Output = wash_runtime::wasmtime::Result<()>> {
+        std::future::ready(cursor_drop(self, rep))
     }
 }
 
@@ -1187,8 +1187,9 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
         let destroyed = Arc::clone(&transaction.transaction.destroyed);
         let already_finished = state
             .lock()
-            .map(|transaction| transaction.finished || transaction.conn.is_none())
-            .unwrap_or(true);
+            .map_or(true, |transaction| {
+                transaction.finished || transaction.conn.is_none()
+            });
         if !already_finished {
             let _ = finish_statement_txn(&state, &destroyed, "ROLLBACK").await;
         }

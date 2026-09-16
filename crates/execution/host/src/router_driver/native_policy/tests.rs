@@ -489,7 +489,7 @@ impl Fixture {
                 )),
                 postgres,
                 logging: Arc::new(
-                    WamnLogging::new(WamnLoggingConfig::default()).expect("logging plugin"),
+                    WamnLogging::new(&WamnLoggingConfig::default()).expect("logging plugin"),
                 ),
                 release,
                 project: "test".into(),

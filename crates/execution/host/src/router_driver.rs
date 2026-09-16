@@ -922,7 +922,7 @@ impl RouterDriver {
             )
             .await?;
         let resolved = match resolved {
-            CandidateWiringResolution::Resolved(resolved) => resolved,
+            CandidateWiringResolution::Resolved(resolved) => *resolved,
             CandidateWiringResolution::Missing => {
                 return Err(CandidateExecutionRefusal::new(
                     CandidateExecutionRefusalKind::Identity,

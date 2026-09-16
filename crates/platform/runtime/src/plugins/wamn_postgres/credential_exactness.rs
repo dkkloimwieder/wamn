@@ -635,25 +635,28 @@ mod tests {
     }
 
     impl CredentialProbeQueries for FakeQueries {
-        async fn identity(&self) -> Result<ObservedIdentity, CredentialProbePredicate> {
+        fn identity(
+            &self,
+        ) -> impl std::future::Future<Output = Result<ObservedIdentity, CredentialProbePredicate>>
+        {
             self.identity_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(self.identity.clone())
+            std::future::ready(Ok(self.identity.clone()))
         }
 
-        async fn membership(
+        fn membership(
             &self,
             _expectation: &MembershipExpectation,
-        ) -> Result<bool, CredentialProbePredicate> {
+        ) -> impl std::future::Future<Output = Result<bool, CredentialProbePredicate>> {
             self.membership_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(self.membership)
+            std::future::ready(Ok(self.membership))
         }
 
-        async fn acl(
+        fn acl(
             &self,
             _expectation: &AclExpectation,
-        ) -> Result<bool, CredentialProbePredicate> {
+        ) -> impl std::future::Future<Output = Result<bool, CredentialProbePredicate>> {
             self.acl_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(self.acl)
+            std::future::ready(Ok(self.acl))
         }
     }
 

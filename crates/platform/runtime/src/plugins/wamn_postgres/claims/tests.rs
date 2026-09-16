@@ -214,8 +214,7 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
 #[test]
 fn a_serving_host_refuses_an_invalid_declared_project() {
     let error = WamnPostgres::from_env_for_project("receiving.prod", None)
-        .err()
-        .expect("an invalid project must refuse before reading ambient configuration");
+        .expect_err("an invalid project must refuse before reading ambient configuration");
     assert!(error.to_string().contains("invalid composed project"));
 }
 
@@ -1957,9 +1956,8 @@ async fn live_scs_off_server_fails_checkout_closed() {
     // server fails on standard_conforming_strings before the
     // wamn-0h0g.22.8.4 exactness hook is reached.
     .expect("pool builds (url parses; the hooks run at checkout, not build)");
-    let raw_err = match pool.get().await {
-        Ok(_) => panic!("raw checkout unexpectedly SUCCEEDED against a scs=off server"),
-        Err(e) => e,
+    let Err(raw_err) = pool.get().await else {
+        panic!("raw checkout unexpectedly SUCCEEDED against a scs=off server");
     };
     let rendered = raw_err.to_string();
     assert!(

@@ -99,7 +99,6 @@ impl ToSql for PgParam {
                 };
                 out.extend_from_slice(s.as_bytes());
             }
-            SqlValue::Text(s) => out.extend_from_slice(s.as_bytes()),
             SqlValue::Bytes(b) => {
                 out.extend_from_slice(b"\\x");
                 let mut s = String::with_capacity(b.len() * 2);
@@ -108,9 +107,10 @@ impl ToSql for PgParam {
                 }
                 out.extend_from_slice(s.as_bytes());
             }
-            // Canonical-string types: pass through, server parses per the
-            // parameter's declared type.
-            SqlValue::Numeric(s)
+            // Text and the canonical-string types: pass through, server parses
+            // per the parameter's declared type.
+            SqlValue::Text(s)
+            | SqlValue::Numeric(s)
             | SqlValue::Timestamptz(s)
             | SqlValue::Json(s)
             | SqlValue::Uuid(s) => out.extend_from_slice(s.as_bytes()),
@@ -144,10 +144,10 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
     ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
         let v = match ty.name() {
             "bool" => SqlValue::Boolean(bool::from_sql(ty, raw)?),
-            "int2" => SqlValue::Int32(i16::from_sql(ty, raw)? as i32),
+            "int2" => SqlValue::Int32(i32::from(i16::from_sql(ty, raw)?)),
             "int4" => SqlValue::Int32(i32::from_sql(ty, raw)?),
             "int8" => SqlValue::Int64(i64::from_sql(ty, raw)?),
-            "float4" => SqlValue::Float64(f32::from_sql(ty, raw)? as f64),
+            "float4" => SqlValue::Float64(f64::from(f32::from_sql(ty, raw)?)),
             "float8" => SqlValue::Float64(f64::from_sql(ty, raw)?),
             "text" | "varchar" | "bpchar" | "name" | "unknown" => {
                 SqlValue::Text(String::from_sql(ty, raw)?)
@@ -213,15 +213,17 @@ pub fn canonical_timestamptz(value: DateTime<Utc>) -> String {
 /// a weight (group index of the first group relative to the decimal point)
 /// and a display scale.
 fn decode_binary_numeric(raw: &[u8]) -> Result<String, Box<dyn std::error::Error + Sync + Send>> {
+    use std::fmt::Write as _;
+
     fn rd_i16(raw: &[u8], at: usize) -> Result<i16, Box<dyn std::error::Error + Sync + Send>> {
         Ok(i16::from_be_bytes(
             raw.get(at..at + 2).ok_or("truncated numeric")?.try_into()?,
         ))
     }
-    let ndigits = rd_i16(raw, 0)? as usize;
-    let weight = rd_i16(raw, 2)? as i32;
-    let sign = rd_i16(raw, 4)? as u16;
-    let dscale = rd_i16(raw, 6)? as u16 as usize;
+    let ndigits = usize::try_from(rd_i16(raw, 0)?)?;
+    let weight = i32::from(rd_i16(raw, 2)?);
+    let sign = rd_i16(raw, 4)?.cast_unsigned();
+    let dscale = usize::from(rd_i16(raw, 6)?.cast_unsigned());
     match sign {
         0x0000 | 0x4000 => {}
         0xC000 => return Ok("NaN".to_string()),
@@ -231,10 +233,9 @@ fn decode_binary_numeric(raw: &[u8]) -> Result<String, Box<dyn std::error::Error
     }
     let mut digits = Vec::with_capacity(ndigits);
     for i in 0..ndigits {
-        digits.push(rd_i16(raw, 8 + i * 2)? as u16);
+        digits.push(rd_i16(raw, 8 + i * 2)?.cast_unsigned());
     }
 
-    use std::fmt::Write as _;
     let mut s = String::new();
     if sign == 0x4000 {
         s.push('-');
@@ -242,7 +243,7 @@ fn decode_binary_numeric(raw: &[u8]) -> Result<String, Box<dyn std::error::Error
     if weight < 0 || ndigits == 0 {
         s.push('0');
     } else {
-        for i in 0..=(weight as usize) {
+        for i in 0..=usize::try_from(weight).expect("the branch above rejects a negative weight") {
             let d = digits.get(i).copied().unwrap_or(0);
             if i == 0 {
                 let _ = write!(s, "{d}");
@@ -256,11 +257,10 @@ fn decode_binary_numeric(raw: &[u8]) -> Result<String, Box<dyn std::error::Error
         let mut gw = -1i32;
         while frac.len() < dscale {
             let i = weight - gw; // digit index of the group with weight `gw`
-            let d = if i >= 0 {
-                digits.get(i as usize).copied().unwrap_or(0)
-            } else {
-                0
-            };
+            let d = usize::try_from(i)
+                .ok()
+                .and_then(|index| digits.get(index).copied())
+                .unwrap_or(0);
             let _ = write!(frac, "{d:04}");
             gw -= 1;
         }
