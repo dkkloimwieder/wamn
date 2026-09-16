@@ -852,6 +852,114 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Arguments of `recover-org-cluster` — render the CNPG `Cluster` that restores one
+/// org recovery domain from its WAL/PITR object store (wamn-fibe).
+#[cfg(feature = "ops")]
+#[derive(Debug, Args)]
+pub struct RecoverOrgClusterArgs {
+    /// Org id whose cluster is recovered. With `--owner` it names the SOURCE
+    /// cluster `<org>-<owner>`, the one `provision-org` created.
+    #[arg(long)]
+    pub org: String,
+
+    /// The template preset the org was stamped from — it supplies the policy the
+    /// restored cluster is sized by, so use the one `provision-org` was run with.
+    #[arg(long, value_enum)]
+    pub template: TemplateArg,
+
+    /// The shared pool cluster a `trials` org sits on. Ignored for dedicated
+    /// templates. A pooled org owns no cluster and cannot be recovered here.
+    #[arg(long, default_value = "wamn-pg")]
+    pub pool: String,
+
+    /// The recovery-domain owner env, e.g. `prod`. CNPG recovery is
+    /// whole-cluster, so this is the unit that is restored.
+    #[arg(long)]
+    pub owner: String,
+
+    /// Name of the NEW cluster the restore lands in. Default
+    /// `<org>-<owner>-restore`. It must differ from the source: the live cluster
+    /// is never the target of a recovery.
+    #[arg(long)]
+    pub target: Option<String>,
+
+    /// Stop the replay at this RFC3339 timestamp (`recoveryTarget.targetTime`) —
+    /// the instant just before the loss. Omit to replay every archived WAL
+    /// segment, which is what a lost-cluster restore wants.
+    #[arg(long = "at")]
+    pub target_time: Option<String>,
+
+    /// Write the recovery `Cluster` CR here; `-` = stdout (default).
+    #[arg(long)]
+    pub emit_cluster: Option<PathBuf>,
+
+    /// Write the RESTORED cluster's own `ObjectStore` CR here; `-` = stdout
+    /// (default). Apply it **before** the cluster. It is a different WAL prefix
+    /// from the source's, so the restore never writes into the stream it read.
+    #[arg(long)]
+    pub emit_object_store: Option<PathBuf>,
+
+    /// Write the RESTORED cluster's own `ScheduledBackup` CR here; `-` = stdout
+    /// (default). Apply it **after** the restored cluster is ready.
+    #[arg(long)]
+    pub emit_scheduled_backup: Option<PathBuf>,
+}
+
+/// Render one recovery: the `Cluster` bootstrapped from the source's object
+/// store, plus the backup resources the restored cluster needs for its own
+/// future backups. Pure — this reads no database and applies nothing.
+#[cfg(feature = "ops")]
+pub fn recover_org_cluster(args: RecoverOrgClusterArgs) -> anyhow::Result<()> {
+    let template = args.template.template();
+    let (org, _) = template.stamp(&args.org, &args.pool);
+    let owner = wamn_control_registry::Env::new(&args.owner);
+    let source = format!("{}-{}", org.id, owner);
+    let target = args
+        .target
+        .unwrap_or_else(|| format!("{}-{}-restore", org.id, owner));
+    let recovered = wamn_control_provision::render_recovery_cluster(
+        &org,
+        &owner,
+        &template.policies,
+        &target,
+        args.target_time.as_deref(),
+    )?;
+
+    match &args.target_time {
+        Some(at) => println!(
+            "recovery of cluster {source:?} into {target:?}, replayed to {at} \
+             (whole-cluster point-in-time recovery)"
+        ),
+        None => println!(
+            "recovery of cluster {source:?} into {target:?}, replaying every archived WAL segment"
+        ),
+    }
+    println!(
+        "  apply order: the ObjectStore, then the Cluster, then the ScheduledBackup once the \
+         restored cluster is ready"
+    );
+    if recovered.object_store.is_none() {
+        println!(
+            "  note: env {owner:?} has no backup cadence in this template, so it has no WAL \
+             stream to restore from and the restore renders no backup resources"
+        );
+    }
+
+    let emit_cluster = args.emit_cluster.unwrap_or_else(|| PathBuf::from("-"));
+    let emit_os = args.emit_object_store.unwrap_or_else(|| PathBuf::from("-"));
+    let emit_sb = args
+        .emit_scheduled_backup
+        .unwrap_or_else(|| PathBuf::from("-"));
+    if let Some(store) = &recovered.object_store {
+        write_json(&emit_os, store).context("emit the restored cluster's ObjectStore CR")?;
+    }
+    write_json(&emit_cluster, &recovered.cluster).context("emit the recovery Cluster CR")?;
+    if let Some(sb) = &recovered.scheduled_backup {
+        write_json(&emit_sb, sb).context("emit the restored cluster's ScheduledBackup CR")?;
+    }
+    Ok(())
+}
+
 /// Print the lines that report one org provisioning run.
 fn print_provisioned_org(provisioned: &ProvisionedOrg) {
     let id = &provisioned.org.id;

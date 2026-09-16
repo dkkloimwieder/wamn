@@ -80,6 +80,14 @@ pub enum ProvisionError {
         /// The triple named on both sides.
         triple: String,
     },
+    /// A recovery whose target cluster is the **source** cluster. A recovery CR
+    /// applied under the source's own name would target the live cluster instead
+    /// of creating a restore beside it, so the restore is named separately
+    /// (`<org>-<owner>-restore`) and the source is left untouched.
+    RecoveryIntoSourceCluster {
+        /// The source cluster named on both sides.
+        cluster: String,
+    },
 }
 
 impl fmt::Display for ProvisionError {
@@ -124,6 +132,11 @@ impl fmt::Display for ProvisionError {
                 f,
                 "src and dst are both {triple}: a self-copy is only meaningful as a move \
                  (re-run with --cutover to re-home the identity onto a different cluster)"
+            ),
+            ProvisionError::RecoveryIntoSourceCluster { cluster } => write!(
+                f,
+                "recovery target {cluster:?} is the source cluster: name the restore \
+                 separately (for example {cluster}-restore), so the live cluster is untouched"
             ),
         }
     }

@@ -178,7 +178,7 @@ fn cluster_labels(org: &str, owner: &str) -> Value {
 /// Cloud plugin ref in `.spec.plugins` naming that ObjectStore — continuous
 /// WAL/PITR. `None` for a policy with no scheduled backup. We use the plugin's
 /// `.spec.plugins`, not the deprecated in-tree `.spec.backup.barmanObjectStore`.
-fn render_cluster(
+pub(crate) fn render_cluster(
     org: &str,
     owner: &Env,
     name: &str,

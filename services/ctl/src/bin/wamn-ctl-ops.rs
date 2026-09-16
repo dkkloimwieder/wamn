@@ -3,7 +3,7 @@
 use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
-use wamn_ctl::ops_verbs;
+use wamn_ctl::{ops_verbs, provisioning_verbs};
 
 #[derive(Parser)]
 #[command(name = "wamn-ctl-ops", version, about)]
@@ -26,6 +26,8 @@ enum Command {
     PruneRecordHistory(ops_verbs::PruneRecordHistoryArgs),
     /// Read retained broker advisories and the available source payloads.
     EventAdvisories(ops_verbs::EventAdvisoriesArgs),
+    /// Render the CNPG Cluster that restores one org recovery domain from its WAL/PITR object store.
+    RecoverOrgCluster(provisioning_verbs::RecoverOrgClusterArgs),
 }
 
 #[tokio::main]
@@ -45,5 +47,6 @@ async fn main() -> anyhow::Result<()> {
         Command::PruneRunHistory(args) => ops_verbs::prune_run_history(args).await,
         Command::PruneRecordHistory(args) => ops_verbs::prune_record_history(args).await,
         Command::EventAdvisories(args) => ops_verbs::event_advisories(args).await,
+        Command::RecoverOrgCluster(args) => provisioning_verbs::recover_org_cluster(args),
     }
 }

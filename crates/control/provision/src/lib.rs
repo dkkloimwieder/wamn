@@ -63,6 +63,8 @@ mod name;
 pub mod operation_grants;
 pub mod org;
 pub mod platform_principals;
+#[cfg(feature = "ops")]
+pub mod recovery;
 pub mod saga;
 pub mod secret;
 pub mod session_role_reader;
@@ -115,6 +117,10 @@ pub use org::{OrgClusters, render_org_cluster_set};
 pub use platform_principals::{
     PlatformDomainError, bind_platform_principal_sql, platform_principals_sql,
     validate_platform_domain,
+};
+#[cfg(feature = "ops")]
+pub use recovery::{
+    RecoveredCluster, recovery_bootstrap, recovery_external_cluster, render_recovery_cluster,
 };
 pub use system_reader::{
     SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorKind,

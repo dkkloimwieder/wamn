@@ -7,4 +7,5 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [running-tests.md](running-tests.md): test selection, database isolation, generation, results, and cleanup.
 - [cluster-tests.md](cluster-tests.md): disposable Receiving, WMS, and native cluster runs.
 - [deployment.md](deployment.md): provisioning, release carriers, and deployed environments.
+- [backup-and-recovery.md](backup-and-recovery.md): cluster backup, point-in-time recovery, and one-table recovery.
 - [delivery.md](delivery.md): repository change checks, qualification, publication, selection, and deployment.
