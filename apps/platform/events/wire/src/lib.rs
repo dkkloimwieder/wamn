@@ -178,10 +178,10 @@ impl Serialize for Envelope {
         S: Serializer,
     {
         let field_count = 5
-            + self.old.is_some() as usize
-            + self.new.is_some() as usize
+            + usize::from(self.old.is_some())
+            + usize::from(self.new.is_some())
             + 2
-            + self.causation.is_some() as usize;
+            + usize::from(self.causation.is_some());
         let mut state = serializer.serialize_struct("Envelope", field_count)?;
         state.serialize_field("op", &self.op)?;
         if let Some(old) = &self.old {
@@ -342,6 +342,8 @@ pub fn derived_msg_id(
     op: Op,
     dedup_id: &str,
 ) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
     let mut digest = Sha256::new();
     digest.update(b"wamn.event.derived-msg-id.v0.1\0");
     for field in [
@@ -359,7 +361,6 @@ pub fn derived_msg_id(
     let digest = digest.finalize();
     let mut message_id = String::with_capacity("derived:".len() + digest.len() * 2);
     message_id.push_str("derived:");
-    const HEX: &[u8; 16] = b"0123456789abcdef";
     for byte in digest {
         message_id.push(char::from(HEX[usize::from(byte >> 4)]));
         message_id.push(char::from(HEX[usize::from(byte & 0x0f)]));
