@@ -449,7 +449,10 @@ On those paths, the triggers exist and every writer binds its executing principa
 `reconcile-run-plane` applies `app-schema.sql` to the project database and writes its platform rows and a service row for each service principal of the project.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 No production code writes a person row today, so a human write refuses with `actor-required`.
-Beads `wamn-0h0g.9.18` owns the person rows and the refusal of a credential for a human principal without a users row.
+Beads `wamn-0h0g.9.18` owns the person rows.
+A principal with no users row still writes, and its write records an actor that names no row.
+There is no write-time lookup and no foreign key.
+Beads `wamn-0h0g.9.19` owns that refusal, by owner ruling at the point of use.
 Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution and `app.operation`.
 Within its tenant, a guest can insert a `configurations_history` entry directly, because it holds `INSERT` on the entry columns.
 Record history gives no tamper resistance against modified application code or administrative SQL.
