@@ -481,7 +481,7 @@ async fn prepare(
                 "labels": {"app.kubernetes.io/name": "wamn-identity", "app.kubernetes.io/managed-by": "wamn"}},
             "stringData": {"url": checked.url()}
         });
-        wamn_control::provision_project_env::write_secret_json(args.emit_secret.as_deref().context("--emit-secret is required")?, &document)
+        crate::provision_project_env::write_secret_json(args.emit_secret.as_deref().context("--emit-secret is required")?, &document)
     }.await;
     if let Err(error) = publish {
         deactivate(admin, &args.issuer, generation)
