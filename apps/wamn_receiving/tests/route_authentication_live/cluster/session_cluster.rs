@@ -409,9 +409,15 @@ struct SecretVolume {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the field names are Kubernetes' own: `rename_all = \"camelCase\"` maps this one \
+              to `mountPath`, the key a volumeMount carries, so renaming it would stop the \
+              overlay parsing"
+)]
 struct Mount {
     name: String,
-    path: String,
+    mount_path: String,
     read_only: bool,
     #[serde(flatten)]
     rest: Preserved,
@@ -475,7 +481,7 @@ fn ca_volume(name: &str) -> Volume {
 fn mount(name: &str, path: &str) -> Mount {
     Mount {
         name: name.to_owned(),
-        path: path.to_owned(),
+        mount_path: path.to_owned(),
         read_only: true,
         rest: Preserved::new(),
     }
@@ -1931,7 +1937,7 @@ mod tests {
             Some("/etc/host-session-ca/ca.crt")
         );
         assert_eq!(group.volumes.len(), 2);
-        assert_eq!(group.mounts[1].path, "/etc/host-session-ca");
+        assert_eq!(group.mounts[1].mount_path, "/etc/host-session-ca");
         group.env.truncate(1);
         group.volumes.truncate(1);
         group.mounts.truncate(1);
