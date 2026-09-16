@@ -40,6 +40,14 @@ const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permission \
     WHERE tenant_id = $1 AND role_name = ANY($2::text[]) \
     ORDER BY permission";
 
+/// One row of the bound principal, read under the tenant's own guest login.
+///
+/// Row existence is the whole question, so the projection is a constant. The
+/// `users_tenant` policy already limits a guest login to its own tenant, and
+/// the bound `tenant_id` predicate keeps the read on the claimed tenant.
+const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM app_system.users \
+    WHERE tenant_id = $1 AND id = $2::text::uuid";
+
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permissions.permission \
     FROM app_system.users AS users \
     JOIN app_system.user_roles AS user_roles \
@@ -141,6 +149,15 @@ pub struct WamnPostgres {
     /// coordinates an effect span names, and the run half is
     /// [`current_run_for`](Self::current_run_for).
     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+    /// component id → the principal id whose `app_system.users` row this
+    /// binding verified (`wamn-0h0g.9.19`). This is the per-invocation cache of
+    /// the provisioning check: [`bind_session_claims`](WamnPostgres::bind_session_claims)
+    /// reads the tenant once and records the answer here, and the entry lives
+    /// exactly as long as the binding does. A users row deleted in the middle
+    /// of an invocation therefore stays accepted until the next bind reads
+    /// again. Absent ⇒ the binding carries no executing principal, which the
+    /// record-history triggers already refuse with actor-required.
+    provisioned_principals: std::sync::RwLock<HashMap<String, String>>,
     /// Verified SQL facts bound by operation plus the one invocation-active
     /// scope. The active scope is host-selected; a guest can only name a digest
     /// inside it.
@@ -204,6 +221,57 @@ pub struct SessionClaims {
     /// The `(effective release id, manifest digest)` the claiming pod carries.
     pub release: Option<ReleaseIdentity>,
 }
+
+/// The bound principal has no `app_system.users` row in the tenant it claims
+/// (`wamn-0h0g.9.19`).
+///
+/// A credential for such a principal is a provisioning defect: every write it
+/// makes records an actor that names no row. The bind refuses it, and the
+/// refusal is an authorization fact, so the owning boundary translates it to
+/// the `permission-denied` the operation vocabulary already carries. The host
+/// router does that translation in
+/// `crates/execution/host/src/router_driver/native_policy.rs`.
+///
+/// It carries the tenant, the project database read, and the principal id, so
+/// an operator can find the missing row. It carries no connection material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnprovisionedPrincipal {
+    tenant: String,
+    project: String,
+    principal_id: String,
+}
+
+impl UnprovisionedPrincipal {
+    /// The tenant whose `app_system.users` table was read.
+    #[must_use]
+    pub fn tenant(&self) -> &str {
+        &self.tenant
+    }
+
+    /// The project database the read used.
+    #[must_use]
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// The `app.user_id` claim that named no row.
+    #[must_use]
+    pub fn principal_id(&self) -> &str {
+        &self.principal_id
+    }
+}
+
+impl std::fmt::Display for UnprovisionedPrincipal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "principal {} has no app_system.users row in tenant {} of project {}",
+            self.principal_id, self.tenant, self.project
+        )
+    }
+}
+
+impl std::error::Error for UnprovisionedPrincipal {}
 
 /// Host-only identity used to load one HTTP effect authorization snapshot.
 #[derive(Debug, Clone, Copy)]
@@ -713,6 +781,7 @@ impl WamnPostgres {
             release_identities: std::sync::RwLock::new(HashMap::new()),
             current_run: std::sync::RwLock::new(HashMap::new()),
             invocations: std::sync::RwLock::new(HashMap::new()),
+            provisioned_principals: std::sync::RwLock::new(HashMap::new()),
             statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
@@ -1115,7 +1184,29 @@ impl WamnPostgres {
     /// Validation is the same as the individual `set_*` setters, so an invalid
     /// claim is refused here and the caller destroys the instance rather than
     /// serving it under a half-written identity.
-    pub fn bind_session_claims(
+    ///
+    /// # The executing principal must own a users row (`wamn-0h0g.9.19`)
+    ///
+    /// A bind that names an `app.user_id` reads `app_system.users` in the
+    /// tenant's project database and refuses when the principal owns no row.
+    /// The credential of such a principal is a provisioning defect, and every
+    /// write it makes records an actor that names no row. The read happens
+    /// here, at the bind, because the two production callers reach this
+    /// function once per invocation, so the cost is one read per invocation
+    /// rather than one per transactional statement.
+    ///
+    /// The answer is cached for the life of the binding in
+    /// `provisioned_principals`. A users row deleted in the middle of an
+    /// invocation therefore stays accepted until the next bind reads again.
+    ///
+    /// The read runs LAST, after every claim is written and validated, so a
+    /// bind that is going to be refused for a malformed claim never opens a
+    /// connection. A refused bind leaves the claim maps half-written, which is
+    /// the contract above: the caller destroys the instance.
+    ///
+    /// A platform principal carries its own `wamn:<component>` row, which
+    /// provisioning writes, so it binds like any other principal.
+    pub async fn bind_session_claims(
         &self,
         component_id: &str,
         claims: &SessionClaims,
@@ -1199,7 +1290,94 @@ impl WamnPostgres {
             .write()
             .expect("current_run lock poisoned")
             .remove(component_id);
+        // The provisioning check and its per-binding cache. An acquisition that
+        // names no principal clears the cache, exactly as every optional claim
+        // above clears its own registry.
+        match claims.user_id.as_deref() {
+            Some(user_id) => {
+                let project = claims.project.as_deref().unwrap_or(DEFAULT_PROJECT);
+                self.require_provisioned_principal(&claims.tenant, project, user_id)
+                    .await?;
+                self.provisioned_principals
+                    .write()
+                    .expect("provisioned principals lock poisoned")
+                    .insert(component_id.to_owned(), user_id.to_owned());
+            }
+            None => drop(
+                self.provisioned_principals
+                    .write()
+                    .expect("provisioned principals lock poisoned")
+                    .remove(component_id),
+            ),
+        }
         Ok(())
+    }
+
+    /// Read one `app_system.users` row and refuse the principal that owns none
+    /// (`wamn-0h0g.9.19`).
+    ///
+    /// The read uses the tenant's own guest login, for two reasons. It is the
+    /// only authority class every composition root names, because the platform
+    /// classes are unnamed when their generation is absent. And it is the
+    /// credential the tenant floor already grants `SELECT` on this table, with
+    /// the `users_tenant` policy limiting it to its own rows, so the check
+    /// needs no new grant and can read no other tenant.
+    ///
+    /// A read that cannot run refuses the bind with its own error rather than
+    /// the `UnprovisionedPrincipal` refusal. An unreachable table is an
+    /// infrastructure defect and not an authorization fact, and the bind must
+    /// fail closed either way.
+    async fn require_provisioned_principal(
+        &self,
+        tenant: &str,
+        project: &str,
+        principal_id: &str,
+    ) -> anyhow::Result<()> {
+        let (connection, _policy) = self
+            .checkout_guest(project, tenant)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .context("check out the tenant connection that reads app_system.users")?;
+        let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
+            Ok(statement) => statement,
+            Err(error) => {
+                self.destroy(connection);
+                return Err(error).context("prepare the provisioned-principal read");
+            }
+        };
+        let rows = connection
+            .query(&statement, &[&tenant, &principal_id])
+            .instrument(tracing::info_span!("wamn.claims.principal.query"))
+            .await
+            .context("read the executing principal's app_system.users row")?;
+        if rows.is_empty() {
+            tracing::warn!(
+                tenant,
+                project,
+                principal_id,
+                "wamn:postgres: refusing a bind for a principal with no app_system.users row"
+            );
+            return Err(UnprovisionedPrincipal {
+                tenant: tenant.to_owned(),
+                project: project.to_owned(),
+                principal_id: principal_id.to_owned(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    /// The principal whose users row this component id's binding verified.
+    ///
+    /// `None` means the binding named no executing principal, or that no
+    /// binding is live. This is the read half of the per-invocation cache.
+    #[must_use]
+    pub fn provisioned_principal_for(&self, component_id: &str) -> Option<String> {
+        self.provisioned_principals
+            .read()
+            .expect("provisioned principals lock poisoned")
+            .get(component_id)
+            .cloned()
     }
 
     /// Read back the claim set one component id currently resolves to.
@@ -1275,6 +1453,10 @@ impl WamnPostgres {
             .write()
             .expect("current_run lock poisoned")
             .remove(component_id);
+        self.provisioned_principals
+            .write()
+            .expect("provisioned principals lock poisoned")
+            .remove(component_id);
     }
 
     /// Reap EVERY per-component-id claim, workload-authority, and verified
@@ -1333,6 +1515,10 @@ impl WamnPostgres {
         self.current_run
             .write()
             .expect("current_run lock poisoned")
+            .retain(|c, _| retain(c));
+        self.provisioned_principals
+            .write()
+            .expect("provisioned principals lock poisoned")
             .retain(|c, _| retain(c));
         if let Ok(mut invocations) = self.invocations.write() {
             invocations.retain(|c, _| retain(c));

@@ -709,6 +709,47 @@ const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
            EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; \
          END $acl$;";
 
+/// The platform principal id `wamn-project-state` derives for `wamn:executor`.
+const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
+
+/// The `app_system.users` floor the provisioning check reads
+/// (`wamn-0h0g.9.19`).
+///
+/// Only the two columns the check names, because row existence is the whole
+/// question. `deploy/sql/app-schema.sql` owns the production table with its
+/// row-level security and its type checks. The guest login reads it, so the
+/// fixture grants the stable ACL role what the production floor grants: usage
+/// on the schema and select on the table.
+const ENSURE_LIVE_USERS_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS app_system; \
+     CREATE TABLE IF NOT EXISTS app_system.users ( \
+         tenant_id text NOT NULL, \
+         id uuid NOT NULL, \
+         PRIMARY KEY (tenant_id, id)); \
+     GRANT USAGE ON SCHEMA app_system TO wamn_app; \
+     GRANT SELECT ON app_system.users TO wamn_app;";
+
+/// Install the users floor in one disposable database and name the principals
+/// that own a row there.
+async fn ensure_live_users_rows(admin_url: &str, tenant: &str, principals: &[&str]) {
+    let admin = connect_raw(admin_url).await;
+    admin
+        .batch_execute(&format!(
+            "{ENSURE_GUEST_ACL_ROLE_SQL} {ENSURE_LIVE_USERS_TABLE_SQL}"
+        ))
+        .await
+        .expect("install the live app_system.users floor");
+    for principal in principals {
+        admin
+            .execute(
+                "INSERT INTO app_system.users (tenant_id, id) VALUES ($1, $2::text::uuid) \
+                 ON CONFLICT DO NOTHING",
+                &[&tenant, principal],
+            )
+            .await
+            .expect("provision the live principal's users row");
+    }
+}
+
 fn live_database(admin_url: &str) -> String {
     url::Url::parse(admin_url)
         .expect("parse the live test url")
@@ -1313,6 +1354,7 @@ async fn effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim() 
             ..SessionClaims::default()
         },
     )
+    .await
     .expect("the acquiring tenant binds");
 
     let lookup = ConnectionEffectLookup {
@@ -1511,6 +1553,7 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
             ..SessionClaims::default()
         },
     )
+    .await
     .expect("the acquiring tenant binds");
 
     let lookup = ConnectionEffectLookup {
@@ -1697,8 +1740,10 @@ async fn live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_ro
         ..SessionClaims::default()
     };
     pg.bind_session_claims(scope_a, &claims(TENANT_A))
+        .await
         .expect("tenant A's acquisition binds");
     pg.bind_session_claims(scope_b, &claims(TENANT_B))
+        .await
         .expect("tenant B's acquisition binds");
 
     // CONTROL: the table is reachable on this path at all, so the refusal
@@ -2067,6 +2112,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
+    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&cold_parse_fixture_sql(&schema, &role))
@@ -2095,6 +2141,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
             ..SessionClaims::default()
         },
     )
+    .await
     .expect("the cold-parse scope binds");
 
     let statement = cold_parse_statement();
@@ -2158,6 +2205,7 @@ async fn a_transactional_statement_without_an_executing_principal_is_refused() {
             ..SessionClaims::default()
         },
     )
+    .await
     .expect("the scope binds");
     let refused = pg
         .one_shot_statement(scope, "sha256:principal", &principal_statement(true), &[])
@@ -2231,6 +2279,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
+    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2249,6 +2298,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
             ..SessionClaims::default()
         },
     )
+    .await
     .expect("the principal scope binds");
 
     let bound = pg
@@ -2280,6 +2330,159 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         .expect("drop the fixture");
 }
 
+/// The bind refuses a principal that owns no `app_system.users` row in the
+/// tenant, and the refusal names the cause (`wamn-0h0g.9.19`).
+///
+/// The floor is installed and the row is left out, so the refusal is a
+/// refusal and not a missing table or an unreachable database. The control
+/// half is the same plugin binding a principal that owns a row, which proves
+/// a guard that refused everything would not pass this test.
+///
+/// The platform principal is the third case: `wamn:executor` carries its own
+/// row, which provisioning writes, so it binds like any other principal.
+#[tokio::test]
+async fn live_a_bind_refuses_a_principal_with_no_users_row() {
+    const TENANT: &str = "unprovisioned";
+    const ABSENT_PRINCIPAL: &str = "11111111-2222-4333-8444-555555555555";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
+    );
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    ensure_live_users_rows(
+        admin_url,
+        TENANT,
+        &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL],
+    )
+    .await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let scope = "unprovisioned-instance-0";
+    let claims = |principal: &str| SessionClaims {
+        tenant: TENANT.to_string(),
+        user_id: Some(principal.to_string()),
+        ..SessionClaims::default()
+    };
+
+    let refused = pg
+        .bind_session_claims(scope, &claims(ABSENT_PRINCIPAL))
+        .await
+        .expect_err("a principal with no users row is refused");
+    let denial = refused
+        .downcast_ref::<UnprovisionedPrincipal>()
+        .expect("the refusal names the missing users row");
+    assert_eq!(denial.principal_id(), ABSENT_PRINCIPAL);
+    assert_eq!(denial.tenant(), TENANT);
+    assert_eq!(denial.project(), DEFAULT_PROJECT);
+    assert_eq!(
+        pg.provisioned_principal_for(scope),
+        None,
+        "a refused bind caches nothing"
+    );
+
+    // CONTROL: the provisioned principal binds, and the answer is cached for
+    // the life of the binding.
+    pg.bind_session_claims(scope, &claims(LIVE_PRINCIPAL))
+        .await
+        .expect("a provisioned principal binds");
+    assert_eq!(
+        pg.provisioned_principal_for(scope),
+        Some(LIVE_PRINCIPAL.to_string())
+    );
+    pg.revoke_session_claims(scope);
+    assert_eq!(
+        pg.provisioned_principal_for(scope),
+        None,
+        "the cache lives exactly as long as the binding"
+    );
+
+    // And a platform principal is a principal like any other.
+    pg.bind_session_claims(scope, &claims(LIVE_PLATFORM_PRINCIPAL))
+        .await
+        .expect("the platform principal's own row binds");
+    assert_eq!(
+        pg.provisioned_principal_for(scope),
+        Some(LIVE_PLATFORM_PRINCIPAL.to_string())
+    );
+
+    drop(pg);
+    let admin = connect_raw(admin_url).await;
+    admin
+        .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
+        .await
+        .expect("drop the fixture");
+}
+
+/// A row removed after the credential was issued is refused on the next bind,
+/// and the binding that already read it is unaffected (`wamn-0h0g.9.19`).
+#[tokio::test]
+async fn live_a_removed_users_row_is_refused_on_the_next_bind() {
+    const TENANT: &str = "removed";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
+    );
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let scope = "removed-instance-0";
+    let claims = SessionClaims {
+        tenant: TENANT.to_string(),
+        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        ..SessionClaims::default()
+    };
+    pg.bind_session_claims(scope, &claims)
+        .await
+        .expect("the provisioned principal binds");
+
+    let admin = connect_raw(admin_url).await;
+    admin
+        .execute(
+            "DELETE FROM app_system.users WHERE tenant_id = $1",
+            &[&TENANT],
+        )
+        .await
+        .expect("remove the users row after issuance");
+    assert_eq!(
+        pg.provisioned_principal_for(scope),
+        Some(LIVE_PRINCIPAL.to_string()),
+        "the live binding holds the answer it read"
+    );
+
+    let refused = pg
+        .bind_session_claims(scope, &claims)
+        .await
+        .expect_err("the next bind reads again and refuses");
+    assert!(refused.downcast_ref::<UnprovisionedPrincipal>().is_some());
+
+    drop(pg);
+    admin
+        .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
+        .await
+        .expect("drop the fixture");
+}
+
 /// A statement that reports the `app.operation` its session carries.
 fn operation_statement(transactional: bool) -> VerifiedStatement {
     VerifiedStatement {
@@ -2295,8 +2498,12 @@ fn operation_statement(transactional: bool) -> VerifiedStatement {
 
 /// An acquisition binds its operation, reads it back, and clears it. A later
 /// acquisition with no operation does not inherit the previous one.
-#[test]
-fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
+///
+/// The claims name no executing principal, so the bind stays offline: the
+/// provisioning read of `wamn-0h0g.9.19` runs only for a bind that names one,
+/// and this test owns the operation registry rather than that check.
+#[tokio::test]
+async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
     const OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
         HashMap::new(),
@@ -2305,11 +2512,11 @@ fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
     let scope = "operation-instance-0";
     let claims = SessionClaims {
         tenant: LIVE_TENANT.to_string(),
-        user_id: Some(LIVE_PRINCIPAL.to_string()),
         operation: Some(OPERATION.to_string()),
         ..SessionClaims::default()
     };
     pg.bind_session_claims(scope, &claims)
+        .await
         .expect("the operation binds");
     assert_eq!(pg.session_claims(scope), Some(claims.clone()));
 
@@ -2320,21 +2527,25 @@ fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
             ..claims.clone()
         },
     )
+    .await
     .expect("the next acquisition binds");
     assert_eq!(pg.operation_for(scope), None);
 
     pg.bind_session_claims(scope, &claims)
+        .await
         .expect("the operation binds again");
     pg.revoke_session_claims(scope);
     assert_eq!(pg.operation_for(scope), None);
 
-    let refused = pg.bind_session_claims(
-        scope,
-        &SessionClaims {
-            operation: Some(String::new()),
-            ..claims
-        },
-    );
+    let refused = pg
+        .bind_session_claims(
+            scope,
+            &SessionClaims {
+                operation: Some(String::new()),
+                ..claims
+            },
+        )
+        .await;
     assert!(refused.is_err(), "the unbound value is not an operation");
 }
 
@@ -2354,6 +2565,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
+    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2371,6 +2583,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         ..SessionClaims::default()
     };
     pg.bind_session_claims(scope, &claims)
+        .await
         .expect("the operation scope binds");
 
     let bound = pg
@@ -2410,6 +2623,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
             ..claims
         },
     )
+    .await
     .expect("the next acquisition binds");
     let next = pg
         .one_shot_statement(scope, "sha256:operation", &operation_statement(true), &[])
