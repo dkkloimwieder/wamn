@@ -568,12 +568,21 @@ fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
 
 /// Constraints the operation can violate.
 ///
-/// An INSERT or an UPDATE can violate a constraint OF ITS OWN TABLE. A DELETE
-/// cannot: removing a row breaks no primary key, unique key, check, or outbound
-/// foreign key that the row itself carries. What a DELETE breaks is an INBOUND
-/// foreign key, held by another table whose row still references this one, and
-/// PostgreSQL names THAT constraint in its 23503. A tombstone removes no row,
-/// so it violates nothing.
+/// An INSERT or an UPDATE can violate a constraint OF ITS OWN TABLE. A hard
+/// DELETE cannot: removing a row breaks no primary key, unique key, check, or
+/// outbound foreign key that the row itself carries. What it breaks is an
+/// INBOUND foreign key, held by another table whose row still references this
+/// one, and PostgreSQL names THAT constraint in its 23503.
+///
+/// A tombstone is an UPDATE of its two marker columns, so it runs through the
+/// same filter every other update runs through. The answer is usually empty,
+/// but it is DERIVED rather than assumed: a unique or foreign key that names a
+/// marker column is reported like any other. It writes no referenced column, so
+/// no inbound key fires.
+///
+/// This set predicts CONSTRAINTS only. A trigger guard, such as the immutable
+/// row guards in `deploy/sql`, refuses a write without any constraint, and no
+/// constraint set of any shape predicts that refusal.
 fn operation_constraints<'a>(
     catalog: &'a CatalogIr,
     table: &'a Table,
@@ -582,10 +591,18 @@ fn operation_constraints<'a>(
     delete_mode: Option<DeleteMode>,
 ) -> Vec<&'a Constraint> {
     if action == CrudAction::Delete {
-        if delete_mode != Some(DeleteMode::Hard) {
-            return Vec::new();
-        }
-        return inbound_foreign_keys(catalog, table);
+        return match delete_mode {
+            Some(DeleteMode::Hard) => inbound_foreign_keys(catalog, table),
+            Some(DeleteMode::Tombstone) => {
+                let marker = TombstoneColumn::ALL.map(|column| column.as_str().to_owned());
+                table
+                    .constraints()
+                    .iter()
+                    .filter(|constraint| update_can_violate(constraint.kind(), &marker))
+                    .collect()
+            }
+            None => Vec::new(),
+        };
     }
     if !matches!(action, CrudAction::Create | CrudAction::Update) {
         return Vec::new();
