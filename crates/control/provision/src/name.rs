@@ -87,9 +87,10 @@ pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
 /// platform mints it, and project ids in that space are rejected.
 pub const DB_PREFIX: &str = "wamn-db-";
 
-/// Max project-id length. Keeps `wamn-db-<project>` within Postgres's 63-byte
-/// identifier limit (`63 - len("wamn-db-") = 55`) with comfortable margin.
-pub const MAX_PROJECT_ID_LEN: usize = 40;
+/// Max project-id length, owned by the registry since wamn-0h0g.9.16 and
+/// re-exported here so the composition helpers below keep one spelling of it.
+/// The registry records the derivation from [`MAX_DB_NAME_LEN`].
+pub use wamn_control_registry::identifiers::MAX_PROJECT_ID_LEN;
 
 /// Max length (bytes) of a provisioned database / K8s resource name: Postgres's
 /// identifier limit (63) — also within the DNS-1123 **label** limit (63) that the
@@ -149,44 +150,27 @@ pub const CDC_SECRET_PREFIX: &str = "wamn-cdc-";
 /// reuse it so the whole CDC surface carries one name.
 pub const CDC_OBJECT_PREFIX: &str = "wamn_cdc_";
 
-/// The shared slug discipline for a provisioned-name identity component: a
-/// non-empty lowercase slug `[a-z0-9-]`, starting and ending alphanumeric, with
-/// **no run of consecutive hyphens**, at most [`MAX_PROJECT_ID_LEN`] bytes.
-/// Returns the rejection reason, or `None` when well-formed.
+/// The shared slug discipline for a provisioned-name identity component.
 ///
-/// The consecutive-hyphen ban (wamn-R27) closes an identity-collision: `--` is
-/// the component separator in [`project_env_database_name`] and (mapped to `__`)
-/// in [`cdc_object_name`], so a `--` run *inside* a component would let two
-/// distinct triples — e.g. `(a, x--p, dev)` and `(a--x, p, dev)` — derive the
-/// SAME database and CDC role/slot/publication names. `_` is not a second vector:
-/// the charset ([`is_slug_byte`]) admits no underscore, so a `-`→`_` mapping only
-/// ever yields an isolated `_` and the `__` separator stays unambiguous.
+/// The registry owns this rule since wamn-0h0g.9.16, so this reads it rather
+/// than restating it. The org and the env are held to the same shape as the
+/// project id, because all three separate on `--` in
+/// [`project_env_database_name`] and on `__` in [`cdc_object_name`]. Only the
+/// project carries the extra reserved-`wamn` rule, which
+/// [`validate_project_id`] applies on top.
 fn slug_reason(id: &str) -> Option<&'static str> {
-    if id.is_empty() {
-        return Some("empty");
-    }
-    if id.len() > MAX_PROJECT_ID_LEN {
-        return Some("too long (max 40 bytes)");
-    }
-    if !id.bytes().all(is_slug_byte) {
-        return Some("only lowercase letters, digits, and hyphens are allowed");
-    }
-    let bytes = id.as_bytes();
-    if !is_alnum(bytes[0]) || !is_alnum(bytes[bytes.len() - 1]) {
-        return Some("must start and end with a lowercase letter or digit");
-    }
-    if id.contains("--") {
-        return Some("must not contain consecutive hyphens");
-    }
-    None
+    wamn_control_registry::identifiers::project_id_reason(id)
 }
 
-/// Validate a project id: a non-empty lowercase slug `[a-z0-9-]`, starting and
-/// ending alphanumeric, with no consecutive hyphens, at most
-/// [`MAX_PROJECT_ID_LEN`] bytes, and not under the reserved `wamn` prefix.
+/// Validate a project id against the one registry-owned rule: a non-empty
+/// lowercase slug `[a-z0-9-]`, starting and ending alphanumeric, with no
+/// consecutive hyphens, at most [`MAX_PROJECT_ID_LEN`] bytes, and not under the
+/// reserved `wamn` prefix.
 ///
-/// Lowercase + hyphen (not underscore) is deliberate: the id is both a K8s
-/// Secret-name suffix (hyphens, no underscores) and — quoted — a database name.
+/// This is the boundary that translates the registry's rejection reason into
+/// this crate's [`ProvisionError`]. The registry reports why an id is wrong and
+/// carries no error type of its own, so nothing from the registry leaks out of
+/// provisioning and there is exactly one project-id taxonomy on the wire.
 pub fn validate_project_id(id: &str) -> Result<(), ProvisionError> {
     if let Some(reason) = slug_reason(id) {
         return Err(ProvisionError::InvalidProjectId {
@@ -194,10 +178,7 @@ pub fn validate_project_id(id: &str) -> Result<(), ProvisionError> {
             reason,
         });
     }
-    // wamn-66x: the `wamn` prefix is platform-reserved. The id is already
-    // lowercase; reject the bare word and any `wamn-…` id (the boundary is a
-    // hyphen, so `wamning` is fine — mirrors the catalog reserved-prefix rule).
-    if id == "wamn" || id.starts_with("wamn-") {
+    if wamn_control_registry::identifiers::project_id_is_reserved(id) {
         return Err(ProvisionError::ReservedProjectId { id: id.to_string() });
     }
     Ok(())
@@ -205,10 +186,6 @@ pub fn validate_project_id(id: &str) -> Result<(), ProvisionError> {
 
 fn is_alnum(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit()
-}
-
-fn is_slug_byte(b: u8) -> bool {
-    is_alnum(b) || b == b'-'
 }
 
 /// The per-project-env database name:
@@ -598,6 +575,38 @@ mod tests {
         // The boundary is a hyphen: `wamn` + non-hyphen is a normal project.
         assert!(validate_project_id("wamning").is_ok());
         assert!(validate_project_id("wamnable").is_ok());
+    }
+
+    #[test]
+    fn the_registry_and_provisioning_decide_a_project_id_alike() {
+        // wamn-0h0g.9.16: one rule, two readers. The registry owns the rule and
+        // this crate translates it, so neither side can accept what the other
+        // refuses. Before the move the registry took 64 bytes of
+        // [A-Za-z0-9_-] and this crate took 40 bytes of [a-z0-9-].
+        let at_cap = "x".repeat(MAX_PROJECT_ID_LEN);
+        let over_cap = "x".repeat(MAX_PROJECT_ID_LEN + 1);
+        for id in [
+            "a",
+            "acme",
+            "acme-corp",
+            at_cap.as_str(),
+            "",
+            "Acme",
+            "under_score",
+            "-lead",
+            "trail-",
+            "a--b",
+            over_cap.as_str(),
+            "wamn",
+            "wamn-db",
+            "wamning",
+        ] {
+            assert_eq!(
+                wamn_control_registry::identifiers::valid_project(id),
+                validate_project_id(id).is_ok(),
+                "the two sides disagree about {id:?}"
+            );
+        }
     }
 
     #[test]
