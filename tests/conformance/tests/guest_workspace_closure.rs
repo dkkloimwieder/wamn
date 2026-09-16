@@ -11,6 +11,14 @@
 //! unreproducible in all the others, and `[WAMN-DEV-LIVE]` could only pass from
 //! the directory the pin happened to be minted in (`wamn-10yt.10.29`).
 //!
+//! That is one of two costs, and it is the narrower one. Cargo reads EVERY
+//! member manifest of a workspace before it builds one guest, so any escape,
+//! of any dependency kind, makes the guest workspace unloadable on its own. In
+//! `wamn-i9rg` that broke the Docker component stage, which was then given a
+//! copy of the escaped tree to read. `wamn-98hz` measured the two apart: the
+//! escape there was a dev-dependency, and the guest build compiles lib targets
+//! only, so it reached no guest byte and no digest moved.
+//!
 //! `wamn-10yt.10.29` relocated the four escaping crates under `components/`.
 //! This gate keeps them there. It is deliberately structural rather than a
 //! digest comparison: the property is cheap to assert on every run, while
@@ -27,7 +35,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
 
@@ -50,41 +58,229 @@ fn read(relative: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
 }
 
-/// `path = "..."` values declared anywhere in one manifest, with their line.
-fn declared_paths(source: &str) -> Vec<(usize, String)> {
+/// The dependency table one declaration sits in, which decides what an escape
+/// from it costs.
+#[derive(Clone, Copy)]
+enum DependencyKind {
+    Normal,
+    Build,
+    Dev,
+    /// `[workspace.dependencies]`, where the inheriting member decides the kind.
+    Workspace,
+}
+
+/// The dependency table a header names, or `None` for any other table.
+///
+/// The keyword sits last in `[dependencies]`, `[build-dependencies]` and
+/// `[target.'cfg(unix)'.dependencies]`, and ahead of the one crate it declares
+/// in `[dev-dependencies.wamn-test-postgres]`, so this walks the segments
+/// instead of reading either end.
+fn dependency_kind(table: &str) -> Option<DependencyKind> {
+    if table == "workspace.dependencies" || table.starts_with("workspace.dependencies.") {
+        return Some(DependencyKind::Workspace);
+    }
+    let mut rest = table;
+    loop {
+        let (segment, tail) = match rest.split_once('.') {
+            Some((segment, tail)) => (segment, Some(tail)),
+            None => (rest, None),
+        };
+        match segment {
+            "dependencies" => return Some(DependencyKind::Normal),
+            "build-dependencies" => return Some(DependencyKind::Build),
+            "dev-dependencies" => return Some(DependencyKind::Dev),
+            _ => rest = tail?,
+        }
+    }
+}
+
+/// The canonical spelling of the table a kind names.
+fn table_name(kind: DependencyKind) -> &'static str {
+    match kind {
+        DependencyKind::Normal => "dependencies",
+        DependencyKind::Build => "build-dependencies",
+        DependencyKind::Dev => "dev-dependencies",
+        DependencyKind::Workspace => "workspace.dependencies",
+    }
+}
+
+/// What an escape from this table costs.
+///
+/// One cost applies to every kind. Cargo reads every member manifest before it
+/// builds one guest, so the escaped directory has to be present wherever a guest
+/// is built. The digest cost is narrower: it needs the escaped crate to be
+/// COMPILED into a guest, and `tools/build-components` builds lib targets only,
+/// under resolver 2, so a dev-dependency reaches no guest byte. `wamn-98hz`
+/// measured that: built at two absolute roots, `wamn-event-reg` kept
+/// `-C metadata=cddb1d4d2d3d1541` and a byte-identical rlib, and the escaped
+/// dev-dependency was never compiled in either build.
+fn cost(kind: DependencyKind) -> &'static str {
+    match kind {
+        DependencyKind::Dev => {
+            "ONE COST APPLIES HERE. The guest workspace cannot load on its own, because Cargo \
+             reads every member manifest before it builds one guest, so the escaped directory \
+             has to be present wherever a guest is built (wamn-i9rg). The digest channel of \
+             wamn-10yt.10.29 does NOT apply to a dev-dependency: the guest build compiles lib \
+             targets only, under resolver 2, so this crate reaches no guest byte (wamn-98hz). \
+             Move the test that needs it into the root workspace."
+        }
+        DependencyKind::Workspace => {
+            "BOTH COSTS ARE IN PLAY, and the members that inherit this entry decide which. \
+             Whatever inherits it: the guest workspace cannot load on its own, because Cargo \
+             reads every member manifest before it builds one guest, so the escaped directory \
+             has to be present wherever a guest is built (wamn-i9rg). Where a member inherits \
+             it into [dependencies] or [build-dependencies]: the escaped crate's absolute path \
+             enters its -C metadata disambiguator and so its compiled bytes, which makes every \
+             component digest a claim about the build directory rather than about the source \
+             (wamn-10yt.10.29)."
+        }
+        DependencyKind::Normal | DependencyKind::Build => {
+            "TWO COSTS APPLY HERE. The guest workspace cannot load on its own, because Cargo \
+             reads every member manifest before it builds one guest, so the escaped directory \
+             has to be present wherever a guest is built (wamn-i9rg). And the escaped crate's \
+             absolute path enters its -C metadata disambiguator and so its compiled bytes, \
+             which makes every component digest a claim about the build directory rather than \
+             about the source (wamn-10yt.10.29). Move the crate under the workspace instead of \
+             reaching out to it."
+        }
+    }
+}
+
+/// `path = "..."` values declared in a dependency table of one manifest, with
+/// their line and the table they sit in.
+///
+/// Only dependency tables are read. A `[[bin]]` or `[lib]` path is a source file
+/// of the declaring package, not a reach into another one.
+fn declared_dependency_paths(source: &str) -> Vec<(usize, String, DependencyKind)> {
     let mut found = Vec::new();
+    let mut table = None;
     for (index, line) in source.lines().enumerate() {
         let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            table = dependency_kind(trimmed.trim_matches(['[', ']']));
+            continue;
+        }
         if trimmed.starts_with('#') {
             continue;
         }
+        let Some(kind) = table else { continue };
         let mut rest = trimmed;
         while let Some(at) = rest.find("path = \"") {
             let tail = &rest[at + "path = \"".len()..];
             let Some(end) = tail.find('"') else { break };
-            found.push((index + 1, tail[..end].to_string()));
+            found.push((index + 1, tail[..end].to_string(), kind));
             rest = &tail[end..];
         }
     }
     found
 }
 
+/// Whether a `path` declared in `manifest_directory` lands outside `workspace_root`.
+///
+/// Both directories are relative to the repository root, so a `..` that walks
+/// off the top of the tree fails to pop and is an escape. The resolution is
+/// lexical: `../label-template` from one member of a workspace names a sibling
+/// member and is not an escape, which a leading-`..` test alone cannot tell.
+fn leaves_workspace(workspace_root: &Path, manifest_directory: &Path, declared: &str) -> bool {
+    let mut resolved = manifest_directory.to_path_buf();
+    for component in Path::new(declared).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !resolved.pop() {
+                    return true;
+                }
+            }
+            Component::Normal(part) => resolved.push(part),
+            // A root or a prefix makes the path absolute, which is always outside.
+            Component::RootDir | Component::Prefix(_) => return true,
+        }
+    }
+    !resolved.starts_with(workspace_root)
+}
+
+/// The member directories one workspace root manifest declares.
+///
+/// The value is a literal array in both guest workspaces, so this reads the
+/// quoted entries between its brackets. An `exclude`d directory is not a member,
+/// so it is already left out, and it belongs to another workspace.
+fn declared_members(manifest: &str, source: &str) -> Vec<String> {
+    let at = source
+        .find("members = [")
+        .unwrap_or_else(|| panic!("{manifest} declares no workspace members"));
+    let tail = &source[at + "members = [".len()..];
+    let end = tail
+        .find(']')
+        .unwrap_or_else(|| panic!("{manifest} has an unterminated members array"));
+    let mut members = Vec::new();
+    let mut rest = &tail[..end];
+    while let Some(open) = rest.find('"') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('"') else { break };
+        let entry = &after[..close];
+        assert!(
+            !entry.contains('*'),
+            "{manifest} declares the glob member {entry:?}. This gate expands no globs, so a \
+             member matched only by a glob goes unscanned, which is the hole wamn-gn57 closed"
+        );
+        members.push(entry.to_string());
+        rest = &after[close + 1..];
+    }
+    members
+}
+
+/// Every manifest Cargo reads to load one guest workspace: its root and each member.
+fn workspace_manifests(workspace: &str) -> Vec<String> {
+    let root = Path::new(workspace)
+        .parent()
+        .expect("a workspace manifest sits in a directory");
+    let mut manifests = vec![workspace.to_string()];
+    for member in declared_members(workspace, &read(workspace)) {
+        let manifest = root.join(&member).join("Cargo.toml");
+        manifests.push(
+            manifest
+                .to_str()
+                .expect("a member manifest path is UTF-8")
+                .to_string(),
+        );
+    }
+    manifests
+}
+
+/// Member manifests are read too, not just workspace roots.
+///
+/// A path escape written straight into a member manifest was invisible to this
+/// gate for a day, and went red only when a different gate pushed the same line
+/// up into the workspace root (`wamn-gn57`). An escape is now caught in the
+/// manifest that declares it.
 #[test]
 fn no_guest_workspace_declares_a_dependency_outside_itself() {
     let mut escapes = Vec::new();
-    for manifest in GUEST_WORKSPACES {
-        for (line, declared) in declared_paths(&read(manifest)) {
-            if declared.starts_with("..") || declared.starts_with('/') {
-                escapes.push(format!("{manifest}:{line}: path = {declared:?}"));
+    for workspace in GUEST_WORKSPACES {
+        let root = Path::new(workspace)
+            .parent()
+            .expect("a workspace manifest sits in a directory");
+        for manifest in workspace_manifests(workspace) {
+            let directory = Path::new(&manifest)
+                .parent()
+                .expect("a manifest sits in a directory")
+                .to_path_buf();
+            for (line, declared, kind) in declared_dependency_paths(&read(&manifest)) {
+                if leaves_workspace(root, &directory, &declared) {
+                    escapes.push(format!(
+                        "{manifest}:{line}: [{}] path = {declared:?}\n    {}",
+                        table_name(kind),
+                        cost(kind)
+                    ));
+                }
             }
         }
     }
     assert!(
         escapes.is_empty(),
-        "a guest workspace declares a dependency outside itself, which makes every component \
-         digest a function of the build directory rather than of the source \
-         (wamn-10yt.10.29). Move the crate under the workspace instead of reaching out to it: \
-         {escapes:#?}"
+        "a guest workspace declares a dependency outside itself. Each escape carries the cost \
+         that applies to the table it sits in:\n{}",
+        escapes.join("\n")
     );
 }
 
