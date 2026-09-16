@@ -143,6 +143,15 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "runs",
+        name: "runs_updated_after_created",
+        // The executor stamps `updated_at` from its own host clock (D2b) while
+        // `created_at` keeps the server default, so a worker running behind the
+        // database must fail the write instead of storing a backwards order.
+        definition: "CHECK (updated_at >= created_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
         name: "runs_check7",
         definition: "CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL)",
         origin: CheckOrigin::Table,
