@@ -37,12 +37,11 @@ use wit_bindgen::block_on;
 
 struct Component;
 
-// The WIT-generated Guest trait declares `run` async; this guest's work is
-// synchronous, and the impl cannot change the signature it must satisfy.
-#[allow(
-    clippy::unused_async,
+// The generated wasi:cli/run Guest trait declares `run` async; this guest's work
+// is synchronous, and the impl cannot change the signature the trait fixes.
+#[expect(
     clippy::unused_async_trait_impl,
-    reason = "the generated Guest trait fixes this signature"
+    reason = "the generated wasi:cli/run Guest trait fixes this signature"
 )]
 impl bindings::exports::wasi::cli::run::Guest for Component {
     async fn run() -> Result<(), ()> {
