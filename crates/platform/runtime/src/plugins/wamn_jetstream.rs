@@ -2272,23 +2272,20 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Live round-trip against a real data-plane NATS. Gated on
-    // WAMN_EVT_NATS_URL (skip-when-absent, the WAMN_*_PG_URL posture): it
-    // exercises the exact async-nats call sequence the plugin relies on
-    // (dedupe on publish, durable pull consumer, fetch/metadata/headers/ack)
-    // through the plugin's own mapping helpers, so a broken API assumption
-    // fails here rather than only in-cluster. The full component-driven e2e
-    // rides the materializer (l5i9.17).
+    // Live round-trip against a real data-plane NATS. Ignored by default and
+    // gated on WAMN_EVT_NATS_URL: it exercises the exact async-nats call
+    // sequence the plugin relies on (dedupe on publish, durable pull consumer,
+    // fetch/metadata/headers/ack) through the plugin's own mapping helpers, so
+    // a broken API assumption fails here rather than only in-cluster. The full
+    // component-driven e2e rides the materializer (l5i9.17).
     // -----------------------------------------------------------------------
 
     #[tokio::test]
+    #[ignore = "requires: WAMN_EVT_NATS_URL"]
     async fn live_derived_publish_replay_converges_through_jetstream_dedup() {
-        let Ok(url) = std::env::var("WAMN_EVT_NATS_URL") else {
-            eprintln!(
-                "skipping live_derived_publish_replay_converges_through_jetstream_dedup: WAMN_EVT_NATS_URL unset"
-            );
-            return;
-        };
+        wamn_test_postgres::require_prerequisites(&["WAMN_EVT_NATS_URL"]);
+        let url = std::env::var("WAMN_EVT_NATS_URL")
+            .expect("set WAMN_EVT_NATS_URL to this test's disposable event broker");
 
         let client = async_nats::connect(&url).await.expect("connect");
         let ctx = async_nats::jetstream::new(client);

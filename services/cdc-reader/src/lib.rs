@@ -2311,11 +2311,12 @@ mod tests {
 
     /// E1 LIVE gate (env-gated, LOCAL): drive the REAL `JsPublisher` pipeline
     /// against a throwaway JetStream (`docker run -d nats:2 -js`). Set
-    /// `WAMN_E1_NATS_URL`; skipped cleanly when unset. Shows the pipelined
+    /// `WAMN_E1_NATS_URL`; ignored by default. Shows the pipelined
     /// publish lands every message, IN ORDER (stream seq == publish order), and
     /// that a re-publish of the same `Nats-Msg-Id`s deduplicates. Uses > 256
     /// messages so a real mid-transaction drain is exercised.
     #[tokio::test]
+    #[ignore = "requires: WAMN_E1_NATS_URL"]
     async fn pipelined_publish_lands_in_order_and_dedupes_live() {
         use async_nats::jetstream::consumer::pull::Config as PullConfig;
         use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
@@ -2326,10 +2327,9 @@ mod tests {
         const ENV: &str = "dev";
         const N: u64 = 600; // > MAX_IN_FLIGHT: forces a real mid-txn drain
 
-        let Ok(nats_url) = std::env::var("WAMN_E1_NATS_URL") else {
-            eprintln!("WAMN_E1_NATS_URL unset — skipping E1 live JetStream gate");
-            return;
-        };
+        wamn_test_postgres::require_prerequisites(&["WAMN_E1_NATS_URL"]);
+        let nats_url = std::env::var("WAMN_E1_NATS_URL")
+            .expect("set WAMN_E1_NATS_URL to a throwaway JetStream-enabled NATS");
 
         let client = async_nats::connect(&nats_url).await.expect("connect nats");
         let js = jetstream::new(client);
