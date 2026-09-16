@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use wamn_control::copy_project_env::{CopyProjectEnvRequest, plan_project_env_copy};
+use wamn_control::create_human::{CreateHumanRequest, create_human_principal};
 use wamn_control::event_advisories::{EventAdvisoriesRequest, read_retained_advisories};
 use wamn_control::prune_record_history::{
     PruneRecordHistoryRequest, PrunedHistory, prune_expired_record_history,
@@ -57,6 +58,48 @@ pub async fn event_advisories(args: EventAdvisoriesArgs) -> anyhow::Result<()> {
     for record in &records {
         println!("{}", serde_json::to_string(record)?);
     }
+    Ok(())
+}
+
+/// Inputs that name one new human principal.
+#[derive(Debug, Args)]
+pub struct CreateHumanArgs {
+    /// Subject that the identity provider asserts for this human.
+    #[arg(long)]
+    pub subject: String,
+
+    /// Deliverable address of this human. One address names one principal for
+    /// the whole platform, so a human who works in two organizations holds one
+    /// principal and two memberships.
+    #[arg(long)]
+    pub email: String,
+
+    /// Name shown for this human.
+    #[arg(long)]
+    pub display_name: String,
+
+    /// Provisioning administrator URL for the system database.
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    pub system_database_url: String,
+}
+
+/// Create one human principal and print its minted id.
+///
+/// The principal carries no access. Run `grant-project-env-membership` with the
+/// printed id to admit the human to one project environment.
+pub async fn create_human(args: CreateHumanArgs) -> anyhow::Result<()> {
+    let principal = create_human_principal(CreateHumanRequest {
+        subject: args.subject,
+        email: args.email,
+        display_name: args.display_name,
+        system_database_url: args.system_database_url,
+    })
+    .await?;
+    println!(
+        "human created principal_id={} subject={}",
+        principal.id(),
+        principal.subject()
+    );
     Ok(())
 }
 

@@ -450,6 +450,10 @@ On those paths, the triggers exist and every writer binds its executing principa
 It writes a service row for each service principal of the project.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It writes a person row for each human with a membership in that project environment.
+`wamn-ctl-ops create-human` creates that human in `identity.principals`, and it is the only path that creates one.
+The verb ships in the operational binary, and only a platform operator runs it.
+One email address names one principal for the whole platform.
+A human who works in two organizations holds one principal and two memberships.
 A person row carries the email of that human from `identity.principals`.
 A new member gains the row at the next reconcile, because the membership grant holds no tenant connection.
 A principal with no users row cannot write in the tenant.

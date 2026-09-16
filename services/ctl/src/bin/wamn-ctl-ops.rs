@@ -18,6 +18,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create one human principal that an operator can then grant access to.
+    CreateHuman(ops_verbs::CreateHumanArgs),
     /// Copy a project-env to another environment.
     CopyProjectEnv(ops_verbs::CopyProjectEnvArgs),
     /// Prune terminal run history older than the retention period.
@@ -43,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
+        Command::CreateHuman(args) => ops_verbs::create_human(args).await,
         Command::CopyProjectEnv(args) => ops_verbs::copy_project_env(args).await,
         Command::PruneRunHistory(args) => ops_verbs::prune_run_history(args).await,
         Command::PruneRecordHistory(args) => ops_verbs::prune_record_history(args).await,

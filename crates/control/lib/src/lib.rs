@@ -13,6 +13,8 @@ pub mod bind_connection;
 pub mod component_declaration;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
+#[cfg(feature = "ops")]
+pub mod create_human;
 pub mod delivery;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
