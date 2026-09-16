@@ -172,6 +172,10 @@ pub(crate) async fn find_replay(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameters are the statement's bind list"
+)]
 pub(crate) async fn insert_movement(
     claim: &mut PendingClaim,
     idempotency_key: String,

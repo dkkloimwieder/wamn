@@ -12,6 +12,17 @@ use super::{
     operation_exclusions, query_variants, rust_identifier, rust_type_identifier, sha256, sql,
 };
 
+/// Clippy's default `too-many-arguments-threshold`. The repository declares no
+/// `clippy.toml`, so this default is what the lint uses. Anyone who adds one
+/// must make this constant agree with it.
+const CLIPPY_ARGUMENT_THRESHOLD: usize = 7;
+
+/// An accessor's parameters are the connection or claim it runs under, plus one
+/// per statement bind.
+fn accessor_argument_count(binds: usize) -> usize {
+    1 + binds
+}
+
 pub(super) fn static_sql_rows(
     operation: &CustomOperationDeclaration,
     projection: Projection,
@@ -256,6 +267,7 @@ fn emit_static_sql_wamn_accessor(
     let finalizes_claim = claim_finalize == Some(accessor.name.as_str());
     let function = rust_identifier(&accessor.name)
         .expect("static SQL statement names were validated for Rust");
+    emit_argument_count_expectation(source, accessor.binds.len());
     writeln!(source, "pub(crate) async fn {function}(").expect("writing to a String cannot fail");
     if finalizes_claim {
         source.push_str("    mut claim: PendingClaim,\n");
@@ -991,6 +1003,21 @@ fn emit_constraint_name_slice(source: &mut String, constraints: &ConstraintNameS
     .expect("writing to a String cannot fail");
 }
 
+/// Expect the arity lint on an accessor whose bind list outruns Clippy's
+/// threshold. The bind list is the statement's, so the accessor cannot take
+/// fewer parameters without hiding which binds the statement wants.
+///
+/// Emitted only above the threshold: an `expect` the lint does not fire on is
+/// itself an error.
+fn emit_argument_count_expectation(source: &mut String, binds: usize) {
+    if accessor_argument_count(binds) > CLIPPY_ARGUMENT_THRESHOLD {
+        source.push_str(
+            "#[expect(clippy::too_many_arguments, reason = \"the parameters are the statement's \
+             bind list\")]\n",
+        );
+    }
+}
+
 fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
     match projection {
         Projection::Native => source.push_str("#[derive(Debug, sqlx::FromRow)]\n"),
@@ -1008,6 +1035,7 @@ fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
 fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
     let owns_claim = accessor.operation == CrudAction::Create;
     let finalizes_claim = owns_claim && accessor.name == CREATE_STATEMENT;
+    emit_argument_count_expectation(source, accessor.binds.len());
     writeln!(
         source,
         "{} async fn {}(",
