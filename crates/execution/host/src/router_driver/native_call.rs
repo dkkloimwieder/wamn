@@ -105,12 +105,16 @@ impl GuestCall for NativeCall {
             };
             // Declared after active_scope, so authority is revoked before the
             // native component identity is restored, including cancellation.
-            let _authority = request.application.policy.activate(
-                &active_scope.component_id,
-                &scope,
-                &request,
-                Arc::clone(&failure),
-            )?;
+            let _authority = request
+                .application
+                .policy
+                .activate(
+                    &active_scope.component_id,
+                    &scope,
+                    &request,
+                    Arc::clone(&failure),
+                )
+                .await?;
             let run: TypedFunc<
                 (node_types::NodeContext, String),
                 (Result<node_types::Emission, node_types::NodeError>,),
