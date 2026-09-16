@@ -21,6 +21,15 @@ struct Cli {
     command: Command,
 }
 
+/// The verbs the shipped `wamn-ctl` binary carries.
+///
+/// DO NOT gate a variant here on the `ops` feature. The `build-ctl` stage in
+/// `Dockerfile` builds this binary with NO features (`cargo build --locked
+/// --release -p wamn-ctl`) and passes `--features ops` only to the separate
+/// `wamn-ctl-ops` binary on the next line. A variant added here behind
+/// `#[cfg(feature = "ops")]` compiles locally and passes tests, and is then
+/// absent from the deployed image. Put an ops-only verb on `wamn-ctl-ops`
+/// instead.
 #[derive(Subcommand)]
 enum Command {
     /// Publish only the release that passed required qualification.
