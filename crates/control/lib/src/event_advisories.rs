@@ -8,52 +8,58 @@ use anyhow::{Context as _, bail};
 #[cfg(test)]
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::stream::RawMessageErrorKind;
-use clap::Args;
 #[cfg(test)]
 use futures_util::StreamExt as _;
 use serde::Serialize;
 use wamn_event_wire::{DeliveryAdvisory, delivery_advisory_stream};
 
-#[derive(Debug, Args)]
-pub struct EventAdvisoriesArgs {
+/// Inputs of one read of the retained delivery advisories of one consumer.
+#[derive(Debug)]
+pub struct EventAdvisoriesRequest {
     /// Event-plane NATS with the retained advisory stream.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
     pub nats_url: String,
 
     /// Event-broker username; requires its password file.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME", requires = "nats_password_file")]
     pub nats_username: Option<String>,
 
     /// File containing the event-broker password; requires its username.
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE", requires = "nats_username")]
     pub nats_password_file: Option<PathBuf>,
 
     /// Exact source stream from the broker advisory.
-    #[arg(long)]
     pub stream: String,
 
     /// Exact durable consumer from the broker advisory.
-    #[arg(long)]
     pub consumer: String,
 
-    /// Maximum advisory records to print.
-    #[arg(long, default_value_t = 100)]
+    /// Maximum advisory records to read.
     pub limit: usize,
 }
 
+/// Whether the message an advisory names is still in its source stream.
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
-enum SourcePayload {
-    Available { subject: String, body: Vec<u8> },
+pub enum SourcePayload {
+    /// The source stream still holds the message, with this subject and body.
+    Available {
+        /// The subject the source message was published on.
+        subject: String,
+        /// The source message body, exactly as the broker retained it.
+        body: Vec<u8>,
+    },
+    /// The source stream no longer holds the message.
     Unavailable,
 }
 
+/// One retained advisory and the source payload it names.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
-struct OperatorRecord {
-    advisory_sequence: u64,
-    advisory: DeliveryAdvisory,
-    source: SourcePayload,
+pub struct OperatorRecord {
+    /// Sequence of the advisory in the retained advisory stream.
+    pub advisory_sequence: u64,
+    /// The decoded broker delivery advisory.
+    pub advisory: DeliveryAdvisory,
+    /// The source payload the advisory names, if the stream still holds it.
+    pub source: SourcePayload,
 }
 
 fn broker_token(value: &str) -> bool {
@@ -113,34 +119,34 @@ fn event_nats_options(
     }
 }
 
-pub async fn run(args: EventAdvisoriesArgs) -> anyhow::Result<()> {
-    if args.limit == 0 || !broker_token(&args.stream) || !broker_token(&args.consumer) {
-        bail!("--limit must be positive, and --stream and --consumer must be exact broker names");
+/// Read the retained delivery advisories of one consumer, newest sequence last,
+/// each with the source payload it names.
+pub async fn read_retained_advisories(
+    request: EventAdvisoriesRequest,
+) -> anyhow::Result<Vec<OperatorRecord>> {
+    if request.limit == 0 || !broker_token(&request.stream) || !broker_token(&request.consumer) {
+        bail!("the limit must be positive, and the stream and consumer must be exact broker names");
     }
     let client = event_nats_options(
-        args.nats_username.as_deref(),
-        args.nats_password_file.as_deref(),
+        request.nats_username.as_deref(),
+        request.nats_password_file.as_deref(),
     )?
-    .connect(&args.nats_url)
+    .connect(&request.nats_url)
     .await
     .context("connect to event-plane NATS")?;
     let jetstream = async_nats::jetstream::new(client);
     let stream = jetstream
-        .get_stream(delivery_advisory_stream(&args.stream))
+        .get_stream(delivery_advisory_stream(&request.stream))
         .await
         .context("open retained delivery advisories")?;
-    for record in retained_advisories(
+    retained_advisories(
         &jetstream,
         &stream,
-        &args.stream,
-        &args.consumer,
-        args.limit,
+        &request.stream,
+        &request.consumer,
+        request.limit,
     )
-    .await?
-    {
-        println!("{}", serde_json::to_string(&record)?);
-    }
-    Ok(())
+    .await
 }
 
 async fn next_advisory(

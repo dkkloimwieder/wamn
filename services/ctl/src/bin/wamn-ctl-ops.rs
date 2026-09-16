@@ -3,9 +3,7 @@
 use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
-use wamn_ctl::{
-    copy_project_env, dump_project_env, event_advisories, ops_verbs, restore_project_env,
-};
+use wamn_ctl::{copy_project_env, dump_project_env, ops_verbs, restore_project_env};
 
 #[derive(Parser)]
 #[command(name = "wamn-ctl-ops", version, about)]
@@ -31,7 +29,7 @@ enum Command {
     /// Remove expired record history entries as the audit retention task.
     PruneRecordHistory(ops_verbs::PruneRecordHistoryArgs),
     /// Read retained broker advisories and the available source payloads.
-    EventAdvisories(event_advisories::EventAdvisoriesArgs),
+    EventAdvisories(ops_verbs::EventAdvisoriesArgs),
 }
 
 #[tokio::main]
@@ -52,6 +50,6 @@ async fn main() -> anyhow::Result<()> {
         Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
         Command::PruneRunHistory(args) => ops_verbs::prune_run_history(args).await,
         Command::PruneRecordHistory(args) => ops_verbs::prune_record_history(args).await,
-        Command::EventAdvisories(args) => event_advisories::run(args).await,
+        Command::EventAdvisories(args) => ops_verbs::event_advisories(args).await,
     }
 }
