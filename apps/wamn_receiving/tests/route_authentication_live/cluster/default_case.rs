@@ -6,7 +6,7 @@ use wamn_test_infrastructure::{event_broker, executor, workload};
 
 use super::{
     cdc, checked, deployment, install_host, kubectl, materializer_case, postcommit_case, provision,
-    route_cases, start, startup_case,
+    route_cases, start_with, startup_case,
 };
 
 #[tokio::test]
@@ -18,7 +18,7 @@ async fn released_routes_materializer_startup_and_environment_isolation() -> any
 }
 
 async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
-    let mut cluster = start(evidence, false, false).await?;
+    let mut cluster = start_with(evidence, false, false, true).await?;
     let result = async {
         let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
         let replication_password = uuid::Uuid::new_v4().simple().to_string();

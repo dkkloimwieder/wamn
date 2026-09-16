@@ -59,9 +59,19 @@ async fn start(
     gates_image: bool,
     session_host: bool,
 ) -> anyhow::Result<ReceivingCluster> {
+    start_with(evidence, gates_image, session_host, false).await
+}
+
+async fn start_with(
+    evidence: &Path,
+    gates_image: bool,
+    session_host: bool,
+    startup_burst: bool,
+) -> anyhow::Result<ReceivingCluster> {
     let repository = repository_root()?;
     let mut cluster = resources::prepare(&repository, evidence, gates_image, session_host).await?;
-    let artifacts = build::components_and_tools(&repository, &cluster.evidence).await?;
+    let artifacts =
+        build::components_and_tools(&repository, &cluster.evidence, startup_burst).await?;
     let registry_password = resources::prepare_files(&cluster).await?;
     let scope = Triple::new(ORG, PROJECT, ENVIRONMENT);
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
