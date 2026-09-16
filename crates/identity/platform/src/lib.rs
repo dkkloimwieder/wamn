@@ -119,7 +119,7 @@ pub const MAX_PAT_LABEL_LEN: usize = 200;
 
 /// Longest accepted personal-access-token lifetime. Expiry is mandatory, so
 /// every issued token dies within a year even if nobody revokes it.
-pub const MAX_PAT_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+pub const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
 
 /// Marker every first-party personal access token starts with. A token reads
 /// `wamn_pat_<16 hex lookup digits>_<64 hex secret digits>`; the lookup half is
@@ -494,7 +494,7 @@ pub async fn create_human(
     let row = client
         .query_one(INSERT_HUMAN_SQL, &[&subject, &display_name])
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     decode_principal(&row)
 }
 
@@ -510,7 +510,7 @@ pub async fn create_service(
     let row = client
         .query_one(INSERT_SERVICE_SQL, &[&subject, &display_name])
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     decode_principal(&row)
 }
 
@@ -522,7 +522,7 @@ pub async fn resolve_principal(
     client
         .query_opt(SELECT_PRINCIPAL_BY_ID_SQL, &[&id.as_str()])
         .await
-        .map_err(database_error)?
+        .map_err(|error| database_error(&error))?
         .as_ref()
         .map(decode_principal)
         .transpose()
@@ -539,7 +539,7 @@ pub async fn resolve_subject(
     client
         .query_opt(SELECT_PRINCIPAL_BY_SUBJECT_SQL, &[&kind.as_str(), &subject])
         .await
-        .map_err(database_error)?
+        .map_err(|error| database_error(&error))?
         .as_ref()
         .map(decode_principal)
         .transpose()
@@ -553,7 +553,7 @@ pub async fn disable_principal(
     let row = client
         .query_opt(DISABLE_PRINCIPAL_SQL, &[&id.as_str()])
         .await
-        .map_err(database_error)?
+        .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
             IdentityError::new(IdentityErrorKind::NotFound, "principal does not exist")
         })?;
@@ -588,7 +588,7 @@ pub async fn issue_pat(
             ],
         )
         .await
-        .map_err(database_error)?
+        .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
             IdentityError::new(
                 IdentityErrorKind::NotFound,
@@ -617,7 +617,7 @@ pub async fn authenticate_pat(
     let row = client
         .query_opt(SELECT_PAT_BY_PREFIX_SQL, &[&prefix])
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     decide_pat(row, token)
 }
 
@@ -642,8 +642,8 @@ fn decide_pat(
             "stored token names a platform principal",
         ));
     }
-    let stored_hash: String = row.try_get(5).map_err(database_error)?;
-    let usable: bool = row.try_get(6).map_err(database_error)?;
+    let stored_hash: String = row.try_get(5).map_err(|error| database_error(&error))?;
+    let usable: bool = row.try_get(6).map_err(|error| database_error(&error))?;
     if !digest_matches(&stored_hash, &digest_token(token))
         || !usable
         || principal.status != PrincipalStatus::Active
@@ -665,7 +665,7 @@ pub async fn revoke_pat(
     let row = client
         .query_opt(REVOKE_PAT_SQL, &[&prefix])
         .await
-        .map_err(database_error)?
+        .map_err(|error| database_error(&error))?
         .ok_or_else(|| IdentityError::new(IdentityErrorKind::NotFound, "token does not exist"))?;
     decode_pat(&row)
 }
@@ -679,7 +679,7 @@ pub async fn list_pats(
     let rows = client
         .query(SELECT_PATS_SQL, &[&principal_id.as_str()])
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     rows.iter().map(decode_pat).collect()
 }
 
@@ -700,7 +700,7 @@ pub async fn assign_project_role(
             &[&principal_id.as_str(), &org, &project, &role],
         )
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
@@ -719,14 +719,14 @@ pub async fn project_roles(
             &[&principal_id.as_str(), &org, &project],
         )
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     decode_project_roles(rows)
 }
 
 fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<ProjectRole>, IdentityError> {
     rows.into_iter()
         .map(|row| {
-            let role: String = row.try_get(0).map_err(database_error)?;
+            let role: String = row.try_get(0).map_err(|error| database_error(&error))?;
             Ok(ProjectRole { role: role.into() })
         })
         .collect()
@@ -752,7 +752,7 @@ pub async fn grant_project_env_membership(
             &[&principal_id.as_str(), &org, &project, &env],
         )
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
@@ -776,9 +776,9 @@ pub async fn has_project_env_membership(
             &[&principal_id.as_str(), &org, &project, &env],
         )
         .await
-        .map_err(database_error)?
+        .map_err(|error| database_error(&error))?
         .try_get(0)
-        .map_err(database_error)
+        .map_err(|error| database_error(&error))
 }
 
 /// Revoke membership, returning whether an explicit grant was removed.
@@ -798,7 +798,7 @@ pub async fn revoke_project_env_membership(
             &[&principal_id.as_str(), &org, &project, &env],
         )
         .await
-        .map_err(database_error)?;
+        .map_err(|error| database_error(&error))?;
     Ok(removed != 0)
 }
 
@@ -831,7 +831,7 @@ impl PreparedIdentityReads {
             route_pat: client
                 .prepare(SELECT_ROUTE_PAT_SQL)
                 .await
-                .map_err(database_error)?,
+                .map_err(|error| database_error(&error))?,
         })
     }
 
@@ -859,17 +859,17 @@ impl PreparedIdentityReads {
         let row = client
             .query_opt(&self.route_pat, &[&prefix, &org, &project, &env, &role])
             .await
-            .map_err(database_error)?;
+            .map_err(|error| database_error(&error))?;
         decide_pat(row, token)
     }
 }
 
 fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
-    let id: String = row.try_get(0).map_err(database_error)?;
-    let kind: String = row.try_get(1).map_err(database_error)?;
-    let subject: String = row.try_get(2).map_err(database_error)?;
-    let display_name: String = row.try_get(3).map_err(database_error)?;
-    let status: String = row.try_get(4).map_err(database_error)?;
+    let id: String = row.try_get(0).map_err(|error| database_error(&error))?;
+    let kind: String = row.try_get(1).map_err(|error| database_error(&error))?;
+    let subject: String = row.try_get(2).map_err(|error| database_error(&error))?;
+    let display_name: String = row.try_get(3).map_err(|error| database_error(&error))?;
+    let status: String = row.try_get(4).map_err(|error| database_error(&error))?;
     Ok(Principal {
         id: PrincipalId(id.into()),
         kind: PrincipalKind::parse(&kind)?,
@@ -880,12 +880,12 @@ fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
 }
 
 fn decode_pat(row: &Row) -> Result<PatRecord, IdentityError> {
-    let id: String = row.try_get(0).map_err(database_error)?;
-    let prefix: String = row.try_get(1).map_err(database_error)?;
-    let label: String = row.try_get(2).map_err(database_error)?;
-    let created_at: String = row.try_get(3).map_err(database_error)?;
-    let expires_at: String = row.try_get(4).map_err(database_error)?;
-    let revoked_at: Option<String> = row.try_get(5).map_err(database_error)?;
+    let id: String = row.try_get(0).map_err(|error| database_error(&error))?;
+    let prefix: String = row.try_get(1).map_err(|error| database_error(&error))?;
+    let label: String = row.try_get(2).map_err(|error| database_error(&error))?;
+    let created_at: String = row.try_get(3).map_err(|error| database_error(&error))?;
+    let expires_at: String = row.try_get(4).map_err(|error| database_error(&error))?;
+    let revoked_at: Option<String> = row.try_get(5).map_err(|error| database_error(&error))?;
     Ok(PatRecord {
         id: PatId(id.into()),
         prefix: prefix.into(),
@@ -964,8 +964,8 @@ fn checked_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
             "token lifetime must be 1 second to 365 days",
         ));
     }
-    // Bounded by MAX_PAT_TTL above, so the cast cannot truncate.
-    Ok(ttl.as_secs() as i64)
+    // Bounded by MAX_PAT_TTL above, so the cast cannot wrap.
+    Ok(ttl.as_secs().cast_signed())
 }
 
 fn checked_pat_prefix(value: &str) -> Result<&str, IdentityError> {
@@ -1034,7 +1034,7 @@ fn canonical_role(value: &str) -> Result<String, IdentityError> {
     Ok(value)
 }
 
-fn database_error(error: tokio_postgres::Error) -> IdentityError {
+fn database_error(error: &tokio_postgres::Error) -> IdentityError {
     let kind = match error.code() {
         Some(code) if code == &SqlState::UNIQUE_VIOLATION => IdentityErrorKind::Conflict,
         Some(code) if code == &SqlState::FOREIGN_KEY_VIOLATION => IdentityErrorKind::NotFound,
