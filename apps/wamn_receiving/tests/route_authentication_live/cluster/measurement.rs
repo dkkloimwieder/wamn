@@ -664,10 +664,12 @@ fn trace_breakdown(document: &Value, name: &str, total_ms: f64) -> anyhow::Resul
             };
             let start = nanos("startTimeUnixNano")?;
             let end = nanos("endTimeUnixNano")?;
-            total += end
-                .checked_sub(start)
-                .context("span ends before it starts")? as f64
-                / 1_000_000.0;
+            total += Duration::from_nanos(
+                end.checked_sub(start)
+                    .context("span ends before it starts")?,
+            )
+            .as_secs_f64()
+                * 1_000.0;
         }
         Ok(total)
     };
@@ -730,7 +732,7 @@ async fn startup_time(
         .filter(|line| line.contains("wamn-host runtime startup completed"))
         .flat_map(str::split_whitespace)
         .filter_map(|field| field.strip_prefix("elapsed_ms="))
-        .last()
+        .next_back()
         .context("host did not report completed startup duration")?
         .parse()
         .context("host startup duration is a whole number of milliseconds")
@@ -995,12 +997,14 @@ async fn throughput_sweep(
                 &state.resources.name,
                 &state.inputs.route_host,
                 &job,
-                layer,
-                *concurrency,
                 secret,
-                &postgres_host,
-                database,
-                &statement,
+                &ThroughputStep {
+                    layer,
+                    concurrency: *concurrency,
+                    postgres: &postgres_host,
+                    database,
+                    statement: &statement,
+                },
             )?;
             let path = resources.work.join(format!("{job}.json"));
             fs::write(&path, serde_json::to_vec_pretty(&manifest)?)?;
@@ -1010,9 +1014,7 @@ async fn throughput_sweep(
                 &sample_url,
                 database,
                 evidence,
-                layer,
-                *concurrency,
-                "before",
+                (layer, *concurrency, "before"),
             )
             .await?;
             checked(super::kubectl(resources).args(["apply", "-f"]).arg(&path)).await?;
@@ -1069,9 +1071,7 @@ async fn throughput_sweep(
                 &sample_url,
                 database,
                 evidence,
-                layer,
-                *concurrency,
-                "after",
+                (layer, *concurrency, "after"),
             )
             .await?;
             let step = StepSpec {
@@ -1109,17 +1109,29 @@ async fn throughput_sweep(
     Ok(())
 }
 
+/// Which layer one throughput job measures, and at what concurrency.
+struct ThroughputStep<'a> {
+    layer: &'a str,
+    concurrency: u32,
+    postgres: &'a str,
+    database: &'a str,
+    statement: &'a str,
+}
+
 fn throughput_job(
     namespace: &str,
     host: &str,
     job: &str,
-    layer: &str,
-    concurrency: u32,
     secret: &str,
-    postgres: &str,
-    database: &str,
-    statement: &str,
+    step: &ThroughputStep<'_>,
 ) -> anyhow::Result<Value> {
+    let ThroughputStep {
+        layer,
+        concurrency,
+        postgres,
+        database,
+        statement,
+    } = *step;
     ensure!(concurrency > 0, "throughput concurrency must be positive");
     let oha =
         "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f";
@@ -1154,10 +1166,9 @@ async fn take_sample(
     postgres_url: &str,
     database: &str,
     evidence: &Path,
-    layer: &str,
-    concurrency: u32,
-    position: &str,
+    sample: (&str, u32, &str),
 ) -> anyhow::Result<()> {
+    let (layer, concurrency, position) = sample;
     let resources = &state.resources;
     let mut sample = throughput_bench::sample(
         postgres_url,
@@ -1241,12 +1252,14 @@ mod tests {
             "selected-environment",
             "selected.example",
             "selected-job",
-            layer,
-            concurrency,
             "selected-pat",
-            "10.89.0.7",
-            "selected_database",
-            "SELECT model.id FROM receiving.purchase_order AS model WHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;",
+            &ThroughputStep {
+                layer,
+                concurrency,
+                postgres: "10.89.0.7",
+                database: "selected_database",
+                statement: "SELECT model.id FROM receiving.purchase_order AS model WHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;",
+            },
         )
     }
 
@@ -1432,10 +1445,10 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
 
     #[test]
     fn overhead_limit_uses_five_sample_median() {
-        assert_eq!(overhead_median(&[5.0, 6.0, 7.0, 30.0, 40.0]).unwrap(), 7.0);
-        assert_eq!(
-            overhead_median(&[10.0, 11.0, 12.0, 13.0, 14.0]).unwrap(),
-            12.0
+        assert!((overhead_median(&[5.0, 6.0, 7.0, 30.0, 40.0]).unwrap() - 7.0).abs() < f64::EPSILON);
+        assert!(
+            (overhead_median(&[10.0, 11.0, 12.0, 13.0, 14.0]).unwrap() - 12.0).abs()
+                < f64::EPSILON
         );
         assert!(overhead_median(&[11.0, 12.0, 12.1, 13.0, 14.0]).is_err());
         assert!(overhead_median(&[1.0, 2.0, 3.0, 4.0]).is_err());
@@ -1462,9 +1475,9 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
     fn startup_request_keeps_the_recovery_limit_and_purchase_order_identity() {
         let body = json!([{"request_id":"startup-restart-first","value":{"id":PURCHASE_ORDER_ID}}]);
         let mut result = json!({"status":"200","first_seconds":"0.010","total_seconds":"0.020","recovery_seconds":120,"body_hex":hex::encode(serde_json::to_vec(&body).unwrap())});
-        assert_eq!(
-            assert_response(&result, "startup-restart-first", true).unwrap(),
-            20.0
+        assert!(
+            (assert_response(&result, "startup-restart-first", true).unwrap() - 20.0).abs()
+                < f64::EPSILON
         );
         result["recovery_seconds"] = json!(121);
         assert!(assert_response(&result, "startup-restart-first", true).is_err());

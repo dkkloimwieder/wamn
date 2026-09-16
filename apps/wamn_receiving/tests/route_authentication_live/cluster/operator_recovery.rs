@@ -17,14 +17,21 @@ use super::{ReceivingCluster, kubectl, materializer_case};
 const SYSTEM: &str = "wamn-system";
 const REQUEST_ID: &str = "00000000-0000-4000-8000-000000000929";
 const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
-const OUTAGE_SECONDS: u64 = 150;
-const RECOVERY_SECONDS: u64 = 120;
+const OUTAGE_SECONDS: u32 = 150;
+const RECOVERY_SECONDS: u32 = 120;
 
+/// Epoch microseconds as epoch seconds. `Duration` carries the conversion, so
+/// the width change is not an `as` cast; a pre-epoch value reports zero.
+fn epoch_seconds(micros: i64) -> f64 {
+    Duration::from_micros(u64::try_from(micros).unwrap_or(0)).as_secs_f64()
+}
 fn now() -> f64 {
-    chrono::Utc::now().timestamp_micros() as f64 / 1_000_000.0
+    epoch_seconds(chrono::Utc::now().timestamp_micros())
 }
 fn timestamp(value: &str) -> anyhow::Result<f64> {
-    Ok(chrono::DateTime::parse_from_rfc3339(value)?.timestamp_micros() as f64 / 1_000_000.0)
+    Ok(epoch_seconds(
+        chrono::DateTime::parse_from_rfc3339(value)?.timestamp_micros(),
+    ))
 }
 fn text<'a>(value: &'a Value, path: &str) -> anyhow::Result<&'a str> {
     value
@@ -392,8 +399,8 @@ fn transport(error: &reqwest::Error) -> anyhow::Result<String> {
                 return Ok("receive".to_owned());
             }
         }
-        if let Some(error) = error.downcast_ref::<std::io::Error>() {
-            if matches!(
+        if let Some(error) = error.downcast_ref::<std::io::Error>()
+            && matches!(
                 error.kind(),
                 std::io::ErrorKind::ConnectionReset
                     | std::io::ErrorKind::ConnectionAborted
@@ -402,7 +409,6 @@ fn transport(error: &reqwest::Error) -> anyhow::Result<String> {
             ) {
                 return Ok("receive".to_owned());
             }
-        }
         cause = error.source();
     }
     anyhow::bail!("the route request failed outside the retained transport classes: {error}")
@@ -443,7 +449,7 @@ async fn sample(
             match response.bytes().await {
                 Ok(body) => {
                     sample.body = String::from_utf8(body.to_vec())
-                        .context("the route response body is UTF-8")?
+                        .context("the route response body is UTF-8")?;
                 }
                 Err(error) => sample.transport_failure = Some(transport(&error)?),
             }
@@ -468,7 +474,7 @@ async fn sample_requests(
 ) -> anyhow::Result<Vec<Sample>> {
     let mut samples = Vec::new();
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(840) {
+    while started.elapsed() < Duration::from_mins(14) {
         let value = match sample(&http, &endpoint, &route_host, &token).await {
             Ok(value) => value,
             Err(error) => {
@@ -482,7 +488,7 @@ async fn sample_requests(
             serde_json::to_vec_pretty(&samples)?,
         )?;
         let _ = changed.send(Ok(samples.clone()));
-        tokio::select! { _ = &mut stop => return Ok(samples), _ = tokio::time::sleep(Duration::from_secs(5)) => {} }
+        tokio::select! { _ = &mut stop => return Ok(samples), () = tokio::time::sleep(Duration::from_secs(5)) => {} }
     }
     anyhow::bail!("the operator request sampler exceeded its retained 840-second bound")
 }
@@ -691,7 +697,12 @@ impl Recovery<'_> {
                     current.pod_uid == initial.pod_uid && current.image_id == initial.image_id,
                     "the operator pod or image changed during the scheduler fault"
                 );
-                if current.restart_count != previous.restart_count {
+                if current.restart_count == previous.restart_count {
+                    ensure!(
+                        current.container_id == previous.container_id,
+                        "the operator container changed without a recorded restart"
+                    );
+                } else {
                     let label = format!("operator-transition-{}", current.restart_count);
                     let pod = format!("pod/{}", current.pod_name);
                     let previous_log = self
@@ -746,11 +757,6 @@ impl Recovery<'_> {
                     transition["observed_at"] = json!(self.operator_fresh_after);
                     self.operator_transitions.push(transition);
                     self.write("operator-supervision", &json!({"initial":self.operator_initial,"transitions":self.operator_transitions}))?;
-                } else {
-                    ensure!(
-                        current.container_id == previous.container_id,
-                        "the operator container changed without a recorded restart"
-                    );
                 }
                 let ready = current.ready;
                 self.operator_seen = Some(current);
@@ -771,7 +777,7 @@ impl Recovery<'_> {
         samples: &watch::Receiver<Samples>,
     ) -> anyhow::Result<Snapshot> {
         let deadline = Instant::now()
-            + Duration::from_secs_f64((RECOVERY_SECONDS as f64 - (now() - after)).max(0.0));
+            + Duration::from_secs_f64((f64::from(RECOVERY_SECONDS) - (now() - after)).max(0.0));
         let mut ready_since = None;
         loop {
             let current = self.snapshot(label).await?;
@@ -794,11 +800,13 @@ impl Recovery<'_> {
                 ready_since = None;
             }
             let responses = self.samples(samples)?;
-            if let (Some(ready_since), Some(response)) = (ready_since, responses.last()) {
-                if response.timestamp as f64 >= ready_since && response.result == "serving" {
+            if let (Some(ready_since), Some(response)) = (ready_since, responses.last())
+                && epoch_seconds(response.timestamp * 1_000_000) >= ready_since
+                && response.result == "serving"
+            {
                     let elapsed = now() - after;
                     ensure!(
-                        elapsed <= RECOVERY_SECONDS as f64,
+                        elapsed <= f64::from(RECOVERY_SECONDS),
                         "recovery exceeded the unchanged 120-second ceiling"
                     );
                     let mut workloads = current
@@ -812,7 +820,6 @@ impl Recovery<'_> {
                     self.write("phases", &self.phases)?;
                     return Ok(current);
                 }
-            }
             ensure!(
                 Instant::now() < deadline,
                 "{label} did not recover within 120 seconds"
@@ -1199,7 +1206,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         .build()?;
     let (changed, samples) = watch::channel(Ok(Vec::<Sample>::new()));
     let (stop, stopped) = oneshot::channel();
-    let mut sampler = tokio::spawn(sample_requests(
+    let mut request_task = tokio::spawn(sample_requests(
         http,
         endpoint,
         cluster.inputs.route_host.clone(),
@@ -1231,7 +1238,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         recovery.phases.insert("scheduler-stopped".to_owned(),json!({"started":stopped,"required_seconds":OUTAGE_SECONDS}));
         recovery.write("phases",&recovery.phases)?;
         let mut guarded = BTreeSet::new();
-        while outage.elapsed() < Duration::from_secs(OUTAGE_SECONDS) {
+        while outage.elapsed() < Duration::from_secs(u64::from(OUTAGE_SECONDS)) {
             let pods = recovery.get("scheduler-still-stopped",SYSTEM,"pods",&["-l","wasmcloud.com/name=nats"]).await?;
             ensure!(array(&pods,"/items")?.is_empty(),"the scheduler resumed before the required outage interval ended");
             let current = recovery.snapshot("scheduler-down").await?;
@@ -1246,7 +1253,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
         ensure!(guarded == recovery.original_hosts.iter().map(|(uid,_)|uid.clone()).collect(), "the native loss-of-heartbeat guard was not observed for every Host");
-        ensure!(recovery.samples(&samples)?.iter().any(|sample| sample.timestamp as f64 >= stopped), "no actual request sampled the stopped interval");
+        ensure!(recovery.samples(&samples)?.iter().any(|sample| epoch_seconds(sample.timestamp * 1_000_000) >= stopped), "no actual request sampled the stopped interval");
         let resumed = now();
         let phase = recovery.phases.get_mut("scheduler-stopped").context("the scheduler outage was recorded")?;
         phase["ended"] = json!(resumed); phase["actual_seconds"] = json!(outage.elapsed().as_secs_f64()); phase["fleet_guard_host_uids"] = json!(guarded);
@@ -1276,8 +1283,8 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
             "before_workload_uids":ids(&before.workloads)?,"after_workload_uids":ids(&after.workloads)?}))
     }.await;
     let mut cleanup_errors = Vec::new();
-    if scheduler_stopped {
-        if let Err(error) = recovery
+    if scheduler_stopped
+        && let Err(error) = recovery
             .run(
                 "restore-scheduler-after-failure",
                 &["-n", SYSTEM, "scale", "deployment/nats", "--replicas=1"],
@@ -1288,21 +1295,20 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         {
             cleanup_errors.push(error.to_string());
         }
-    }
     let _ = stop.send(());
-    match tokio::time::timeout(Duration::from_secs(10), &mut sampler).await {
+    match tokio::time::timeout(Duration::from_secs(10), &mut request_task).await {
         Ok(Ok(Ok(samples))) => recovery.write("route-samples", &samples)?,
         Ok(Ok(Err(error))) => cleanup_errors.push(error.to_string()),
         Ok(Err(error)) => cleanup_errors.push(error.to_string()),
         Err(_) => {
-            sampler.abort();
-            let _ = sampler.await;
+            request_task.abort();
+            let _ = request_task.await;
             cleanup_errors.push("the request sampler did not stop within ten seconds".to_owned());
         }
     }
     if let Err(error) = recovery
         .run(
-            "delete-sampler-endpoint",
+            "delete-request_task-endpoint",
             &[
                 "-n",
                 &resources.name,
@@ -1322,7 +1328,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
     if let Err(error) = recovery.final_operator_logs().await {
         cleanup_errors.push(error.to_string());
     }
-    recovery.write("cleanup",&json!({"result":if cleanup_errors.is_empty(){"pass"}else{"fail"},"errors":cleanup_errors,"sampler":"stopped"}))?;
+    recovery.write("cleanup",&json!({"result":if cleanup_errors.is_empty(){"pass"}else{"fail"},"errors":cleanup_errors,"request_task":"stopped"}))?;
     ensure!(
         cleanup_errors.is_empty(),
         "operator recovery cleanup failed: {cleanup_errors:?}"
@@ -1396,7 +1402,7 @@ mod tests {
                     seconds: value["seconds"].as_f64().context("request elapsed time")?,
                     body: value["body"].as_str().context("request body")?.to_owned(),
                     result: String::new(),
-                    origin: "retained-in-cluster-sampler".to_owned(),
+                    origin: "retained-in-cluster-request_task".to_owned(),
                 };
                 let class = classify(&sample, ORDER_ID)?;
                 assert_eq!(value["result"], class);

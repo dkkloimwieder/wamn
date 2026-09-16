@@ -1,10 +1,23 @@
 //! Native start demand and progress through the retained Receiving fixture.
 
+use std::fmt::Write as _;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, DirBuilder};
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::Path;
 use std::time::Duration;
+
+/// Every observed span, keyed by its (trace, span) identity, with its body
+/// and the name the protocol recorded it under.
+type ObservedSpans = BTreeMap<(String, String), (Value, String)>;
+
+/// Seconds as whole nanoseconds. `Duration` carries the conversion, so the
+/// width change is not an `as` cast; a negative value reports zero.
+fn whole_nanos(seconds: f64) -> u64 {
+    Duration::try_from_secs_f64(seconds.max(0.0))
+        .map_or(0, |span| u64::try_from(span.as_nanos()).unwrap_or(u64::MAX))
+}
 
 use anyhow::{Context as _, ensure};
 use base64::Engine as _;
@@ -88,7 +101,7 @@ pub(super) async fn assert_startup(
             "the native host log did not confirm the declared start limit");
         for name in ["cache_scope","phase_attribution","host_ready_seconds"] { final_result[name] = protocol[name].clone(); }
         final_result["first_success_since_process_start_seconds"] = json!(
-            (number(&protocol["cold"]["started_unix_ns"])? - number(&protocol["process_started_unix_ns"])?) as f64 / 1e9
+            Duration::from_nanos(number(&protocol["cold"]["started_unix_ns"])? - number(&protocol["process_started_unix_ns"])?).as_secs_f64()
                 + protocol["cold"]["first_success_seconds"].as_f64().context("cold progress has a first success time")?);
         final_result["occupancy_limit"] = json!("workload_start begins before the permit; overlap shows queued demand, not active permit occupancy or CPU-core use");
         final_result["comparison_limit"] = json!("Distinct from a herd of different cold digests; local host cgroup and new native probe semantics differ from historical in-cluster timings. Existing performance modes are unchanged.");
@@ -104,12 +117,11 @@ pub(super) async fn assert_startup(
                 .args(["-TERM", "--", &format!("-{pid}")]).status().await?;
             let outcome = tokio::time::timeout(Duration::from_secs(70), child.wait()).await;
             let forced = outcome.is_err();
-            let status = match outcome {
-                Ok(status) => status?,
-                Err(_) => {
-                    child.start_kill()?;
-                    tokio::time::timeout(Duration::from_secs(5), child.wait()).await??
-                }
+            let status = if let Ok(status) = outcome {
+                status?
+            } else {
+                child.start_kill()?;
+                tokio::time::timeout(Duration::from_secs(5), child.wait()).await??
             };
             let entry = json!({"pid":pid,"exit_code":status.code(),"signal_sent":signaled.success(),"wait_exceeded_host_grace":forced});
             ensure!(!forced, "an owned port forward exceeded its shutdown grace: {entry}");
@@ -172,13 +184,15 @@ pub(super) async fn assert_startup(
     let mut hashes = String::new();
     for path in paths {
         if path.is_file() {
-            hashes.push_str(&format!(
-                "{}  {}\n",
+            writeln!(
+                hashes,
+                "{}  {}",
                 hex::encode(Sha256::digest(fs::read(&path)?)),
                 path.file_name()
                     .context("evidence has a filename")?
                     .to_string_lossy()
-            ));
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     fs::write(evidence.join("evidence.sha256"), hashes)?;
@@ -572,14 +586,14 @@ fn phases(
             events.push((number(&span["start_ns"])?, 1i64));
             events.push((number(&span["end_ns"])?, -1i64));
         }
-        events.sort();
+        events.sort_unstable();
         let (mut active, mut maximum) = (0i64, 0i64);
         for (_, change) in events {
             active += change;
             maximum = maximum.max(active);
         }
         ensure!(
-            maximum > limit as i64,
+            maximum > i64::try_from(limit).unwrap_or(i64::MAX),
             "insufficient measured native queued-start exposure"
         );
         starts.sort_by_key(|span| span["start_ns"].as_u64());
@@ -599,15 +613,17 @@ fn phases(
             .context("the startup protocol has progress observations")?
         {
             let start = origin
-                + (observation["started_seconds"]
-                    .as_f64()
-                    .context("progress has a start time")?
-                    * 1e9) as u64;
+                + whole_nanos(
+                    observation["started_seconds"]
+                        .as_f64()
+                        .context("progress has a start time")?,
+                );
             let end = origin
-                + (observation["finished_seconds"]
-                    .as_f64()
-                    .context("progress has an end time")?
-                    * 1e9) as u64;
+                + whole_nanos(
+                    observation["finished_seconds"]
+                        .as_f64()
+                        .context("progress has an end time")?,
+                );
             if intervals
                 .iter()
                 .any(|&(first, last)| first <= start && end <= last)
@@ -630,13 +646,13 @@ fn phases(
 }
 
 fn number(value: &Value) -> anyhow::Result<u64> {
-    value.as_u64().map(Ok).unwrap_or_else(|| {
+    value.as_u64().map_or_else(|| {
         value
             .as_str()
             .context("a time value is numeric text")?
             .parse()
             .context("a time value is valid")
-    })
+    }, Ok)
 }
 fn attribute<'a>(span: &'a Value, name: &str) -> Option<&'a str> {
     span["attributes"]
@@ -774,15 +790,15 @@ mod tests {
         assert!(scheduler_volume_patch(&deployment).is_err());
     }
 
-    fn observed() -> (Value, BTreeMap<(String, String), (Value, String)>) {
+    fn observed() -> (Value, ObservedSpans) {
         let mut spans = BTreeMap::new();
         let mut protocol = json!({});
         for (phase, origin) in [("cold", 100u64), ("warm", 1_000)] {
             let ids = [format!("{phase}-one"), format!("{phase}-two")];
             protocol[phase] = json!({"starts":[{"id":ids[0]},{"id":ids[1]}],"started_unix_ns":origin.to_string(),
-                "observations":[{"started_seconds":0.000000030,"finished_seconds":0.000000040,
+                "observations":[{"started_seconds":0.000_000_030,"finished_seconds":0.000_000_040,
                     "native_live_status":200,"native_ready_status":200,"application":{"status":200}}],
-                "first_success_seconds":0.000000040,"all_running_seconds":0.000000080});
+                "first_success_seconds":0.000_000_040,"all_running_seconds":0.000_000_080});
             for (id, start, end) in [
                 (&ids[0], origin + 10, origin + 60),
                 (&ids[1], origin + 20, origin + 80),
@@ -811,8 +827,8 @@ mod tests {
             result["warm"]["complete_progress_observations_within_continuous_start_intervals"],
             1
         );
-        protocol["warm"]["observations"][0]["started_seconds"] = json!(0.000000100);
-        protocol["warm"]["observations"][0]["finished_seconds"] = json!(0.000000110);
+        protocol["warm"]["observations"][0]["started_seconds"] = json!(0.000_000_100);
+        protocol["warm"]["observations"][0]["finished_seconds"] = json!(0.000_000_110);
         assert!(phases(&protocol, &spans, 1).is_err());
     }
 

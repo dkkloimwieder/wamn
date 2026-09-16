@@ -19,7 +19,8 @@ use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 
 use super::{
-    BASE_RECORD_RECEIPT, OPERATION, assert_direct_route_trace, fresh_only, invoke_journey_route,
+    BASE_RECORD_RECEIPT, JourneyRuntime, OPERATION, assert_direct_route_trace, fresh_only,
+    invoke_journey_route,
     journey_trace, nested_receipt_state, span_attribute, trace_component_invocations,
 };
 
@@ -178,10 +179,12 @@ impl Transport for RouteTransport {
         let index = self.calls.fetch_add(1, Ordering::SeqCst);
         let (_, parent) = journey_trace(self.first_trace + index as u64);
         let response = invoke_journey_route(
-            &self.engine,
-            &self.flow_http,
-            Arc::clone(&self.routing),
-            Arc::clone(&self.bridge),
+            &JourneyRuntime {
+                engine: &self.engine,
+                flow_http: &self.flow_http,
+                routing: &self.routing,
+                bridge: &self.bridge,
+            },
             host,
             url.path(),
             Some(bearer),

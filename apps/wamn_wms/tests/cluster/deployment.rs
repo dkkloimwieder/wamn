@@ -117,8 +117,8 @@ pub(super) async fn wait_registry(authority: &str, auth_file: &Path) -> anyhow::
         .build()?;
     let url = format!("http://{authority}/v2/");
     for _ in 0..30 {
-        if let Ok(response) = client.get(&url).send().await {
-            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        if let Ok(response) = client.get(&url).send().await
+            && response.status() == reqwest::StatusCode::UNAUTHORIZED {
                 let authenticated = client
                     .get(&url)
                     .basic_auth(username, Some(password))
@@ -130,7 +130,6 @@ pub(super) async fn wait_registry(authority: &str, auth_file: &Path) -> anyhow::
                 );
                 return Ok(());
             }
-        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     anyhow::bail!("owned registry did not require authentication after 30 attempts")
@@ -145,11 +144,9 @@ pub(super) async fn wait_minio(endpoint: &str) -> anyhow::Result<()> {
             .get(format!("{endpoint}/minio/health/live"))
             .send()
             .await
-        {
-            if response.status().is_success() {
+            && response.status().is_success() {
                 return Ok(());
             }
-        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     anyhow::bail!("owned labels store did not become ready after 30 attempts")
@@ -395,9 +392,6 @@ pub(super) async fn capture_failure(
     work: &Path,
     evidence: &Path,
 ) -> anyhow::Result<()> {
-    if !work.join("kubeconfig").is_file() {
-        return Ok(());
-    }
     async fn capture(
         command: &mut Command,
         evidence: &Path,
@@ -407,6 +401,9 @@ pub(super) async fn capture_failure(
         fs::write(evidence.join(name), &output.stdout)?;
         fs::write(evidence.join(format!("{name}.stderr")), &output.stderr)?;
         Ok(output.stdout)
+    }
+    if !work.join("kubeconfig").is_file() {
+        return Ok(());
     }
     let mut failures = Vec::new();
     for (name, arguments) in [
@@ -444,8 +441,8 @@ pub(super) async fn capture_failure(
             failures.push(format!("{name}: {error:#}"));
         }
     }
-    if let Ok(bytes) = fs::read(evidence.join("failure-pods.json")) {
-        if let Ok(pods) = serde_json::from_slice::<Value>(&bytes) {
+    if let Ok(bytes) = fs::read(evidence.join("failure-pods.json"))
+        && let Ok(pods) = serde_json::from_slice::<Value>(&bytes) {
             for pod in pods["items"].as_array().into_iter().flatten() {
                 if pod["metadata"]["labels"]["wasmcloud.com/name"] != "hostgroup" {
                     continue;
@@ -483,9 +480,8 @@ pub(super) async fn capture_failure(
                 }
             }
         }
-    }
-    if let Ok(bytes) = fs::read(evidence.join("failure-jobs.json")) {
-        if let Ok(jobs) = serde_json::from_slice::<Value>(&bytes) {
+    if let Ok(bytes) = fs::read(evidence.join("failure-jobs.json"))
+        && let Ok(jobs) = serde_json::from_slice::<Value>(&bytes) {
             for job in jobs["items"].as_array().into_iter().flatten() {
                 if job["status"]["conditions"]
                     .as_array()
@@ -519,7 +515,6 @@ pub(super) async fn capture_failure(
                 }
             }
         }
-    }
     crate::wms_runtime_live::write_result(
         evidence,
         "failure-capture.json",

@@ -18,19 +18,19 @@ use super::{
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn baseline_overlay_and_materializer_progress() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
-    run(BaseCandidate::Baseline).await
+    Box::pin(run(BaseCandidate::Baseline)).await
 }
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn additive_overlay_and_materializer_progress() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
-    run(BaseCandidate::Additive).await
+    Box::pin(run(BaseCandidate::Additive)).await
 }
 
 async fn run(base: BaseCandidate) -> anyhow::Result<()> {
     let evidence = super::evidence_directory()?;
-    super::with_signals(&evidence, run_selected(base, &evidence)).await
+    Box::pin(super::with_signals(&evidence, run_selected(base, &evidence))).await
 }
 
 pub(super) async fn run_selected(
@@ -86,12 +86,14 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &route,
         &cluster.resources.work,
         &replication_password,
-        &cluster.nats_url,
-        cluster.broker.publisher.username.clone(),
-        cluster.broker.publisher.password_file.clone(),
-        &cluster.broker.provisioning,
-        &super::declared_consumers()?,
-        &cluster.source,
+        cdc::BrokerBinding {
+            nats_url: &cluster.nats_url,
+            nats_username: cluster.broker.publisher.username.clone(),
+            nats_password_file: cluster.broker.publisher.password_file.clone(),
+            provisioning: &cluster.broker.provisioning,
+            consumers: &super::declared_consumers()?,
+            source: &cluster.source,
+        },
     )
     .await?;
     cluster.resources.reader = Some(cdc::start(
@@ -115,11 +117,13 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &cluster.resources,
         &cluster.inputs,
         &carrier,
-        3,
-        &cluster.nats_url,
-        &secrets,
-        &cluster.source,
-        None,
+        &super::HostBinding {
+            replicas: 3,
+            nats_url: &cluster.nats_url,
+            native_nats_secrets: &secrets,
+            source: &cluster.source,
+            session: None,
+        },
     )
     .await?;
     let resources = &cluster.resources;

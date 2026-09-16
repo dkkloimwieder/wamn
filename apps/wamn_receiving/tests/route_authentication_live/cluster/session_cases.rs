@@ -17,7 +17,7 @@ async fn session_hosts_preserve_the_original_caller() -> anyhow::Result<()> {
         "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
     ]);
     let evidence = super::evidence_directory()?;
-    super::with_signals(&evidence, run(&evidence, false, false)).await
+    Box::pin(super::with_signals(&evidence, run(&evidence, false, false))).await
 }
 
 #[tokio::test]
@@ -27,7 +27,7 @@ async fn fresh_only_session_selection() -> anyhow::Result<()> {
         "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
     ]);
     let evidence = super::evidence_directory()?;
-    super::with_signals(&evidence, run(&evidence, true, false)).await
+    Box::pin(super::with_signals(&evidence, run(&evidence, true, false))).await
 }
 
 #[tokio::test]
@@ -37,7 +37,7 @@ async fn session_client_login_and_fresh_selection() -> anyhow::Result<()> {
         "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
     ]);
     let evidence = super::evidence_directory()?;
-    super::with_signals(&evidence, run(&evidence, true, true)).await
+    Box::pin(super::with_signals(&evidence, run(&evidence, true, true))).await
 }
 
 async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow::Result<()> {
@@ -68,11 +68,13 @@ async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow:
             resources,
             &cluster.inputs,
             &carrier,
-            2,
-            &cluster.nats_url,
-            &secrets,
-            &cluster.source,
-            Some((&issuer, suffix)),
+            &super::HostBinding {
+                replicas: 2,
+                nats_url: &cluster.nats_url,
+                native_nats_secrets: &secrets,
+                source: &cluster.source,
+                session: Some((&issuer, suffix)),
+            },
         )
         .await?;
         let digest = workload::image_ready(
@@ -99,14 +101,14 @@ async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow:
         )
         .await?;
         let http = deployment::publish_http(&cluster).await?;
-        session_cluster::assert_session(
+        Box::pin(session_cluster::assert_session(
             &cluster,
             &fixture,
             &issuer,
             &http,
             fresh_only,
             session_client,
-        )
+        ))
         .await?;
         super::assert_source_unchanged(resources).await
     }

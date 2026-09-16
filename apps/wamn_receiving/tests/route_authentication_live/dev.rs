@@ -4,7 +4,7 @@ use super::*;
 
 mod local_delivery;
 
-pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_secs(12 * 60);
+pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_mins(12);
 pub(super) const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
     (
         OVERLAY_PACKAGE_ID,
@@ -425,9 +425,9 @@ pub(super) async fn assert_dev_command(
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
-    let (admin, admin_task) = connect(&system_url).await?;
+    let (admin, admin_task) = connect(system_url).await?;
     let environment =
-        wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
+        wamn_ctl::dev::environment::provision(system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
             .await?;
     let (project, project_task) = connect(&environment.route.database_url).await?;
     let system_acl_before = current_database_acl(admin.as_ref()).await?;
@@ -446,7 +446,7 @@ pub(super) async fn assert_dev_command(
     ).await?;
     let config = write_dev_config(
         root,
-        &system_url,
+        system_url,
         &environment.template,
         &environment.route,
         &environment.credentials,

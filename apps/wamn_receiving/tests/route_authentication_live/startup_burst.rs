@@ -516,7 +516,7 @@ pub(crate) async fn assert_startup(
             .context("private route PAT")?;
         for phase in ["cold", "warm"] {
             burst(
-                &inputs,
+                inputs,
                 &client,
                 &heartbeat.id,
                 &http,

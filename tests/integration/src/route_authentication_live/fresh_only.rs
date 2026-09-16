@@ -26,7 +26,7 @@ use super::{
     BASE_PACKAGE_ID, BASE_PACKAGE_VERSION, BASE_RECORD_RECEIPT, JOURNEY_PACKAGES, JourneyDocument,
     ROUTE_JOURNEY_GATE_BIND, ScratchRoot, TraceHarness, assert_invocation_identity,
     assert_operation_refusal, assert_postgres_descendants, build_journey_runtime,
-    invoke_journey_route, journey_package_root, journey_publication_root,
+    JourneyRuntime, invoke_journey_route, journey_package_root, journey_publication_root,
     journey_scenario_worker_binary, journey_trace, span_attribute, span_descends_from,
     successful_value, trace_component_invocations,
 };
@@ -378,10 +378,12 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             );
         } else {
             let response = invoke_journey_route(
-                &engine,
-                &flow_http,
-                Arc::clone(&routing),
-                Arc::clone(&bridge),
+                &JourneyRuntime {
+                    engine: &engine,
+                    flow_http: &flow_http,
+                    routing: &routing,
+                    bridge: &bridge,
+                },
                 &test.inputs.route_host,
                 ROUTE,
                 Some(test.session),
@@ -433,10 +435,12 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             );
         } else {
             let response = invoke_journey_route(
-                &engine,
-                &flow_http,
-                Arc::clone(&routing),
-                Arc::clone(&bridge),
+                &JourneyRuntime {
+                    engine: &engine,
+                    flow_http: &flow_http,
+                    routing: &routing,
+                    bridge: &bridge,
+                },
                 &test.inputs.route_host,
                 ROUTE,
                 Some(test.pat),

@@ -411,7 +411,7 @@ struct SecretVolume {
 #[serde(rename_all = "camelCase")]
 struct Mount {
     name: String,
-    mount_path: String,
+    path: String,
     read_only: bool,
     #[serde(flatten)]
     rest: Preserved,
@@ -475,7 +475,7 @@ fn ca_volume(name: &str) -> Volume {
 fn mount(name: &str, path: &str) -> Mount {
     Mount {
         name: name.to_owned(),
-        mount_path: path.to_owned(),
+        path: path.to_owned(),
         read_only: true,
         rest: Preserved::new(),
     }
@@ -783,7 +783,7 @@ pub(super) async fn assert_session(
             "the published session key became active"
         );
         if available {
-            nested_session(cluster, issuer, fresh_only, session_client).await?;
+            Box::pin(nested_session(cluster, issuer, fresh_only, session_client)).await?;
         }
         if session_client {
             break;
@@ -897,14 +897,16 @@ pub(super) async fn assert_session(
         )
         .await?;
         let endpoints = host_endpoints(
-            &pins,
-            &deployments,
-            &replicasets,
-            &workloads,
-            &before_pods,
-            &before_hosts,
-            &service,
-            &slices,
+            &ObservedObjects {
+                pins: &pins,
+                deployments: &deployments,
+                replicasets: &replicasets,
+                workloads: &workloads,
+                pods: &before_pods,
+                hosts: &before_hosts,
+                service: &service,
+                slices: &slices,
+            },
             &resources.name,
             &resources.host_image,
             &host_digest,
@@ -1052,7 +1054,7 @@ async fn nested_session(
             .context("the session port-forward reports the declared HTTPS target")?
             .parse::<u16>()?;
         ensure!(port != 0, "the forwarded HTTPS port is assigned");
-        tokio::time::timeout(
+        Box::pin(tokio::time::timeout(
             Duration::from_secs(240),
             sessions::assert_nested_session(
                 cluster.inputs.clone(),
@@ -1062,7 +1064,7 @@ async fn nested_session(
                 fresh_only,
                 session_client,
             ),
-        )
+        ))
         .await??;
         save(
             resources,
@@ -1166,21 +1168,36 @@ fn owned_by(value: &Value, owner: &Value, kind: &str) -> bool {
         })
 }
 
+/// The live cluster objects one endpoint reconciliation reads.
+struct ObservedObjects<'a> {
+    pins: &'a [Value],
+    deployments: &'a Value,
+    replicasets: &'a Value,
+    workloads: &'a Value,
+    pods: &'a Value,
+    hosts: &'a Value,
+    service: &'a Value,
+    slices: &'a Value,
+}
+
 fn host_endpoints(
-    pins: &[Value],
-    deployments: &Value,
-    replicasets: &Value,
-    workloads: &Value,
-    pods: &Value,
-    hosts: &Value,
-    service: &Value,
-    slices: &Value,
+    observed: &ObservedObjects<'_>,
     namespace: &str,
     image: &str,
     digest: &str,
     component: &str,
     route: &str,
 ) -> anyhow::Result<Vec<Value>> {
+    let ObservedObjects {
+        pins,
+        deployments,
+        replicasets,
+        workloads,
+        pods,
+        hosts,
+        service,
+        slices,
+    } = *observed;
     let mut addresses = Vec::new();
     for slice in array(slices, "/items")? {
         ensure!(
@@ -1825,9 +1842,7 @@ fn assert_job(
     text(job, "/metadata/uid")?;
     occurred_after(text(job, "/metadata/creationTimestamp")?, started)?;
     let transition = array(job, "/status/conditions")?
-        .iter()
-        .filter(|condition| condition["type"] == "Complete" && condition["status"] == "True")
-        .next_back()
+        .iter().rfind(|condition| condition["type"] == "Complete" && condition["status"] == "True")
         .context("the Job has its Complete condition")?;
     occurred_after(text(transition, "/lastTransitionTime")?, started)?;
     let pods = array(pods, "/items")?;
@@ -1916,7 +1931,7 @@ mod tests {
             Some("/etc/host-session-ca/ca.crt")
         );
         assert_eq!(group.volumes.len(), 2);
-        assert_eq!(group.mounts[1].mount_path, "/etc/host-session-ca");
+        assert_eq!(group.mounts[1].path, "/etc/host-session-ca");
         group.env.truncate(1);
         group.volumes.truncate(1);
         group.mounts.truncate(1);

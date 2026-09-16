@@ -16,7 +16,7 @@ use super::{
 async fn command_histories() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = evidence_directory()?;
-    super::with_signals(&evidence, run_histories(&evidence)).await
+    Box::pin(super::with_signals(&evidence, run_histories(&evidence))).await
 }
 
 async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
@@ -42,7 +42,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         }))?;
         let cancellation = pg_walstream::CancellationToken::new();
         let _cancel_on_exit = cancellation.clone().drop_guard();
-        tokio::task::spawn_blocking(move || super::super::command_histories::assert_histories_with_cancellation(inputs, cancellation))
+        tokio::task::spawn_blocking(move || super::super::command_histories::assert_histories_with_cancellation(&inputs, &cancellation))
             .await.context("join the bounded Receiving command histories")??;
         let summaries = fs::read_to_string(path)?.lines().map(serde_json::from_str::<Value>)
             .collect::<Result<Vec<_>, _>>()?.into_iter().filter(|row| row["case"] == "summary").collect::<Vec<_>>();
@@ -62,7 +62,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
 async fn human_membership_and_permission_revocation() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = evidence_directory()?;
-    super::with_signals(&evidence, run_membership(&evidence)).await
+    Box::pin(super::with_signals(&evidence, run_membership(&evidence))).await
 }
 
 async fn run_membership(evidence: &std::path::Path) -> anyhow::Result<()> {

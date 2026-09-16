@@ -16,6 +16,8 @@ use super::{ReceivingCluster, apply, checked, deployment, kubectl, resources};
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl, cargo-sqlx"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+
     wamn_test_postgres::require_prerequisites(&[
         "docker",
         "kind",
@@ -56,7 +58,6 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         cleanup
     });
     wash_runtime::init_crypto();
-    use tokio::signal::unix::{SignalKind, signal};
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     let mut hangup = signal(SignalKind::hangup())?;
@@ -97,7 +98,7 @@ async fn exercise(
     step(
         cluster,
         "native-registry",
-        &mut Command::new(&adapter)
+        Command::new(&adapter)
             .arg("native-registry")
             .arg(&resources.name)
             .arg(&resources.work)
@@ -114,11 +115,13 @@ async fn exercise(
         resources,
         &cluster.inputs,
         &carrier,
-        1,
-        &cluster.nats_url,
-        &native_secrets,
-        &cluster.source,
-        None,
+        &super::HostBinding {
+            replicas: 1,
+            nats_url: &cluster.nats_url,
+            native_nats_secrets: &native_secrets,
+            source: &cluster.source,
+            session: None,
+        },
     )
     .await?;
     fs::write(
@@ -128,7 +131,7 @@ async fn exercise(
     let rendered = step(
         cluster,
         "render-host",
-        &mut Command::new(&adapter)
+        Command::new(&adapter)
             .arg("render-host")
             .arg(&resources.name)
             .arg(&resources.work),
@@ -262,7 +265,7 @@ async fn exercise(
     step(
         cluster,
         "load-native",
-        &mut Command::new(&adapter)
+        Command::new(&adapter)
             .arg("load-native")
             .arg(&resources.name)
             .arg(&resources.work),
@@ -273,7 +276,7 @@ async fn exercise(
     step(
         cluster,
         "qualify-release",
-        &mut Command::new(&binary)
+        Command::new(&binary)
             .arg("qualify-release")
             .arg("--repository")
             .arg(&resources.repository)
@@ -474,7 +477,7 @@ async fn step(
         .current_dir(&cluster.resources.repository)
         .kill_on_drop(true);
     let output =
-        wamn_control::delivery::qualification::execute_owned(command, Duration::from_secs(3 * 60 * 60))
+        wamn_control::delivery::qualification::execute_owned(command, Duration::from_hours(3))
             .await
             .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
             .with_context(|| format!("execute owned delivery {name}"))?;

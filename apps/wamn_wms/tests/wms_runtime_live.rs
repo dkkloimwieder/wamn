@@ -128,7 +128,7 @@ pub(crate) async fn assert_contention_and_replay(document: &JourneyDocument) -> 
         "the journey document carries no runtime phase: the route must be reachable and the \
          fixture seeded before these assertions run",
     )?;
-    let route = Route::from_document(&document, runtime)?;
+    let route = Route::from_document(document, runtime)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -252,7 +252,7 @@ pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> a
         "the journey document carries no runtime phase: the route must be reachable and the \
          fixture seeded before these assertions run",
     )?;
-    let route = Route::from_document(&document, runtime)?;
+    let route = Route::from_document(document, runtime)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -310,7 +310,7 @@ pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> a
         .await?;
     let adjusted = value(&answer, "ops-adjust")?;
     anyhow::ensure!(
-        quantity(&adjusted["adjusted_quantity"])? == 7.0
+        (quantity(&adjusted["adjusted_quantity"])? - 7.0).abs() < f64::EPSILON
             && adjusted["row_version"] == version + 1
             && adjusted["pallet_status"] == "available",
         "the adjust counted 7 and advanced the revision from {version} (held {held}): {adjusted}"
@@ -358,7 +358,8 @@ pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> a
         .await?;
     let detail = refusal(&answer, "ops-split-too-much", "insufficient_quantity")?;
     anyhow::ensure!(
-        detail["field"] == "value.quantity" && quantity(&detail["observed"])? == 4.0,
+        detail["field"] == "value.quantity"
+            && (quantity(&detail["observed"])? - 4.0).abs() < f64::EPSILON,
         "the refusal names the field and what the row holds: {detail}"
     );
 
@@ -424,7 +425,9 @@ pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> a
     let rows = value(&answer, "ops-aggregate-after")?["rows"].clone();
     let rows = rows.as_array().context("aggregate answers rows")?;
     anyhow::ensure!(
-        rows.len() == 1 && quantity(&rows[0]["quantity"])? == 7.0 && rows[0]["pallet_count"] == 1,
+        rows.len() == 1
+            && (quantity(&rows[0]["quantity"])? - 7.0).abs() < f64::EPSILON
+            && rows[0]["pallet_count"] == 1,
         "the aggregate counts 7 on one live pallet and not the consumed one: {rows:?}"
     );
 
@@ -487,7 +490,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(document: &Journey
         .runtime
         .as_ref()
         .context("the journey needs its runtime phase")?;
-    let route = Route::from_document(&document, runtime)?;
+    let route = Route::from_document(document, runtime)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -633,7 +636,7 @@ pub(crate) async fn assert_committed_rows(
     let command_key = expected["idempotency_key"].as_str().context("the result has a command key")?;
     let pallet = expected["pallet_id"].as_str().context("the result has a pallet id")?;
     let row = project.query_one(
-        r#"SELECT json_build_object(
+        r"SELECT json_build_object(
     'command_count', (SELECT count(*) FROM wms.inventory_move_command WHERE idempotency_key = $1),
     'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE idempotency_key = $1),
     'quantity_count', (SELECT count(*) FROM wms.pallet_quantity WHERE pallet_id = $2::text::uuid),
@@ -648,7 +651,7 @@ pub(crate) async fn assert_committed_rows(
     'pallet', (SELECT row_to_json(pallet) FROM (
         SELECT id, location_id, status, row_version FROM wms.pallet WHERE id = $2::text::uuid
     ) AS pallet)
-);"#,
+);",
         &[&command_key, &pallet],
     ).await.context("read the committed WMS rows")?;
     let observed: Value = row.get(0);

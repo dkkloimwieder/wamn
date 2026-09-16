@@ -14,7 +14,7 @@ use super::{
 async fn released_routes_materializer_startup_and_environment_isolation() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
-    super::with_signals(&evidence, run(&evidence)).await
+    Box::pin(super::with_signals(&evidence, run(&evidence))).await
 }
 
 async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
@@ -27,12 +27,14 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             &route,
             &cluster.resources.work,
             &replication_password,
-            &cluster.nats_url,
-            cluster.broker.publisher.username.clone(),
-            cluster.broker.publisher.password_file.clone(),
-            &cluster.broker.provisioning,
-            &super::declared_consumers()?,
-            &cluster.source,
+            cdc::BrokerBinding {
+                nats_url: &cluster.nats_url,
+                nats_username: cluster.broker.publisher.username.clone(),
+                nats_password_file: cluster.broker.publisher.password_file.clone(),
+                provisioning: &cluster.broker.provisioning,
+                consumers: &super::declared_consumers()?,
+                source: &cluster.source,
+            },
         )
         .await?;
         cluster.resources.reader = Some(cdc::start(reader, &evidence.join("cdc-reader.log"))?);
@@ -45,7 +47,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
                 .context("the owned CDC reader is started")?
                 .1,
             &observer,
-            &evidence,
+            evidence,
         )
         .await?;
         let resources = &cluster.resources;
@@ -70,7 +72,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
                 source: &resources.source,
                 stream: &cluster.source,
             },
-            &evidence,
+            evidence,
         )
         .await?;
         let secrets = deployment::native_secrets(&cluster)?;
@@ -78,11 +80,13 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             resources,
             &cluster.inputs,
             &carrier,
-            3,
-            &cluster.nats_url,
-            &secrets,
-            &cluster.source,
-            None,
+            &super::HostBinding {
+                replicas: 3,
+                nats_url: &cluster.nats_url,
+                native_nats_secrets: &secrets,
+                source: &cluster.source,
+                session: None,
+            },
         )
         .await?;
         let digest = workload::image_ready(
@@ -92,7 +96,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             &resources.host_image,
             &resources.source,
             "release",
-            &evidence,
+            evidence,
         )
         .await?;
         let hosts = workload::hosts_ready(
@@ -104,7 +108,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
                 image: &resources.host_image,
                 runtime_digest: &digest,
                 replicas: 3,
-                evidence: &evidence,
+                evidence,
             },
         )
         .await?;
@@ -115,7 +119,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             &resources.work,
             &resources.name,
             &hosts,
-            &evidence,
+            evidence,
         )
         .await?;
         workload::unknown_route(
@@ -123,11 +127,11 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             &resources.work,
             &resources.name,
             &cluster.inputs.route_host,
-            &evidence,
+            evidence,
         )
         .await?;
         let input = deployment::install_materializer(&cluster, &materializer).await?;
-        workload::materializer_ready(&resources.name, &resources.work, &input, &hosts, &evidence)
+        workload::materializer_ready(&resources.name, &resources.work, &input, &hosts, evidence)
             .await?;
         let endpoint =
             materializer_case::endpoint(&cluster, "receiving-materializer-nodeport").await?;
@@ -171,7 +175,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             &resources.work,
             &resources.name,
             &observed_http,
-            &evidence,
+            evidence,
         )
         .await?;
         super::operator_recovery::assert_recovery(&cluster).await?;

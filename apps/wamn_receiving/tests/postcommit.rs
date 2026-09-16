@@ -648,7 +648,7 @@ pub(super) async fn assert_postcommit(
     let mut evidence = json!({"schema":"wamn-receiving-postcommit/v0.1", "source":phase.source_commit,
         "verdict":"fail", "invariants":["REC-EVENT-REPLAY","REC-POSTCOMMIT-PROGRESS"], "recovery_assumptions":"The owned database, broker, host, and materializer remain available. The poison lock lasts through retry exhaustion."});
     let result = assert_replay_and_progress(
-        &document,
+        document,
         phase,
         project.as_ref(),
         lock.as_ref(),

@@ -95,7 +95,7 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
     let item_id = Uuid::new_v4();
     client
         .execute(
-            r#"WITH item AS (
+            r"WITH item AS (
             INSERT INTO receiving.item (id, item_number)
             VALUES ($4, $7 || '-item') RETURNING id
         ), location AS (
@@ -113,7 +113,7 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
         FROM purchase CROSS JOIN item
         UNION ALL
         SELECT $3::uuid, purchase.id, 2, item.id, $10::int4::numeric, 0
-        FROM purchase CROSS JOIN item"#,
+        FROM purchase CROSS JOIN item",
             &[
                 &fixture.id,
                 &fixture.line_ids[0],
@@ -147,7 +147,7 @@ pub struct Snapshot {
 pub async fn snapshot(client: &Client, fixture: &Fixture) -> Result<Snapshot> {
     let value: Value = client
         .query_one(
-            r#"WITH orders AS (
+            r"WITH orders AS (
             SELECT * FROM receiving.purchase_order WHERE id = $1
         ), lines AS (
             SELECT * FROM receiving.purchase_order_line WHERE purchase_order_id = $1
@@ -174,7 +174,7 @@ pub async fn snapshot(client: &Client, fixture: &Fixture) -> Result<Snapshot> {
                 FROM receipts r), '[]'::jsonb),
             'receipt_lines', COALESCE((SELECT jsonb_agg(to_jsonb(l) || jsonb_build_object(
                 'quantity', l.quantity::text) ORDER BY l.id)
-                FROM receipt_lines l), '[]'::jsonb))"#,
+                FROM receipt_lines l), '[]'::jsonb))",
             &[&fixture.id, &fixture.key_prefix],
         )
         .await
@@ -309,7 +309,7 @@ pub async fn wait_for_blocked(
     let result = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             let rows = client.query(
-                r#"WITH RECURSIVE activity AS MATERIALIZED (
+                r"WITH RECURSIVE activity AS MATERIALIZED (
                     SELECT a.pid, a.usename, a.wait_event_type, a.wait_event,
                         pg_blocking_pids(a.pid) AS blockers,
                         a.state = 'active' AND a.wait_event_type = 'Lock'
@@ -327,7 +327,7 @@ pub async fn wait_for_blocked(
                 )
                 SELECT a.pid, a.usename, a.wait_event_type, a.wait_event, a.blockers,
                     COALESCE(a.receiving_command, false) AND b.pid IS NOT NULL AS matched
-                FROM activity a LEFT JOIN blocked b ON b.pid = a.pid ORDER BY a.pid"#,
+                FROM activity a LEFT JOIN blocked b ON b.pid = a.pid ORDER BY a.pid",
                 &[&blocker_pid],
             ).await.context("observe actual Receiving guest lock waits")?;
             observed.clear();

@@ -57,7 +57,7 @@ pub(super) async fn prepare_session_host_fixture(
              JOIN catalog.release_manifest_v3_snapshots AS snapshots \
                USING (tenant_id, effective_release_id) \
              WHERE releases.tenant_id = $1 AND releases.effective_release_id = $2",
-            &[&TENANT, &(RELEASE_ID as i32)],
+            &[&TENANT, &RELEASE_ID.cast_signed()],
         )
         .await
         .context("read the completed PAT journey release")?;
@@ -70,7 +70,7 @@ pub(super) async fn prepare_session_host_fixture(
     let mut attachments = Vec::with_capacity(JOURNEY_PACKAGES.len());
     let mut changed = 0;
     for package in JOURNEY_PACKAGES {
-        let source = journey_publication_root(package, Some(&inputs)).join("attachments.json");
+        let source = journey_publication_root(package, Some(inputs)).join("attachments.json");
         let original =
             std::fs::read(&source).with_context(|| format!("read {}", source.display()))?;
         let mut document: Value = serde_json::from_slice(&original)?;
@@ -98,7 +98,7 @@ pub(super) async fn prepare_session_host_fixture(
         "session fixture must change exactly one copied attachment"
     );
     let (manifest_digest, release) = publish_journey_release(
-        &inputs,
+        inputs,
         JourneyReleaseTarget {
             project_url: project_url.as_str(),
             system_url: &inputs.system_pg_url,
@@ -203,7 +203,7 @@ pub(super) async fn prepare_session_host_fixture(
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(&output)
+        .open(output)
         .context("create private session-host fixture output")?;
     file.write_all(&serde_json::to_vec(&document)?)?;
     anyhow::ensure!(
@@ -256,7 +256,7 @@ pub(super) async fn assert_nested_session(
                 .context("the journey omitted the Acme purchase_order update route")?,
         );
     }
-    let endpoint = reqwest::Url::parse(&endpoint)?;
+    let endpoint = reqwest::Url::parse(endpoint)?;
     anyhow::ensure!(
         endpoint.scheme() == "https"
             && matches!(endpoint.host_str(), Some("localhost" | "127.0.0.1"))
@@ -269,9 +269,9 @@ pub(super) async fn assert_nested_session(
         "nested test requires an explicit loopback HTTPS port-forward origin"
     );
     let keys = IssuerKeys::new(IssuerKeysConfig::new(
-        &issuer,
+        issuer,
         endpoint.join("/.well-known/jwks.json")?.as_str(),
-        &ca,
+        ca,
     )?)?;
     let http = reqwest::Client::builder()
         .https_only(true)
@@ -280,7 +280,7 @@ pub(super) async fn assert_nested_session(
         .retry(reqwest::retry::never())
         .timeout(Duration::from_secs(5))
         .tls_backend_rustls()
-        .tls_certs_only(reqwest::Certificate::from_pem_bundle(&ca)?)
+        .tls_certs_only(reqwest::Certificate::from_pem_bundle(ca)?)
         .build()?;
     let scratch = ScratchRoot::create()?;
     inputs.compilation_cache_directory = scratch.path().join("nested-compilation-cache");
@@ -518,14 +518,14 @@ pub(super) async fn assert_nested_session(
     };
     let token = token.as_str();
     let verifier = SessionVerifier::new(keys, ORG, &audience)?;
-    let verified = verifier.verify(token).await?;
+    let verified_claims = verifier.verify(token).await?;
     anyhow::ensure!(
-        verified.claims().sub == human.id().as_str()
-            && verified.claims().roles == [ROLE]
+        verified_claims.claims().sub == human.id().as_str()
+            && verified_claims.claims().roles == [ROLE]
             && exchange
                 .as_ref()
                 .is_none_or(|exchange| exchange["token_type"] == "Bearer"
-                    && exchange["expires_at"].as_i64() == Some(verified.claims().exp)),
+                    && exchange["expires_at"].as_i64() == Some(verified_claims.claims().exp)),
         "real issuer changed the nested caller's signed identity"
     );
     let secret = |name: &str| {
@@ -622,10 +622,12 @@ pub(super) async fn assert_nested_session(
     // The existing command keeps the two-host GET fixture and event set unchanged.
     // A fresh-only refusal must stop before the base guest runs.
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         overlay_route_path("receiving_record_receipt"),
         Some(token),
@@ -656,10 +658,12 @@ pub(super) async fn assert_nested_session(
         // This is an explicit new request from the same human, not a host retry.
         let (pat_trace, pat_parent) = journey_trace(32);
         let response = invoke_journey_route(
-            &engine,
-            &flow_http,
-            Arc::clone(&routing),
-            Arc::clone(&bridge),
+            &JourneyRuntime {
+                engine: &engine,
+                flow_http: &flow_http,
+                routing: &routing,
+                bridge: &bridge,
+            },
             &inputs.route_host,
             overlay_route_path("receiving_record_receipt"),
             Some(pat.token()),
@@ -686,10 +690,12 @@ pub(super) async fn assert_nested_session(
 
         let (direct_session_trace, direct_session_parent) = journey_trace(35);
         let response = invoke_journey_route(
-            &engine,
-            &flow_http,
-            Arc::clone(&routing),
-            Arc::clone(&bridge),
+            &JourneyRuntime {
+                engine: &engine,
+                flow_http: &flow_http,
+                routing: &routing,
+                bridge: &bridge,
+            },
             &inputs.route_host,
             direct_attachment.path,
             Some(token),
@@ -706,10 +712,12 @@ pub(super) async fn assert_nested_session(
 
         let (direct_pat_trace, direct_pat_parent) = journey_trace(36);
         let response = invoke_journey_route(
-            &engine,
-            &flow_http,
-            Arc::clone(&routing),
-            Arc::clone(&bridge),
+            &JourneyRuntime {
+                engine: &engine,
+                flow_http: &flow_http,
+                routing: &routing,
+                bridge: &bridge,
+            },
             &inputs.route_host,
             direct_attachment.path,
             Some(pat.token()),
@@ -778,10 +786,12 @@ pub(super) async fn assert_nested_session(
         );
         let (role_trace, role_parent) = journey_trace(33);
         let response = invoke_journey_route(
-            &engine,
-            &flow_http,
-            Arc::clone(&routing),
-            Arc::clone(&bridge),
+            &JourneyRuntime {
+                engine: &engine,
+                flow_http: &flow_http,
+                routing: &routing,
+                bridge: &bridge,
+            },
             &inputs.route_host,
             overlay_route_path("receiving_record_receipt"),
             Some(pat.token()),
@@ -808,10 +818,12 @@ pub(super) async fn assert_nested_session(
         .await?;
         let (membership_trace, membership_parent) = journey_trace(34);
         let response = invoke_journey_route(
-            &engine,
-            &flow_http,
-            Arc::clone(&routing),
-            Arc::clone(&bridge),
+            &JourneyRuntime {
+                engine: &engine,
+                flow_http: &flow_http,
+                routing: &routing,
+                bridge: &bridge,
+            },
             &inputs.route_host,
             overlay_route_path("receiving_record_receipt"),
             Some(pat.token()),
@@ -932,10 +944,12 @@ async fn assert_pat_and_session_stamp_one_actor(
         }]))?;
         let (_, traceparent) = journey_trace(trace);
         let response = invoke_journey_route(
-            engine,
-            flow_http,
-            Arc::clone(routing),
-            Arc::clone(bridge),
+            &JourneyRuntime {
+                engine,
+                flow_http,
+                routing,
+                bridge,
+            },
             route_host,
             path,
             Some(token),

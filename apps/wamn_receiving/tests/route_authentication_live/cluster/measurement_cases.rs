@@ -15,7 +15,7 @@ async fn startup_and_steady_request_overhead() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
-        let (mut cluster, _, cold) = prepare(&evidence).await?;
+        let (mut cluster, _, cold) = Box::pin(prepare(&evidence)).await?;
         let result = measurement::measure_startup(&cluster, &cold).await;
         finish(&mut cluster, result).await
     })
@@ -28,7 +28,7 @@ async fn receiving_throughput() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
-        let (mut cluster, route, cold) = prepare(&evidence).await?;
+        let (mut cluster, route, cold) = Box::pin(prepare(&evidence)).await?;
         let result = measurement::throughput(&cluster, &cold, &route.database_url).await;
         finish(&mut cluster, result).await
     })
@@ -41,7 +41,7 @@ async fn receiving_fresh_authority() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
-        let (mut cluster, route, cold) = prepare(&evidence).await?;
+        let (mut cluster, route, cold) = Box::pin(prepare(&evidence)).await?;
         let result = measurement::fresh_auth(&cluster, &cold, &route.database_url).await;
         finish(&mut cluster, result).await
     })
@@ -59,11 +59,13 @@ async fn prepare(
         resources,
         &cluster.inputs,
         &carrier,
-        0,
-        &cluster.nats_url,
-        &secrets,
-        &cluster.source,
-        None,
+        &super::HostBinding {
+            replicas: 0,
+            nats_url: &cluster.nats_url,
+            native_nats_secrets: &secrets,
+            source: &cluster.source,
+            session: None,
+        },
     )
     .await?;
     let cold = measurement::cold_host(&cluster).await?;

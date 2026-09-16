@@ -2306,7 +2306,10 @@ fn an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim() {
 }
 
 /// Turn the shipped command into a state-idempotent one with the given guards.
-fn state_command(declaration: &mut Value, guards: Value) {
+/// One named mutation a refusal case applies to a valid declaration.
+type MutateDeclaration = fn(&mut Value);
+
+fn state_command(declaration: &mut Value, guards: &Value) {
     let operation = declaration["custom_operations"]["receiving.record_receipt"]
         .as_object_mut()
         .unwrap();
@@ -2331,7 +2334,7 @@ fn state_command(declaration: &mut Value, guards: Value) {
 #[test]
 fn each_declared_idempotence_value_admits_only_its_own_shape() {
     let catalog = receiving_catalog();
-    let cases: [(&str, fn(&mut Value)); 7] = [
+    let cases: [(&str, MutateDeclaration); 7] = [
         (
             "idempotent_by claim with no claim declared",
             |declaration: &mut Value| {
@@ -2364,7 +2367,7 @@ fn each_declared_idempotence_value_admits_only_its_own_shape() {
         (
             "idempotent_by state that guards no relation at all",
             |declaration: &mut Value| {
-                state_command(declaration, json!({}));
+                state_command(declaration, &json!({}));
             },
         ),
         (
@@ -2372,14 +2375,14 @@ fn each_declared_idempotence_value_admits_only_its_own_shape() {
             |declaration: &mut Value| {
                 state_command(
                     declaration,
-                    json!({"absent_relation": "value.purchase_order_id"}),
+                    &json!({"absent_relation": "value.purchase_order_id"}),
                 );
             },
         ),
         (
             "idempotent_by state guarding with a field it never takes",
             |declaration: &mut Value| {
-                state_command(declaration, json!({"purchase_order": "absent_field"}));
+                state_command(declaration, &json!({"purchase_order": "absent_field"}));
             },
         ),
         (
@@ -2421,7 +2424,7 @@ fn each_declared_idempotence_value_admits_only_its_own_shape() {
 #[test]
 fn an_authored_claim_is_refused_unless_every_identity_comes_from_it() {
     let catalog = receiving_catalog();
-    let cases: [(&str, fn(&mut Value)); 5] = [
+    let cases: [(&str, MutateDeclaration); 5] = [
         (
             "a claim relation the operation never declared",
             |declaration: &mut Value| {

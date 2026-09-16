@@ -341,16 +341,27 @@ fn component_declaration(
 }
 
 /// Publish WMS and its label components, author its wirings, then bind and attest.
+/// The artifacts and endpoint one release publication is minted from.
+pub struct PublicationArtifacts<'a> {
+    pub scenario_worker: &'a Path,
+    pub label_render_wasm: &'a Path,
+    pub minio_endpoint: &'a str,
+    pub mint_only: bool,
+}
+
 pub async fn publish(
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
     credentials: &JourneyCredentials,
-    scenario_worker: &Path,
-    label_render_wasm: &Path,
-    minio_endpoint: &str,
+    artifacts: &PublicationArtifacts<'_>,
     evidence: &Path,
-    mint_only: bool,
 ) -> anyhow::Result<ReleaseCarrier> {
+    let PublicationArtifacts {
+        scenario_worker,
+        label_render_wasm,
+        minio_endpoint,
+        mint_only,
+    } = *artifacts;
     let package = package_coordinate()?;
     let root = package_root();
     let repository = repository_root();
@@ -476,7 +487,7 @@ pub async fn publish(
         let (project, task) = connect(&route.database_url).await?;
         let snapshot = project.query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &(RELEASE_ID as i32)],
+            &[&TENANT, &RELEASE_ID.cast_signed()],
         ).await;
         drop(project);
         task.abort();

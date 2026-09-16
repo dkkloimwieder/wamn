@@ -364,7 +364,7 @@ pub(super) async fn verify_journey_components_are_effectful(
 pub(super) fn gate_document(
     command_id: &str,
     package: JourneyPackage,
-    document: Value,
+    document: &Value,
 ) -> anyhow::Result<wamn_authoring_model::AuthoringDocument> {
     wamn_test_infrastructure::declarations::gate_document(
         &wamn_test_infrastructure::declarations::GateInput {
@@ -375,7 +375,7 @@ pub(super) fn gate_document(
                 environment: ENVIRONMENT.to_owned(),
             },
         },
-        &serde_json::to_string(&document)?,
+        &serde_json::to_string(document)?,
     )
 }
 
@@ -402,7 +402,7 @@ pub(super) async fn gate_journey_wirings(inputs: &JourneyDocument, bind: &str, b
                 .json(&gate_document(
                     &format!("gate-{}-{wiring}", package.id),
                     package,
-                    document,
+                    &document,
                 )?)
                 .send()
                 .await
@@ -556,7 +556,7 @@ pub(super) async fn mint_journey_release(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[&TENANT, &(release_id as i32), &ORG, &PROJECT, &ENVIRONMENT],
+            &[&TENANT, &release_id.cast_signed(), &ORG, &PROJECT, &ENVIRONMENT],
         )
         .await
         .context("verify the minted Receiving release remains inactive")?;
@@ -568,7 +568,7 @@ pub(super) async fn mint_journey_release(
         .query_one(
             "SELECT manifest_digest FROM catalog.release_manifest_v3_snapshots \
              WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &(release_id as i32)],
+            &[&TENANT, &release_id.cast_signed()],
         )
         .await
         .context("read the production-minted release digest")?
@@ -576,7 +576,7 @@ pub(super) async fn mint_journey_release(
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let bytes: Vec<u8> = project.query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &(release_id as i32)],
+            &[&TENANT, &release_id.cast_signed()],
         ).await?.get(0);
         let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
         candidate.assert_manifest(&manifest)?;
@@ -615,7 +615,7 @@ pub(super) async fn publish_journey_release(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[&TENANT, &(release_id as i32), &ORG, &PROJECT, &ENVIRONMENT],
+            &[&TENANT, &release_id.cast_signed(), &ORG, &PROJECT, &ENVIRONMENT],
         )
         .await
         .context("verify the deployed Receiving release is serving")?

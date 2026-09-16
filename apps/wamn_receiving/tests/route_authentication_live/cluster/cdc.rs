@@ -14,18 +14,31 @@ use wamn_gate_harness::journey::JourneyDocument;
 
 use super::super::{ENVIRONMENT, ORG, PROJECT};
 
+/// The broker identity one CDC reader publishes under.
+pub(super) struct BrokerBinding<'a> {
+    pub(super) nats_url: &'a str,
+    pub(super) nats_username: String,
+    pub(super) nats_password_file: PathBuf,
+    pub(super) provisioning: &'a wamn_test_infrastructure::event_broker::Credentials,
+    pub(super) consumers: &'a [async_nats::jetstream::consumer::pull::Config],
+    pub(super) source: &'a async_nats::jetstream::stream::Config,
+}
+
 pub(super) async fn configure(
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
     work: &Path,
     replication_password: &str,
-    nats_url: &str,
-    nats_username: String,
-    nats_password_file: PathBuf,
-    provisioning: &wamn_test_infrastructure::event_broker::Credentials,
-    consumers: &[async_nats::jetstream::consumer::pull::Config],
-    source: &async_nats::jetstream::stream::Config,
+    broker: BrokerBinding<'_>,
 ) -> anyhow::Result<EventReaderArgs> {
+    let BrokerBinding {
+        nats_url,
+        nats_username,
+        nats_password_file,
+        provisioning,
+        consumers,
+        source,
+    } = broker;
     let mut admin_url = reqwest::Url::parse(&route.database_url)?;
     let database_host = admin_url
         .host_str()
@@ -169,7 +182,7 @@ pub(super) async fn ready(
                         && advisory_info.config.name == advisory_name,
                     "the reader must use its declared event and advisory streams"
                 );
-                let observed = |info: &async_nats::jetstream::stream::Info| {
+                let stream_state = |info: &async_nats::jetstream::stream::Info| {
                     serde_json::json!({
                         "config":info.config,
                         "state":{"messages":info.state.messages,"bytes":info.state.bytes,
@@ -180,7 +193,7 @@ pub(super) async fn ready(
                 fs::write(
                     evidence.join("nats-reader-ready.json"),
                     serde_json::to_vec_pretty(
-                        &serde_json::json!({"source":observed(source_info),"advisories":observed(advisory_info)}),
+                        &serde_json::json!({"source":stream_state(source_info),"advisories":stream_state(advisory_info)}),
                     )?,
                 )?;
                 fs::write(

@@ -12,22 +12,13 @@ use wamn_control::delivery::Candidate;
 use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::kubernetes_documents;
-use wamn_test_infrastructure::{event_broker::EventBroker, platform};
+use wamn_test_infrastructure::platform;
 
 use super::{application, bootstrap, checked, deployment, kubectl};
 use crate::environment::{ORG, PROJECT, RELEASE_ID, TENANT};
 
 pub(super) async fn run(
-    repository: &Path,
-    lifecycle: &Path,
-    cluster: &str,
-    work: &Path,
-    target: &Path,
-    evidence: &Path,
-    source_head: &str,
-    files: &bootstrap::BootstrapFiles,
-    broker: &EventBroker,
-    source: &async_nats::jetstream::stream::Config,
+    context: &super::CaseContext<'_>,
     document: &JourneyDocument,
     route: &ProvisionedRoute,
     release: &ReleaseCarrier,
@@ -35,6 +26,19 @@ pub(super) async fn run(
     nats_url: &str,
     cancelled: &pg_walstream::CancellationToken,
 ) -> anyhow::Result<()> {
+    let super::CaseContext {
+        repository,
+        lifecycle,
+        cluster,
+        work,
+        target,
+        evidence,
+        source_head,
+        files,
+        broker,
+        source,
+        ..
+    } = *context;
     let secrets = vec![
         route.database_url.clone(),
         document.system_pg_url.clone(),
@@ -45,7 +49,7 @@ pub(super) async fn run(
         repository,
         evidence,
         "native-registry",
-        &mut Command::new(&adapter)
+        Command::new(&adapter)
             .arg("native-registry")
             .arg(cluster)
             .arg(work)
@@ -75,12 +79,14 @@ pub(super) async fn run(
     .await?;
     let (base, _) = application::render_host(
         document,
-        cluster,
-        nats_url,
-        postgres_ip,
-        release.manifest_digest.as_str(),
-        source,
-        1,
+        &application::HostBinding {
+            host_tag: cluster,
+            nats_url,
+            database_host: postgres_ip,
+            manifest_digest: release.manifest_digest.as_str(),
+            source,
+            replicas: 1,
+        },
         work,
     )?;
     fs::write(
@@ -91,7 +97,7 @@ pub(super) async fn run(
         repository,
         evidence,
         "render-host",
-        &mut Command::new(&adapter)
+        Command::new(&adapter)
             .arg("render-host")
             .arg(cluster)
             .arg(work),
@@ -229,7 +235,7 @@ pub(super) async fn run(
         repository,
         evidence,
         "load-native",
-        &mut Command::new(&adapter)
+        Command::new(&adapter)
             .arg("load-native")
             .arg(cluster)
             .arg(work),
@@ -241,7 +247,7 @@ pub(super) async fn run(
         repository,
         evidence,
         "qualify-release",
-        &mut Command::new(&binary)
+        Command::new(&binary)
             .arg("qualify-release")
             .arg("--repository")
             .arg(repository)
@@ -379,7 +385,7 @@ async fn step(
         .collect::<Vec<_>>();
     command.current_dir(repository).kill_on_drop(true);
     let output =
-        wamn_control::delivery::qualification::execute_owned(command, Duration::from_secs(3 * 60 * 60))
+        wamn_control::delivery::qualification::execute_owned(command, Duration::from_hours(3))
             .await
             .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
             .with_context(|| format!("execute owned delivery {name}"))?;

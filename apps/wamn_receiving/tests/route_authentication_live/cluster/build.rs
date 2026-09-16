@@ -1,5 +1,7 @@
 //! Builds used by the Receiving cluster tests.
 
+use std::fmt::Write as _;
+
 use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -124,11 +126,13 @@ pub(super) async fn components_and_tools(
             "the built component is empty: {}",
             path.display()
         );
-        component_hashes.push_str(&format!(
-            "{}  {}\n",
+        writeln!(
+            component_hashes,
+            "{}  {}",
             hex::encode(Sha256::digest(fs::read(&path)?)),
             path.display()
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     fs::write(evidence.join("component-bytes.sha256"), component_hashes)?;
     Ok(artifacts)

@@ -433,17 +433,31 @@ pub(super) struct JourneyGuestMemory {
     pub(super) peak_bytes: u64,
 }
 
+/// The four host-owned handles one journey invocation runs against. They travel
+/// together at every call site, so they are one argument here.
+pub(super) struct JourneyRuntime<'a> {
+    pub(super) engine: &'a wash_runtime::engine::Engine,
+    pub(super) flow_http: &'a Component,
+    pub(super) routing: &'a Arc<FlowHttpRouting>,
+    pub(super) bridge: &'a Arc<RouterDeliveryBridge>,
+}
+
 pub(super) async fn invoke_journey_route(
-    engine: &wash_runtime::engine::Engine,
-    flow_http: &Component,
-    routing: Arc<FlowHttpRouting>,
-    bridge: Arc<RouterDeliveryBridge>,
+    runtime: &JourneyRuntime<'_>,
     route_host: &str,
     path: &str,
     bearer: Option<&str>,
     traceparent: &str,
     body: Bytes,
 ) -> anyhow::Result<hyper::Response<Bytes>> {
+    let JourneyRuntime {
+        engine,
+        flow_http,
+        routing,
+        bridge,
+    } = *runtime;
+    let routing = Arc::clone(routing);
+    let bridge = Arc::clone(bridge);
     let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
     let mut request = Request::builder()
         .method(Method::POST)

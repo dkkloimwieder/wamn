@@ -849,13 +849,15 @@ mod tests {
         let location_id = Uuid::from_u128(0xa420);
         insert_receipt_fixtures(
             client,
-            Uuid::from_u128(0xa430),
-            purchase_order_id,
-            other_purchase_order_id,
-            line_id,
-            unused_line_id,
-            other_line_id,
-            location_id,
+            &ReceiptFixtureIds {
+                item_id: Uuid::from_u128(0xa430),
+                purchase_order_id,
+                other_purchase_order_id,
+                first_line_id: line_id,
+                second_line_id: unused_line_id,
+                other_line_id,
+                location_id,
+            },
         )
         .await?;
 
@@ -1048,13 +1050,15 @@ mod tests {
         let missing_id = Uuid::from_u128(0x4ff);
         insert_receipt_fixtures(
             client,
-            Uuid::from_u128(0x430),
-            purchase_order_id,
-            other_purchase_order_id,
-            first_line_id,
-            second_line_id,
-            other_line_id,
-            location_id,
+            &ReceiptFixtureIds {
+                item_id: Uuid::from_u128(0x430),
+                purchase_order_id,
+                other_purchase_order_id,
+                first_line_id,
+                second_line_id,
+                other_line_id,
+                location_id,
+            },
         )
         .await?;
 
@@ -1374,8 +1378,13 @@ mod tests {
         Ok(())
     }
 
-    async fn insert_receipt_fixtures(
-        client: &Client,
+    /// The identities one receipt fixture seeds.
+    #[expect(
+        clippy::struct_field_names,
+        reason = "every field names one seeded row's primary key, and the `_id` suffix is what \
+                  distinguishes an identity from the value columns beside it at the call site"
+    )]
+    struct ReceiptFixtureIds {
         item_id: Uuid,
         purchase_order_id: Uuid,
         other_purchase_order_id: Uuid,
@@ -1383,7 +1392,18 @@ mod tests {
         second_line_id: Uuid,
         other_line_id: Uuid,
         location_id: Uuid,
-    ) -> Result<()> {
+    }
+
+    async fn insert_receipt_fixtures(client: &Client, ids: &ReceiptFixtureIds) -> Result<()> {
+        let ReceiptFixtureIds {
+            item_id,
+            purchase_order_id,
+            other_purchase_order_id,
+            first_line_id,
+            second_line_id,
+            other_line_id,
+            location_id,
+        } = *ids;
         let item_number = format!("item-record-receipt-{item_id}");
         client
             .execute(

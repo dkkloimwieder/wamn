@@ -214,25 +214,27 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         )
         .await?;
         checked(kubectl(&cluster, work.path()).args(["create", "namespace", &cluster])).await?;
-        let result = run_created(
-            &repository,
-            &lifecycle,
-            &cluster,
-            work.path(),
-            &target,
-            &evidence,
-            &image,
-            &tag,
-            &head,
-            &digest,
-            &files,
-            &broker,
+        let result = Box::pin(run_created(
+            &CaseContext {
+                repository: &repository,
+                lifecycle: &lifecycle,
+                cluster: &cluster,
+                work: work.path(),
+                target: &target,
+                evidence: &evidence,
+                image: &image,
+                tag: &tag,
+                source_head: &head,
+                runtime_digest: &digest,
+                files: &files,
+                broker: &broker,
+                source: &source,
+            },
             &scope,
-            &source,
             case,
             browser,
             &delivery_cancelled,
-        )
+        ))
         .await;
         demo::hold(work.path(), browser && result.is_ok()).await?;
         result
@@ -246,12 +248,12 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     };
     let observed = match observed {
         Ok(result) => result,
-        Err(cause) => {
+        Err(failure) => {
             delivery_cancelled.cancel();
             if matches!(case, Case::Delivery) {
                 let _ = tokio::time::timeout(Duration::from_secs(180), &mut run).await;
             }
-            Ok(Err(anyhow::anyhow!(cause)))
+            Ok(Err(anyhow::anyhow!(failure)))
         }
     };
     drop(run);
@@ -335,25 +337,46 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     }
 }
 
+/// What one cluster case is built from and where it writes. Every case carries
+/// the same set, so it travels as one argument.
+struct CaseContext<'a> {
+    repository: &'a Path,
+    lifecycle: &'a Path,
+    cluster: &'a str,
+    work: &'a Path,
+    target: &'a Path,
+    evidence: &'a Path,
+    image: &'a str,
+    tag: &'a str,
+    source_head: &'a str,
+    runtime_digest: &'a str,
+    files: &'a bootstrap::BootstrapFiles,
+    broker: &'a EventBroker,
+    source: &'a async_nats::jetstream::stream::Config,
+}
+
 async fn run_created(
-    repository: &Path,
-    lifecycle: &Path,
-    cluster: &str,
-    work: &Path,
-    target: &Path,
-    evidence: &Path,
-    image: &str,
-    tag: &str,
-    source_head: &str,
-    runtime_digest: &str,
-    files: &bootstrap::BootstrapFiles,
-    broker: &EventBroker,
+    case_context: &CaseContext<'_>,
     scope: &Triple,
-    source: &async_nats::jetstream::stream::Config,
     case: Case,
     browser: bool,
     delivery_cancelled: &pg_walstream::CancellationToken,
 ) -> anyhow::Result<()> {
+    let CaseContext {
+        repository,
+        lifecycle,
+        cluster,
+        work,
+        target,
+        evidence,
+        image,
+        tag,
+        source_head,
+        runtime_digest,
+        files,
+        broker,
+        source,
+    } = *case_context;
     let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
     let generated_terminal = matches!(case, Case::GeneratedTerminal);
     let measure_startup = matches!(case, Case::Startup);
@@ -404,11 +427,13 @@ async fn run_created(
         &document,
         work,
         &admin_url,
-        &target.join("debug/wamn-scenario-worker"),
-        &target.join("wasm32-wasip2/release/label_render.wasm"),
-        &minio_endpoint,
+        &application::PublicationInputs {
+            scenario_worker: &target.join("debug/wamn-scenario-worker"),
+            label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
+            minio_endpoint: &minio_endpoint,
+            mint_only: matches!(case, Case::Delivery),
+        },
         evidence,
-        matches!(case, Case::Delivery),
     )
     .await?;
     event_broker::write_binding(broker, &nats_url, source)?;
@@ -452,8 +477,8 @@ async fn run_created(
     drop(source_observed);
     drop(advisory_observed);
     drop(context);
-    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
-        if let Some(image) = &candidate.executor_image {
+    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()?
+        && let Some(image) = &candidate.executor_image {
             let binary = crate::delivery::executor_launcher(work, image, &format!("{cluster}-executor"))?;
             wamn_test_infrastructure::executor::assert_idle_lifecycle(
                 &wamn_test_infrastructure::executor::ExecutorInput {
@@ -478,16 +503,21 @@ async fn run_created(
                 "boundary":"idle-readiness-and-signal-shutdown","result":"pass",
             }))?;
         }
-    }
     observer
         .drain()
         .await
         .context("close the scoped stream observation client")?;
     if matches!(case, Case::Delivery) {
         return delivery_case::run(
-            repository, lifecycle, cluster, work, target, evidence, source_head,
-            files, broker, source, &document, &route, &release, &postgres_ip, &nats_url, delivery_cancelled,
-        ).await;
+            case_context,
+            &document,
+            &route,
+            &release,
+            &postgres_ip,
+            &nats_url,
+            delivery_cancelled,
+        )
+        .await;
     }
     let (project, project_task) = wamn_ctl::dev::environment::connect(&route.database_url).await?;
     let reader_args = if measure_startup {
@@ -537,12 +567,14 @@ async fn run_created(
         .await?;
         let (base, overlay) = application::render_host(
             &document,
-            tag,
-            &nats_url,
-            &postgres_ip,
-            release.manifest_digest.as_str(),
-            source,
-            if measure_startup { 0 } else { 3 },
+            &application::HostBinding {
+                host_tag: tag,
+                nats_url: &nats_url,
+                database_host: &postgres_ip,
+                manifest_digest: release.manifest_digest.as_str(),
+                source,
+                replicas: if measure_startup { 0 } else { 3 },
+            },
             work,
         )?;
         checked(
@@ -633,13 +665,15 @@ async fn run_created(
         if generated_terminal {
             application::generated_terminal(
                 &document,
-                repository,
-                target,
+                &application::TerminalPaths {
+                    repository,
+                    target,
+                    work,
+                    evidence,
+                },
                 &loopback_url,
                 instance,
                 "success",
-                work,
-                evidence,
                 &store,
             )
             .await?;
@@ -656,13 +690,15 @@ async fn run_created(
                 if generated_terminal {
                     application::generated_terminal(
                         &document,
-                        repository,
-                        target,
+                        &application::TerminalPaths {
+                            repository,
+                            target,
+                            work,
+                            evidence,
+                        },
                         &loopback_url,
                         instance,
                         "partial",
-                        work,
-                        evidence,
                         &store,
                     )
                     .await?;
@@ -711,8 +747,8 @@ async fn run_created(
             image: materializer,
             tenant: crate::environment::TENANT.to_owned(),
             event: EventIdentity {
-                org: scope.org.to_string(),
-                project: scope.project.to_string(),
+                org: scope.org.clone(),
+                project: scope.project.clone(),
                 environment: scope.env.as_str().to_owned(),
             },
             event_stream: source.name.clone(),
@@ -746,8 +782,7 @@ async fn run_created(
             cancellation.cancel();
             if measure_startup { result } else { match (result, tokio::time::timeout(Duration::from_secs(10), &mut reader).await) {
                 (Ok(()), Ok(Ok(()))) => Ok(()),
-                (Err(error), _) => Err(error),
-                (Ok(()), Ok(Err(error))) => Err(error),
+                (Err(error), _) | (Ok(()), Ok(Err(error))) => Err(error),
                 (Ok(()), Err(_)) => Err(anyhow::anyhow!("the production CDC reader did not stop within ten seconds")),
             }}
         }

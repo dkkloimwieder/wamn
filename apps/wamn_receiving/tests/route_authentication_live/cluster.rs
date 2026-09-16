@@ -335,26 +335,23 @@ async fn candidate_executor(
     Ok(())
 }
 
+/// What one installed host group binds to: how many replicas, which broker,
+/// and the optional session issuer the overlay pins.
+struct HostBinding<'a> {
+    replicas: u32,
+    nats_url: &'a str,
+    native_nats_secrets: &'a [PathBuf],
+    source: &'a async_nats::jetstream::stream::Config,
+    session: Option<(&'a str, &'a str)>,
+}
+
 async fn install_host(
     cluster: &Resources,
     inputs: &JourneyDocument,
     carrier: &ReleaseCarrier,
-    replicas: u32,
-    nats_url: &str,
-    native_nats_secrets: &[PathBuf],
-    source: &async_nats::jetstream::stream::Config,
-    session: Option<(&str, &str)>,
+    binding: &HostBinding<'_>,
 ) -> anyhow::Result<()> {
-    let (base, overlay) = prepare_host(
-        cluster,
-        inputs,
-        carrier,
-        replicas,
-        nats_url,
-        native_nats_secrets,
-        source,
-        session,
-    )
+    let (base, overlay) = prepare_host(cluster, inputs, carrier, binding)
     .await?;
     checked(
         Command::new(&cluster.lifecycle)
@@ -382,12 +379,16 @@ async fn prepare_host(
     cluster: &Resources,
     inputs: &JourneyDocument,
     carrier: &ReleaseCarrier,
-    replicas: u32,
-    nats_url: &str,
-    native_nats_secrets: &[PathBuf],
-    source: &async_nats::jetstream::stream::Config,
-    session: Option<(&str, &str)>,
+    binding: &HostBinding<'_>,
 ) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let HostBinding {
+        replicas,
+        nats_url,
+        native_nats_secrets,
+        source,
+        session,
+    } = *binding;
+
     let database_host = reqwest::Url::parse(&inputs.system_pg_url)?
         .host_str()
         .context("the owned system URL has a host")?
@@ -591,8 +592,8 @@ async fn with_signals(
             _ = hangup.recv() => Err(anyhow::anyhow!("the Receiving test received SIGHUP")),
         }
     };
-    if let Err(error) = &result {
-        if evidence.is_dir() {
+    if let Err(error) = &result
+        && evidence.is_dir() {
             fs::write(
                 evidence.join("failure.json"),
                 serde_json::to_vec_pretty(&json!({
@@ -600,7 +601,6 @@ async fn with_signals(
                 }))?,
             )?;
         }
-    }
     result
 }
 
@@ -663,11 +663,13 @@ async fn released_http(
         resources,
         &cluster.inputs,
         &carrier,
-        replicas,
-        &cluster.nats_url,
-        &secrets,
-        &cluster.source,
-        None,
+        &HostBinding {
+            replicas,
+            nats_url: &cluster.nats_url,
+            native_nats_secrets: &secrets,
+            source: &cluster.source,
+            session: None,
+        },
     )
     .await?;
     let digest = workload::image_ready(

@@ -452,11 +452,10 @@ pub(super) async fn capture_failure(cluster: &Resources) {
             .kill_on_drop(true)
             .output()
             .await;
-        if let Ok(output) = output {
-            if output.status.success() {
+        if let Ok(output) = output
+            && output.status.success() {
                 let _ = fs::write(cluster.evidence.join(name), output.stdout);
             }
-        }
     }
     let pods = fs::read(cluster.evidence.join("failure-pods.json"))
         .ok()
@@ -500,17 +499,17 @@ pub(super) async fn capture_failure(cluster: &Resources) {
 pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
     let reader_result = if let Some((cancellation, mut task)) = cluster.reader.take() {
         cancellation.cancel();
-        match tokio::time::timeout(std::time::Duration::from_secs(10), &mut task).await {
-            Ok(result) => result
+        if let Ok(result) = tokio::time::timeout(std::time::Duration::from_secs(10), &mut task).await
+        {
+            result
                 .context("join the production CDC reader")
-                .and_then(|result| result),
-            Err(_) => {
-                task.abort();
-                let _ = task.await;
-                Err(anyhow::anyhow!(
-                    "the production CDC reader did not stop within 10 seconds"
-                ))
-            }
+                .and_then(|result| result)
+        } else {
+            task.abort();
+            let _ = task.await;
+            Err(anyhow::anyhow!(
+                "the production CDC reader did not stop within 10 seconds"
+            ))
         }
     } else {
         Ok(())

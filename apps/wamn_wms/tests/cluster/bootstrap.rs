@@ -33,7 +33,7 @@ impl std::fmt::Debug for BootstrapFiles {
 pub(super) fn prepare(repository: &Path, work: &Path) -> anyhow::Result<BootstrapFiles> {
     let metadata = fs::metadata(work).context("read the owned WMS work directory")?;
     ensure!(
-        metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
+        metadata.is_dir() && metadata.permissions().mode().trailing_zeros() >= 6,
         "the WMS work directory must be private"
     );
     let kind = render_kind_cluster(&fs::read_to_string(

@@ -133,7 +133,7 @@ fn receipt_body(fixture: &Fixture, receipt: Receipt, request_id: &str) -> Value 
     }}])
 }
 
-fn record(evidence: &mut File, value: Value) -> Result<()> {
+fn record(evidence: &mut File, value: &Value) -> Result<()> {
     serde_json::to_writer(&mut *evidence, &value)?;
     evidence.write_all(b"\n")?;
     evidence.flush()?;
@@ -247,7 +247,7 @@ async fn reproduce_history(
     };
     record(
         evidence,
-        json!({"case":"history-reproduction","origin":origin,"history":selected,
+        &json!({"case":"history-reproduction","origin":origin,"history":selected,
         "expected_failure":expected,"observed_failure":observed,"same_failure":same_failure,
         "result":outcome,"infrastructure_during_shrink":infrastructure_during_shrink,
         "confirmed_business_failure":same_failure && !infrastructure_during_shrink,
@@ -387,7 +387,7 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
                         &outcome,
                     )?;
                     history_assert(
-                        value["row_version"] == revision.to_string(),
+                        value["row_version"] == revision,
                         "REC-REVISION/response",
                         &outcome,
                         format_args!("REC-HISTORY revision at step {index}: {value}"),
@@ -537,7 +537,7 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
         .and_then(|error| error.downcast_ref::<HistoryFailure>());
     record(
         evidence,
-        json!({"case":"history","fixture":fixture.id.to_string(),"history":history,
+        &json!({"case":"history","fixture":fixture.id.to_string(),"history":history,
         "completed_steps":completed,"result":if result.is_ok(){"pass"}else{"fail"},
         "failure":failure,
         "failure_class":if result.is_ok(){"none"}else if failure.is_some(){"business"}else{"infrastructure"},
@@ -569,7 +569,7 @@ async fn invalid_status(db: &Client, route: &Route, evidence: &mut File) -> Resu
     );
     record(
         evidence,
-        json!({"case":"invalid-status","fixture":fixture.id.to_string(),"result":"pass"}),
+        &json!({"case":"invalid-status","fixture":fixture.id.to_string(),"result":"pass"}),
     )
 }
 
@@ -630,7 +630,7 @@ async fn mixed_items(db: &Client, route: &Route, evidence: &mut File) -> Result<
     assert_state(&snapshot(db, &fixture).await?, [3, 0], "open", 3, 2)?;
     record(
         evidence,
-        json!({"case":"mixed-envelope","fixture":fixture.id.to_string(),
+        &json!({"case":"mixed-envelope","fixture":fixture.id.to_string(),
         "committed_items":2,"refused_items":1,"result":"pass"}),
     )
 }
@@ -669,7 +669,7 @@ async fn competing_receipts(
     let second_body = receipt_body(
         &fixture,
         Receipt {
-            key: if same_key { 0 } else { 1 },
+            key: u8::from(!same_key),
             line: 0,
             quantity: 2,
         },
@@ -705,7 +705,7 @@ async fn competing_receipts(
     assert_state(&snapshot(db, &fixture).await?, [2, 0], "open", 2, 1)?;
     record(
         evidence,
-        json!({"case":if same_key{"overlapping-replay"}else{"competing-receipts"},
+        &json!({"case":if same_key{"overlapping-replay"}else{"competing-receipts"},
         "fixture":fixture.id.to_string(),"blocked_backends":blocked,"result":"pass"}),
     )
 }
@@ -778,7 +778,7 @@ async fn rollback_after_write(
     );
     record(
         evidence,
-        json!({"case":"rollback-after-receipt-write","fixture":fixture.id.to_string(),
+        &json!({"case":"rollback-after-receipt-write","fixture":fixture.id.to_string(),
         "blocked_backends":blocked,"result":"pass"}),
     )
 }
@@ -804,7 +804,7 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
         // The HTTP adapter received bytes, but the application gets no result.
         arrived
             .send(())
-            .map_err(|_| anyhow::anyhow!("response control disappeared"))?;
+            .map_err(|()| anyhow::anyhow!("response control disappeared"))?;
         control
             .await
             .context("wait for the response suppression control")?;
@@ -819,7 +819,7 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     assert_state(&committed, [2, 0], "open", 2, 1)?;
     suppress
         .send(())
-        .map_err(|_| anyhow::anyhow!("response suppression task disappeared"))?;
+        .map_err(|()| anyhow::anyhow!("response suppression task disappeared"))?;
     ensure!(
         receiver.await.is_err(),
         "REC-LOST-RESPONSE first application result was delivered"
@@ -845,7 +845,7 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     );
     record(
         evidence,
-        json!({"case":"commit-withheld-application-response","fixture":fixture.id.to_string(),
+        &json!({"case":"commit-withheld-application-response","fixture":fixture.id.to_string(),
         "suppression_boundary":"after HTTP bytes, before application result delivery","result":"pass"}),
     )
 }
@@ -898,13 +898,13 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     assert_state(&snapshot(db, &fixture).await?, [2, 0], "open", 2, 1)?;
     record(
         evidence,
-        json!({"case":"denied-then-authorized","fixture":fixture.id.to_string(),"result":"pass"}),
+        &json!({"case":"denied-then-authorized","fixture":fixture.id.to_string(),"result":"pass"}),
     )
 }
 
 pub(crate) fn assert_histories_with_cancellation(
-    inputs: Inputs,
-    cancellation: pg_walstream::CancellationToken,
+    inputs: &Inputs,
+    cancellation: &pg_walstream::CancellationToken,
 ) -> Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
     ensure!(
@@ -973,14 +973,14 @@ pub(crate) fn assert_histories_with_cancellation(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let db = run_before(&runtime, deadline, &cancellation, connect(&inputs.project_pg_url))?;
+    let db = run_before(&runtime, deadline, cancellation, connect(&inputs.project_pg_url))?;
     run_before(
         &runtime,
         deadline,
-        &cancellation,
+        cancellation,
         bind_fixture_principal(&db.client, &inputs.tenant),
     )?;
-    let version: String = run_before(&runtime, deadline, &cancellation, db.client.query_one("SHOW server_version_num", &[]))?
+    let version: String = run_before(&runtime, deadline, cancellation, db.client.query_one("SHOW server_version_num", &[]))?
         .get(0);
     ensure!(
         version.parse::<u32>()? >= 180_000,
@@ -992,7 +992,7 @@ pub(crate) fn assert_histories_with_cancellation(
         .open(&inputs.evidence_file)?;
     record(
         &mut evidence,
-        json!({"case":"identity","source_commit":inputs.source_commit,
+        &json!({"case":"identity","source_commit":inputs.source_commit,
         "component_digests":inputs.component_digests,"corpus_sha256":inputs.corpus_sha256,
         "postgres_server_version_num":version,"schema_state_ids":schema_state_ids,
         "generation_provenance":{"receiving":metadata["provenance"],
@@ -1003,7 +1003,7 @@ pub(crate) fn assert_histories_with_cancellation(
             "REC-ROLLBACK","REC-LOST-RESPONSE","REC-REVISION","REC-AUTHORITY"]}),
     )?;
     if let Some(selected) = &inputs.history {
-        run_before(&runtime, deadline, &cancellation, explicit_history(
+        run_before(&runtime, deadline, cancellation, explicit_history(
             &db.client,
             &route,
             selected,
@@ -1011,12 +1011,12 @@ pub(crate) fn assert_histories_with_cancellation(
         ))?;
         record(
             &mut evidence,
-            json!({"case":"summary","result":"pass","reproduction":true}),
+            &json!({"case":"summary","result":"pass","reproduction":true}),
         )?;
         return Ok(());
     }
     for example in model::examples() {
-        run_before(&runtime, deadline, &cancellation, explicit_history(
+        run_before(&runtime, deadline, cancellation, explicit_history(
             &db.client,
             &route,
             &example,
@@ -1040,7 +1040,7 @@ pub(crate) fn assert_histories_with_cancellation(
             if failures.borrow().infrastructure.is_some() {
                 return Ok(());
             }
-            let result = run_before(&runtime, deadline, &cancellation, history(
+            let result = run_before(&runtime, deadline, cancellation, history(
                 &db.client,
                 &route,
                 &case,
@@ -1054,13 +1054,13 @@ pub(crate) fn assert_histories_with_cancellation(
         if let Some((case, failure)) = &failures.infrastructure {
             record(
                 &mut evidence,
-                json!({"case":"history-infrastructure-failure",
+                &json!({"case":"history-infrastructure-failure",
                 "history":case,"error":format!("{failure:#}"),
                 "shrink_target":failures.target,"confirmed_business_failure":false}),
             )?;
         }
         if let TestError::Fail(reason, minimized) = error {
-            let reproduction = run_before(&runtime, deadline, &cancellation, reproduce_history(
+            let reproduction = run_before(&runtime, deadline, cancellation, reproduce_history(
                 &db.client,
                 &route,
                 &minimized,
@@ -1089,18 +1089,18 @@ pub(crate) fn assert_histories_with_cancellation(
         }
         return Err(anyhow::anyhow!("REC-HISTORY generation aborted: {error}"));
     }
-    run_before(&runtime, deadline, &cancellation, async {
+    run_before(&runtime, deadline, cancellation, async {
         invalid_status(&db.client, &route, &mut evidence).await?;
         mixed_items(&db.client, &route, &mut evidence).await?;
-        competing_receipts(&db.client, &route, &inputs, &mut evidence, false).await?;
-        competing_receipts(&db.client, &route, &inputs, &mut evidence, true).await?;
-        rollback_after_write(&db.client, &route, &inputs, &mut evidence).await?;
+        competing_receipts(&db.client, &route, inputs, &mut evidence, false).await?;
+        competing_receipts(&db.client, &route, inputs, &mut evidence, true).await?;
+        rollback_after_write(&db.client, &route, inputs, &mut evidence).await?;
         lost_response(&db.client, &route, &mut evidence).await?;
-        authority(&db.client, &route, &inputs, &mut evidence).await
+        authority(&db.client, &route, inputs, &mut evidence).await
     })?;
     record(
         &mut evidence,
-        json!({"case":"summary","result":"pass","generated_cases":inputs.cases,
+        &json!({"case":"summary","result":"pass","generated_cases":inputs.cases,
         "explicit_histories":model::examples().len(),"boundary_cases":7}),
     )?;
     println!(
@@ -1124,7 +1124,7 @@ where
         tokio::select! {
             result = tokio::time::timeout_at(deadline, operation) => result
                 .context("the Receiving command histories exceeded 600 seconds")?.map_err(Into::into),
-            _ = cancellation.cancelled() => Err(anyhow::anyhow!("the Receiving command histories were interrupted")),
+            () = cancellation.cancelled() => Err(anyhow::anyhow!("the Receiving command histories were interrupted")),
         }
     })
 }

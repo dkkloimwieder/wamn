@@ -201,7 +201,7 @@ async fn receiving_release_journey(
     }
     reconcile_journey_data_access(inputs, &route.database_url).await?;
     let declarations = render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
-    push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
+    push_journey_components(inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
 
@@ -266,15 +266,17 @@ async fn receiving_release_journey(
 
     let traces = TraceHarness::install();
     let (engine, flow_http, routing, bridge, identity_task) =
-        build_journey_runtime(&inputs, &credentials, release, None).await?;
+        build_journey_runtime(inputs, &credentials, release, None).await?;
     let mut expected_direct_traces = Vec::new();
 
     let (cold_nested_trace, traceparent) = journey_trace(1);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         overlay_route_path("receiving_record_receipt"),
         Some(&route.token),
@@ -317,10 +319,12 @@ async fn receiving_release_journey(
 
     let (_, traceparent) = journey_trace(15);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/location/list",
         Some(&route.token),
@@ -340,10 +344,12 @@ async fn receiving_release_journey(
 
     let (_, traceparent) = journey_trace(16);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/receiving/load_receipt_screen",
         Some(&route.token),
@@ -366,10 +372,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(2);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/purchase_order/get",
         Some(&route.token),
@@ -393,10 +401,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(3);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/purchase_order/query",
         Some(&route.token),
@@ -422,10 +432,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(4);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/purchase_order/update",
         Some(&route.token),
@@ -466,10 +478,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(5);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/receiving/record_receipt",
         Some(&route.token),
@@ -520,10 +534,12 @@ async fn receiving_release_journey(
         "id": receipt_id,
     }]))?;
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/receipt/get",
         Some(&route.token),
@@ -545,10 +561,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(7);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/receipt/query",
         Some(&route.token),
@@ -579,10 +597,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(8);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         overlay_route_path("purchase_order_get"),
         Some(&route.token),
@@ -609,10 +629,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(9);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         overlay_route_path("purchase_order_update"),
         Some(&route.token),
@@ -655,10 +677,12 @@ async fn receiving_release_journey(
 
     let (trace_id, traceparent) = journey_trace(10);
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         overlay_route_path("quality_load_purchase_order_detail"),
         Some(&route.token),
@@ -689,10 +713,12 @@ async fn receiving_release_journey(
         "expected_row_version": "1",
     }]))?;
     let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         overlay_route_path("quality_approve_inspection"),
         Some(&route.token),
@@ -731,10 +757,12 @@ async fn receiving_release_journey(
     );
     let (denied_history_trace, denied_history_parent) = journey_trace(22);
     let denied_history = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/receiving/load_purchase_order_history",
         Some(&route.token),
@@ -764,10 +792,12 @@ async fn receiving_release_journey(
     );
     let (denied_nested_trace, denied_nested_parent) = journey_trace(12);
     let denied_nested = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         overlay_route_path("receiving_record_receipt"),
         Some(&route.token),
@@ -805,10 +835,12 @@ async fn receiving_release_journey(
 
     let (unauthorized_trace, unauthorized_parent) = journey_trace(13);
     let unauthorized = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/purchase_order/get",
         None,
@@ -827,10 +859,12 @@ async fn receiving_release_journey(
 
     let (oversized_trace, oversized_parent) = journey_trace(14);
     let oversized = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
+        &JourneyRuntime {
+            engine: &engine,
+            flow_http: &flow_http,
+            routing: &routing,
+            bridge: &bridge,
+        },
         &inputs.route_host,
         "/purchase_order/get",
         Some(&route.token),
@@ -957,10 +991,12 @@ async fn assert_route_update_record_history(
 ) -> anyhow::Result<()> {
     let (_, traceparent) = journey_trace(17);
     let response = invoke_journey_route(
-        engine,
-        flow_http,
-        Arc::clone(routing),
-        Arc::clone(bridge),
+        &JourneyRuntime {
+            engine,
+            flow_http,
+            routing,
+            bridge,
+        },
         route_host,
         "/purchase_order/update",
         Some(token),
@@ -978,10 +1014,12 @@ async fn assert_route_update_record_history(
 
     let (_, traceparent) = journey_trace(18);
     let response = invoke_journey_route(
-        engine,
-        flow_http,
-        Arc::clone(routing),
-        Arc::clone(bridge),
+        &JourneyRuntime {
+            engine,
+            flow_http,
+            routing,
+            bridge,
+        },
         route_host,
         "/purchase_order/update",
         Some(token),
@@ -1004,10 +1042,12 @@ async fn assert_route_update_record_history(
     // A client-supplied stamp fails the closed route schema at its pointer.
     let (_, traceparent) = journey_trace(19);
     let response = invoke_journey_route(
-        engine,
-        flow_http,
-        Arc::clone(routing),
-        Arc::clone(bridge),
+        &JourneyRuntime {
+            engine,
+            flow_http,
+            routing,
+            bridge,
+        },
         route_host,
         "/purchase_order/update",
         Some(token),
@@ -1056,10 +1096,12 @@ async fn assert_route_history_read(
     const ACME_COLUMNS: [&str; 2] = ["acme_inspection_required", "acme_quality_status"];
     let (_, traceparent) = journey_trace(21);
     let response = invoke_journey_route(
-        engine,
-        flow_http,
-        Arc::clone(routing),
-        Arc::clone(bridge),
+        &JourneyRuntime {
+            engine,
+            flow_http,
+            routing,
+            bridge,
+        },
         route_host,
         "/receiving/load_purchase_order_history",
         Some(token),
@@ -1216,10 +1258,12 @@ async fn assert_unauthorized_no_op_refuses(
     }]))?;
     let (_, traceparent) = journey_trace(20);
     let response = invoke_journey_route(
-        engine,
-        flow_http,
-        Arc::clone(routing),
-        Arc::clone(bridge),
+        &JourneyRuntime {
+            engine,
+            flow_http,
+            routing,
+            bridge,
+        },
         route_host,
         "/purchase_order/update",
         Some(token),

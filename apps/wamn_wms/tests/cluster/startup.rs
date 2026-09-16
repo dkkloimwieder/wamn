@@ -100,9 +100,11 @@ pub(super) async fn requests(
         work,
         image,
         inputs,
-        "cold",
-        "11111111111111111111111111111111",
-        "1111111111111111",
+        &RequestTrace {
+            name: "cold",
+            trace_id: "11111111111111111111111111111111",
+            parent_span: "1111111111111111",
+        },
         evidence,
     )
     .await?;
@@ -166,9 +168,11 @@ pub(super) async fn requests(
         work,
         image,
         inputs,
-        "restart-first",
-        "22222222222222222222222222222222",
-        "2222222222222222",
+        &RequestTrace {
+            name: "restart-first",
+            trace_id: "22222222222222222222222222222222",
+            parent_span: "2222222222222222",
+        },
         evidence,
     )
     .await?;
@@ -177,9 +181,11 @@ pub(super) async fn requests(
         work,
         image,
         inputs,
-        "steady",
-        "33333333333333333333333333333333",
-        "3333333333333333",
+        &RequestTrace {
+            name: "steady",
+            trace_id: "33333333333333333333333333333333",
+            parent_span: "3333333333333333",
+        },
         evidence,
     )
     .await?;
@@ -213,16 +219,26 @@ pub(super) async fn requests(
     )
 }
 
+/// The trace identity one measured request is issued under.
+struct RequestTrace<'a> {
+    name: &'a str,
+    trace_id: &'a str,
+    parent_span: &'a str,
+}
+
 async fn request(
     cluster: &str,
     work: &Path,
     image: &str,
     inputs: &JourneyDocument,
-    name: &str,
-    trace_id: &str,
-    parent_span: &str,
+    trace: &RequestTrace<'_>,
     evidence: &Path,
 ) -> anyhow::Result<f64> {
+    let RequestTrace {
+        name,
+        trace_id,
+        parent_span,
+    } = *trace;
     let caller: Value = serde_json::from_slice(&fs::read(&inputs.route_caller_secret_output)?)?;
     let secret = caller["metadata"]["name"]
         .as_str()
@@ -238,8 +254,7 @@ async fn request(
         &inputs.route_host,
         secret,
         &job,
-        trace_id,
-        parent_span,
+        (trace_id, parent_span),
         &body,
     );
     let path = work.join(format!("{job}.json"));
@@ -319,10 +334,10 @@ fn request_job(
     route_host: &str,
     secret: &str,
     job: &str,
-    trace_id: &str,
-    parent_span: &str,
+    trace: (&str, &str),
     body: &str,
 ) -> Value {
+    let (trace_id, parent_span) = trace;
     // The mounted PAT stays inside the owned request pod. Results contain no credentials.
     let script = r#"probe_start=$(date +%s)
 attempt=0
@@ -609,10 +624,12 @@ fn trace_breakdown(document: &Value, name: &str, total_ms: f64) -> anyhow::Resul
             };
             let start = nanos("startTimeUnixNano")?;
             let end = nanos("endTimeUnixNano")?;
-            total += end
-                .checked_sub(start)
-                .context("span ends before it starts")? as f64
-                / 1_000_000.0;
+            total += std::time::Duration::from_nanos(
+                end.checked_sub(start)
+                    .context("span ends before it starts")?,
+            )
+            .as_secs_f64()
+                * 1_000.0;
         }
         Ok(total)
     };
@@ -650,7 +667,7 @@ async fn startup_time(
         .filter(|line| line.contains("wamn-host runtime startup completed"))
         .flat_map(str::split_whitespace)
         .filter_map(|field| field.strip_prefix("elapsed_ms="))
-        .last()
+        .next_back()
         .context("host did not report completed startup duration")?
         .parse()
         .context("host startup duration is a whole number of milliseconds")
@@ -726,8 +743,7 @@ mod tests {
             "selected.example",
             "selected-pat",
             "selected-job",
-            "11111111111111111111111111111111",
-            "1111111111111111",
+            ("11111111111111111111111111111111", "1111111111111111"),
             body,
         );
         assert_eq!(
@@ -893,9 +909,9 @@ printf '%s 0.001 0.002' "$status"
     fn startup_request_keeps_the_recovery_limit_and_pallet_identity() {
         let body = json!([{"request_id":"startup-restart-first","value":{"id":super::super::application::PALLET_ID}}]);
         let mut result = json!({"status":"200","first_seconds":"0.010","total_seconds":"0.020","recovery_seconds":120,"body_hex":hex::encode(serde_json::to_vec(&body).unwrap())});
-        assert_eq!(
-            assert_response(&result, "startup-restart-first", true).unwrap(),
-            20.0
+        assert!(
+            (assert_response(&result, "startup-restart-first", true).unwrap() - 20.0).abs()
+                < f64::EPSILON
         );
         result["recovery_seconds"] = json!(121);
         assert!(assert_response(&result, "startup-restart-first", true).is_err());

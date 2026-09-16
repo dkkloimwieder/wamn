@@ -574,13 +574,12 @@ impl Watch {
             Ok::<_, std::io::Error>(status)
         })
         .await;
-        let status = match completed {
-            Ok(status) => status?,
-            Err(_) => {
-                self.kill_group();
-                self.child.kill().await?;
-                anyhow::bail!("the owned developer process did not stop within its cleanup bound");
-            }
+        let status = if let Ok(status) = completed {
+            status?
+        } else {
+            self.kill_group();
+            self.child.kill().await?;
+            anyhow::bail!("the owned developer process did not stop within its cleanup bound");
         };
         self.kill_group();
         ensure!(

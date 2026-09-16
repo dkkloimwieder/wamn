@@ -21,15 +21,20 @@ const LOCATION_B_ID: &str = "00000000-0000-0000-0000-000000000202";
 pub(super) const PALLET_ID: &str = "00000000-0000-0000-0000-000000000301";
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
+/// The artifacts and endpoint one application publication is minted from.
+pub(super) struct PublicationInputs<'a> {
+    pub(super) scenario_worker: &'a Path,
+    pub(super) label_render: &'a Path,
+    pub(super) minio_endpoint: &'a str,
+    pub(super) mint_only: bool,
+}
+
 pub(super) async fn prepare_application(
     inputs: &JourneyDocument,
     work: &Path,
     admin_url: &str,
-    scenario_worker: &Path,
-    label_render: &Path,
-    minio_endpoint: &str,
+    publication: &PublicationInputs<'_>,
     evidence: &Path,
-    mint_only: bool,
 ) -> anyhow::Result<(
     wamn_control::provision_project_env::ProvisionedRoute,
     wamn_control::print_release_env::ReleaseCarrier,
@@ -39,18 +44,17 @@ pub(super) async fn prepare_application(
         &inputs.system_pg_url,
         work,
         "https://127.0.0.1",
-        std::time::Duration::from_secs(86_400),
+        std::time::Duration::from_hours(24),
         0,
         "wamn-identity-db",
     )
     .await?;
-    let issued =
+    let issued_pat =
         crate::environment::provision_project(inputs, work, admin_url, issuer.args.clone()).await;
     let stopped = issuer.stop().await;
-    let route = match (issued, stopped) {
+    let route = match (issued_pat, stopped) {
         (Ok(route), Ok(())) => route,
-        (Err(error), Ok(())) => return Err(error),
-        (Ok(_), Err(error)) => return Err(error),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
         (Err(error), Err(cleanup)) => {
             return Err(error.context(format!("PAT shutdown also failed: {cleanup:#}")));
         }
@@ -60,11 +64,13 @@ pub(super) async fn prepare_application(
         inputs,
         &route,
         &credentials,
-        scenario_worker,
-        label_render,
-        minio_endpoint,
+        &crate::environment::PublicationArtifacts {
+            scenario_worker: publication.scenario_worker,
+            label_render_wasm: publication.label_render,
+            minio_endpoint: publication.minio_endpoint,
+            mint_only: publication.mint_only,
+        },
         evidence,
-        mint_only,
     )
     .await?;
     let (project, task) = wamn_ctl::dev::environment::connect(&route.database_url).await?;
@@ -97,14 +103,19 @@ pub(super) fn host_secrets(
     )
 }
 
+/// The identities one rendered host group binds to.
+pub(super) struct HostBinding<'a> {
+    pub(super) host_tag: &'a str,
+    pub(super) nats_url: &'a str,
+    pub(super) database_host: &'a str,
+    pub(super) manifest_digest: &'a str,
+    pub(super) source: &'a async_nats::jetstream::stream::Config,
+    pub(super) replicas: u32,
+}
+
 pub(super) fn render_host(
     inputs: &JourneyDocument,
-    host_tag: &str,
-    nats_url: &str,
-    database_host: &str,
-    manifest_digest: &str,
-    source: &async_nats::jetstream::stream::Config,
-    replicas: u32,
+    binding: &HostBinding<'_>,
     work: &Path,
 ) -> anyhow::Result<(std::path::PathBuf, std::path::PathBuf)> {
     use wamn_control_provision::WorkloadRoleFamily;
@@ -112,6 +123,15 @@ pub(super) fn render_host(
         EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
         render_host_values,
     };
+
+    let HostBinding {
+        host_tag,
+        nats_url,
+        database_host,
+        manifest_digest,
+        source,
+        replicas,
+    } = *binding;
 
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let secrets = host_secrets(inputs, database_host)?;
@@ -293,18 +313,30 @@ pub(super) async fn partial_completion(
     write_result(evidence, "wms-partial-database.json", &rows)
 }
 
+/// Where one generated-terminal check reads its sources and writes its results.
+pub(super) struct TerminalPaths<'a> {
+    pub(super) repository: &'a Path,
+    pub(super) target: &'a Path,
+    pub(super) work: &'a Path,
+    pub(super) evidence: &'a Path,
+}
+
 pub(super) async fn generated_terminal(
     inputs: &JourneyDocument,
-    repository: &Path,
-    target: &Path,
+    paths: &TerminalPaths<'_>,
     project_url: &str,
     target_instance: &str,
     mode: &str,
-    work: &Path,
-    evidence: &Path,
     store: &AmazonS3,
 ) -> anyhow::Result<()> {
     use sha2::{Digest as _, Sha256};
+
+    let TerminalPaths {
+        repository,
+        target,
+        work,
+        evidence,
+    } = *paths;
     let token = wamn_control::provision_project_env::secret_value(
         &inputs.route_caller_secret_output,
         "token",
