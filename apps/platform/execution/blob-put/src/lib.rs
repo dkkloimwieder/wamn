@@ -42,15 +42,21 @@
 // on the exported interface and drives it through call_async; admission
 // admits the async lift on this contract alone. label-render, which imports
 // nothing async, keeps `handler`.
-wit_bindgen::generate!({
-    world: "blob-put",
-    path: "wit",
-    generate_all,
-    async: ["export:wamn:node/async-handler@0.1.0#run"],
-});
+#[allow(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "blob-put",
+        path: "wit",
+        generate_all,
+        async: ["export:wamn:node/async-handler@0.1.0#run"],
+    });
+}
 
-use exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
-use wamn::node::types::ErrorDetail;
+use bindings::exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
+use bindings::wamn::node::types::ErrorDetail;
 
 /// One JSON-pointer wiring parameter.
 ///
@@ -171,14 +177,14 @@ async fn write_object(
 ) -> Result<String, NodeError> {
     // The generated `wit_stream::new` is the only way a guest mints a
     // component-model stream; the vtable it needs is private to the bindings.
-    let (mut writer, reader) = wit_stream::new::<u8>();
-    let container = wasmcloud::blobstore::blobstore::get_container(store_alias)
+    let (mut writer, reader) = bindings::wit_stream::new::<u8>();
+    let container = bindings::wasmcloud::blobstore::blobstore::get_container(store_alias)
         .await
-        .map_err(|error| terminal("no_container", &format!("{error:?}")))?;
+        .map_err(|error| terminal("no_container", format!("{error:?}")))?;
     let name = container
         .name()
         .await
-        .map_err(|error| terminal("container_unnamed", &format!("{error:?}")))?;
+        .map_err(|error| terminal("container_unnamed", format!("{error:?}")))?;
     // THE WRITE AND THE HAND-OVER RUN TOGETHER (wamn-362o.47). A component-
     // model stream write completes only as its reader consumes, and the
     // reader reaches the host inside `write-data`. Awaiting the body write
@@ -193,7 +199,7 @@ async fn write_object(
         drop(writer);
     };
     let (written, ()) = join2(container.write_data(key, reader), fill).await;
-    written.map_err(|error| terminal("write_failed", &format!("{error:?}")))?;
+    written.map_err(|error| terminal("write_failed", format!("{error:?}")))?;
     Ok(name)
 }
 
@@ -212,15 +218,15 @@ where
     let mut a_out = None;
     let mut b_out = None;
     std::future::poll_fn(|cx| {
-        if a_out.is_none() {
-            if let Poll::Ready(value) = a.as_mut().poll(cx) {
-                a_out = Some(value);
-            }
+        if a_out.is_none()
+            && let Poll::Ready(value) = a.as_mut().poll(cx)
+        {
+            a_out = Some(value);
         }
-        if b_out.is_none() {
-            if let Poll::Ready(value) = b.as_mut().poll(cx) {
-                b_out = Some(value);
-            }
+        if b_out.is_none()
+            && let Poll::Ready(value) = b.as_mut().poll(cx)
+        {
+            b_out = Some(value);
         }
         if a_out.is_some() && b_out.is_some() {
             Poll::Ready((a_out.take().unwrap(), b_out.take().unwrap()))
@@ -245,4 +251,4 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
     })
 }
 
-export!(Component);
+bindings::export!(Component with_types_in bindings);
