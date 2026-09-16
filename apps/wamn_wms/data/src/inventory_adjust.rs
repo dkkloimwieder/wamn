@@ -25,6 +25,9 @@ use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_adjust as sql;
 use crate::scalar;
 
+/// What `inventory.adjust` can refuse with. Read only by the contract test in
+/// `error`, which holds this list to the operation's generated contract.
+#[cfg(test)]
 pub(crate) const REFUSALS: &[AccessErrorKind] = &[
     AccessErrorKind::InvalidInput,
     AccessErrorKind::PalletNotFound,
