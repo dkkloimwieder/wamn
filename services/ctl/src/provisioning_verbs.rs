@@ -119,8 +119,9 @@ pub struct ProvisionProjectEnvArgs {
     pub emit_role_sql: Option<PathBuf>,
 
     /// Write the privilege SQL (`ALTER DATABASE … OWNER TO wamn_db_owner`, then
-    /// `REVOKE CONNECT,TEMPORARY FROM PUBLIC` / `GRANT CONNECT TO wamn_app`;
-    /// apply AFTER the database is ready) here; `-` = stdout.
+    /// `REVOKE CONNECT,TEMPORARY FROM PUBLIC` and `REVOKE CONNECT` from
+    /// `wamn_app` and `wamn_dispatch_reader`; apply AFTER the database is
+    /// ready) here; `-` = stdout.
     #[arg(long)]
     pub emit_privilege_sql: Option<PathBuf>,
 
