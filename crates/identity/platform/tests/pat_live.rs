@@ -258,7 +258,10 @@ async fn platform_pat_round_trip_on_postgres() {
         .await
         .expect("list human tokens");
     assert_eq!(
-        listed.iter().map(|pat| pat.label()).collect::<Vec<_>>(),
+        listed
+            .iter()
+            .map(wamn_platform_identity::PatRecord::label)
+            .collect::<Vec<_>>(),
         ["expiring", "revocable", "laptop"]
     );
     assert!(listed.iter().all(|pat| pat.prefix().len() == 16));

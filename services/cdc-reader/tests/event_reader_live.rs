@@ -208,7 +208,7 @@ async fn read_all(
                 .headers
                 .as_ref()
                 .and_then(|h| h.get(NATS_MESSAGE_ID))
-                .map(|v| v.to_string())
+                .map(std::string::ToString::to_string)
                 .unwrap_or_default();
             let envelope: Envelope =
                 serde_json::from_slice(&msg.payload).expect("envelope deserializes (draft shape)");
@@ -899,7 +899,12 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         base + 5,
         "5 row events (100-104); the rolled-back txn (105) + the message frames publish nothing"
     );
-    let all = read_all(&js, &stream_name, (base + 5) as usize).await;
+    let all = read_all(
+        &js,
+        &stream_name,
+        usize::try_from(base + 5).expect("the fixture count fits a usize"),
+    )
+    .await;
     let caus: std::collections::BTreeMap<i64, Option<Causation>> = all
         .iter()
         .filter_map(|(_, _, e)| {

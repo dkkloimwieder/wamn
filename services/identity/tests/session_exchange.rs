@@ -597,7 +597,7 @@ async fn verify_response(
     assert!(!String::from_utf8_lossy(&bytes).contains(PASSWORD));
     let body: Value = serde_json::from_slice(&bytes).expect_redacted("exchange JSON");
     assert_fields(&body, &["access_token", "expires_at", "token_type"]);
-    assert!(body["token_type"] == "Bearer");
+    assert_eq!(body["token_type"], "Bearer");
     let token = body["access_token"]
         .as_str()
         .expect_redacted("bearer string");

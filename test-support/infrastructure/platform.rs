@@ -248,8 +248,10 @@ fn render_event_rbac(template: &str, namespace: &str) -> anyhow::Result<String> 
         .context("parse operator event permissions")?;
     for document in &mut documents {
         match document {
-            EventRbac::Role(role) => role.metadata.namespace = namespace.to_owned(),
-            EventRbac::RoleBinding(binding) => binding.metadata.namespace = namespace.to_owned(),
+            EventRbac::Role(role) => namespace.clone_into(&mut role.metadata.namespace),
+            EventRbac::RoleBinding(binding) => {
+                namespace.clone_into(&mut binding.metadata.namespace);
+            }
         }
     }
     Ok(documents
@@ -279,12 +281,12 @@ fn validate_event_role(role: &EventRole, namespace: &str) -> anyhow::Result<()> 
         role.rules.len() == 1,
         "operator event Role must contain exactly one rule"
     );
-    let rule = &role.rules[0];
-    let mut verbs = rule.verbs.clone();
+    let first_rule = &role.rules[0];
+    let mut verbs = first_rule.verbs.clone();
     verbs.sort();
     ensure!(
-        rule.api_groups == ["events.k8s.io"]
-            && rule.resources == ["events"]
+        first_rule.api_groups == ["events.k8s.io"]
+            && first_rule.resources == ["events"]
             && verbs == ["create", "patch"],
         "operator event Role must grant only create and patch on events.k8s.io events"
     );
@@ -335,7 +337,7 @@ fn render_environment_certificates(template: &str, namespace: &str) -> anyhow::R
         .collect::<Result<Vec<_>, _>>()
         .context("parse environment certificates")?;
     for certificate in &mut certificates {
-        certificate.metadata.namespace = namespace.to_owned();
+        namespace.clone_into(&mut certificate.metadata.namespace);
     }
     Ok(certificates
         .iter()
@@ -548,7 +550,7 @@ mod tests {
         for field in ["groups", "resources", "verbs", "rules"] {
             let mut role = original.clone();
             match field {
-                "groups" => role.rules[0].api_groups = vec!["".into()],
+                "groups" => role.rules[0].api_groups = vec![String::new()],
                 "resources" => role.rules[0].resources = vec!["secrets".into()],
                 "verbs" => role.rules[0].verbs.push("get".into()),
                 "rules" => role.rules.push(role.rules[0].clone()),

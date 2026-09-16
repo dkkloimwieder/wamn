@@ -150,14 +150,16 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     )
     .await?;
     let hosts = workload::hosts_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &resources.host_image,
-        &digest,
-        3,
-        &resources.evidence,
+        &workload::HostsReadyInput {
+            lifecycle: &resources.lifecycle,
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+            image: &resources.host_image,
+            runtime_digest: &digest,
+            replicas: 3,
+            evidence: &resources.evidence,
+        },
     )
     .await?;
     let (http_image, materializer_image) = deployment::publish_platform_components(cluster).await?;
@@ -187,15 +189,17 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     cluster.inputs.materializer = Some(phase);
     assert_materializer_logs(cluster, &hosts.pods).await?;
     wamn_test_infrastructure::traces::telemetry::collect(
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &resources.source,
-        super::super::TENANT,
-        super::super::PROJECT,
-        super::super::ENVIRONMENT,
-        [("update", &update_trace), ("receipt", &receipt_trace)],
-        &resources.evidence.join("telemetry"),
+        &wamn_test_infrastructure::traces::telemetry::TelemetryInput {
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+            source: &resources.source,
+            tenant: super::super::TENANT,
+            project: super::super::PROJECT,
+            environment: super::super::ENVIRONMENT,
+            requests: [("update", &update_trace), ("receipt", &receipt_trace)],
+            evidence: &resources.evidence.join("telemetry"),
+        },
     )
     .await?;
     cluster.inputs.postcommit = Some(PostcommitPhase {

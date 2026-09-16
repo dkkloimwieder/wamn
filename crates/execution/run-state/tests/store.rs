@@ -1,5 +1,9 @@
 //! Persisted status vocabulary and canonical run-state DDL tests.
 
+use std::fmt::Write as _;
+use std::io::Write as _;
+use std::process::{Command as Proc, Stdio};
+
 use serde_json::json;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
@@ -372,7 +376,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
 
     let mut script = String::new();
     // Prepare the production-shaped App identity and a fresh schema.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{app_role}') THEN \
            EXECUTE format('DROP OWNED BY %I', '{app_role}'); \
            EXECUTE format('DROP ROLE %I', '{app_role}'); \
@@ -394,8 +399,9 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          );\n\
          INSERT INTO catalog.effective_releases VALUES\n\
            ('t1',1,'test','test-publisher'), ('t2',1,'test','test-publisher'),\n\
-           ('t3',1,'test','test-publisher');\n"
-    ));
+           ('t3',1,'test','test-publisher');"
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(&ddl);
     script.push('\n');
     script.push_str(
@@ -418,13 +424,15 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     );
     // The generation's `current_user` derives tenant t1 and sees only that
     // tenant's run without trusting a settable claim.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "BEGIN;\n\
          SET LOCAL ROLE {app_role};\n\
          SET LOCAL search_path TO wamn_run;\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 1, 't1 sees only its run'; END $$;\n\
-         COMMIT;\n"
-    ));
+         COMMIT;"
+    )
+    .expect("writing to a String cannot fail");
     // Intentional refusal fixture: the stable ACL role carries no tenant key,
     // so even a superuser's SET ROLE probe sees zero rows.
     script.push_str(
@@ -466,7 +474,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         .map(|literal| format!("'{literal}'"))
         .collect::<Vec<_>>()
         .join(", ");
-    script.push_str(&format!(
+    writeln!(
+        script,
         "CREATE TEMP TABLE status_probe (literal text PRIMARY KEY, answer text NOT NULL);\n\
          DO $status_probe$\n\
          DECLARE candidate text; ordinal int := 0;\n\
@@ -499,23 +508,24 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
              AND con.contype = 'c'\n\
              AND cardinality(con.conkey) = 1\n\
              AND col.attname = 'status'\n\
-         ) AS installed;\n"
-    ));
+         ) AS installed;"
+    )
+    .expect("writing to a String cannot fail");
     // Terminal run history remains deletable.
     script.push_str(
         "UPDATE wamn_run.runs SET status='completed' \
            WHERE tenant_id='t1' AND run_id='run-a';\n\
          DELETE FROM wamn_run.runs WHERE tenant_id='t1' AND run_id='run-a';\n",
     );
-    script.push_str(&format!(
+    writeln!(
+        script,
         "DROP SCHEMA wamn_run CASCADE; DROP SCHEMA catalog CASCADE;\n\
          {retire_app}\n\
          {drain_app}\n\
-         DROP ROLE \"{app_role}\";\n"
-    ));
+         DROP ROLE \"{app_role}\";"
+    )
+    .expect("writing to a String cannot fail");
 
-    use std::io::Write;
-    use std::process::{Command as Proc, Stdio};
     let mut child = Proc::new("psql")
         .arg(&url)
         // `-A -t` so the probe's answers arrive as bare tagged lines.

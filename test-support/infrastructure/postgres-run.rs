@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
                         .context("--database requires a name")?
                         .into_string()
                         .map_err(|_| anyhow::anyhow!("the database name must be UTF-8"))?,
-                )
+                );
             }
             Some("--url-env") => names.push(
                 args.next()
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
                         .context("--schema requires a name")?
                         .into_string()
                         .map_err(|_| anyhow::anyhow!("the schema must be UTF-8"))?,
-                )
+                );
             }
             Some("--migration-dir") => migrations.push(PathBuf::from(
                 args.next().context("--migration-dir requires a path")?,
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             Some("--history-manifest") => {
                 history_manifest = Some(PathBuf::from(
                     args.next().context("--history-manifest requires a path")?,
-                ))
+                ));
             }
             Some("--") => {
                 program = args.next();
@@ -128,8 +128,11 @@ async fn run(
     let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let mut child = command.spawn().context("start the owned database test")?;
     let group = ProcessGroup(
-        Pid::from_raw(child.id().context("the child has a process ID")? as i32)
-            .context("the child process ID is positive")?,
+        Pid::from_raw(
+            i32::try_from(child.id().context("the child has a process ID")?)
+                .context("the child process ID fits a signed identifier")?,
+        )
+        .context("the child process ID is positive")?,
     );
     let status = tokio::select! {
         status = child.wait() => status.context("wait for the owned database test"),

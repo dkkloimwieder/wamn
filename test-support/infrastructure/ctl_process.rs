@@ -100,9 +100,7 @@ fn binary(env: &str, name: &str) -> OsString {
             .flatten()
             .filter(|path| path.is_file())
     });
-    sibling
-        .map(PathBuf::into_os_string)
-        .unwrap_or_else(|| OsString::from(name))
+    sibling.map_or_else(|| OsString::from(name), PathBuf::into_os_string)
 }
 
 fn ctl_command<I, S>(binary: &OsStr, args: I) -> Command

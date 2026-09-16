@@ -561,14 +561,16 @@ async fn run_created(
             None
         };
         let hosts = workload::hosts_ready(
-            lifecycle,
-            cluster,
-            work,
-            cluster,
-            image,
-            runtime_digest,
-            if measure_startup { 1 } else { 3 },
-            evidence,
+            &workload::HostsReadyInput {
+                lifecycle,
+                cluster,
+                work,
+                namespace: cluster,
+                image,
+                runtime_digest,
+                replicas: if measure_startup { 1 } else { 3 },
+                evidence,
+            },
         )
         .await?;
         let flow_http = deployment::publish_runtime(

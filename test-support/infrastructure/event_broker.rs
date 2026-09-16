@@ -39,11 +39,11 @@ struct BrokerConfiguration {
 
 #[derive(Serialize)]
 struct Authorization {
-    users: Vec<User>,
+    users: Vec<Account>,
 }
 
 #[derive(Serialize)]
-struct User {
+struct Account {
     user: String,
     password: String,
     permissions: Permissions,
@@ -216,7 +216,7 @@ fn credentials(
     stream: &str,
     publish: Vec<String>,
     tap: Option<String>,
-    users: &mut Vec<User>,
+    users: &mut Vec<Account>,
 ) -> anyhow::Result<Credentials> {
     let username = format!("{role}_{stream}");
     let mut random = [0u8; 32];
@@ -232,7 +232,7 @@ fn credentials(
     )?;
     let mut subscribe = vec![format!("_INBOX_{username}.>")];
     subscribe.extend(tap);
-    users.push(User {
+    users.push(Account {
         user: username.clone(),
         password,
         permissions: Permissions {
@@ -425,7 +425,7 @@ mod tests {
                 "acme",
                 &source,
                 &advisory,
-                &[consumer.clone()]
+                std::slice::from_ref(&consumer)
             )
             .is_err()
         );
@@ -437,7 +437,7 @@ mod tests {
                 "*",
                 &source,
                 &advisory,
-                &[consumer.clone()]
+                std::slice::from_ref(&consumer)
             )
             .is_err()
         );

@@ -667,14 +667,16 @@ pub(super) async fn assert_session(
     )
     .await?;
     workload::hosts_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &resources.host_image,
-        &host_digest,
-        2,
-        &resources.evidence,
+        &workload::HostsReadyInput {
+            lifecycle: &resources.lifecycle,
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+            image: &resources.host_image,
+            runtime_digest: &host_digest,
+            replicas: 2,
+            evidence: &resources.evidence,
+        },
     )
     .await?;
     let deployment = read_object(

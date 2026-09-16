@@ -974,6 +974,9 @@ mod tests {
         provider: SdkMeterProvider,
     }
 
+    /// One exported series: instrument name, sorted attributes, and value.
+    type MetricSeries = (String, Vec<(String, String)>, i64);
+
     impl MetricHarness {
         fn install() -> Self {
             let exporter = InMemoryMetricExporter::default();
@@ -989,7 +992,7 @@ mod tests {
 
         /// One exporter tick: flush, then read back only the NEWEST batch, so
         /// two calls model two ticks of the exporter's own clock.
-        fn export(&self) -> Vec<(String, Vec<(String, String)>, i64)> {
+        fn export(&self) -> Vec<MetricSeries> {
             self.provider
                 .force_flush()
                 .expect("test metrics must flush");

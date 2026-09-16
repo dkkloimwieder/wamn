@@ -495,12 +495,12 @@ async fn crash_rotation(url: &str, observer: &Client, next: &PublicSessionKey) {
 async fn wait_blocked(observer: &Client, waiting: i32, blocker: i32) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let blocked: bool = observer
+            let is_blocked: bool = observer
                 .query_one("SELECT $2=ANY(pg_blocking_pids($1))", &[&waiting, &blocker])
                 .await
                 .unwrap()
                 .get(0);
-            if blocked {
+            if is_blocked {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;

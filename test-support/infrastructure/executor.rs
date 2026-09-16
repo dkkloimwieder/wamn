@@ -119,7 +119,7 @@ fn redact(mut text: String, secrets: &[String]) -> String {
 fn file_hash(path: &Path) -> anyhow::Result<String> {
     let mut file = File::open(path)?;
     let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
-    let mut buffer = [0u8; 64 * 1024];
+    let mut buffer = vec![0u8; 64 * 1024].into_boxed_slice();
     loop {
         let count = file.read(&mut buffer)?;
         if count == 0 {

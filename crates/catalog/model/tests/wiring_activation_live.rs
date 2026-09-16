@@ -13,6 +13,8 @@
 //! Each gate runs as the superuser of its own test database and holds the
 //! process lock, because it creates cluster-wide roles.
 
+use std::fmt::Write as _;
+
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
@@ -189,19 +191,23 @@ fn wiring_activation_live() {
 
     // Rollback is discovered, then performed by the SAME `flip` statement — the
     // one this script prepared once, from the one builder in the crate.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "CREATE TEMP TABLE prior_probe AS EXECUTE prior('shop','prod','orders-create','{b}');\n\
-         SELECT 'prior=' || coalesce((SELECT confirmed_definition_hash FROM prior_probe), 'none');\n",
+         SELECT 'prior=' || coalesce((SELECT confirmed_definition_hash FROM prior_probe), 'none');",
         b = hash('b'),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(&activate(&hash('a'), true, "rollback to v1"));
     script.push_str(&read("rolled_back"));
 
     // A flip that does not commit leaves the stored activation unchanged.
-    script.push_str(&format!(
-        "BEGIN;\nEXECUTE flip('shop','prod','orders-create','{b}',true);\nROLLBACK;\n",
+    writeln!(
+        script,
+        "BEGIN;\nEXECUTE flip('shop','prod','orders-create','{b}',true);\nROLLBACK;",
         b = hash('b'),
-    ));
+    )
+    .expect("writing to a String cannot fail");
     script.push_str(&read("after_abort"));
 
     // Taking a wiring dark is the same flip with `enabled = false`; the
@@ -213,12 +219,14 @@ fn wiring_activation_live() {
     // The serving generation inherits SELECT and nothing else from the stable
     // ACL role. Its `current_user` supplies the tenant authority; `app.tenant`
     // remains the matching data-value input.
-    script.push_str(&format!(
+    writeln!(
+        script,
         "BEGIN;\nSET LOCAL ROLE {app_generation};\nSET LOCAL app.tenant = '{TENANT}';\n\
          SELECT 'as_app_user=' || current_user;\n\
-         {read}COMMIT;\n",
+         {read}COMMIT;",
         read = read("as_app"),
-    ));
+    )
+    .expect("writing to a String cannot fail");
 
     script.push_str(
         "SELECT 'event=' || confirmed_definition_hash || '|' || enabled::text \
@@ -373,15 +381,17 @@ fn the_terminal_document_survives_fresh_catalog_storage() {
     let wire = serde_json::to_string(&document).expect("the document serializes");
 
     let mut script = preamble(&database, &app_generation);
-    script.push_str(&format!(
+    writeln!(
+        script,
         "SET app.tenant = 't1';\n\
          INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
                 version, graph_json, wiring_hash) \
          VALUES ('t1','shop','1.0.0','terminal-roundtrip',1,$doc${wire}$doc$,'{digest}');\n\
          SELECT 'stored=' || graph_json::text FROM catalog.wirings \
-          WHERE wiring_id = 'terminal-roundtrip' AND version = 1;\n",
+          WHERE wiring_id = 'terminal-roundtrip' AND version = 1;",
         digest = document.wiring_hash(),
-    ));
+    )
+    .expect("writing to a String cannot fail");
 
     let stdout = success(&url, &script);
     let reported = |label: &str| {

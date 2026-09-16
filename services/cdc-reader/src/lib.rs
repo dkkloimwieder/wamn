@@ -437,10 +437,10 @@ async fn resolve_relation_classification(
                         entity_id,
                     }))
                 }
-                (None, None, Some(package_id), Some(relation_id)) => {
+                (None, None, Some(package_id), Some(excluded_id)) => {
                     Ok(RelationClassification::Excluded(ExcludedRelation {
                         package_id,
-                        relation_id,
+                        relation_id: excluded_id,
                     }))
                 }
                 (None, None, None, None) => Err(ReplicationError::Config(format!(
@@ -834,12 +834,12 @@ async fn ladder_step_or_bail(
                 error = %e,
                 reopens = ladder.reopens(),
                 consecutive_failures = ladder.consecutive_failures(),
-                backoff_ms = delay.as_millis() as u64,
+                backoff_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
                 "session severed/failed; backing off before re-open"
             );
             tokio::select! {
-                _ = token.cancelled() => {}
-                _ = tokio::time::sleep(delay) => {}
+                () = token.cancelled() => {}
+                () = tokio::time::sleep(delay) => {}
             }
             Ok(())
         }
@@ -1058,11 +1058,12 @@ async fn drain(
                 // Begin/Commit; one outside a frame is a protocol surprise —
                 // log and ignore, never crash the session.
                 if let Some(c) = parse_causation(flags, &prefix, &content) {
-                    match txn.as_mut() {
-                        Some(frame) => frame.causation = Some(c),
-                        None => tracing::warn!(
+                    if let Some(frame) = txn.as_mut() {
+                        frame.causation = Some(c);
+                    } else {
+                        tracing::warn!(
                             "transactional wamn.causation message outside a txn frame — ignored"
-                        ),
+                        );
                     }
                 }
                 continue;
@@ -1155,7 +1156,7 @@ async fn drain(
                     relation = excluded.relation_id.as_str(),
                     "CDC exclusion resolved"
                 ),
-            };
+            }
             remember_relation_classification(&mut relation_classifications, relation_oid, resolved)
         };
         let Some(frame) = txn.as_mut() else {
@@ -1442,8 +1443,8 @@ fn spawn_slot_monitor(
                 );
             }
             tokio::select! {
-                _ = token.cancelled() => return,
-                _ = tokio::time::sleep(poll) => {}
+                () = token.cancelled() => return,
+                () = tokio::time::sleep(poll) => {}
             }
         }
     });
@@ -1535,8 +1536,8 @@ async fn publish_txn<P: AckPublisher>(
                     }
                 }
                 tokio::select! {
-                    _ = token.cancelled() => return PublishOutcome::CancelledMidRetry,
-                    _ = tokio::time::sleep(delay) => {}
+                    () = token.cancelled() => return PublishOutcome::CancelledMidRetry,
+                    () = tokio::time::sleep(delay) => {}
                 }
                 delay = (delay * 2).min(Duration::from_secs(10));
             }
@@ -2152,22 +2153,28 @@ mod tests {
 
     impl AckPublisher for FakePublisher {
         type Ack = usize;
-        async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<usize> {
+        fn send(
+            &self,
+            msg: &PreparedMsg,
+        ) -> impl std::future::Future<Output = anyhow::Result<usize>> {
             let idx: usize = msg.id.parse().unwrap();
             self.log.borrow_mut().push(format!("send:{idx}"));
-            Ok(idx)
+            std::future::ready(Ok(idx))
         }
-        async fn settle(&self, ack: usize) -> anyhow::Result<PublishAcknowledgment> {
+        fn settle(
+            &self,
+            ack: usize,
+        ) -> impl std::future::Future<Output = anyhow::Result<PublishAcknowledgment>> {
             let idx = ack;
             if self.settle_fails.borrow()[idx] > 0 {
                 self.settle_fails.borrow_mut()[idx] -= 1;
                 self.log.borrow_mut().push(format!("settlefail:{idx}"));
-                return Err(anyhow::anyhow!("scripted ack failure at {idx}"));
+                return std::future::ready(Err(anyhow::anyhow!("scripted ack failure at {idx}")));
             }
             self.log.borrow_mut().push(format!("settle:{idx}"));
-            Ok(PublishAcknowledgment {
+            std::future::ready(Ok(PublishAcknowledgment {
                 duplicate: self.duplicate.borrow()[idx],
-            })
+            }))
         }
     }
 
@@ -2310,10 +2317,6 @@ mod tests {
     /// messages so a real mid-transaction drain is exercised.
     #[tokio::test]
     async fn pipelined_publish_lands_in_order_and_dedupes_live() {
-        let Ok(nats_url) = std::env::var("WAMN_E1_NATS_URL") else {
-            eprintln!("WAMN_E1_NATS_URL unset — skipping E1 live JetStream gate");
-            return;
-        };
         use async_nats::jetstream::consumer::pull::Config as PullConfig;
         use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
         use futures_util::StreamExt as _;
@@ -2322,6 +2325,11 @@ mod tests {
         const PROJECT: &str = "app";
         const ENV: &str = "dev";
         const N: u64 = 600; // > MAX_IN_FLIGHT: forces a real mid-txn drain
+
+        let Ok(nats_url) = std::env::var("WAMN_E1_NATS_URL") else {
+            eprintln!("WAMN_E1_NATS_URL unset — skipping E1 live JetStream gate");
+            return;
+        };
 
         let client = async_nats::connect(&nats_url).await.expect("connect nats");
         let js = jetstream::new(client);
@@ -2398,7 +2406,7 @@ mod tests {
         while (ids.len() as u64) < N && Instant::now() < deadline {
             let mut batch = consumer
                 .fetch()
-                .max_messages(N as usize - ids.len())
+                .max_messages(usize::try_from(N).expect("the fixture count fits a usize") - ids.len())
                 .messages()
                 .await
                 .expect("fetch");
@@ -2408,7 +2416,7 @@ mod tests {
                     .headers
                     .as_ref()
                     .and_then(|h| h.get(NATS_MESSAGE_ID))
-                    .map(|v| v.to_string())
+                    .map(std::string::ToString::to_string)
                     .unwrap_or_default();
                 ids.push(id);
                 msg.ack().await.expect("ack");

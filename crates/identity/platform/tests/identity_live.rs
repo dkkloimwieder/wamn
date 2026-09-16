@@ -95,7 +95,10 @@ async fn platform_identity_round_trip_on_postgres() {
         .await
         .expect("read project roles");
     assert_eq!(
-        roles.iter().map(|role| role.as_str()).collect::<Vec<_>>(),
+        roles
+            .iter()
+            .map(wamn_platform_identity::ProjectRole::as_str)
+            .collect::<Vec<_>>(),
         ["project-author", "project-promoter"]
     );
     let stamps = client

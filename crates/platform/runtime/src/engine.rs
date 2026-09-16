@@ -391,7 +391,7 @@ mod tests {
     /// The `wasi:sockets` subset the socket guest imports, at the version the
     /// engine links. The error-code enum and the address variants must match
     /// the host's case lists exactly, or the component does not link.
-    const SOCKETS_SUBSET_WIT: &str = r#"
+    const SOCKETS_SUBSET_WIT: &str = r"
 package wasi:sockets@0.2.12;
 
 interface network {
@@ -428,7 +428,7 @@ interface tcp-create-socket {
   use tcp.{tcp-socket};
   create-tcp-socket: func(address-family: ip-address-family) -> result<tcp-socket, error-code>;
 }
-"#;
+";
 
     const SOCKET_GUEST_WORLD: &str = "package test:socket-guest; world guest { \
         import wasi:sockets/instance-network@0.2.12; \

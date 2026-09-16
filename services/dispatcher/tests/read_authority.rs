@@ -412,7 +412,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     run_ok(
         &project_url,
         &format!(
-            r#"
+            r"
 DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
   SELECT count(*) INTO writes FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE c.relkind IN ('r','p','v','m') AND n.nspname NOT IN ('pg_catalog','information_schema')
@@ -507,7 +507,7 @@ DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
              AND d.refobjid = (SELECT oid FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}')) = 0,
     'the dispatch reader owns objects';
 END $$;
-"#
+"
         ),
     );
 

@@ -96,14 +96,16 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
         )
         .await?;
         let hosts = workload::hosts_ready(
-            &resources.lifecycle,
-            &resources.name,
-            &resources.work,
-            &resources.name,
-            &resources.host_image,
-            &digest,
-            3,
-            &evidence,
+            &workload::HostsReadyInput {
+                lifecycle: &resources.lifecycle,
+                cluster: &resources.name,
+                work: &resources.work,
+                namespace: &resources.name,
+                image: &resources.host_image,
+                runtime_digest: &digest,
+                replicas: 3,
+                evidence: &evidence,
+            },
         )
         .await?;
         let (http, materializer) = deployment::publish_platform_components(&cluster).await?;
@@ -134,15 +136,17 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
         super::super::materializer::assert_materializer_causation(&phase, observer).await?;
         postcommit_case::assert_materializer_logs(&cluster, &hosts.pods).await?;
         wamn_test_infrastructure::traces::telemetry::collect(
-            &resources.name,
-            &resources.work,
-            &resources.name,
-            &resources.source,
-            super::super::TENANT,
-            super::super::PROJECT,
-            super::super::ENVIRONMENT,
-            [("update", &update_trace), ("receipt", &receipt_trace)],
-            &evidence.join("telemetry"),
+            &wamn_test_infrastructure::traces::telemetry::TelemetryInput {
+                cluster: &resources.name,
+                work: &resources.work,
+                namespace: &resources.name,
+                source: &resources.source,
+                tenant: super::super::TENANT,
+                project: super::super::PROJECT,
+                environment: super::super::ENVIRONMENT,
+                requests: [("update", &update_trace), ("receipt", &receipt_trace)],
+                evidence: &evidence.join("telemetry"),
+            },
         )
         .await?;
         checked(kubectl(resources).args([

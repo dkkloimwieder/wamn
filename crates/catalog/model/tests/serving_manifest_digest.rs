@@ -158,7 +158,11 @@ fn the_format_one_preimage_and_digest_are_pinned() {
     assert_eq!(digest.as_str(), mint_vector::DIGEST);
 
     let raw = <sha2::Sha256 as sha2::Digest>::digest(mint_vector::CANONICAL_BYTES);
-    let hex: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
+    let hex: String = raw.iter().fold(String::new(), |mut out, byte| {
+        use std::fmt::Write as _;
+        write!(out, "{byte:02x}").expect("writing to a string is infallible");
+        out
+    });
     assert_eq!(digest.as_str(), format!("sha256:{hex}"));
 }
 

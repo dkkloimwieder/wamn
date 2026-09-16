@@ -223,7 +223,8 @@ async fn operator_pat_issuance_over_https() {
     let started = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect_redacted("fixture clock")
-        .as_secs() as i64;
+        .as_secs()
+        .cast_signed();
     let jwt = sign_session_token(
         &mut system,
         SessionClaims {
@@ -518,8 +519,8 @@ async fn success(
         .await
         .expect_redacted("operator issuance response");
     assert_eq!(response.status(), 201);
-    assert!(response.headers()["cache-control"] == "no-store");
-    assert!(response.headers()["content-type"] == "application/json");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response.headers()["content-type"], "application/json");
     let bytes = response
         .bytes()
         .await
@@ -531,31 +532,31 @@ async fn success(
         .keys()
         .map(String::as_str)
         .collect();
-    assert!(
-        fields
-            == BTreeSet::from([
-                "token",
-                "token_prefix",
-                "principal_id",
-                "created_at",
-                "expires_at"
-            ])
+    assert_eq!(
+        fields,
+        BTreeSet::from([
+            "token",
+            "token_prefix",
+            "principal_id",
+            "created_at",
+            "expires_at"
+        ])
     );
-    assert!(value["principal_id"] == principal.as_str());
+    assert_eq!(value["principal_id"], principal.as_str());
     let token = value["token"].as_str().expect("PAT string");
     let authenticated = authenticate_pat(system, token)
         .await
         .expect_redacted("real PAT verification")
         .expect("issued token authenticates");
-    assert!(authenticated.principal().id() == principal);
+    assert_eq!(authenticated.principal().id(), principal);
     let record = system.query_one("SELECT principal_id::text, token_hash, label, extract(epoch FROM expires_at-created_at)::bigint, created_by::text, updated_by::text FROM identity.pats WHERE token_prefix=$1", &[&value["token_prefix"].as_str().expect("token prefix")])
         .await.expect_redacted("persisted PAT record");
-    assert!(record.get::<_, String>(0) == principal.as_str());
+    assert_eq!(record.get::<_, String>(0), principal.as_str());
     assert!(
         record.get::<_, String>(1) != token,
         "storage retains no raw PAT"
     );
-    assert!(record.get::<_, String>(2) == label.trim());
+    assert_eq!(record.get::<_, String>(2), label.trim());
     assert_eq!(record.get::<_, i64>(3), 3600);
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
     assert!(
@@ -679,8 +680,8 @@ async fn malformed_requests(
 
 async fn assert_failure(response: reqwest::Response, status: u16, body: &str) {
     assert_eq!(response.status().as_u16(), status);
-    assert!(response.headers()["cache-control"] == "no-store");
-    assert!(response.headers()["content-type"] == "application/json");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response.headers()["content-type"], "application/json");
     assert!(
         response.text().await.expect_redacted("fixed refusal body") == body,
         "fixed non-secret refusal"
@@ -703,7 +704,7 @@ async fn public_routes(endpoint: &str, client: &reqwest::Client) {
         .await
         .expect_redacted("anonymous JWKS");
     assert_eq!(response.status(), 200);
-    assert!(response.headers()["cache-control"] == "public, max-age=300");
+    assert_eq!(response.headers()["cache-control"], "public, max-age=300");
     let value: Value = serde_json::from_slice(&response.bytes().await.expect_redacted("JWKS body"))
         .expect_redacted("public JWKS JSON");
     assert_eq!(value["keys"].as_array().expect("public keys").len(), 1);

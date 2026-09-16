@@ -83,17 +83,31 @@ pub async fn image_ready(
     Ok(expected.context("the host image was observed on a node")?.0)
 }
 
+/// Where one host-readiness check reads the deployed cluster, and what it expects.
+#[derive(Debug, Clone, Copy)]
+pub struct HostsReadyInput<'a> {
+    pub lifecycle: &'a Path,
+    pub cluster: &'a str,
+    pub work: &'a Path,
+    pub namespace: &'a str,
+    pub image: &'a str,
+    pub runtime_digest: &'a str,
+    pub replicas: u32,
+    pub evidence: &'a Path,
+}
+
 /// Check the deployed chart, ready host pods, and native Host objects.
-pub async fn hosts_ready(
-    lifecycle: &Path,
-    cluster: &str,
-    work: &Path,
-    namespace: &str,
-    image: &str,
-    runtime_digest: &str,
-    replicas: u32,
-    evidence: &Path,
-) -> anyhow::Result<HostObservation> {
+pub async fn hosts_ready(input: &HostsReadyInput<'_>) -> anyhow::Result<HostObservation> {
+    let HostsReadyInput {
+        lifecycle,
+        cluster,
+        work,
+        namespace,
+        image,
+        runtime_digest,
+        replicas,
+        evidence,
+    } = *input;
     let releases = command_json(
         Command::new(lifecycle)
             .arg("helm-releases")
@@ -371,7 +385,7 @@ pub async fn cross_environment_refused(
             "operator Event permission {verb} differs from its declared scope"
         );
         ensure!(
-            output.status.code() == Some(if expected { 0 } else { 1 }),
+            output.status.code() == Some(i32::from(!expected)),
             "operator Event authorization command failed for {verb}"
         );
         permissions.push(json!({"verb":verb,"allowed":expected}));
@@ -531,10 +545,14 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
 }
 
 fn validate_unknown_route(response: &Value) -> anyhow::Result<()> {
-    let expected_hex = b"{\"error\":{\"code\":\"route-not-found\"}}"
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let expected_hex = b"{\"error\":{\"code\":\"route-not-found\"}}".iter().fold(
+        String::new(),
+        |mut out, byte| {
+            use std::fmt::Write as _;
+            write!(out, "{byte:02x}").expect("writing to a string is infallible");
+            out
+        },
+    );
     ensure!(
         response["transport"]["status"] == 404
             && response["transport"]["content_type"] == "application/json"
@@ -872,9 +890,11 @@ fn validate_materializer(deployment: &Value, expected: &MaterializerInput) -> an
             "accepted materializer input {name} differs from its declaration"
         );
     }
+    let fetch_ms = expected.fetch_ms.to_string();
+    let sweep_ms = expected.sweep_ms.to_string();
     ensure!(
-        environment["WAMN_MAT_FETCH_MS"] == expected.fetch_ms.to_string()
-            && environment["WAMN_MAT_SWEEP_MS"] == expected.sweep_ms.to_string(),
+        environment["WAMN_MAT_FETCH_MS"] == fetch_ms
+            && environment["WAMN_MAT_SWEEP_MS"] == sweep_ms,
         "accepted materializer intervals differ from their declaration"
     );
     let mut interfaces = array_at(spec, "/hostInterfaces")?.clone();
@@ -1165,10 +1185,14 @@ mod tests {
 
     #[test]
     fn in_cluster_response_requires_the_exact_status_type_and_body_bytes() {
-        let hex = b"{\"error\":{\"code\":\"route-not-found\"}}"
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let hex = b"{\"error\":{\"code\":\"route-not-found\"}}".iter().fold(
+            String::new(),
+            |mut out, byte| {
+                use std::fmt::Write as _;
+                write!(out, "{byte:02x}").expect("writing to a string is infallible");
+                out
+            },
+        );
         let response =
             json!({"transport":{"status":404,"content_type":"application/json"},"body_hex":hex});
         validate_unknown_route(&response).unwrap();

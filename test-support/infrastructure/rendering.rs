@@ -133,12 +133,13 @@ pub fn render_host_values(
         .image
         .as_mut()
         .context("host base runtime.image is missing")?
-        .tag = input.host_tag.clone();
+        .tag
+        .clone_from(&input.host_tag);
     let base_group = one_mut(&mut base.runtime.host_groups, "host base hostGroups")?;
-    base_group.namespace = input.namespace.clone();
+    base_group.namespace.clone_from(&input.namespace);
     base_group.replicas = input.replicas;
     let group = one_mut(&mut overlay.runtime.host_groups, "host overlay hostGroups")?;
-    group.namespace = input.namespace.clone();
+    group.namespace.clone_from(&input.namespace);
     group.replicas = input.replicas;
     unique_env(&group.env)?;
     let guest = env_mut(&mut group.env, "WAMN_PG_URL")?;
@@ -147,7 +148,8 @@ pub fn render_host_values(
         .as_mut()
         .context("WAMN_PG_URL requires a Secret reference")?
         .secret_key_ref
-        .name = input.guest_secret_name.clone();
+        .name
+        .clone_from(&input.guest_secret_name);
     let mut families = BTreeSet::new();
     for secret in &input.role_secrets {
         let expected = workload_secret_name(
@@ -173,7 +175,7 @@ pub fn render_host_values(
             references.next().is_none(),
             "host overlay repeats role Secret {expected}"
         );
-        reference.name = secret.name.clone();
+        reference.name.clone_from(&secret.name);
     }
     let mut object_volumes = group
         .volumes
@@ -190,7 +192,8 @@ pub fn render_host_values(
                 .secret
                 .as_mut()
                 .context("connection-credentials requires a Secret volume")?
-                .secret_name = name.clone()
+                .secret_name
+                .clone_from(name);
         }
         (None, None) => {}
         (None, Some(_)) => {
@@ -331,15 +334,15 @@ pub fn render_http_workload(template: &str, input: &HttpWorkloadInput) -> anyhow
         match document {
             HttpDocument::Service(service) => {
                 services += 1;
-                service.metadata.namespace = input.namespace.clone();
+                service.metadata.namespace.clone_from(&input.namespace);
             }
             HttpDocument::WorkloadDeployment(workload) => {
                 workloads += 1;
-                workload.metadata.namespace = input.namespace.clone();
+                workload.metadata.namespace.clone_from(&input.namespace);
                 let spec = &mut workload.spec.template.spec;
-                spec.environment = input.namespace.clone();
+                spec.environment.clone_from(&input.namespace);
                 let component = one_mut(&mut spec.components, "HTTP components")?;
-                component.image = input.image.clone();
+                component.image.clone_from(&input.image);
                 component.local_resources.config = input.claims.clone();
                 ensure!(
                     spec.host_interfaces
@@ -386,22 +389,22 @@ pub fn render_http_workload(template: &str, input: &HttpWorkloadInput) -> anyhow
 pub fn render_materializer(template: &str, input: &MaterializerInput) -> anyhow::Result<String> {
     let mut workload: MaterializerDocument =
         serde_yaml::from_str(template).context("parse materializer workload")?;
-    workload.metadata.name = input.workload.clone();
-    workload.metadata.namespace = input.namespace.clone();
+    workload.metadata.name.clone_from(&input.workload);
+    workload.metadata.namespace.clone_from(&input.namespace);
     let spec = &mut workload.spec.template.spec;
-    spec.environment = input.namespace.clone();
+    spec.environment.clone_from(&input.namespace);
     let service = &mut spec.service;
-    service.image = input.image.clone();
+    service.image.clone_from(&input.image);
     let config = &mut service.local_resources.config;
-    config.tenant = input.tenant.clone();
-    config.project = input.event.project.clone();
-    config.environment = input.event.environment.clone();
+    config.tenant.clone_from(&input.tenant);
+    config.project.clone_from(&input.event.project);
+    config.environment.clone_from(&input.event.environment);
     let environment = &mut service.local_resources.environment.config;
-    environment.stream = input.event_stream.clone();
-    environment.org = input.event.org.clone();
-    environment.project = input.event.project.clone();
-    environment.environment = input.event.environment.clone();
-    environment.tenant = input.tenant.clone();
+    environment.stream.clone_from(&input.event_stream);
+    environment.org.clone_from(&input.event.org);
+    environment.project.clone_from(&input.event.project);
+    environment.environment.clone_from(&input.event.environment);
+    environment.tenant.clone_from(&input.tenant);
     environment.fetch_ms = Some(input.fetch_ms.to_string());
     environment.sweep_ms = Some(input.sweep_ms.to_string());
     serde_yaml::to_string(&workload).context("serialize materializer workload")

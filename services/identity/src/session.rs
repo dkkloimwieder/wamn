@@ -198,7 +198,11 @@ async fn mint_for_principal(
     SystemRandom::new()
         .fill(&mut random)
         .map_err(|_| failed())?;
-    let jti: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let jti: String = random.iter().fold(String::new(), |mut out, byte| {
+        use std::fmt::Write as _;
+        write!(out, "{byte:02x}").expect("writing to a string is infallible");
+        out
+    });
     let claims = SessionClaims {
         iss: inner.issuer.clone(),
         sub: principal.id().to_string(),

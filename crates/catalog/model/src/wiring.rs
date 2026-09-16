@@ -606,7 +606,7 @@ mod tests {
             .add_resource("mem://partial-response.json", schema)
             .unwrap();
         let mut schemas = boon::Schemas::new();
-        let compiled = compiler
+        let schema_index = compiler
             .compile("mem://partial-response.json", &mut schemas)
             .unwrap();
         let accepted = json!({
@@ -614,7 +614,7 @@ mod tests {
             "failed_outcome": {"code": "write_failed", "operation": "store", "effect_outcome": "response-lost"}
         });
         schemas
-            .validate(&accepted, compiled)
+            .validate(&accepted, schema_index)
             .expect("declared evidence validates");
         for (pointer, value) in [
             ("/all_results", json!([])),
@@ -631,15 +631,15 @@ mod tests {
                 .as_object_mut()
                 .unwrap()
                 .insert(key.to_owned(), value);
-            assert!(schemas.validate(&invalid, compiled).is_err(), "{invalid}");
+            assert!(schemas.validate(&invalid, schema_index).is_err(), "{invalid}");
         }
         let no_commit = json!({"failed_outcome": {"code": "write_failed"}});
-        assert!(schemas.validate(&no_commit, compiled).is_err());
+        assert!(schemas.validate(&no_commit, schema_index).is_err());
         assert!(
             schemas
                 .validate(
                     &json!({"committed_result": {"receipt_id": "receipt-1"}}),
-                    compiled
+                    schema_index
                 )
                 .is_err()
         );

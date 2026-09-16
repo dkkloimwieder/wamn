@@ -78,14 +78,16 @@ async fn prepare(
     )
     .await?;
     let hosts = workload::hosts_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &resources.host_image,
-        &digest,
-        1,
-        evidence,
+        &workload::HostsReadyInput {
+            lifecycle: &resources.lifecycle,
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+            image: &resources.host_image,
+            runtime_digest: &digest,
+            replicas: 1,
+            evidence,
+        },
     )
     .await?;
     let http = deployment::publish_http(&cluster).await?;

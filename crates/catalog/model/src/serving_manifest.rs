@@ -1049,7 +1049,7 @@ mod tests {
             .get_mut(&digest)
             .expect("fixture has a statement")
             .sql
-            .push_str(" ");
+            .push(' ');
         broken.insert(base);
         let error = ServingManifest::new(
             release(),

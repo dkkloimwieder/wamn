@@ -252,18 +252,33 @@ fn metrics(text: &str, namespace: &str, project: &str) -> anyhow::Result<Value> 
     Ok(serde_json::to_value(found)?)
 }
 
+/// Which cluster, identity, and sampled requests one telemetry read covers.
+#[derive(Debug, Clone, Copy)]
+pub struct TelemetryInput<'a> {
+    pub cluster: &'a str,
+    pub work: &'a Path,
+    pub namespace: &'a str,
+    pub source: &'a str,
+    pub tenant: &'a str,
+    pub project: &'a str,
+    pub environment: &'a str,
+    pub requests: [(&'a str, &'a str); 2],
+    pub evidence: &'a Path,
+}
+
 /// Read Tempo and collector results for two sampled requests in the owned cluster.
-pub async fn collect(
-    cluster: &str,
-    work: &Path,
-    namespace: &str,
-    source: &str,
-    tenant: &str,
-    project: &str,
-    environment: &str,
-    requests: [(&str, &str); 2],
-    evidence: &Path,
-) -> anyhow::Result<()> {
+pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
+    let TelemetryInput {
+        cluster,
+        work,
+        namespace,
+        source,
+        tenant,
+        project,
+        environment,
+        requests,
+        evidence,
+    } = *input;
     ensure!(
         work.join("kubeconfig").is_file(),
         "telemetry requires the private kubeconfig"

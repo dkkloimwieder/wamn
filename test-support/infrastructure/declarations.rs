@@ -54,10 +54,10 @@ pub fn render_component_declaration(
         .and_then(Value::as_array_mut)
     {
         for connection in connections {
-            if let Some(alias) = connection.get_mut("store-alias") {
-                if alias.as_str() == Some("__STORE_ALIAS__") {
-                    *alias = Value::from(store_alias);
-                }
+            if let Some(alias) = connection.get_mut("store-alias")
+                && alias.as_str() == Some("__STORE_ALIAS__")
+            {
+                *alias = Value::from(store_alias);
             }
         }
     }
@@ -105,10 +105,10 @@ fn placeholder(value: &str) -> Option<&str> {
             .bytes()
             .take_while(|byte| byte.is_ascii_uppercase() || *byte == b'_')
             .count();
-        if let Some(end) = remaining[..length].rfind("__") {
-            if end > 0 {
-                return Some(&value[start..start + end + 4]);
-            }
+        if let Some(end) = remaining[..length].rfind("__")
+            && end > 0
+        {
+            return Some(&value[start..start + end + 4]);
         }
     }
     None
