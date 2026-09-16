@@ -572,10 +572,17 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
     })
 }
 
-/// The lowest PostgreSQL major version the reader accepts. Provisioning creates
-/// the slot with the five-argument `pg_create_logical_replication_slot`, and
-/// PostgreSQL 17 added that `failover` argument. Every deployment target in this
-/// repository runs PostgreSQL 18.
+/// The lowest PostgreSQL major version the reader accepts.
+///
+/// PostgreSQL 17 shipped both features the reader depends on. It added the
+/// `failover` argument that makes `pg_create_logical_replication_slot` take
+/// five arguments, which is the call `create_failover_slot_sql` emits. It also
+/// added the `invalidation_reason` column of `pg_replication_slots`, which
+/// [`preflight_slot`] reads to find the capture-gap incident. A PostgreSQL 17
+/// server therefore passes this floor and then finds both. See
+/// <https://www.postgresql.org/docs/17/release-17.html>.
+///
+/// Every deployment target in this repository runs PostgreSQL 18.
 const POSTGRES_MAJOR_FLOOR: i32 = 17;
 
 /// The output plugin `create_failover_slot_sql` declares.

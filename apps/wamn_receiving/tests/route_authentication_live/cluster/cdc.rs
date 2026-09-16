@@ -130,12 +130,12 @@ pub(super) async fn configure(
     })
 }
 
-/// Start the production reader with the same shutdown token used by its binary.
+/// Start the production reader with the same shutdown handle used by its binary.
 pub(super) fn start(
     args: EventReaderArgs,
     log: &Path,
 ) -> anyhow::Result<(
-    pg_walstream::CancellationToken,
+    wamn_cdc_reader::ReaderShutdown,
     tokio::task::JoinHandle<anyhow::Result<()>>,
 )> {
     use tracing::instrument::WithSubscriber as _;
@@ -145,9 +145,9 @@ pub(super) fn start(
         .with_env_filter(filter)
         .with_writer(fs::File::create(log)?)
         .finish();
-    let cancellation = pg_walstream::CancellationToken::new();
+    let cancellation = wamn_cdc_reader::ReaderShutdown::new();
     let task = tokio::spawn(
-        wamn_cdc_reader::run_with_token(args, cancellation.clone()).with_subscriber(subscriber),
+        wamn_cdc_reader::run_with_shutdown(args, cancellation.clone()).with_subscriber(subscriber),
     );
     Ok((cancellation, task))
 }

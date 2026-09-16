@@ -558,11 +558,11 @@ async fn run_created(
         )?)
     };
     let cdc_url = reader_args.as_ref().map(|args| args.cdc_url.clone());
-    let cancellation = pg_walstream::CancellationToken::new();
-    let _cancel_on_drop = cancellation.clone().drop_guard();
+    let cancellation = wamn_cdc_reader::ReaderShutdown::new();
+    let _cancel_on_drop = cancellation.clone().into_guard();
     let reader = async {
         match reader_args {
-            Some(args) => wamn_cdc_reader::run_with_token(args, cancellation.clone()).await,
+            Some(args) => wamn_cdc_reader::run_with_shutdown(args, cancellation.clone()).await,
             None => std::future::pending::<anyhow::Result<()>>().await,
         }
     };
@@ -796,7 +796,7 @@ async fn run_created(
             Err(error) => Err(error),
         },
         result = assertions => {
-            cancellation.cancel();
+            cancellation.shutdown();
             if measure_startup { result } else { match (result, tokio::time::timeout(Duration::from_secs(10), &mut reader).await) {
                 (Ok(()), Ok(Ok(()))) => Ok(()),
                 (Err(error), _) | (Ok(()), Ok(Err(error))) => Err(error),
