@@ -822,7 +822,9 @@ impl WamnPostgres {
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             valid_project(project),
-            "invalid composed project {project:?}: 1-64 chars of [A-Za-z0-9_-] required"
+            "invalid composed project {project:?}: a lowercase slug [a-z0-9-] of at most 40 bytes, \
+             starting and ending alphanumeric, with no consecutive hyphens and not under the \
+             reserved `wamn` prefix, is required"
         );
         let cfg = WamnPostgresConfig::from_env();
         let mut projects = HashMap::new();
@@ -865,7 +867,9 @@ impl WamnPostgres {
     pub fn set_project(&self, component_id: &str, project: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_project(project),
-            "invalid project {project:?}: 1-64 chars of [A-Za-z0-9_-] required"
+            "invalid project {project:?}: a lowercase slug [a-z0-9-] of at most 40 bytes, \
+             starting and ending alphanumeric, with no consecutive hyphens and not under the \
+             reserved `wamn` prefix, is required"
         );
         self.projects
             .write()

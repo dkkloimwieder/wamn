@@ -157,12 +157,11 @@ impl NamedProject {
                     "named wamn:postgres import {name:?} has no {NAMED_PROJECT_CONFIG_KEY} config"
                 )
             })?;
+        // wamn-0h0g.9.16: the registry owns the one project-id rule. This path
+        // carried an inlined copy of the old loose rule, so a named import
+        // admitted ids the registry and provisioning both refuse.
         anyhow::ensure!(
-            project.len() <= 64
-                && !project.is_empty()
-                && project
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'),
+            wamn_control_registry::identifiers::valid_project(project),
             "invalid project {project:?} for named wamn:postgres import {name:?}"
         );
         Ok(Self(Arc::from(project.as_str())))
