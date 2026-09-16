@@ -7,8 +7,13 @@
 //!
 //! Definition promotion now has one production owner, `wamn-ctl promote`.
 //! This operations verb retains only `pg_restore --data-only
-//! --disable-triggers` from a fresh `pg_dump -Fd` snapshot (the q3n.10
-//! artifact, recorded in `provisioning.dumps`).
+//! --disable-triggers` from a fresh `pg_dump -Fd` snapshot. The driver records
+//! that snapshot in `provisioning.dumps`.
+//!
+//! The operator passes the source and destination superuser URLs on the command
+//! line. The platform mints and stores no credential for this verb. Scheduled
+//! platform-run dumps are retired, and CloudNativePG backup and recovery is the
+//! platform mechanism for backups.
 //!
 //! **The cutover gate (fixes cjv.7):** a `--cutover` copy is a *move* — the
 //! pipeline `Quiesce → Snapshot → Restore → Verify → Cutover` is mandatory,
@@ -28,20 +33,20 @@
 //! exists (`provision-project-env` + its Database CR).
 
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use tokio_postgres::NoTls;
 use tokio_postgres::error::SqlState;
 
 use wamn_control_provision::{
-    COPY_SAGA_KIND, CopyRequest, CopyStep, count_rows_sql, dump_object_key, list_schema_tables_sql,
-    pg_dump_argv, pg_restore_data_only_argv, plan_copy, project_env_database_name,
-    quiesce_database_sql, sql as provision_sql, terminate_database_backends_sql,
-    unquiesce_database_sql, validate_project_env,
+    COPY_SAGA_KIND, CopyRequest, CopyStep, DUMP_FORMAT, count_rows_sql, dump_object_key,
+    list_schema_tables_sql, pg_dump_argv, pg_restore_data_only_argv, plan_copy,
+    project_env_database_name, quiesce_database_sql, sql as provision_sql,
+    terminate_database_backends_sql, unquiesce_database_sql, validate_project_env,
 };
 use wamn_control_registry::Triple;
 
-use crate::restore_project_env::swap_db;
 use wamn_schema_control::BareSchemaName;
 
 /// Inputs of one project-env data copy.
@@ -91,8 +96,8 @@ pub struct CopyProjectEnvRequest {
     /// data-only restore is scoped to it).
     pub data_schema: String,
 
-    /// Directory snapshots are staged under (a per-timestamp subdirectory —
-    /// the `dump-project-env --run-now` layout).
+    /// Directory snapshots are staged under. Each snapshot gets its own
+    /// per-timestamp subdirectory.
     pub dump_root: PathBuf,
 
     /// Saga id the pipeline records under. Absent means
@@ -174,7 +179,7 @@ pub async fn copy_project_env(
     let saga_id = request.saga_id.clone().unwrap_or_else(|| {
         format!(
             "copy-{src_db}-to-{dst_db}-{}",
-            crate::dump_project_env::unix_seconds()
+            unix_seconds()
         )
     });
 
@@ -342,7 +347,7 @@ async fn exec_snapshot(
     src: &Triple,
     recorder: &Option<SagaRecorder>,
 ) -> anyhow::Result<()> {
-    let timestamp = crate::dump_project_env::unix_seconds().to_string();
+    let timestamp = unix_seconds().to_string();
     let out = ctx.request.dump_root.join(&timestamp);
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -354,7 +359,7 @@ async fn exec_snapshot(
 
     let object_key = dump_object_key(src, &timestamp);
     if let Some(r) = recorder {
-        let byte_size: Option<i64> = crate::dump_project_env::dir_size(&out)
+        let byte_size: Option<i64> = dir_size(&out)
             .map(|b| b as i64)
             .ok();
         let env = src.env.as_str();
@@ -366,7 +371,7 @@ async fn exec_snapshot(
                     &src.project,
                     &env,
                     &object_key,
-                    &wamn_control_provision::dump::DUMP_FORMAT,
+                    &DUMP_FORMAT,
                     &byte_size,
                 ],
             )
@@ -583,4 +588,64 @@ fn run_argv(argv: &[String]) -> anyhow::Result<()> {
 async fn list_tables(client: &tokio_postgres::Client, schema: &str) -> anyhow::Result<Vec<String>> {
     let rows = client.query(list_schema_tables_sql(), &[&schema]).await?;
     Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
+}
+
+/// Swap the database path segment of a libpq URL, keeping any query string.
+///
+/// The operator passes one maintenance URL per cluster. Each step re-points it
+/// at the database that step works on. The connection driver owns this, so the
+/// pure builders stay free of URL shapes.
+fn swap_db(url: &str, db: &str) -> String {
+    let (no_q, query) = match url.split_once('?') {
+        Some((a, b)) => (a, Some(b)),
+        None => (url, None),
+    };
+    let (base, _old) = no_q.rsplit_once('/').unwrap_or((url, ""));
+    match query {
+        Some(q) => format!("{base}/{db}?{q}"),
+        None => format!("{base}/{db}"),
+    }
+}
+
+/// Seconds since the Unix epoch, the label one snapshot gets.
+///
+/// The clock lives in this driver, never in a pure builder (SR6 rule 1).
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Total byte size of a directory tree, the snapshot's size on disk.
+fn dir_size(path: &std::path::Path) -> std::io::Result<u64> {
+    let mut total = 0;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        total += if meta.is_dir() {
+            dir_size(&entry.path())?
+        } else {
+            meta.len()
+        };
+    }
+    Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swap_db_replaces_the_database_segment_keeping_the_query() {
+        assert_eq!(
+            swap_db("postgres://u:p@h:5432/postgres", "wamn-db-acme--app--dev"),
+            "postgres://u:p@h:5432/wamn-db-acme--app--dev"
+        );
+        // A query string (e.g. sslmode) is preserved across the swap.
+        assert_eq!(
+            swap_db("postgres://u:p@h:5432/postgres?sslmode=disable", "scratch"),
+            "postgres://u:p@h:5432/scratch?sslmode=disable"
+        );
+    }
 }

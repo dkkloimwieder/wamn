@@ -137,13 +137,9 @@ fn copy_and_dump_builders_match_the_ops_relations() {
     let record = wamn_control_provision::state::record_dump_sql();
     assert!(record.contains("INSERT INTO provisioning.dumps"));
     assert!(record.contains("ON CONFLICT (org, project, env, object_key) DO UPDATE"));
-    for reader in [
-        wamn_control_provision::state::select_latest_dump_sql(),
-        wamn_control_provision::state::select_dumps_sql(),
-    ] {
-        assert!(reader.contains("FROM provisioning.dumps"));
-        assert!(reader.contains("ORDER BY taken_at DESC, object_key DESC"));
-    }
+    let reader = wamn_control_provision::state::select_dumps_sql();
+    assert!(reader.contains("FROM provisioning.dumps"));
+    assert!(reader.contains("ORDER BY taken_at DESC, object_key DESC"));
 }
 
 /// Apply core once and the ops extension twice to a test database, then

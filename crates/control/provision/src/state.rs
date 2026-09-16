@@ -68,15 +68,6 @@ pub fn record_dump_sql() -> &'static str {
        taken_at = now()"
 }
 
-/// Select the newest recorded dump for one project environment.
-pub fn select_latest_dump_sql() -> &'static str {
-    "SELECT object_key, format, byte_size, taken_at \
-     FROM provisioning.dumps \
-     WHERE org = $1 AND project = $2 AND env = $3 \
-     ORDER BY taken_at DESC, object_key DESC \
-     LIMIT 1"
-}
-
 /// List recorded dumps for one project environment, newest first.
 pub fn select_dumps_sql() -> &'static str {
     "SELECT object_key, format, byte_size, taken_at \

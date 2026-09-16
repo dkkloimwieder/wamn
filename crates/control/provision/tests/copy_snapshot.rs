@@ -1,26 +1,24 @@
-//! Live round-trip gate for the per-project-env dump ARTIFACT (wamn-q3n.10).
+//! Live round-trip gate for the `copy-project-env` snapshot ARTIFACT.
 //!
-//! The essential test (Q2, substrate-agnostic): the `pg_dump -Fd` artifact the
-//! renderer schedules is **valid and restorable** — seed a database, dump it with
-//! the REAL [`wamn_control_provision::pg_dump_argv`] builder, `pg_restore` into a scratch
-//! database, and assert the seeded rows survive the round-trip. One artifact
-//! serves restore-to-last-dump AND the 10.3 export; this shows it restores.
+//! The copy pipeline snapshots the source database, then restores that snapshot
+//! into the destination. This gate proves the snapshot is valid and restorable.
+//! It seeds a database, dumps it with the real
+//! [`wamn_control_provision::pg_dump_argv`] builder, restores into a second
+//! database, and asserts the seeded rows survive.
 //!
-//! The source and scratch databases are test databases on the test PostgreSQL
-//! server, and the `pg_dump`/`pg_restore`/`psql` client tools must be on `PATH`.
-//! The object-store transport is out of scope here; this gate validates the
-//! artifact itself, which is substrate-independent.
+//! The two databases are test databases on the test PostgreSQL server. The
+//! `pg_dump`, `pg_restore` and `psql` client tools must be on `PATH`.
 
 use std::process::Command as Proc;
 
 use wamn_control_provision::pg_dump_argv;
 
 #[test]
-fn dump_round_trips_a_seeded_database() {
+fn copy_snapshot_round_trips_a_seeded_database() {
     for tool in ["psql", "pg_dump", "pg_restore"] {
         assert!(
             tool_present(tool),
-            "dump_round_trips_a_seeded_database requires {tool} on PATH"
+            "copy_snapshot_round_trips_a_seeded_database requires {tool} on PATH"
         );
     }
 
@@ -28,7 +26,7 @@ fn dump_round_trips_a_seeded_database() {
     let scratch_database = wamn_test_postgres::database();
     let src = src_database.url().to_owned();
     let scratch = scratch_database.url().to_owned();
-    let dump_dir = std::env::temp_dir().join(format!("wamn-dump-gate-{}", std::process::id()));
+    let dump_dir = std::env::temp_dir().join(format!("wamn-copy-snapshot-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dump_dir);
 
     // Seed the source with a table carrying an exact-decimal column (the no-float

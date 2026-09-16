@@ -18,10 +18,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Render or run per-project-env logical dumps.
-    DumpProjectEnv(ops_verbs::DumpProjectEnvArgs),
-    /// Restore a per-project-env logical dump.
-    RestoreProjectEnv(ops_verbs::RestoreProjectEnvArgs),
     /// Copy a project-env to another environment.
     CopyProjectEnv(ops_verbs::CopyProjectEnvArgs),
     /// Prune terminal run history older than the retention period.
@@ -45,8 +41,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        Command::DumpProjectEnv(args) => ops_verbs::dump_project_env(args).await,
-        Command::RestoreProjectEnv(args) => ops_verbs::restore_project_env(args).await,
         Command::CopyProjectEnv(args) => ops_verbs::copy_project_env(args).await,
         Command::PruneRunHistory(args) => ops_verbs::prune_run_history(args).await,
         Command::PruneRecordHistory(args) => ops_verbs::prune_record_history(args).await,

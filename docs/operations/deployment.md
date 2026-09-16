@@ -173,6 +173,7 @@ A release digest selects exact bytes, but a mutable image tag does not.
 A code rollback does not reverse database changes.
 For schema changes, use a fresh target instead of implying an in-place upgrade path.
 
-`wamn-ctl-ops` contains dump, restore, copy, run-history pruning, and event advisory commands.
+`wamn-ctl-ops` contains copy, run-history pruning, and event advisory commands.
+For backup and recovery, use CloudNativePG backup and recovery on the cluster.
 Use its `--help` output for the selected action and required credentials.
 These maintenance verbs do not authorize shared development targets or a new schema lifecycle.

@@ -168,8 +168,8 @@ ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
 
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
-# NOTE pg_dump/pg_restore are NOT installed (parity with the pre-split image);
-# dump/restore-project-env need a pg-client-equipped environment.
+# NOTE pg_dump and pg_restore are NOT installed (parity with the pre-split
+# image). Run copy-project-env from a pg-client-equipped environment.
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-ctl /native-output/wamn-ctl /usr/local/bin/wamn-ctl

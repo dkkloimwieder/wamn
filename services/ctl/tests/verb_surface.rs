@@ -12,8 +12,6 @@ const MVP_VERBS: &[&str] = &[
 ];
 
 const OPS_VERBS: &[&str] = &[
-    "dump-project-env",
-    "restore-project-env",
     "copy-project-env",
     "prune-run-history",
     "prune-record-history",

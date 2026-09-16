@@ -55,8 +55,6 @@ pub mod control_author;
 #[cfg(feature = "ops")]
 pub mod copy;
 pub mod database;
-#[cfg(feature = "ops")]
-pub mod dump;
 mod error;
 pub mod events;
 pub mod identity_issuer;
@@ -65,8 +63,6 @@ mod name;
 pub mod operation_grants;
 pub mod org;
 pub mod platform_principals;
-#[cfg(feature = "ops")]
-pub mod restore;
 pub mod saga;
 pub mod secret;
 pub mod session_role_reader;
@@ -94,16 +90,11 @@ pub use control_author::{
 };
 #[cfg(feature = "ops")]
 pub use copy::{
-    COPY_SAGA_KIND, CopyRequest, CopyStep, count_rows_sql, list_schema_tables_sql,
-    pg_restore_data_only_argv, plan_copy, quiesce_database_sql, terminate_database_backends_sql,
-    unquiesce_database_sql,
+    COPY_SAGA_KIND, CopyRequest, CopyStep, DUMP_FORMAT, count_rows_sql, dump_object_key,
+    list_schema_tables_sql, pg_dump_argv, pg_restore_data_only_argv, plan_copy,
+    quiesce_database_sql, terminate_database_backends_sql, unquiesce_database_sql,
 };
 pub use database::render_project_env_database;
-#[cfg(feature = "ops")]
-pub use dump::{
-    DEFAULT_BUCKET, DEFAULT_DUMP_SCHEDULE, dump_object_key, dump_resource_name, pg_dump_argv,
-    render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
-};
 pub use error::{ProvisionError, check_tenant_environment_identity};
 pub use management_admitter::{
     ManagementAdmissionConnection, ManagementAdmissionUrlError, ManagementAdmissionUrlErrorKind,
@@ -125,8 +116,6 @@ pub use platform_principals::{
     PlatformDomainError, bind_platform_principal_sql, platform_principals_sql,
     validate_platform_domain,
 };
-#[cfg(feature = "ops")]
-pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use system_reader::{
     SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorKind,
     parse_system_reader_url, system_reader_generation_role, system_reader_scope_hash,

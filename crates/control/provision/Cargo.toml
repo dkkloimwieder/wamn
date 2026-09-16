@@ -13,18 +13,13 @@ ops = []
 test-util = ["dep:wamn-test-postgres"]
 
 [[test]]
-name = "dump"
-path = "tests/dump.rs"
+name = "copy_snapshot"
+path = "tests/copy_snapshot.rs"
 required-features = ["ops"]
 
 [[test]]
 name = "ops_storage"
 path = "tests/ops_storage.rs"
-required-features = ["ops"]
-
-[[test]]
-name = "restore"
-path = "tests/restore.rs"
 required-features = ["ops"]
 
 [dependencies]

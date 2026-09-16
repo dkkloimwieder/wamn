@@ -1,8 +1,8 @@
 //! The env-symmetric **data copy** plan (wamn-8df.5, D18 §4).
 //!
 //! One operation over arbitrary `(org, project, env)` triples — same-org or
-//! cross-org. Definition promotion is owned by `wamn-ctl promote`; this plan
-//! retains only the q3n.10/.11 data-only dump/restore path.
+//! cross-org. `wamn-ctl promote` owns definition promotion. This plan copies
+//! data only.
 //!
 //! This module is **pure** (SR3 / house rule 1): the request/step model, the
 //! plan derivation ([`plan_copy`]), and the quiesce/verify SQL + argv builders.
@@ -50,8 +50,8 @@ pub enum CopyStep {
     /// terminate existing backends) and check it with a write probe. Cutover
     /// plans only.
     Quiesce { src: Triple },
-    /// `pg_dump -Fd` the src database (the q3n.10 artifact; recorded in
-    /// `provisioning.dumps`).
+    /// `pg_dump -Fd` the src database with [`pg_dump_argv`]. The driver records
+    /// the snapshot in `provisioning.dumps`.
     Snapshot { src: Triple },
     /// `pg_restore --data-only --disable-triggers` the snapshot into the dst.
     /// A restore replays state; it does not produce per-row events.
@@ -174,6 +174,45 @@ pub fn count_rows_sql(schema: &str, table: &str) -> String {
         "SELECT count(*) FROM {}.{}",
         quote_ident(schema),
         quote_ident(table)
+    )
+}
+
+/// The `pg_dump` format the copy snapshot uses: directory (`-Fd`).
+///
+/// Directory format lets the restore step select one schema. The copy driver
+/// records this value in the `provisioning.dumps` row.
+pub const DUMP_FORMAT: &str = "directory";
+
+/// The `pg_dump` argv for the copy snapshot of the src database.
+///
+/// `-Fd` writes the directory-format artifact [`pg_restore_data_only_argv`]
+/// reads. `conninfo` is a full connection URL, which the operator supplies as
+/// `--src-admin-url`. `--no-password` fails instead of prompting, because the
+/// credential arrives inside that URL. The snapshot keeps ownership and ACLs,
+/// and the data-only restore drops them on the way back in.
+pub fn pg_dump_argv(conninfo: &str, out_dir: &str) -> Vec<String> {
+    vec![
+        "pg_dump".into(),
+        "-Fd".into(),
+        "--no-password".into(),
+        "-f".into(),
+        out_dir.into(),
+        "-d".into(),
+        conninfo.into(),
+    ]
+}
+
+/// The object key of one copy snapshot: `dumps/<org>/<project>/<env>/<timestamp>`.
+///
+/// The key derives from the triple alone, so no registry read names it. The
+/// caller supplies the timestamp, because this builder holds no clock.
+pub fn dump_object_key(triple: &Triple, timestamp: &str) -> String {
+    format!(
+        "dumps/{}/{}/{}/{}",
+        triple.org,
+        triple.project,
+        triple.env.as_str(),
+        timestamp
     )
 }
 
@@ -300,6 +339,42 @@ mod tests {
             count_rows_sql("public", "receipts"),
             "SELECT count(*) FROM \"public\".\"receipts\""
         );
+    }
+
+    #[test]
+    fn snapshot_dump_uses_directory_format() {
+        // -Fd is load-bearing: the data-only restore reads a directory artifact.
+        let argv = pg_dump_argv("postgres://u@h/db", "/dump/out");
+        assert_eq!(argv[0], "pg_dump");
+        assert!(
+            argv.iter().any(|a| a == "-Fd"),
+            "must dump directory format"
+        );
+        assert_eq!(DUMP_FORMAT, "directory", "the recorded format matches -Fd");
+        // The connection + output dir are passed as separate argv (no shell splice).
+        assert!(argv.windows(2).any(|w| w == ["-f", "/dump/out"]));
+        assert!(argv.windows(2).any(|w| w == ["-d", "postgres://u@h/db"]));
+        // Never prompt for a password.
+        assert!(argv.iter().any(|a| a == "--no-password"));
+    }
+
+    #[test]
+    fn snapshot_object_key_has_the_stable_derivable_shape() {
+        // dumps/<org>/<project>/<env>/<timestamp> — derivable from the triple alone.
+        let dev = Triple::new("acme", "billing", "dev");
+        assert_eq!(
+            dump_object_key(&dev, "1720000000"),
+            "dumps/acme/billing/dev/1720000000"
+        );
+        // The key carries the env slug verbatim (an open D18 env, not a closed enum).
+        let staging = Triple::new("acme", "billing", "staging");
+        assert_eq!(
+            dump_object_key(&staging, "1"),
+            "dumps/acme/billing/staging/1"
+        );
+        // The prod and dev envs of one project never share a key.
+        let prod = Triple::new("acme", "billing", "prod");
+        assert_ne!(dump_object_key(&dev, "1"), dump_object_key(&prod, "1"));
     }
 
     #[test]

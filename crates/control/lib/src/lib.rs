@@ -14,8 +14,6 @@ pub mod component_declaration;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
 pub mod delivery;
-#[cfg(feature = "ops")]
-pub mod dump_project_env;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
 #[cfg(feature = "ops")]
@@ -43,8 +41,6 @@ pub mod push_release_manifest;
 pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
-#[cfg(feature = "ops")]
-pub mod restore_project_env;
 pub mod sql_params;
 pub mod terminalize_effect_uncertain;
 pub mod verification_policy;
