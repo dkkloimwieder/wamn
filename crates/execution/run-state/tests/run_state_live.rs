@@ -276,6 +276,10 @@ fn run_state_live() {
 
     let release = release_caller_sql();
     let terminalize = terminalize_sql();
+    // D2b: the two transitions take their instant from the caller. This test
+    // picks the instants, so the stored stamps are exact and reproducible.
+    let released_at = "2024-03-04 05:06:07.000008+00";
+    let terminal_at = "2024-03-04 05:06:09.000010+00";
 
     // Positive caller release, duplicate replay, then terminalization. A
     // transition after terminal state returns its typed refusal.
@@ -298,10 +302,16 @@ fn run_state_live() {
            EXECUTE $statement${}$statement$ INTO STRICT released \
              USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
                    'responded'::text,'{{\"ok\":true}}'::text,200::int, \
-                   'respond'::text,'sha256:one'::text; \
+                   'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
            ASSERT released.result_code = 'released', 'caller released'; \
            ASSERT (SELECT caller_outcome_kind FROM runs WHERE run_id='release-1') = 'responded', \
                   'caller outcome persisted'; \
+           ASSERT (SELECT caller_released_at FROM runs WHERE run_id='release-1') \
+                  = '{released_at}'::timestamptz, \
+                  'the caller instant is the one the caller passed'; \
+           ASSERT (SELECT updated_at FROM runs WHERE run_id='release-1') \
+                  = '{released_at}'::timestamptz, \
+                  'the release stamps updated_at with the same instant'; \
          END $test$; COMMIT;",
         executor_preamble(),
         release
@@ -313,7 +323,7 @@ fn run_state_live() {
            EXECUTE $statement${}$statement$ INTO STRICT replayed \
              USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
                    'responded'::text,'{{\"ok\":true}}'::text,200::int, \
-                   'respond'::text,'sha256:one'::text; \
+                   'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
            ASSERT replayed.result_code = 'already-released', 'duplicate is replay'; \
            ASSERT replayed.outcome_kind = 'responded', 'stored kind returned'; \
          END $test$; COMMIT;",
@@ -327,10 +337,13 @@ fn run_state_live() {
            EXECUTE $statement${}$statement$ INTO STRICT terminal \
              USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
                    'completed'::text,'frontier-exhausted'::text, \
-                   '{{\"done\":true}}'::text,NULL::text; \
+                   '{{\"done\":true}}'::text,NULL::text,'{terminal_at}'::timestamptz; \
            ASSERT terminal.result_code = 'terminalized', 'run terminalized'; \
            ASSERT (SELECT status FROM runs WHERE run_id='release-1') = 'completed', \
                   'terminal status persisted'; \
+           ASSERT (SELECT updated_at FROM runs WHERE run_id='release-1') \
+                  = '{terminal_at}'::timestamptz, \
+                  'the terminal instant is the one the caller passed'; \
            ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='release-1'), \
                   'queue row removed atomically'; \
          END $test$; COMMIT;",
@@ -376,16 +389,20 @@ fn run_state_live() {
          BEGIN \
            EXECUTE terminal_stmt INTO STRICT cron_terminal \
              USING 'terminal-cron'::text,'terminal-cron'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
+                   '{terminal_at}'::timestamptz; \
            EXECUTE terminal_stmt INTO STRICT event_terminal \
              USING 'terminal-event'::text,'terminal-event'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
+                   '{terminal_at}'::timestamptz; \
            EXECUTE terminal_stmt INTO STRICT http_open_terminal \
              USING 'terminal-http-open'::text,'terminal-http-open'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
+                   '{terminal_at}'::timestamptz; \
            EXECUTE terminal_stmt INTO STRICT http_released_terminal \
              USING 'terminal-http-released'::text,'terminal-http-released'::text,'worker-source'::text,1::bigint, \
-                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text, \
+                   '{terminal_at}'::timestamptz; \
            ASSERT cron_terminal.result_code = 'terminalized', \
                   'attached cron has no caller to release'; \
            ASSERT event_terminal.result_code = 'terminalized', \
@@ -415,7 +432,7 @@ fn run_state_live() {
            EXECUTE $statement${}$statement$ INTO STRICT refused \
              USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
                    'failed'::text,'{{\"error\":{{}}}}'::text,500::int, \
-                   NULL::text,'sha256:two'::text; \
+                   NULL::text,'sha256:two'::text,'{released_at}'::timestamptz; \
            ASSERT refused.result_code = 'already-released', \
                   'post-terminal transition is typed'; \
          END $test$; COMMIT;",
@@ -458,7 +475,7 @@ fn run_state_live() {
            EXECUTE $statement${}$statement$ INTO STRICT stale \
              USING 'race-1'::text,'race-1'::text,'stale-worker'::text,7::bigint, \
                    'responded'::text,'{{\"bad\":true}}'::text,200::int, \
-                   'respond'::text,'sha256:stale'::text; \
+                   'respond'::text,'sha256:stale'::text,'{released_at}'::timestamptz; \
            ASSERT stale.result_code = 'fence-lost', 'stale generation loses'; \
            ASSERT (SELECT caller_released_at FROM runs WHERE run_id='race-1') IS NULL, \
                   'FenceLost writes no caller state'; \
@@ -486,13 +503,14 @@ fn run_state_live() {
     );
     let fault_script = format!(
         "{} PREPARE release_stmt \
-           (text,text,text,bigint,text,text,int,text,text) AS {}; \
+           (text,text,text,bigint,text,text,int,text,text,timestamptz) AS {}; \
          PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text,text) AS {}; \
+           (text,text,text,bigint,text,text,text,text,timestamptz) AS {}; \
          EXECUTE release_stmt('fault-1','fault-1','worker-f',9, \
-                              'failed','{{\"error\":{{\"code\":\"boom\"}}}}',500,NULL,'sha256:fault'); \
+                              'failed','{{\"error\":{{\"code\":\"boom\"}}}}',500,NULL,'sha256:fault', \
+                              '{released_at}'); \
          EXECUTE terminal_stmt('fault-1','fault-1','worker-f',9, \
-                               'failed','node-failed','null','terminal'); \
+                               'failed','node-failed','null','terminal','{terminal_at}'); \
          SELECT 1/0; COMMIT;",
         executor_preamble(),
         release,

@@ -132,9 +132,13 @@ impl CallerReleaseResult {
 /// Release the durable caller outcome under the queue fence.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// outcome kind, outcome JSON text, HTTP status, release node id, outcome hash.
-/// The one returned row is `(result_code, run_status, kind, body_text,
-/// http_status, release_node_id, hash)`.
+/// outcome kind, outcome JSON text, HTTP status, release node id, outcome hash,
+/// release instant. The one returned row is `(result_code, run_status, kind,
+/// body_text, http_status, release_node_id, hash)`.
+///
+/// The caller supplies the instant (D2b). The statement never reads the server
+/// clock, so a test or a simulator controls `caller_released_at` and
+/// `updated_at` directly.
 pub fn release_caller_sql() -> String {
     format!(
         "{FENCED_PREFIX}, \
@@ -159,7 +163,8 @@ pub fn release_caller_sql() -> String {
                     caller_http_status = $7, \
                     caller_release_node_id = $8, \
                     caller_outcome_hash = $9, \
-                    caller_released_at = now(), updated_at = now() \
+                    caller_released_at = $10::timestamptz, \
+                    updated_at = $10::timestamptz \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
@@ -215,8 +220,12 @@ impl TerminalizeResult {
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// terminal status, terminal reason, result JSON text, failure kind.
-/// Completing a caller-attached run before caller release is a typed refusal.
+/// terminal status, terminal reason, result JSON text, failure kind, terminal
+/// instant. Completing a caller-attached run before caller release is a typed
+/// refusal.
+///
+/// The caller supplies the instant (D2b). The statement never reads the server
+/// clock, so a test or a simulator controls `updated_at` directly.
 pub fn terminalize_sql() -> String {
     format!(
         "{FENCED_PREFIX}, \
@@ -236,7 +245,8 @@ pub fn terminalize_sql() -> String {
          terminalized AS ( \
              UPDATE runs AS r \
                 SET status = $5, terminal_reason = $6, \
-                    result_json = $7::text::jsonb, fail_kind = $8, updated_at = now() \
+                    result_json = $7::text::jsonb, fail_kind = $8, \
+                    updated_at = $9::timestamptz \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
@@ -352,6 +362,30 @@ mod tests {
             );
             assert!(sql.contains("'cross-run-authority'"), "{sql}");
             assert!(sql.contains("'fence-lost'"), "{sql}");
+        }
+    }
+
+    /// D2b: the caller owns the instant, so the statements are reproducible.
+    #[test]
+    fn time_dependent_transitions_take_the_instant_from_the_caller() {
+        let release = release_caller_sql();
+        assert!(
+            release.contains("caller_released_at = $10::timestamptz"),
+            "{release}"
+        );
+        assert!(
+            release.contains("updated_at = $10::timestamptz"),
+            "{release}"
+        );
+        let terminal = terminalize_sql();
+        assert!(
+            terminal.contains("updated_at = $9::timestamptz"),
+            "{terminal}"
+        );
+        for sql in [release, terminalize_sql()] {
+            assert!(!sql.contains("now()"), "{sql}");
+            assert!(!sql.contains("statement_timestamp()"), "{sql}");
+            assert!(!sql.contains("clock_timestamp()"), "{sql}");
         }
     }
 

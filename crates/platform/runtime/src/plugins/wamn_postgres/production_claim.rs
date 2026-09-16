@@ -1,6 +1,7 @@
 //! Host-only composition of one production queue claim transaction.
 
 use std::fmt::{Display, Formatter};
+use std::time::SystemTime;
 
 use deadpool_postgres::Object;
 use tokio_postgres::Row;
@@ -924,6 +925,11 @@ async fn complete_in_transaction(
     completion: &ProductionCompletion,
 ) -> Result<ProductionCompletionResult, ProductionClaimError> {
     require_executor_authority(connection).await?;
+    // D2b: the transitions take their instant from this host, not from the
+    // database server. One instant serves the caller release and the
+    // terminalization, because both statements run inside this one transaction
+    // and the server `now()` they replace was the transaction timestamp.
+    let completed_at = SystemTime::now();
     if let Some(caller) = completion.caller.as_ref() {
         let body_json = serde_json::to_string(&caller.body).map_err(|error| {
             ProductionClaimError::new(
@@ -953,6 +959,7 @@ async fn complete_in_transaction(
                     &http_status,
                     &release_node_id,
                     &hash,
+                    &completed_at,
                 ],
             )
             .await
@@ -1019,6 +1026,7 @@ async fn complete_in_transaction(
                 &completion.terminal_reason,
                 &result_json,
                 &fail_kind,
+                &completed_at,
             ],
         )
         .await
