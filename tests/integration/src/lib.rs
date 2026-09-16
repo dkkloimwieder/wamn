@@ -20,8 +20,8 @@ pub mod identity_session_test;
 pub mod measure;
 mod measurement_schema;
 pub mod membership_test;
-pub mod readerbench;
 pub mod rc;
+pub mod readerbench;
 #[cfg(test)]
 mod route_authentication_live;
 mod router_tap_live;

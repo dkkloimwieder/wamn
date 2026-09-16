@@ -83,9 +83,9 @@ impl ReceiptQuery for Component {
 
 impl LoadReceiptScreen for Component {
     fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(wamn_receiving_data_access::operation::receiving_load_receipt_screen(
-            &input,
-        ))
+        invoke_operation(
+            wamn_receiving_data_access::operation::receiving_load_receipt_screen(&input),
+        )
     }
 }
 

@@ -1445,10 +1445,11 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
 
     #[test]
     fn overhead_limit_uses_five_sample_median() {
-        assert!((overhead_median(&[5.0, 6.0, 7.0, 30.0, 40.0]).unwrap() - 7.0).abs() < f64::EPSILON);
         assert!(
-            (overhead_median(&[10.0, 11.0, 12.0, 13.0, 14.0]).unwrap() - 12.0).abs()
-                < f64::EPSILON
+            (overhead_median(&[5.0, 6.0, 7.0, 30.0, 40.0]).unwrap() - 7.0).abs() < f64::EPSILON
+        );
+        assert!(
+            (overhead_median(&[10.0, 11.0, 12.0, 13.0, 14.0]).unwrap() - 12.0).abs() < f64::EPSILON
         );
         assert!(overhead_median(&[11.0, 12.0, 12.1, 13.0, 14.0]).is_err());
         assert!(overhead_median(&[1.0, 2.0, 3.0, 4.0]).is_err());

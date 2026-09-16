@@ -1,28 +1,27 @@
 //! Receiving application scenarios over real platform adapters.
 
-#[path = "../../../tests/integration/src/route_authentication_live/fresh_only.rs"]
-mod fresh_only;
 mod cluster;
-mod startup_burst;
 #[path = "receiving_command_histories_live.rs"]
 mod command_histories;
+#[path = "../../../tests/integration/src/route_authentication_live/fresh_only.rs"]
+mod fresh_only;
+mod startup_burst;
 use command_histories::database::{FIXTURE_PRINCIPAL, bind_fixture_principal};
+mod delivery;
+mod dev;
+mod environment;
+mod materializer;
 #[path = "../../client_acme_receiving/tests/overlay_compatibility.rs"]
 mod overlay_compatibility;
 #[path = "../../../tests/integration/src/route_authentication_live/p3_shell.rs"]
 mod p3_shell;
 #[path = "postcommit.rs"]
 mod postcommit;
+mod routes;
+mod runtime;
 #[path = "../../../tests/integration/src/route_authentication_live/session_client.rs"]
 mod session_client;
-mod dev;
-mod runtime;
-mod routes;
 mod sessions;
-mod materializer;
-mod environment;
-mod delivery;
-
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::Permissions;
@@ -38,7 +37,9 @@ use http_body_util::{BodyExt, Full};
 use hyper::{Method, Request, StatusCode};
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::{InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData};
+use opentelemetry_sdk::trace::{
+    InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
+};
 use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::Client;
@@ -49,21 +50,34 @@ use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
-use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
+use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_ctl::dev::DevSourceState;
 use wamn_ctl::dev::watch::GitSource;
+use wamn_execution_host::{
+    ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
+};
 use wamn_gate_harness::journey::{BaseCandidate, JourneyDocument, MaterializerPhase};
-use wamn_execution_host::{ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WiringCacheCapacity};
-use wamn_platform_identity::{PrincipalKind, create_human, issue_pat, resolve_subject, route_caller_subject};
-use wamn_runtime::component_artifact_source::{ComponentArtifactSource, ComponentArtifactSourceConfig};
-use wamn_runtime::engine::{build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets};
+use wamn_platform_identity::{
+    PrincipalKind, create_human, issue_pat, resolve_subject, route_caller_subject,
+};
+use wamn_runtime::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
+};
+use wamn_runtime::engine::{
+    build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,
+};
 use wamn_runtime::plugins::WamnJetstream;
-use wamn_runtime::plugins::flow_http_routing::{FLOW_HTTP_ROUTING_ID, FlowHttpRouting, RouteAuthentication, RouteInFlightLimit, SessionRouteAuthentication};
+use wamn_runtime::plugins::flow_http_routing::{
+    FLOW_HTTP_ROUTING_ID, FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,
+    SessionRouteAuthentication,
+};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
-use wamn_runtime::plugins::wamn_postgres::{AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{
+    AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
+};
 use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
@@ -79,13 +93,34 @@ use wash_runtime::wasmtime::component::{Component, Linker};
 use wasmtime_wasi_http::p3::bindings::Service;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
-use wamn_control::provision_project_env::{read_json, secret_value};
-use wamn_ctl::dev::environment::{DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT, connect, install_journey_platform_floor, prepare_journey_credentials, provision_journey_control, provision_route, reconcile_journey_run_plane, spawn_journey_management_gate, write_dev_config};
-use wamn_test_infrastructure::scratch::ScratchRoot;
-use runtime::{TraceHarness, journey_trace, span_attribute, span_descends_from, trace_component_invocations, assert_invocation_identity, assert_postgres_descendants, assert_direct_route_trace, assert_nested_record_receipt_trace, assert_native_nested_acquisition, assert_nested_permission_denial_trace, assert_no_component_trace, build_journey_runtime, JourneyGuestMemory, JourneyRuntime, invoke_journey_route, invoke_journey_request, successful_value};
+use environment::{
+    JourneyReleaseTarget, author_journey_wirings, gate_journey_wirings, install_journey_project,
+    journey_package_root, journey_publication_root, journey_scenario_worker_binary,
+    overlay_package_root, overlay_route_path, package_root, publish_journey_release,
+    push_journey_components, reconcile_journey_data_access, released_component_digests,
+    render_component_declarations, repository_root, required_journey, required_journey_path,
+    seed_materializer_trigger_rows, seed_preexisting_quality_fixture, seed_receiving_business_rows,
+    verify_journey_components_are_effectful, verify_journey_operation_grants,
+    verify_zero_case_gate_reports,
+};
 use routes::copy_fresh_only_package;
+use runtime::{
+    JourneyGuestMemory, JourneyRuntime, TraceHarness, assert_direct_route_trace,
+    assert_invocation_identity, assert_native_nested_acquisition,
+    assert_nested_permission_denial_trace, assert_nested_record_receipt_trace,
+    assert_no_component_trace, assert_postgres_descendants, build_journey_runtime,
+    invoke_journey_request, invoke_journey_route, journey_trace, span_attribute,
+    span_descends_from, successful_value, trace_component_invocations,
+};
 use sessions::{assert_operation_refusal, nested_receipt_state};
-use environment::{package_root, overlay_package_root, journey_package_root, required_journey, required_journey_path, journey_scenario_worker_binary, journey_publication_root, overlay_route_path, install_journey_project, reconcile_journey_data_access, verify_journey_operation_grants, repository_root, render_component_declarations, push_journey_components, verify_journey_components_are_effectful, gate_journey_wirings, verify_zero_case_gate_reports, author_journey_wirings, JourneyReleaseTarget, publish_journey_release, released_component_digests, seed_receiving_business_rows, seed_preexisting_quality_fixture, seed_materializer_trigger_rows};
+use wamn_control::provision_project_env::{read_json, secret_value};
+use wamn_ctl::dev::environment::{
+    DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT,
+    connect, install_journey_platform_floor, prepare_journey_credentials,
+    provision_journey_control, provision_route, reconcile_journey_run_plane,
+    spawn_journey_management_gate, write_dev_config,
+};
+use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const ROUTE_CALLER_ROLE: &str = "route-caller";
 const BASE_PACKAGE_ID: &str = "wamn_receiving";

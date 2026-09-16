@@ -157,7 +157,11 @@ pub(super) fn table<'a>(catalog: &'a CatalogIr, name: &str) -> &'a Table {
         .unwrap()
 }
 
-pub(super) fn rebuilt_table(table: &Table, columns: Vec<Column>, constraints: Vec<Constraint>) -> Table {
+pub(super) fn rebuilt_table(
+    table: &Table,
+    columns: Vec<Column>,
+    constraints: Vec<Constraint>,
+) -> Table {
     Table::new(
         table.schema(),
         table.name(),

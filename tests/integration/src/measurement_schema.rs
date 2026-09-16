@@ -6,7 +6,6 @@
 
 use std::path::Path;
 
-
 pub const PACKAGE_ID: &str = "poc_material_receiving";
 
 const MODEL_TABLES: [(&str, &str); 9] = [

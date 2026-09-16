@@ -118,18 +118,19 @@ pub(super) async fn wait_registry(authority: &str, auth_file: &Path) -> anyhow::
     let url = format!("http://{authority}/v2/");
     for _ in 0..30 {
         if let Ok(response) = client.get(&url).send().await
-            && response.status() == reqwest::StatusCode::UNAUTHORIZED {
-                let authenticated = client
-                    .get(&url)
-                    .basic_auth(username, Some(password))
-                    .send()
-                    .await?;
-                ensure!(
-                    authenticated.status() == reqwest::StatusCode::OK,
-                    "registry refused its private credential"
-                );
-                return Ok(());
-            }
+            && response.status() == reqwest::StatusCode::UNAUTHORIZED
+        {
+            let authenticated = client
+                .get(&url)
+                .basic_auth(username, Some(password))
+                .send()
+                .await?;
+            ensure!(
+                authenticated.status() == reqwest::StatusCode::OK,
+                "registry refused its private credential"
+            );
+            return Ok(());
+        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     anyhow::bail!("owned registry did not require authentication after 30 attempts")
@@ -144,9 +145,10 @@ pub(super) async fn wait_minio(endpoint: &str) -> anyhow::Result<()> {
             .get(format!("{endpoint}/minio/health/live"))
             .send()
             .await
-            && response.status().is_success() {
-                return Ok(());
-            }
+            && response.status().is_success()
+        {
+            return Ok(());
+        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     anyhow::bail!("owned labels store did not become ready after 30 attempts")
@@ -442,79 +444,81 @@ pub(super) async fn capture_failure(
         }
     }
     if let Ok(bytes) = fs::read(evidence.join("failure-pods.json"))
-        && let Ok(pods) = serde_json::from_slice::<Value>(&bytes) {
-            for pod in pods["items"].as_array().into_iter().flatten() {
-                if pod["metadata"]["labels"]["wasmcloud.com/name"] != "hostgroup" {
-                    continue;
-                }
-                let Some(name) = pod["metadata"]["name"].as_str() else {
-                    continue;
-                };
-                for previous in [false, true] {
-                    let mut command = kubectl(cluster, work);
-                    command.args([
-                        "--request-timeout=10s",
-                        "-n",
-                        cluster,
-                        "logs",
-                        "--timestamps",
-                        "-c",
-                        "host",
-                        name,
-                    ]);
-                    if previous {
-                        command.arg("--previous");
-                    }
-                    if let Err(error) = capture(
-                        &mut command,
-                        evidence,
-                        &format!(
-                            "failure-{name}{}.log",
-                            if previous { ".previous" } else { "" }
-                        ),
-                    )
-                    .await
-                    {
-                        failures.push(format!("host {name}: {error:#}"));
-                    }
-                }
+        && let Ok(pods) = serde_json::from_slice::<Value>(&bytes)
+    {
+        for pod in pods["items"].as_array().into_iter().flatten() {
+            if pod["metadata"]["labels"]["wasmcloud.com/name"] != "hostgroup" {
+                continue;
             }
-        }
-    if let Ok(bytes) = fs::read(evidence.join("failure-jobs.json"))
-        && let Ok(jobs) = serde_json::from_slice::<Value>(&bytes) {
-            for job in jobs["items"].as_array().into_iter().flatten() {
-                if job["status"]["conditions"]
-                    .as_array()
-                    .is_some_and(|conditions| {
-                        conditions.iter().any(|condition| {
-                            condition["type"] == "Complete" && condition["status"] == "True"
-                        })
-                    })
-                {
-                    continue;
+            let Some(name) = pod["metadata"]["name"].as_str() else {
+                continue;
+            };
+            for previous in [false, true] {
+                let mut command = kubectl(cluster, work);
+                command.args([
+                    "--request-timeout=10s",
+                    "-n",
+                    cluster,
+                    "logs",
+                    "--timestamps",
+                    "-c",
+                    "host",
+                    name,
+                ]);
+                if previous {
+                    command.arg("--previous");
                 }
-                let Some(name) = job["metadata"]["name"].as_str() else {
-                    continue;
-                };
                 if let Err(error) = capture(
-                    kubectl(cluster, work).args([
-                        "--request-timeout=10s",
-                        "-n",
-                        cluster,
-                        "logs",
-                        &format!("job/{name}"),
-                        "--all-containers",
-                        "--tail=-1",
-                    ]),
+                    &mut command,
                     evidence,
-                    &format!("failure-job-{name}.log"),
+                    &format!(
+                        "failure-{name}{}.log",
+                        if previous { ".previous" } else { "" }
+                    ),
                 )
                 .await
                 {
-                    failures.push(format!("Job {name}: {error:#}"));
+                    failures.push(format!("host {name}: {error:#}"));
                 }
             }
         }
+    }
+    if let Ok(bytes) = fs::read(evidence.join("failure-jobs.json"))
+        && let Ok(jobs) = serde_json::from_slice::<Value>(&bytes)
+    {
+        for job in jobs["items"].as_array().into_iter().flatten() {
+            if job["status"]["conditions"]
+                .as_array()
+                .is_some_and(|conditions| {
+                    conditions.iter().any(|condition| {
+                        condition["type"] == "Complete" && condition["status"] == "True"
+                    })
+                })
+            {
+                continue;
+            }
+            let Some(name) = job["metadata"]["name"].as_str() else {
+                continue;
+            };
+            if let Err(error) = capture(
+                kubectl(cluster, work).args([
+                    "--request-timeout=10s",
+                    "-n",
+                    cluster,
+                    "logs",
+                    &format!("job/{name}"),
+                    "--all-containers",
+                    "--tail=-1",
+                ]),
+                evidence,
+                &format!("failure-job-{name}.log"),
+            )
+            .await
+            {
+                failures.push(format!("Job {name}: {error:#}"));
+            }
+        }
+    }
     crate::wms_runtime_live::write_result(
         evidence,
         "failure-capture.json",

@@ -23,10 +23,8 @@ mod tests {
         let database = super::tenant_app_system();
         assert_eq!(
             database
-                .execute(&[
-                    "SELECT to_regclass('catalog.packages') IS NOT NULL \
-                       AND to_regclass('app_system.users') IS NOT NULL",
-                ])
+                .execute(&["SELECT to_regclass('catalog.packages') IS NOT NULL \
+                       AND to_regclass('app_system.users') IS NOT NULL",])
                 .unwrap()
                 .trim(),
             "t"

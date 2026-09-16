@@ -315,7 +315,10 @@ async fn qualify_candidate(
                 case_result.display().to_string(),
             ),
             // The case creates its own new result directory inside this parent.
-            (app.evidence_env.to_owned(), temporary.0.display().to_string()),
+            (
+                app.evidence_env.to_owned(),
+                temporary.0.display().to_string(),
+            ),
         ]);
         let command = vec![
             executable.display().to_string(),

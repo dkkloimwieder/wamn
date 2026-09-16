@@ -1192,11 +1192,9 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
         let transaction = self.table.delete(rep)?;
         let state = Arc::clone(&transaction.transaction.state);
         let destroyed = Arc::clone(&transaction.transaction.destroyed);
-        let already_finished = state
-            .lock()
-            .map_or(true, |transaction| {
-                transaction.finished || transaction.conn.is_none()
-            });
+        let already_finished = state.lock().map_or(true, |transaction| {
+            transaction.finished || transaction.conn.is_none()
+        });
         if !already_finished {
             let _ = finish_statement_txn(&state, &destroyed, "ROLLBACK").await;
         }

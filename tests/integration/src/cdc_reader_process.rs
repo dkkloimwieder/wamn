@@ -103,9 +103,10 @@ fn reader_binary() -> OsString {
     let sibling = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("wamn-cdc-reader")));
-    sibling
-        .filter(|path| path.is_file())
-        .map_or_else(|| OsString::from("wamn-cdc-reader"), PathBuf::into_os_string)
+    sibling.filter(|path| path.is_file()).map_or_else(
+        || OsString::from("wamn-cdc-reader"),
+        PathBuf::into_os_string,
+    )
 }
 
 #[cfg(test)]

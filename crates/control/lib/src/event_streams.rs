@@ -164,7 +164,13 @@ mod tests {
             Duration::from_secs(30),
             5,
         );
-        validate_inputs(&scope, 3, Duration::from_secs(120), std::slice::from_ref(&expected)).unwrap();
+        validate_inputs(
+            &scope,
+            3,
+            Duration::from_secs(120),
+            std::slice::from_ref(&expected),
+        )
+        .unwrap();
         for filter in [
             "evt.acme.wms.dev.receipt.>",
             "evt.acme.receiving.prod.receipt.>",

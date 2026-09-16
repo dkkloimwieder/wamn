@@ -2,7 +2,6 @@
 
 use super::*;
 
-
 pub(super) fn package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving")
 }
@@ -21,7 +20,11 @@ pub(super) fn journey_package_root(
         overlay_package_root()
     };
     if let Some(root) = inputs.and_then(|inputs| inputs.fresh_only_packages.as_ref()) {
-        return root.join(source.file_name().expect("the test package has a directory name"));
+        return root.join(
+            source
+                .file_name()
+                .expect("the test package has a directory name"),
+        );
     }
     if let Some(phase) = inputs.and_then(|inputs| inputs.overlay_compatibility.as_ref()) {
         return overlay_compatibility::source(phase, package);
@@ -51,7 +54,10 @@ pub(super) fn journey_scenario_worker_binary() -> anyhow::Result<PathBuf> {
     Ok(binary)
 }
 
-pub(super) fn journey_publication_root(package: JourneyPackage, inputs: Option<&JourneyDocument>) -> PathBuf {
+pub(super) fn journey_publication_root(
+    package: JourneyPackage,
+    inputs: Option<&JourneyDocument>,
+) -> PathBuf {
     journey_package_root(package, inputs).join("publication")
 }
 
@@ -98,7 +104,10 @@ pub(super) async fn install_journey_project(
     Ok(())
 }
 
-pub(super) async fn reconcile_journey_data_access(inputs: &JourneyDocument, project_url: &str) -> anyhow::Result<()> {
+pub(super) async fn reconcile_journey_data_access(
+    inputs: &JourneyDocument,
+    project_url: &str,
+) -> anyhow::Result<()> {
     let packages = JOURNEY_PACKAGES
         .iter()
         .map(|package| journey_package_root(*package, Some(inputs)))
@@ -379,7 +388,11 @@ pub(super) fn gate_document(
     )
 }
 
-pub(super) async fn gate_journey_wirings(inputs: &JourneyDocument, bind: &str, bearer: &str) -> anyhow::Result<Vec<String>> {
+pub(super) async fn gate_journey_wirings(
+    inputs: &JourneyDocument,
+    bind: &str,
+    bearer: &str,
+) -> anyhow::Result<Vec<String>> {
     let client = reqwest::Client::new();
     let mut reports = Vec::with_capacity(
         JOURNEY_PACKAGES
@@ -468,7 +481,11 @@ pub(super) async fn verify_zero_case_gate_reports(
     Ok(())
 }
 
-pub(super) async fn author_journey_wirings(inputs: &JourneyDocument, project_url: &str, system_url: &str) -> anyhow::Result<()> {
+pub(super) async fn author_journey_wirings(
+    inputs: &JourneyDocument,
+    project_url: &str,
+    system_url: &str,
+) -> anyhow::Result<()> {
     for package in JOURNEY_PACKAGES {
         for (wiring, _) in package.operations {
             let document = author_wiring::read_wiring_document(
@@ -556,7 +573,13 @@ pub(super) async fn mint_journey_release(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[&TENANT, &release_id.cast_signed(), &ORG, &PROJECT, &ENVIRONMENT],
+            &[
+                &TENANT,
+                &release_id.cast_signed(),
+                &ORG,
+                &PROJECT,
+                &ENVIRONMENT,
+            ],
         )
         .await
         .context("verify the minted Receiving release remains inactive")?;
@@ -615,7 +638,13 @@ pub(super) async fn publish_journey_release(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[&TENANT, &release_id.cast_signed(), &ORG, &PROJECT, &ENVIRONMENT],
+            &[
+                &TENANT,
+                &release_id.cast_signed(),
+                &ORG,
+                &PROJECT,
+                &ENVIRONMENT,
+            ],
         )
         .await
         .context("verify the deployed Receiving release is serving")?

@@ -406,9 +406,10 @@ fn transport(error: &reqwest::Error) -> anyhow::Result<String> {
                     | std::io::ErrorKind::ConnectionAborted
                     | std::io::ErrorKind::BrokenPipe
                     | std::io::ErrorKind::UnexpectedEof
-            ) {
-                return Ok("receive".to_owned());
-            }
+            )
+        {
+            return Ok("receive".to_owned());
+        }
         cause = error.source();
     }
     anyhow::bail!("the route request failed outside the retained transport classes: {error}")
@@ -804,22 +805,22 @@ impl Recovery<'_> {
                 && epoch_seconds(response.timestamp * 1_000_000) >= ready_since
                 && response.result == "serving"
             {
-                    let elapsed = now() - after;
-                    ensure!(
-                        elapsed <= f64::from(RECOVERY_SECONDS),
-                        "recovery exceeded the unchanged 120-second ceiling"
-                    );
-                    let mut workloads = current
-                        .workloads
-                        .iter()
-                        .map(|workload| text(workload, "/metadata/uid").map(str::to_owned))
-                        .collect::<anyhow::Result<Vec<_>>>()?;
-                    workloads.sort();
-                    self.phases.insert(label.to_owned(), json!({"started":after,"ready_and_serving_after_seconds":elapsed,
+                let elapsed = now() - after;
+                ensure!(
+                    elapsed <= f64::from(RECOVERY_SECONDS),
+                    "recovery exceeded the unchanged 120-second ceiling"
+                );
+                let mut workloads = current
+                    .workloads
+                    .iter()
+                    .map(|workload| text(workload, "/metadata/uid").map(str::to_owned))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                workloads.sort();
+                self.phases.insert(label.to_owned(), json!({"started":after,"ready_and_serving_after_seconds":elapsed,
                         "readiness_observed":ready_since,"exact_200_after_readiness":response,"workload_uids":workloads}));
-                    self.write("phases", &self.phases)?;
-                    return Ok(current);
-                }
+                self.write("phases", &self.phases)?;
+                return Ok(current);
+            }
             ensure!(
                 Instant::now() < deadline,
                 "{label} did not recover within 120 seconds"
@@ -1292,9 +1293,9 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
                 false,
             )
             .await
-        {
-            cleanup_errors.push(error.to_string());
-        }
+    {
+        cleanup_errors.push(error.to_string());
+    }
     let _ = stop.send(());
     match tokio::time::timeout(Duration::from_secs(10), &mut request_task).await {
         Ok(Ok(Ok(samples))) => recovery.write("route-samples", &samples)?,

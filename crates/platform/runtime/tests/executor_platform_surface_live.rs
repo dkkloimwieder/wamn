@@ -33,13 +33,12 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_runtime::plugins::wamn_postgres::{
-    AclExpectation, AclTarget, AmbientCredentialState, CANDIDATE_WIRING_SQL,
-    ClassCredentials, ProductionClaimErrorKind, ProductionClaimResult, ProductionCompletion,
-    ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
-    WamnPostgres, WamnPostgresConfig,
+    AclExpectation, AclTarget, AmbientCredentialState, CANDIDATE_WIRING_SQL, ClassCredentials,
     CredentialConnectionKind, CredentialProbeErrorKind, CredentialProbePredicate,
-    ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, RELEASE_WIRING_SQL,
-    credential_exactness_probe, explicit_credential_source,
+    ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, ProductionClaimErrorKind,
+    ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
+    ProductionLeaseRenewal, ProductionReapResult, RELEASE_WIRING_SQL, WamnPostgres,
+    WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
 };
 
 /// The generation login every leg runs as.
@@ -704,7 +703,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         "the tenant binding must refuse before a connection is used"
     );
 
-
     // Warm the real executor pool before revoking membership on its existing connection.
     let plugin = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(platform_url)),
@@ -718,7 +716,9 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     assert_eq!(
-        plugin.renew_production_lease(COMPONENT, "absent", 1, 30_000).await?,
+        plugin
+            .renew_production_lease(COMPONENT, "absent", 1, 30_000)
+            .await?,
         ProductionLeaseRenewal::FenceLost
     );
     let snapshot = "SELECT jsonb_build_array(to_jsonb(r), to_jsonb(q)) \
@@ -736,22 +736,37 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let packages = [PACKAGE_ID.to_string()];
     let completion = ProductionCompletion::completed(serde_json::json!({"done": true}), None);
     for result in [
-        plugin.claim_next_production(COMPONENT, &packages, ENVIRONMENT, 30_000)
-            .await.map(|_| ()),
-        plugin.reap_one_exhausted_production(COMPONENT, &packages, ENVIRONMENT, 0)
-            .await.map(|_| ()),
-        plugin.renew_production_lease(COMPONENT, "run-1", 1, 30_000)
-            .await.map(|_| ()),
-        plugin.complete_production(COMPONENT, "run-1", 1, &completion)
-            .await.map(|_| ()),
+        plugin
+            .claim_next_production(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .await
+            .map(|_| ()),
+        plugin
+            .reap_one_exhausted_production(COMPONENT, &packages, ENVIRONMENT, 0)
+            .await
+            .map(|_| ()),
+        plugin
+            .renew_production_lease(COMPONENT, "run-1", 1, 30_000)
+            .await
+            .map(|_| ()),
+        plugin
+            .complete_production(COMPONENT, "run-1", 1, &completion)
+            .await
+            .map(|_| ()),
     ] {
         let error = result.expect_err("broad table grants must not replace executor membership");
         assert_eq!(error.kind(), ProductionClaimErrorKind::Identity);
         assert_eq!(error.operation(), "check executor authority");
-        assert!(error.to_string().contains("executor-platform-authority-required"));
+        assert!(
+            error
+                .to_string()
+                .contains("executor-platform-authority-required")
+        );
     }
     let after: Value = admin.query_one(snapshot, &[&TENANT]).await?.get(0);
-    assert_eq!(after, before, "every refused operation must leave the run and queue unchanged");
+    assert_eq!(
+        after, before,
+        "every refused operation must leave the run and queue unchanged"
+    );
     admin
         .batch_execute(&format!(
             "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, wamn_run FROM {GENERATION}; \
@@ -760,22 +775,33 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         ))
         .await?;
     assert_eq!(
-        plugin.reap_one_exhausted_production(COMPONENT, &packages, ENVIRONMENT, 0).await?,
+        plugin
+            .reap_one_exhausted_production(COMPONENT, &packages, ENVIRONMENT, 0)
+            .await?,
         ProductionReapResult::Empty
     );
-    let ProductionClaimResult::Ready { run_id, lease_generation, .. } =
-        plugin.claim_next_production(COMPONENT, &packages, ENVIRONMENT, 30_000).await?
+    let ProductionClaimResult::Ready {
+        run_id,
+        lease_generation,
+        ..
+    } = plugin
+        .claim_next_production(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        .await?
     else {
         anyhow::bail!("the restored executor must claim its unchanged run");
     };
     assert_eq!(run_id, "run-1");
     assert_eq!(lease_generation, 1);
     assert_eq!(
-        plugin.renew_production_lease(COMPONENT, &run_id, lease_generation, 30_000).await?,
+        plugin
+            .renew_production_lease(COMPONENT, &run_id, lease_generation, 30_000)
+            .await?,
         ProductionLeaseRenewal::Renewed
     );
     assert_eq!(
-        plugin.complete_production(COMPONENT, &run_id, lease_generation, &completion).await?,
+        plugin
+            .complete_production(COMPONENT, &run_id, lease_generation, &completion)
+            .await?,
         ProductionCompletionResult::Terminalized
     );
 

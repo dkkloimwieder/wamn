@@ -1068,7 +1068,10 @@ mod tests {
                 }),
             )
             .expect_err("the complete target records must be byte-exact");
-            assert_eq!(error.kind(), PromotionErrorKind::PackageMigrationRecordMismatch);
+            assert_eq!(
+                error.kind(),
+                PromotionErrorKind::PackageMigrationRecordMismatch
+            );
         }
     }
 

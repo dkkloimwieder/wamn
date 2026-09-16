@@ -99,18 +99,16 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             evidence,
         )
         .await?;
-        let hosts = workload::hosts_ready(
-            &workload::HostsReadyInput {
-                lifecycle: &resources.lifecycle,
-                cluster: &resources.name,
-                work: &resources.work,
-                namespace: &resources.name,
-                image: &resources.host_image,
-                runtime_digest: &digest,
-                replicas: 3,
-                evidence,
-            },
-        )
+        let hosts = workload::hosts_ready(&workload::HostsReadyInput {
+            lifecycle: &resources.lifecycle,
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+            image: &resources.host_image,
+            runtime_digest: &digest,
+            replicas: 3,
+            evidence,
+        })
         .await?;
         let (http, materializer) = deployment::publish_platform_components(&cluster).await?;
         deployment::install_http(&cluster, &http).await?;

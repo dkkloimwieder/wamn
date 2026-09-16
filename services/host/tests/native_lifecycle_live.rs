@@ -403,7 +403,10 @@ async fn assert_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyh
 
 // Exercise a real native command-task failure through the public WAMN
 // lifecycle helpers. This case runs in the test process, not the host child.
-async fn assert_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> anyhow::Result<()> {
+async fn assert_missing_first_beat(
+    nats_address: SocketAddr,
+    evidence: &Path,
+) -> anyhow::Result<()> {
     use std::sync::Arc;
 
     use wamn_runtime::lifecycle::{bounded_cleanup, watch_liveness};

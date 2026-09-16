@@ -8,9 +8,7 @@ use wamn_catalog::ServingManifest;
 
 use super::Qualification;
 use crate::print_release_env::{ReleaseSnapshot, lookup_release_snapshot};
-use crate::push_release_manifest::{
-    self, PublishedReleaseManifest, PushReleaseManifestRequest,
-};
+use crate::push_release_manifest::{self, PublishedReleaseManifest, PushReleaseManifestRequest};
 
 /// Publish an already qualified candidate through the existing OCI publisher.
 pub async fn publish(
@@ -22,11 +20,8 @@ pub async fn publish(
     // The existing publisher rereads the sealed snapshot, preserves exact
     // retries, and records its upload with the same source attribution.
     qualification.assert_artifacts()?;
-    push_release_manifest::push_release_manifest(
-        publication,
-        Some(&qualification.source_commit),
-    )
-    .await
+    push_release_manifest::push_release_manifest(publication, Some(&qualification.source_commit))
+        .await
 }
 
 pub(super) async fn checked_snapshot(

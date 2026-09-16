@@ -284,8 +284,8 @@ fn logging_guest() -> String {
 
 #[tokio::test]
 async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest() {
-    let (logging, capture) =
-        WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("logging plugin builds");
+    let (logging, capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default())
+        .expect("logging plugin builds");
     let logging = Arc::new(logging);
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(

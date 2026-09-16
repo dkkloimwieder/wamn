@@ -501,7 +501,10 @@ mod tests {
                 "printf launched > replacement-launched\nexit 0",
             );
             let (control, stopped) = supervisor();
-            control.start(spec(executable, "old")).await.expect("launch");
+            control
+                .start(spec(executable, "old"))
+                .await
+                .expect("launch");
             wait_for(&fixture.root.join("pid")).await;
             let pid = fs::read_to_string(fixture.root.join("pid")).expect("read child PID");
             let error = control

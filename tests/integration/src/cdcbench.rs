@@ -936,12 +936,8 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
             let msgs = stream_msgs(&js, &stream_name).await;
             let lag = slot_lag(&db, &cdc_name).await?;
             lag_max = lag_max.max(lag);
-            writeln!(
-                series,
-                "{rate},{},{msgs},{lag}",
-                t0.elapsed().as_millis()
-            )
-            .expect("writing to a String cannot fail");
+            writeln!(series, "{rate},{},{msgs},{lag}", t0.elapsed().as_millis())
+                .expect("writing to a String cannot fail");
             if handles.iter().all(tokio::task::JoinHandle::is_finished) {
                 break;
             }
@@ -1049,7 +1045,9 @@ async fn op_batch(
         p50_ms: percentile(&samples, 0.50).as_secs_f64() * 1e3,
         p99_ms: percentile(&samples, 0.99).as_secs_f64() * 1e3,
         wal_mean: crate::measure::signed_count_f64(wal) / crate::measure::len_f64(n),
-        wal_p50: crate::measure::signed_count_f64(wal_deltas.get(wal_deltas.len() / 2).copied().unwrap_or(0)),
+        wal_p50: crate::measure::signed_count_f64(
+            wal_deltas.get(wal_deltas.len() / 2).copied().unwrap_or(0),
+        ),
     })
 }
 

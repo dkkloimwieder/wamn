@@ -13,10 +13,10 @@ use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::provision_project_env::secret_value;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
+use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_ctl::dev::environment::{
     ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
 };
-use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
@@ -24,9 +24,9 @@ use wamn_runtime::session_verifier::SessionVerifier;
 
 use super::{
     BASE_PACKAGE_ID, BASE_PACKAGE_VERSION, BASE_RECORD_RECEIPT, JOURNEY_PACKAGES, JourneyDocument,
-    ROUTE_JOURNEY_GATE_BIND, ScratchRoot, TraceHarness, assert_invocation_identity,
+    JourneyRuntime, ROUTE_JOURNEY_GATE_BIND, ScratchRoot, TraceHarness, assert_invocation_identity,
     assert_operation_refusal, assert_postgres_descendants, build_journey_runtime,
-    JourneyRuntime, invoke_journey_route, journey_package_root, journey_publication_root,
+    invoke_journey_route, journey_package_root, journey_publication_root,
     journey_scenario_worker_binary, journey_trace, span_attribute, span_descends_from,
     successful_value, trace_component_invocations,
 };
@@ -64,7 +64,9 @@ pub(super) struct PriorCommitTest<'a> {
 
 impl std::fmt::Debug for PriorCommitTest<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("PriorCommitTest").finish_non_exhaustive()
+        formatter
+            .debug_struct("PriorCommitTest")
+            .finish_non_exhaustive()
     }
 }
 
@@ -117,8 +119,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     // Test instrumentation, not a generated application command: the ordinary
     // raw palette import uses GuestSql and its login-bound tenant. Only count is
     // writable; this fixture adds no role or permanent product policy.
-    test
-        .project
+    test.project
         .batch_execute(&format!(
             "ALTER TABLE fresh_only_probe.counter ENABLE ROW LEVEL SECURITY; \
          ALTER TABLE fresh_only_probe.counter FORCE ROW LEVEL SECURITY; \
@@ -129,8 +130,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
            ON fresh_only_probe.counter TO wamn_app;"
         ))
         .await?;
-    test
-        .project
+    test.project
         .execute(
             "INSERT INTO fresh_only_probe.counter (id, tenant_id, count) \
          VALUES ('00000000-0000-0000-0000-000000000904', $1, 0), \
@@ -145,7 +145,8 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         .find(|package| package.id == BASE_PACKAGE_ID)
         .context("the journey must declare the actual base package")?;
     let source: Value = serde_json::from_slice(&std::fs::read(
-        journey_publication_root(base_package, Some(test.inputs)).join("components/receiving.json.in"),
+        journey_publication_root(base_package, Some(test.inputs))
+            .join("components/receiving.json.in"),
     )?)?;
     let ports = &source["operations"][BASE_RECORD_RECEIPT];
     let declaration = json!({
@@ -405,14 +406,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             counter(&test, &counter_read).await? == 1,
             "late session refusal rolled back or repeated the earlier committed effect"
         );
-        assert_counter_trace(
-            &test,
-            &trace,
-            &parent_digest,
-            base_digest,
-            "session",
-            false,
-        )?;
+        assert_counter_trace(&test, &trace, &parent_digest, base_digest, "session", false)?;
         let (trace, parent) = journey_trace(42);
         if let Some(client) = &client {
             let result = client

@@ -67,9 +67,7 @@ pub struct PruneRunHistoryRequest {
 /// Prune one tenant's expired terminal run history and return the number of
 /// `runs` rows the delete removed. A dry run rolls back and returns the count
 /// the same delete would have removed.
-pub async fn prune_terminal_run_history(
-    request: PruneRunHistoryRequest,
-) -> anyhow::Result<u64> {
+pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyhow::Result<u64> {
     if !crate::ident::is_bare_ident(&request.schema) {
         bail!(
             "the schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",

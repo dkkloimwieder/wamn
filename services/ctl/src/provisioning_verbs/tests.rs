@@ -143,8 +143,8 @@ fn clap_guards_the_workload_identity_accesses_in_every_action_mode() {
                 .expect("the omitted flag is in the complete action invocation");
             argv.drain(at..=at + 1);
 
-            let error = parse_argv(argv)
-                .expect_err("a workload action accepted a missing identity member");
+            let error =
+                parse_argv(argv).expect_err("a workload action accepted a missing identity member");
             assert_eq!(
                 error.kind(),
                 clap::error::ErrorKind::MissingRequiredArgument,
@@ -430,8 +430,7 @@ fn parsed_credential_outputs_must_name_distinct_files() {
 #[test]
 fn provisioning_summary_contains_no_database_credentials() {
     let triple = Triple::new("acme", "billing", "dev");
-    let summary =
-        provision_summary(&triple, "wamn-db-acme--billing--dev--k3m9x2p7", "acme-dev");
+    let summary = provision_summary(&triple, "wamn-db-acme--billing--dev--k3m9x2p7", "acme-dev");
     assert_eq!(
         summary,
         "project-env acme/billing/dev: database \"wamn-db-acme--billing--dev--k3m9x2p7\" on cluster \"acme-dev\" (owner wamn_db_owner)"
@@ -619,8 +618,7 @@ fn no_flag_exclusion_list_names_a_family_and_none_can() {
         .collect();
     for line in &survivors {
         assert_eq!(
-            *line,
-            "required_unless_present_any = [\"revoke_pat_prefix\", WORKLOAD_ACTION_GROUP]",
+            *line, "required_unless_present_any = [\"revoke_pat_prefix\", WORKLOAD_ACTION_GROUP]",
             "an exclusion list grew members again"
         );
     }

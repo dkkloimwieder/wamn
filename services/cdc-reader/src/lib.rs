@@ -2406,7 +2406,9 @@ mod tests {
         while (ids.len() as u64) < N && Instant::now() < deadline {
             let mut batch = consumer
                 .fetch()
-                .max_messages(usize::try_from(N).expect("the fixture count fits a usize") - ids.len())
+                .max_messages(
+                    usize::try_from(N).expect("the fixture count fits a usize") - ids.len(),
+                )
                 .messages()
                 .await
                 .expect("fetch");

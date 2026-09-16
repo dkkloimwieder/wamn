@@ -505,12 +505,8 @@ impl From<screen_sql::LoadReceiptScreenRow> for ReceiptScreenValue {
             item_id: row.item_id.map(|value| value.0.into_boxed_str()),
             item_number: row.item_number.map(String::into_boxed_str),
             ordered_quantity: row.ordered_quantity.map(|value| value.0.into_boxed_str()),
-            received_quantity: row
-                .received_quantity
-                .map(|value| value.0.into_boxed_str()),
-            remaining_quantity: row
-                .remaining_quantity
-                .map(|value| value.0.into_boxed_str()),
+            received_quantity: row.received_quantity.map(|value| value.0.into_boxed_str()),
+            remaining_quantity: row.remaining_quantity.map(|value| value.0.into_boxed_str()),
         }
     }
 }
@@ -738,11 +734,7 @@ pub async fn location_list(input: &str) -> Result<String, InvocationError> {
             let rows = location_sql::list_locations(&mut transaction)
                 .await
                 .map_err(|source| {
-                    AccessError::from_statement(
-                        "list locations",
-                        &source,
-                        AllowedConstraints::NONE,
-                    )
+                    AccessError::from_statement("list locations", &source, AllowedConstraints::NONE)
                 })?;
             transaction.commit().await.map_err(|source| {
                 AccessError::from_statement(
@@ -1012,12 +1004,7 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
             },
             Err(error) => refused(
                 item.request_id,
-                access_error(
-                    &error,
-                    "purchase_order.get",
-                    Some(("id", &parsed.id)),
-                    None,
-                ),
+                access_error(&error, "purchase_order.get", Some(("id", &parsed.id)), None),
             ),
         });
     }

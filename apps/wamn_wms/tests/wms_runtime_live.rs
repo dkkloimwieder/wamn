@@ -123,7 +123,9 @@ fn item<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
     Ok(&items[0])
 }
 
-pub(crate) async fn assert_contention_and_replay(document: &JourneyDocument) -> anyhow::Result<Value> {
+pub(crate) async fn assert_contention_and_replay(
+    document: &JourneyDocument,
+) -> anyhow::Result<Value> {
     let runtime = document.runtime.as_ref().context(
         "the journey document carries no runtime phase: the route must be reachable and the \
          fixture seeded before these assertions run",
@@ -247,7 +249,9 @@ fn uuid(value: &Value) -> anyhow::Result<String> {
         .with_context(|| format!("a uuid: {value}"))
 }
 
-pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> anyhow::Result<Value> {
+pub(crate) async fn assert_remaining_operations(
+    document: &JourneyDocument,
+) -> anyhow::Result<Value> {
     let runtime = document.runtime.as_ref().context(
         "the journey document carries no runtime phase: the route must be reachable and the \
          fixture seeded before these assertions run",
@@ -485,7 +489,9 @@ pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> a
     Ok(json!({"split_pallet_id": new_pallet_id}))
 }
 
-pub(crate) async fn assert_committed_move_after_label_failure(document: &JourneyDocument) -> anyhow::Result<(Value, Value)> {
+pub(crate) async fn assert_committed_move_after_label_failure(
+    document: &JourneyDocument,
+) -> anyhow::Result<(Value, Value)> {
     let runtime = document
         .runtime
         .as_ref()
@@ -616,11 +622,13 @@ pub(crate) async fn assert_committed_move_after_label_failure(document: &Journey
     ))
 }
 
-
 /// Check the label objects returned by the store's existing client.
 pub(crate) fn assert_single_label(objects: &[Value], movement_id: &str) -> anyhow::Result<()> {
     let label_count = objects.len();
-    let label_key = objects.first().and_then(|object| object["key"].as_str()).unwrap_or("");
+    let label_key = objects
+        .first()
+        .and_then(|object| object["key"].as_str())
+        .unwrap_or("");
     anyhow::ensure!(
         label_count == 1 && label_key == movement_id,
         "expected exactly one label object named {movement_id} under wms/, found {label_count}: {label_key}"
@@ -633,10 +641,15 @@ pub(crate) async fn assert_committed_rows(
     project: &tokio_postgres::Client,
     expected: &Value,
 ) -> anyhow::Result<Value> {
-    let command_key = expected["idempotency_key"].as_str().context("the result has a command key")?;
-    let pallet = expected["pallet_id"].as_str().context("the result has a pallet id")?;
-    let row = project.query_one(
-        r"SELECT json_build_object(
+    let command_key = expected["idempotency_key"]
+        .as_str()
+        .context("the result has a command key")?;
+    let pallet = expected["pallet_id"]
+        .as_str()
+        .context("the result has a pallet id")?;
+    let row = project
+        .query_one(
+            r"SELECT json_build_object(
     'command_count', (SELECT count(*) FROM wms.inventory_move_command WHERE idempotency_key = $1),
     'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE idempotency_key = $1),
     'quantity_count', (SELECT count(*) FROM wms.pallet_quantity WHERE pallet_id = $2::text::uuid),
@@ -652,8 +665,10 @@ pub(crate) async fn assert_committed_rows(
         SELECT id, location_id, status, row_version FROM wms.pallet WHERE id = $2::text::uuid
     ) AS pallet)
 );",
-        &[&command_key, &pallet],
-    ).await.context("read the committed WMS rows")?;
+            &[&command_key, &pallet],
+        )
+        .await
+        .context("read the committed WMS rows")?;
     let observed: Value = row.get(0);
     anyhow::ensure!(
         observed["command_count"] == 1

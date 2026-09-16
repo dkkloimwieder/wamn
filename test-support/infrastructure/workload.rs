@@ -1031,38 +1031,23 @@ mod tests {
     use super::*;
 
     // These are observed native objects from the recorded three-host run.
-    const DENIED: &str = include_str!(
-        "fixtures/workload/cross-environment-workload.json"
-    );
-    const EVENT: &str = include_str!(
-        "fixtures/workload/cross-environment-event.json"
-    );
-    const DEPLOYMENT: &str = include_str!(
-        "fixtures/workload/flow-http-deployment.json"
-    );
-    const SLICES: &str = include_str!(
-        "fixtures/workload/flow-http-endpointslices.json"
-    );
-    const SERVICE: &str =
-        include_str!("fixtures/workload/flow-http-service.json");
-    const WORKLOAD: &str =
-        include_str!("fixtures/workload/flow-http-workload.json");
-    const HOSTS: &str =
-        include_str!("fixtures/workload/hosts.json");
-    const PODS: &str =
-        include_str!("fixtures/workload/host-pods.json");
+    const DENIED: &str = include_str!("fixtures/workload/cross-environment-workload.json");
+    const EVENT: &str = include_str!("fixtures/workload/cross-environment-event.json");
+    const DEPLOYMENT: &str = include_str!("fixtures/workload/flow-http-deployment.json");
+    const SLICES: &str = include_str!("fixtures/workload/flow-http-endpointslices.json");
+    const SERVICE: &str = include_str!("fixtures/workload/flow-http-service.json");
+    const WORKLOAD: &str = include_str!("fixtures/workload/flow-http-workload.json");
+    const HOSTS: &str = include_str!("fixtures/workload/hosts.json");
+    const PODS: &str = include_str!("fixtures/workload/host-pods.json");
 
     #[test]
     fn recorded_images_require_one_runtime_digest_and_a_config_id() {
         // Both inputs are historical native output; neither is the failed RC inspection.
-        let identity: Value = serde_json::from_str(include_str!(
-            "fixtures/workload/identity-node-image.json"
-        ))
-        .unwrap();
-        let gates: Value = serde_json::from_str(include_str!(
-            "fixtures/workload/gates-node-image.json"
-        ))
-        .unwrap();
+        let identity: Value =
+            serde_json::from_str(include_str!("fixtures/workload/identity-node-image.json"))
+                .unwrap();
+        let gates: Value =
+            serde_json::from_str(include_str!("fixtures/workload/gates-node-image.json")).unwrap();
         let expected = (
             "sha256:a3dafaa1a09101a5a4eaaeedd12fc21542a8bb4b3c66fb8dd3fa01850ec16021".to_owned(),
             "sha256:6d7e01c8efdb85c004da7c5924b7b83a8489f3ab97b55a0aaeed45601e795e77".to_owned(),

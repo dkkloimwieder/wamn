@@ -213,7 +213,8 @@ async fn send(
         body.len()
     );
     if let Some(bearer) = bearer {
-        writeln!(request, "Authorization: Bearer {bearer}\r").expect("writing to a String cannot fail");
+        writeln!(request, "Authorization: Bearer {bearer}\r")
+            .expect("writing to a String cannot fail");
     }
     for (name, value) in extra {
         writeln!(request, "{name}: {value}\r").expect("writing to a String cannot fail");

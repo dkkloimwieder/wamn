@@ -1688,7 +1688,9 @@ fn max_host_call_ms() -> u64 {
 }
 
 fn bounded_node_deadline_ms(deadline_ms: Option<u64>) -> u64 {
-    deadline_ms.unwrap_or(max_host_call_ms()).clamp(1, max_host_call_ms())
+    deadline_ms
+        .unwrap_or(max_host_call_ms())
+        .clamp(1, max_host_call_ms())
 }
 
 fn lower_node_outcome(

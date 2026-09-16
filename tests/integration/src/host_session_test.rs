@@ -474,8 +474,8 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        HostSessionTestArgs, IO_TIMEOUT, KEY_MAX_AGE, TEST_TIMEOUT, REFUSAL_REQUEST_TIMEOUT,
-        ROUTE_PATH, WARM_REQUEST_TIMEOUT, endpoints,
+        HostSessionTestArgs, IO_TIMEOUT, KEY_MAX_AGE, REFUSAL_REQUEST_TIMEOUT, ROUTE_PATH,
+        TEST_TIMEOUT, WARM_REQUEST_TIMEOUT, endpoints,
     };
     use clap::{CommandFactory as _, Parser};
 

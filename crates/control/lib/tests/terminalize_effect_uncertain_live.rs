@@ -493,7 +493,9 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
             .await
             .expect_err("operator action is immutable even to its owner");
         assert_eq!(
-            error.as_db_error().map(tokio_postgres::error::DbError::message),
+            error
+                .as_db_error()
+                .map(tokio_postgres::error::DbError::message),
             Some("operator-run-action-immutable")
         );
     }

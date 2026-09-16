@@ -10,6 +10,6 @@ mod wms_wiring_shape;
 #[cfg(test)]
 mod cluster;
 #[cfg(test)]
-mod environment;
-#[cfg(test)]
 mod delivery;
+#[cfg(test)]
+mod environment;

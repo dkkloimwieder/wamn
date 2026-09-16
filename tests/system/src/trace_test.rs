@@ -161,7 +161,10 @@ pub async fn run(args: TraceTestArgs) -> anyhow::Result<()> {
     let trace_id = format!("{nanos:032x}"); // 32 hex chars
     let trace_id = trace_id[trace_id.len() - 32..].to_string();
     // The low 64 bits are what a span id is; the truncation is the point.
-    let sent_span = format!("{:016x}", u64::try_from(nanos & u128::from(u64::MAX)).unwrap_or(u64::MAX) | 1);
+    let sent_span = format!(
+        "{:016x}",
+        u64::try_from(nanos & u128::from(u64::MAX)).unwrap_or(u64::MAX) | 1
+    );
     let sent_tp = format!("00-{trace_id}-{sent_span}-01");
     println!("controlled parent traceparent = {sent_tp}");
 

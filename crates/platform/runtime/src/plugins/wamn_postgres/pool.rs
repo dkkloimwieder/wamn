@@ -323,7 +323,12 @@ impl StaticCredentialProvider {
                  \"guest_pool_max_size\" and \"platform_pool_max_size\" separately"
             );
             let credentials = class_credentials_from_json(name, entry)?;
-            let u64_or = |k: &str, d: u64| entry.get(k).and_then(serde_json::Value::as_u64).unwrap_or(d);
+            let u64_or = |k: &str, d: u64| {
+                entry
+                    .get(k)
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(d)
+            };
             out.insert(
                 name.clone(),
                 ProjectConfig {
@@ -719,9 +724,10 @@ pub(super) fn session_statement_timeout_hook(statement_timeout_ms: u32) -> Hook 
         let timeout = timeout.clone();
         Box::pin(async move {
             client
-                .execute("SELECT set_config('statement_timeout', $1, false)", &[
-                    &timeout,
-                ])
+                .execute(
+                    "SELECT set_config('statement_timeout', $1, false)",
+                    &[&timeout],
+                )
                 .await
                 .map_err(|e| {
                     HookError::message(format!("set the session statement_timeout failed: {e}"))

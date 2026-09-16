@@ -96,7 +96,7 @@ pub fn select_claim_effect_attempt_sql() -> String {
           WHERE effect.tenant_id = current_setting('app.tenant', true) \
             AND effect.run_id = $1 \
      )"
-        .to_string()
+    .to_string()
 }
 
 /// Serialize effect-attempt creation against claim-time classification.

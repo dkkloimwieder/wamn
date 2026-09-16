@@ -640,7 +640,8 @@ mod tests {
                 serde_json::to_vec(&manifest).unwrap(),
             )
             .unwrap();
-            let packages = operator_packages(std::slice::from_ref(&root)).expect("read declared components");
+            let packages =
+                operator_packages(std::slice::from_ref(&root)).expect("read declared components");
             assert_eq!(packages.len(), names.len());
             let selected = select_component(std::slice::from_ref(&root), "receiving").unwrap();
             assert_eq!(

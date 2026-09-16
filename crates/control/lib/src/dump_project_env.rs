@@ -249,10 +249,7 @@ mod tests {
     #[test]
     fn the_default_schedule_is_the_provision_default() {
         // The dump cadence is the fixed D18 default (no closed-tier knob).
-        assert_eq!(
-            wamn_control_provision::DEFAULT_DUMP_SCHEDULE,
-            "0 3 * * *"
-        );
+        assert_eq!(wamn_control_provision::DEFAULT_DUMP_SCHEDULE, "0 3 * * *");
     }
 
     #[test]

@@ -114,7 +114,10 @@ async fn pat_only_startup_returns_the_original_credential_without_an_exchange() 
         .await
         .expect("PAT-only startup");
     assert_eq!(provider.bearer().await.expect("PAT credential"), PAT);
-    assert_eq!(provider.fresh_bearer().await.expect("fresh PAT credential"), PAT);
+    assert_eq!(
+        provider.fresh_bearer().await.expect("fresh PAT credential"),
+        PAT
+    );
     assert_eq!(exchange.calls.load(Ordering::SeqCst), 0);
     assert!(!format!("{provider:?}").contains(PAT));
 }
@@ -127,8 +130,14 @@ async fn session_startup_finishes_login_and_keeps_the_pat_for_fresh_calls() {
         .await
         .expect("session startup");
     assert_eq!(exchange.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(provider.bearer().await.expect("session credential"), SESSION);
-    assert_eq!(provider.fresh_bearer().await.expect("fresh PAT credential"), PAT);
+    assert_eq!(
+        provider.bearer().await.expect("session credential"),
+        SESSION
+    );
+    assert_eq!(
+        provider.fresh_bearer().await.expect("fresh PAT credential"),
+        PAT
+    );
     assert_eq!(exchange.calls.load(Ordering::SeqCst), 1);
     let diagnostic = format!("{provider:?}");
     assert!(!diagnostic.contains(PAT) && !diagnostic.contains(SESSION));

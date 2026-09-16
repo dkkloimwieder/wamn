@@ -2,7 +2,6 @@
 
 use super::*;
 
-
 pub(super) struct TraceHarness {
     pub(super) exporter: InMemorySpanExporter,
     pub(super) provider: SdkTracerProvider,
@@ -69,7 +68,10 @@ pub(super) fn span_descends_from(spans: &[SpanData], span: &SpanData, ancestor: 
     false
 }
 
-pub(super) fn trace_component_invocations<'a>(spans: &'a [SpanData], trace_id: &str) -> Vec<&'a SpanData> {
+pub(super) fn trace_component_invocations<'a>(
+    spans: &'a [SpanData],
+    trace_id: &str,
+) -> Vec<&'a SpanData> {
     spans
         .iter()
         .filter(|span| {
@@ -309,7 +311,9 @@ pub(super) fn assert_no_component_trace(spans: &[SpanData], trace_id: &str) {
     );
 }
 
-pub(super) fn journey_postgres(credentials: &JourneyCredentials) -> anyhow::Result<Arc<WamnPostgres>> {
+pub(super) fn journey_postgres(
+    credentials: &JourneyCredentials,
+) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
         guest_pool_max_size: 4,
@@ -392,8 +396,11 @@ pub(super) async fn build_journey_runtime(
         },
     )?);
     let jetstream = Arc::new(
-        WamnJetstream::new(WamnJetstreamConfig { nats_url: None, ..Default::default() })
-            .with_release(Some(Arc::clone(&release))),
+        WamnJetstream::new(WamnJetstreamConfig {
+            nats_url: None,
+            ..Default::default()
+        })
+        .with_release(Some(Arc::clone(&release))),
     );
     let bridge = Arc::new(RouterDeliveryBridge::new(
         driver,
@@ -599,7 +606,10 @@ where
     Ok(response)
 }
 
-pub(super) fn successful_value(response: &hyper::Response<Bytes>, request_id: &str) -> anyhow::Result<Value> {
+pub(super) fn successful_value(
+    response: &hyper::Response<Bytes>,
+    request_id: &str,
+) -> anyhow::Result<Value> {
     anyhow::ensure!(
         response.status() == StatusCode::OK,
         "request {request_id} returned {}: {}",

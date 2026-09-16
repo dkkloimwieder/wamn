@@ -52,8 +52,9 @@ fn collect_copies(dir: &Path, root: &Path, found: &mut Vec<String>) {
 #[test]
 fn every_vendored_http_connection_contract_is_byte_identical() {
     let root = repo_root();
-    let authority = fs::read(root.join("crates/platform/runtime/wit/deps/wamn-connection/package.wit"))
-        .expect("authoritative connection WIT reads");
+    let authority =
+        fs::read(root.join("crates/platform/runtime/wit/deps/wamn-connection/package.wit"))
+            .expect("authoritative connection WIT reads");
     let mut found = Vec::new();
     for top in [
         "apps",
@@ -82,9 +83,10 @@ fn every_vendored_http_connection_contract_is_byte_identical() {
 
 #[test]
 fn frozen_http_surface_is_relative_typed_and_extension_free() {
-    let authority =
-        fs::read_to_string(repo_root().join("crates/platform/runtime/wit/deps/wamn-connection/package.wit"))
-            .expect("authoritative connection WIT reads");
+    let authority = fs::read_to_string(
+        repo_root().join("crates/platform/runtime/wit/deps/wamn-connection/package.wit"),
+    )
+    .expect("authoritative connection WIT reads");
     for required in [
         "package wamn:connection@0.1.0;",
         "requirement: string,",

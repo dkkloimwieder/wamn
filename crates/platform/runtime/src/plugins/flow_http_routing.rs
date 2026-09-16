@@ -611,7 +611,11 @@ impl FlowHttpRouting {
 
     fn routes(&self, method: &str, authority: &str) -> Result<Vec<RouteDefinition>, NoRelease> {
         let loaded_release = self.release.as_ref().ok_or(NoRelease)?;
-        Ok(route_definitions(loaded_release.manifest(), method, authority))
+        Ok(route_definitions(
+            loaded_release.manifest(),
+            method,
+            authority,
+        ))
     }
 
     fn carries_route(&self, attachment_id: &str) -> Result<bool, NoRelease> {
@@ -1328,7 +1332,8 @@ mod tests {
     fn omitted_projection_fields_defer_to_their_real_authority() {
         let manifest = one_http_route();
         let mount = Mount::holding(&manifest, "unconstrained-input");
-        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let served = route_definitions(&manifest, "POST", "api.example.test");
 
@@ -1365,7 +1370,8 @@ mod tests {
             attachment(AttachmentKind::Http, definition),
         )]));
         let mount = Mount::holding(&manifest, "authored-input");
-        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let served = route_definitions(&manifest, "POST", "api.example.test");
 
@@ -1407,7 +1413,8 @@ mod tests {
             attachment(AttachmentKind::Http, definition),
         )]));
         let mount = Mount::holding(&manifest, "schema-pointer");
-        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         for (payload, pointer) in [
             (
@@ -1455,7 +1462,8 @@ mod tests {
             ("distinct".to_string(), with_schema("distinct", distinct)),
         ]));
         let mount = Mount::holding(&manifest, "schema-dedup");
-        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         assert_eq!(
             plugin.input_schemas.attachment_hashes["first"],
@@ -1500,7 +1508,8 @@ mod tests {
             ),
         ]));
         let mount = Mount::holding(&manifest, "schema-invalid");
-        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
         let invalid_hash = &plugin.input_schemas.attachment_hashes["invalid"];
 
         assert!(matches!(
@@ -1753,7 +1762,8 @@ mod tests {
     #[test]
     fn the_loaded_manifest_is_the_only_source_the_plugin_reads() {
         let mount = Mount::holding(&one_http_route(), "loaded");
-        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let served = plugin
             .routes("POST", "api.example.test")
@@ -1769,7 +1779,8 @@ mod tests {
         protected.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let manifest = release_manifest(BTreeMap::from([("orders".to_string(), protected)]));
         let mount = Mount::holding(&manifest, "pat-backend");
-        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let rejection = plugin
             .authenticate("orders", &[])
@@ -1842,7 +1853,8 @@ mod tests {
     fn route_limit_is_nonzero_and_has_one_chart_default() {
         assert_eq!(RouteInFlightLimit::default().get(), 64);
         assert_eq!(
-            "2".parse::<RouteInFlightLimit>().map(RouteInFlightLimit::get),
+            "2".parse::<RouteInFlightLimit>()
+                .map(RouteInFlightLimit::get),
             Ok(2)
         );
         for refused in ["", "0", "-1", "many"] {

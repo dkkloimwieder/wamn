@@ -160,12 +160,15 @@ pub(super) fn verify_dev_command_output(output: &std::process::Output) -> anyhow
     Ok(())
 }
 
-pub(super) fn declared_dev_data_access_grants() -> anyhow::Result<BTreeSet<(String, String, String, String)>> {
+pub(super) fn declared_dev_data_access_grants()
+-> anyhow::Result<BTreeSet<(String, String, String, String)>> {
     let inputs = std::env::var_os(JOURNEY_DOCUMENT_ENV)
-        .map(|_| JourneyDocument::required()).transpose()?;
+        .map(|_| JourneyDocument::required())
+        .transpose()?;
     let mut expected = BTreeSet::new();
     for package in JOURNEY_PACKAGES {
-        let path = journey_package_root(package, inputs.as_ref()).join("generated/platform-policy/data-access.json");
+        let path = journey_package_root(package, inputs.as_ref())
+            .join("generated/platform-policy/data-access.json");
         let policy = read_json(&path)?;
         anyhow::ensure!(
             policy["role"] == "wamn_app",
@@ -218,7 +221,9 @@ pub(super) fn declared_dev_data_access_grants() -> anyhow::Result<BTreeSet<(Stri
     Ok(expected)
 }
 
-pub(super) async fn verify_dev_target_package_and_acl_state(project: &Client) -> anyhow::Result<()> {
+pub(super) async fn verify_dev_target_package_and_acl_state(
+    project: &Client,
+) -> anyhow::Result<()> {
     let packages = project
         .query(
             "SELECT package_id, package_version, manifest_sha256 \
@@ -366,7 +371,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(project: &Client) ->
 }
 
 /// The entries are sorted, because a recreated database can list the same entries in another order.
-pub(super) async fn current_database_acl(client: &Client) -> anyhow::Result<(String, Option<String>)> {
+pub(super) async fn current_database_acl(
+    client: &Client,
+) -> anyhow::Result<(String, Option<String>)> {
     let row = client
         .query_one(
             "SELECT datname::text, \
@@ -409,8 +416,10 @@ async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> an
         password_file: required_journey_path("WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE")?,
     };
     let provisioning = wamn_test_infrastructure::event_broker::connect(
-        &credentials, &inputs.environment.event_nats_url,
-    ).await?;
+        &credentials,
+        &inputs.environment.event_nats_url,
+    )
+    .await?;
     assert_dev_command(&system_url, &mut inputs, &provisioning).await
 }
 
@@ -440,10 +449,13 @@ pub(super) async fn assert_dev_command(
         env: wamn_control_registry::Env::new(environment.identity.environment.clone()),
     };
     wamn_control::event_streams::provision(
-        &async_nats::jetstream::new(event_provisioning.clone()), &event_scope,
+        &async_nats::jetstream::new(event_provisioning.clone()),
+        &event_scope,
         inputs.environment.stream_replicas,
-        Duration::from_secs(inputs.environment.dup_window_secs), &[],
-    ).await?;
+        Duration::from_secs(inputs.environment.dup_window_secs),
+        &[],
+    )
+    .await?;
     let config = write_dev_config(
         root,
         system_url,

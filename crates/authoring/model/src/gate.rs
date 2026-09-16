@@ -101,8 +101,12 @@ mod tests {
         let component = component();
         let mut document = document();
         assert!(
-            judge_gate_document(&document, &component.scope, std::slice::from_ref(&component))
-                .is_ok()
+            judge_gate_document(
+                &document,
+                &component.scope,
+                std::slice::from_ref(&component)
+            )
+            .is_ok()
         );
         assert!(matches!(
             judge_gate_document(&document, &component.scope, &[]),
@@ -110,7 +114,11 @@ mod tests {
         ));
         document.nodes.get_mut("node").unwrap().operation = "removed".to_owned();
         assert!(matches!(
-            judge_gate_document(&document, &component.scope, std::slice::from_ref(&component)),
+            judge_gate_document(
+                &document,
+                &component.scope,
+                std::slice::from_ref(&component)
+            ),
             Err(GateRefusal::InvalidDocument { .. })
         ));
     }
@@ -125,15 +133,23 @@ mod tests {
         });
         let mut document = document();
         assert_eq!(
-            judge_gate_document(&document, &component.scope, std::slice::from_ref(&component)),
+            judge_gate_document(
+                &document,
+                &component.scope,
+                std::slice::from_ref(&component)
+            ),
             Err(GateRefusal::EffectfulComponentReached {
                 components: vec!["transform".to_owned()],
             })
         );
         document.cases.clear();
         assert!(
-            judge_gate_document(&document, &component.scope, std::slice::from_ref(&component))
-                .is_ok()
+            judge_gate_document(
+                &document,
+                &component.scope,
+                std::slice::from_ref(&component)
+            )
+            .is_ok()
         );
     }
 

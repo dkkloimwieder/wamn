@@ -6,7 +6,10 @@ use anyhow::Context as _;
 
 use super::{NoTls, PgConfig, Url};
 
-pub(super) fn exact_project_database_config(admin_url: &str, database: &str) -> anyhow::Result<PgConfig> {
+pub(super) fn exact_project_database_config(
+    admin_url: &str,
+    database: &str,
+) -> anyhow::Result<PgConfig> {
     let config = PgConfig::from_str(admin_url).context("parse target admin database URL")?;
     anyhow::ensure!(
         config.get_dbname() == Some(database),
@@ -26,7 +29,12 @@ pub(super) fn named_database_config(admin_url: &str, purpose: &str) -> anyhow::R
     Ok(config)
 }
 
-pub(super) fn workload_config(admin: &PgConfig, role: &str, password: &str, database: &str) -> PgConfig {
+pub(super) fn workload_config(
+    admin: &PgConfig,
+    role: &str,
+    password: &str,
+    database: &str,
+) -> PgConfig {
     let mut config = admin.clone();
     config.user(role);
     config.password(password);

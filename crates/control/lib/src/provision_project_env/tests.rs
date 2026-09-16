@@ -1,13 +1,14 @@
-use super::*;
 use super::grants::{
     RoleAcl, StableGrantSet, stable_grant_set, verify_audit_retention_grants,
-    verify_event_materializer_grants, verify_http_admitter_grants, verify_management_admitter_grants,
-    verify_session_role_reader_grants, verify_system_reader_grants,
+    verify_event_materializer_grants, verify_http_admitter_grants,
+    verify_management_admitter_grants, verify_session_role_reader_grants,
+    verify_system_reader_grants,
 };
 use super::registry::{INSTANCE_SUFFIX_ALPHABET, do_record_project_env};
 use super::workload::{
     WorkloadActionIdentity, WorkloadLifecycle, is_workload_generation_role, workload_lifecycle,
 };
+use super::*;
 use wamn_control_provision::MANAGEMENT_ADMITTER_ROLE;
 
 /// The mint is the whole non-reuse mechanism (wamn-0h0g.13.57): every draw
@@ -208,8 +209,7 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
     write_secret_json(&route_path, &route_document).unwrap();
     let stored_management: Value =
         serde_json::from_slice(&std::fs::read(&management_path).unwrap()).unwrap();
-    let stored_route: Value =
-        serde_json::from_slice(&std::fs::read(&route_path).unwrap()).unwrap();
+    let stored_route: Value = serde_json::from_slice(&std::fs::read(&route_path).unwrap()).unwrap();
     assert_eq!(stored_management, management_document);
     assert_eq!(stored_route, route_document);
 
@@ -616,8 +616,7 @@ fn every_family_derives_its_credential_secret_name() {
     }
     let mut names = BTreeSet::new();
     for family in WorkloadRoleFamily::ALL {
-        let name =
-            wamn_control_provision::workload_secret_name(family, "acme", "billing", "dev");
+        let name = wamn_control_provision::workload_secret_name(family, "acme", "billing", "dev");
         assert!(name.starts_with("wamn-"), "{family:?}: {name}");
         assert!(names.insert(name), "{family:?} shares a Secret name");
     }
@@ -761,34 +760,18 @@ fn materializer_grants_cover_exactly_the_two_production_reads() {
         exact.push(role_acl("relation", "catalog", relation, "SELECT"));
     }
     assert!(
-        verify_event_materializer_grants(
-            "wamn_event_materializer",
-            "wamn",
-            "wamn",
-            &exact,
-        )
-        .is_ok()
+        verify_event_materializer_grants("wamn_event_materializer", "wamn", "wamn", &exact,)
+            .is_ok()
     );
 
     let mut widened = exact.clone();
     widened.push(role_acl("relation", "catalog", "packages", "INSERT"));
     assert!(
-        verify_event_materializer_grants(
-            "wamn_event_materializer",
-            "wamn",
-            "wamn",
-            &widened,
-        )
-        .is_err()
+        verify_event_materializer_grants("wamn_event_materializer", "wamn", "wamn", &widened,)
+            .is_err()
     );
     assert!(
-        verify_event_materializer_grants(
-            "wamn_event_materializer",
-            "wamn",
-            "wamn",
-            &[],
-        )
-        .is_err()
+        verify_event_materializer_grants("wamn_event_materializer", "wamn", "wamn", &[],).is_err()
     );
 }
 
@@ -809,13 +792,8 @@ fn management_grants_are_exact_and_required_in_the_target_database() {
             "INSERT",
         ));
     }
-    verify_management_admitter_grants(
-        MANAGEMENT_ADMITTER_ROLE,
-        "project_db",
-        "project_db",
-        &exact,
-    )
-    .unwrap();
+    verify_management_admitter_grants(MANAGEMENT_ADMITTER_ROLE, "project_db", "project_db", &exact)
+        .unwrap();
 
     let mut widened = exact.clone();
     widened.push(role_acl(
@@ -873,8 +851,7 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
         environment: "dev",
         tenant: "tenant",
     };
-    let lifecycle =
-        workload_lifecycle(WorkloadRoleFamily::ManagementAdmitter, identity, DATABASE);
+    let lifecycle = workload_lifecycle(WorkloadRoleFamily::ManagementAdmitter, identity, DATABASE);
     assert_eq!(lifecycle.family, WorkloadRoleFamily::ManagementAdmitter);
     assert_eq!(lifecycle.database(), DATABASE);
     assert_eq!(lifecycle.label(), "management-admitter");
@@ -887,8 +864,7 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
     // The A/B pair is the crate's derivation, never a second spelling here.
     let a = lifecycle.role(CredentialGeneration::A);
     let b = lifecycle.role(CredentialGeneration::B);
-    for (generation, derived) in [(CredentialGeneration::A, &a), (CredentialGeneration::B, &b)]
-    {
+    for (generation, derived) in [(CredentialGeneration::A, &a), (CredentialGeneration::B, &b)] {
         assert_eq!(
             derived,
             &wamn_control_provision::management_admitter_generation_role(

@@ -2,9 +2,7 @@
 
 use std::fmt::Write as _;
 
-use std::collections::{
-    BTreeMap, BTreeSet,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use wamn_catalog::CATALOG_SCHEMA_SQL;
 
@@ -15,11 +13,10 @@ use super::schema::{
 };
 
 use super::{
-    BareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME,
-    RUN_PLANE_FILES, RUN_STATE_SQL, RowPolicyObservation, RowSecurityObservation,
-    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
-    SCENARIO_AUTHOR_ROLE, ensure_scenario_author_role_sql, rewrite_schema,
-    strip_retired_registration_keys_sql,
+    BareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RUN_PLANE_FILES, RUN_STATE_SQL,
+    RowPolicyObservation, RowSecurityObservation, RunPlaneAction, RunPlaneActionKind,
+    RunPlaneObservation, RunPlanePlan, SCENARIO_AUTHOR_ROLE, ensure_scenario_author_role_sql,
+    rewrite_schema, strip_retired_registration_keys_sql,
 };
 
 use super::declarations::{
@@ -27,24 +24,23 @@ use super::declarations::{
     EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
     EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_FRAME_COLUMNS, EFFECT_OUTCOME_DISPATCH_FK_DEF,
     EFFECT_OUTCOME_DISPATCH_FK_NAME, EFFECT_OUTCOME_DISPATCH_FK_SQL,
-    ENVIRONMENT_POLICY_TENANT_QUAL,
-    RETIRED_EFFECT_ATTEMPT_COLUMNS, TABLE_PRIVILEGE_TYPES, helper_specs, trigger_specs,
+    ENVIRONMENT_POLICY_TENANT_QUAL, RETIRED_EFFECT_ATTEMPT_COLUMNS, TABLE_PRIVILEGE_TYPES,
+    helper_specs, trigger_specs,
 };
 
 use super::schema_changes::{
     RETIRED_CHILD_RUN_COLUMNS, RETIRED_FAILURE_DETAIL_COLUMNS, RETIRED_PARTITION_CHECK,
-    RETIRED_PARTITION_COLUMNS, RETIRED_RERUN_LINEAGE_COLUMNS,
-    RETIRED_TEST_SET_REFERENCE_COLUMN, RETIRED_TEST_SET_REFERENCE_TABLES,
-    child_run_cutover_needed, child_run_cutover_sql, effect_table_cutover_owned_check,
-    effect_table_cutover_sql, effect_table_cutover_needed,
-    execution_bundle_cutover_needed, execution_bundle_cutover_sql,
-    failure_detail_cutover_needed, failure_detail_cutover_sql, frame_identity_check,
-    frame_identity_column, frame_identity_cutover_sql, frame_identity_cutover_targets,
-    partition_plane_cutover_needed, partition_plane_cutover_sql, rerun_lineage_cutover_needed,
-    rerun_lineage_cutover_sql, retired_child_run_check,
-    retired_effect_disposition_cutover_needed, retired_effect_disposition_cutover_sql,
-    run_queue_claim_index_ready, run_wiring_identity_contract_complete,
-    stored_suite_cutover_needed, stored_suite_cutover_sql, wiring_identity_cutover_sql,
+    RETIRED_PARTITION_COLUMNS, RETIRED_RERUN_LINEAGE_COLUMNS, RETIRED_TEST_SET_REFERENCE_COLUMN,
+    RETIRED_TEST_SET_REFERENCE_TABLES, child_run_cutover_needed, child_run_cutover_sql,
+    effect_table_cutover_needed, effect_table_cutover_owned_check, effect_table_cutover_sql,
+    execution_bundle_cutover_needed, execution_bundle_cutover_sql, failure_detail_cutover_needed,
+    failure_detail_cutover_sql, frame_identity_check, frame_identity_column,
+    frame_identity_cutover_sql, frame_identity_cutover_targets, partition_plane_cutover_needed,
+    partition_plane_cutover_sql, rerun_lineage_cutover_needed, rerun_lineage_cutover_sql,
+    retired_child_run_check, retired_effect_disposition_cutover_needed,
+    retired_effect_disposition_cutover_sql, run_queue_claim_index_ready,
+    run_wiring_identity_contract_complete, stored_suite_cutover_needed, stored_suite_cutover_sql,
+    wiring_identity_cutover_sql,
 };
 
 pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservation {

@@ -79,18 +79,16 @@ async fn prepare(
         evidence,
     )
     .await?;
-    let hosts = workload::hosts_ready(
-        &workload::HostsReadyInput {
-            lifecycle: &resources.lifecycle,
-            cluster: &resources.name,
-            work: &resources.work,
-            namespace: &resources.name,
-            image: &resources.host_image,
-            runtime_digest: &digest,
-            replicas: 1,
-            evidence,
-        },
-    )
+    let hosts = workload::hosts_ready(&workload::HostsReadyInput {
+        lifecycle: &resources.lifecycle,
+        cluster: &resources.name,
+        work: &resources.work,
+        namespace: &resources.name,
+        image: &resources.host_image,
+        runtime_digest: &digest,
+        replicas: 1,
+        evidence,
+    })
     .await?;
     let http = deployment::publish_http(&cluster).await?;
     deployment::install_http(&cluster, &http).await?;

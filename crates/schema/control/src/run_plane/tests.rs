@@ -116,9 +116,7 @@ fn observation_at_record() -> RunPlaneObservation {
             (schema_name.to_string(), spec.table.to_string()),
             "platform_admin".to_string(),
         );
-        for (grantee, privileges) in
-            [("wamn_app", spec.app), (SCENARIO_AUTHOR_ROLE, spec.author)]
-        {
+        for (grantee, privileges) in [("wamn_app", spec.app), (SCENARIO_AUTHOR_ROLE, spec.author)] {
             if !privileges.is_empty() {
                 let key = (
                     schema_name.to_string(),
@@ -136,8 +134,7 @@ fn observation_at_record() -> RunPlaneObservation {
                 let expected_columns: BTreeSet<String> = expected
                     .into_iter()
                     .filter(|privilege| {
-                        ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
-                            .contains(&privilege.as_str())
+                        ["SELECT", "INSERT", "UPDATE", "REFERENCES"].contains(&privilege.as_str())
                     })
                     .collect();
                 if !expected_columns.is_empty() {
@@ -302,8 +299,7 @@ fn add_legacy_partition_plane(obs: &mut RunPlaneObservation) {
     );
     obs.checks.insert(
         ("run_queue".to_string(), RETIRED_PARTITION_CHECK.to_string()),
-        "CHECK (partition_policy = ANY (ARRAY['blocking'::text, 'leapfrog'::text]))"
-            .to_string(),
+        "CHECK (partition_policy = ANY (ARRAY['blocking'::text, 'leapfrog'::text]))".to_string(),
     );
     obs.indexes.insert(
         RETIRED_PARTITION_INDEX.to_string(),
@@ -449,9 +445,11 @@ fn fresh_schema_omits_execution_bundle_carriers() {
     assert!(runs.contains(
         "FOREIGN KEY (tenant_id, effective_release_id)\n        REFERENCES catalog.effective_releases"
     ));
-    assert!(runs.contains(
-        "CREATE INDEX runs_release ON wamn_run.runs (tenant_id, effective_release_id)"
-    ));
+    assert!(
+        runs.contains(
+            "CREATE INDEX runs_release ON wamn_run.runs (tenant_id, effective_release_id)"
+        )
+    );
     assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-admission-pin-immutable'"));
     assert!(!runs.contains(RETIRED_EXECUTION_BUNDLE_COLUMN));
     assert!(!CATALOG_SCHEMA_SQL.contains("catalog.execution_bundles"));
@@ -461,9 +459,11 @@ fn fresh_schema_omits_execution_bundle_carriers() {
     assert!(!runs.contains("release_version int"));
     assert!(runs.contains("manifest_digest text"));
     assert!(runs.contains("CONSTRAINT runs_release_record_check"));
-    assert!(runs.contains(
-        "manifest_digest IS NULL\n      OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'"
-    ));
+    assert!(
+        runs.contains(
+            "manifest_digest IS NULL\n      OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'"
+        )
+    );
     // The durability-class carrier joins the same column-scoped guard
     // (wamn-0h0g.20.1 rider 1): a column the trigger does not NAME never
     // fires its transition arm, so the class would be silently mutable.
@@ -722,9 +722,11 @@ fn child_run_cutover_is_atomic_exact_and_idempotent() {
     let cutover = &plan.actions[0];
     assert_eq!(cutover.kind, RunPlaneActionKind::ChildRunCutover);
     assert_eq!(cutover.target, "runs.durable-child-state");
-    assert!(cutover.sql.starts_with(
-        "LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE; DO $child_run_cutover$"
-    ));
+    assert!(
+        cutover.sql.starts_with(
+            "LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE; DO $child_run_cutover$"
+        )
+    );
     let refusal = cutover.sql.find("RAISE EXCEPTION").expect("refusal");
     let first_drop = cutover.sql.find("DROP INDEX").expect("first DDL");
     assert!(refusal < first_drop, "refusal must precede every DDL");
@@ -1475,9 +1477,7 @@ fn legacy_partition_plane_plans_one_leading_cutover() {
     }));
     assert!(sqls.contains(&"DROP TABLE IF EXISTS \"demo\".\"outbox\""));
     assert!(sqls.contains(&"DROP TABLE IF EXISTS \"demo\".\"evt_shadow\""));
-    assert!(
-        sqls.contains(&"DROP TRIGGER IF EXISTS wamn_outbox_event ON \"demo\".\"receipts\"")
-    );
+    assert!(sqls.contains(&"DROP TRIGGER IF EXISTS wamn_outbox_event ON \"demo\".\"receipts\""));
     assert!(sqls.contains(&"DROP FUNCTION IF EXISTS \"demo\".wamn_outbox_event()"));
     // Trigger drops precede the RESTRICT function drop.
     let trig = kinds
@@ -1578,9 +1578,11 @@ fn partial_partition_plane_requires_unobservable_lease_tables_to_be_empty() {
         .expect("partition cutover action");
     assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
     assert!(!cutover.sql.contains("clock_timestamp()"));
-    assert!(cutover.sql.contains(
-        "partition-plane-cutover-requires-observable-run-queue-leases-or-empty-queue"
-    ));
+    assert!(
+        cutover.sql.contains(
+            "partition-plane-cutover-requires-observable-run-queue-leases-or-empty-queue"
+        )
+    );
     assert!(cutover.sql.contains(
         "partition-plane-cutover-requires-observable-partition-leases-or-empty-owner-table"
     ));
@@ -1795,8 +1797,7 @@ fn partial_dispatch_cutover_repairs_attempt_fk_after_creating_peer() {
         .iter()
         .position(|action| {
             action.kind == RunPlaneActionKind::RepairForeignKey
-                && action.target
-                    == "effect_attempt_dispatches.effect_attempt_dispatches_attempt_fk"
+                && action.target == "effect_attempt_dispatches.effect_attempt_dispatches_attempt_fk"
         })
         .expect("dispatch FK is repaired in the same plan");
     assert!(create_position < fk_position);
@@ -2510,9 +2511,7 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
 #[test]
 fn the_authoring_test_set_store_is_absent_from_the_record() {
     assert!(RETIRED_STORED_SUITE_TABLES.contains(&"authoring_test_sets"));
-    assert!(
-        RETIRED_STORED_SUITE_FUNCTIONS.contains(&"reject_immutable_authoring_test_set_change")
-    );
+    assert!(RETIRED_STORED_SUITE_FUNCTIONS.contains(&"reject_immutable_authoring_test_set_change"));
     assert_eq!(
         RETIRED_STORED_SUITE_TABLES
             .iter()
@@ -2748,9 +2747,11 @@ fn missing_helpers_and_record_triggers_are_repaired() {
                 && action.target == "guard_terminal_run_delete"
         })
         .expect("terminal-delete guard repair");
-    assert!(terminal_delete_guard.sql.contains(
-        "IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN"
-    ));
+    assert!(
+        terminal_delete_guard.sql.contains(
+            "IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN"
+        )
+    );
     assert!(terminal_delete_guard.sql.contains("ERRCODE = '55000'"));
     assert!(
         terminal_delete_guard
@@ -2796,8 +2797,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
 #[test]
 fn operator_action_helper_and_acl_pin_admin_only_append_and_immutability() {
     assert!(
-        REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL
-            .contains("operator-run-action-immutable")
+        REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL.contains("operator-run-action-immutable")
     );
     assert!(RUN_STATE_SQL.contains(
         "REVOKE ALL PRIVILEGES ON TABLE wamn_run.operator_run_actions\n    FROM PUBLIC, wamn_app, wamn_scenario_author;"
@@ -3046,12 +3046,10 @@ fn schema_rewrite_is_dot_anchored() {
     // The prose mention of the wamn_run_store crate must survive verbatim.
     assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("wamn_run_store"));
     assert!(
-        rewrite_schema(RUN_STATE_SQL, &schema)
-            .contains("CREATE TABLE poc_f1.operator_run_actions")
+        rewrite_schema(RUN_STATE_SQL, &schema).contains("CREATE TABLE poc_f1.operator_run_actions")
     );
     assert!(
-        !rewrite_schema(RUN_STATE_SQL, &schema)
-            .contains("SET search_path = pg_catalog, wamn_run")
+        !rewrite_schema(RUN_STATE_SQL, &schema).contains("SET search_path = pg_catalog, wamn_run")
     );
     assert!(
         !rewrite_schema(RUN_STATE_SQL, &schema)
@@ -3194,9 +3192,7 @@ fn observation_sql_is_pinned() {
         select_run_plane_helper_functions_sql()
             .contains("reject_immutable_operator_run_action_change")
     );
-    assert!(
-        select_run_plane_helper_functions_sql().contains("guard_effect_disposition_append")
-    );
+    assert!(select_run_plane_helper_functions_sql().contains("guard_effect_disposition_append"));
     assert_eq!(
         strip_retired_registration_keys_sql(),
         "UPDATE catalog.event_registrations \

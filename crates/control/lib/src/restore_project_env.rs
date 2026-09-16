@@ -342,8 +342,12 @@ async fn restore_in_place(
         "an in-place restore drops and replaces the LIVE {triple} database — re-run with the \
          confirmation to proceed"
     );
-    let db_name =
-        project_env_database_name(&request.org, &request.project, triple.env.as_str(), instance);
+    let db_name = project_env_database_name(
+        &request.org,
+        &request.project,
+        triple.env.as_str(),
+        instance,
+    );
     let conninfo = swap_db(admin_url, &db_name);
     run_pg_restore(&conninfo, dump_dir, true)?;
     Ok(RestoreOutcome::InPlace { database: db_name })

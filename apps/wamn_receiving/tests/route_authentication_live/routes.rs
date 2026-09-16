@@ -2,7 +2,6 @@
 
 use super::*;
 
-
 pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
@@ -200,7 +199,8 @@ async fn receiving_release_journey(
         }
     }
     reconcile_journey_data_access(inputs, &route.database_url).await?;
-    let declarations = render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
+    let declarations =
+        render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
     push_journey_components(inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
@@ -233,20 +233,22 @@ async fn receiving_release_journey(
     author_journey_wirings(inputs, &route.database_url, &system_url).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
     let target = JourneyReleaseTarget {
-            project_url: &route.database_url,
-            system_url: &system_url,
-            publisher: route
-                .management_principal_subject
-                .as_deref()
-                .context("project provisioning emitted no management-author principal")?,
-            project: project.as_ref(),
-            control: admin.as_ref(),
-            release_id: RELEASE_ID,
-            attachments: JOURNEY_PACKAGES
-                .iter()
-                .map(|package| journey_publication_root(*package, Some(inputs)).join("attachments.json"))
-                .collect(),
-        };
+        project_url: &route.database_url,
+        system_url: &system_url,
+        publisher: route
+            .management_principal_subject
+            .as_deref()
+            .context("project provisioning emitted no management-author principal")?,
+        project: project.as_ref(),
+        control: admin.as_ref(),
+        release_id: RELEASE_ID,
+        attachments: JOURNEY_PACKAGES
+            .iter()
+            .map(|package| {
+                journey_publication_root(*package, Some(inputs)).join("attachments.json")
+            })
+            .collect(),
+    };
     if mint_only {
         super::environment::mint_journey_release(inputs, target).await?;
         seed_receiving_business_rows(project.as_ref()).await?;
@@ -1029,8 +1031,8 @@ async fn assert_route_update_record_history(
         ),
     )
     .await?;
-    let body: Value = serde_json::from_slice(response.body())
-        .context("decode the stale no-op response")?;
+    let body: Value =
+        serde_json::from_slice(response.body()).context("decode the stale no-op response")?;
     anyhow::ensure!(
         response.status() == StatusCode::OK
             && body[0]["request_id"] == "purchase-order-stale-no-op"
@@ -1057,8 +1059,8 @@ async fn assert_route_update_record_history(
         ),
     )
     .await?;
-    let body: Value = serde_json::from_slice(response.body())
-        .context("decode the supplied-stamp refusal")?;
+    let body: Value =
+        serde_json::from_slice(response.body()).context("decode the supplied-stamp refusal")?;
     anyhow::ensure!(
         response.status() == StatusCode::BAD_REQUEST
             && body

@@ -28,9 +28,7 @@ const RECEIVING_SOURCES: [AuthoredSql<'static>; 18] = [
     ),
     AuthoredSql::new(
         "command/record_receipt/finalize_command.sql",
-        include_bytes!(
-            "../command/record_receipt/finalize_command.sql"
-        ),
+        include_bytes!("../command/record_receipt/finalize_command.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/find_replay.sql",
@@ -38,9 +36,7 @@ const RECEIVING_SOURCES: [AuthoredSql<'static>; 18] = [
     ),
     AuthoredSql::new(
         "command/record_receipt/finish_purchase_order.sql",
-        include_bytes!(
-            "../command/record_receipt/finish_purchase_order.sql"
-        ),
+        include_bytes!("../command/record_receipt/finish_purchase_order.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/insert_receipt.sql",
@@ -48,51 +44,35 @@ const RECEIVING_SOURCES: [AuthoredSql<'static>; 18] = [
     ),
     AuthoredSql::new(
         "command/record_receipt/insert_receipt_line.sql",
-        include_bytes!(
-            "../command/record_receipt/insert_receipt_line.sql"
-        ),
+        include_bytes!("../command/record_receipt/insert_receipt_line.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/lock_purchase_order.sql",
-        include_bytes!(
-            "../command/record_receipt/lock_purchase_order.sql"
-        ),
+        include_bytes!("../command/record_receipt/lock_purchase_order.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/update_purchase_order_line.sql",
-        include_bytes!(
-            "../command/record_receipt/update_purchase_order_line.sql"
-        ),
+        include_bytes!("../command/record_receipt/update_purchase_order_line.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/validate_receipt_line.sql",
-        include_bytes!(
-            "../command/record_receipt/validate_receipt_line.sql"
-        ),
+        include_bytes!("../command/record_receipt/validate_receipt_line.sql"),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_purchase_order_number_ascending.sql",
-        include_bytes!(
-            "../query/open_purchase_order_by_purchase_order_number_ascending.sql"
-        ),
+        include_bytes!("../query/open_purchase_order_by_purchase_order_number_ascending.sql"),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_purchase_order_number_descending.sql",
-        include_bytes!(
-            "../query/open_purchase_order_by_purchase_order_number_descending.sql"
-        ),
+        include_bytes!("../query/open_purchase_order_by_purchase_order_number_descending.sql"),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_status_ascending.sql",
-        include_bytes!(
-            "../query/open_purchase_order_by_status_ascending.sql"
-        ),
+        include_bytes!("../query/open_purchase_order_by_status_ascending.sql"),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_status_descending.sql",
-        include_bytes!(
-            "../query/open_purchase_order_by_status_descending.sql"
-        ),
+        include_bytes!("../query/open_purchase_order_by_status_descending.sql"),
     ),
     AuthoredSql::new(
         "query/open_purchase_order.sql",
@@ -100,9 +80,7 @@ const RECEIVING_SOURCES: [AuthoredSql<'static>; 18] = [
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_created_at_descending.sql",
-        include_bytes!(
-            "../query/open_purchase_order_by_created_at_descending.sql"
-        ),
+        include_bytes!("../query/open_purchase_order_by_created_at_descending.sql"),
     ),
     AuthoredSql::new(
         "query/load_purchase_order_history.sql",
@@ -1918,11 +1896,7 @@ fn additive_unused_column_on_consumed_relation_preserves_required_contract() {
     ));
     let additive_catalog = replacing_table(
         &catalog,
-        rebuilt_table(
-            command_table,
-            columns,
-            command_table.constraints().to_vec(),
-        ),
+        rebuilt_table(command_table, columns, command_table.constraints().to_vec()),
     );
     let additive = shipped_generation(&additive_catalog, &manifest).unwrap();
     let base_metadata = artifact_json(&base, "generated/package-weld.json");

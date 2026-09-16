@@ -7,12 +7,12 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_control::delivery::Candidate;
 use wamn_control::print_release_env::ReleaseCarrier;
+use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_gate_harness::journey::JourneyDocument;
-use wamn_test_infrastructure::rendering::kubernetes_documents;
 use wamn_test_infrastructure::platform;
+use wamn_test_infrastructure::rendering::kubernetes_documents;
 
 use super::{application, bootstrap, checked, deployment, kubectl};
 use crate::environment::{ORG, PROJECT, RELEASE_ID, TENANT};

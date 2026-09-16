@@ -631,7 +631,10 @@ mod tests {
                 .as_object_mut()
                 .unwrap()
                 .insert(key.to_owned(), value);
-            assert!(schemas.validate(&invalid, schema_index).is_err(), "{invalid}");
+            assert!(
+                schemas.validate(&invalid, schema_index).is_err(),
+                "{invalid}"
+            );
         }
         let no_commit = json!({"failed_outcome": {"code": "write_failed"}});
         assert!(schemas.validate(&no_commit, schema_index).is_err());

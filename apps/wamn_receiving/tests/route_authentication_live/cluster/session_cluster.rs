@@ -12,11 +12,11 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::Command;
 use wamn_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
+use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_control::provision_project_env::{
     self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
 };
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, workload_secret_name};
-use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 use wamn_test_infrastructure::workload;
 
@@ -672,18 +672,16 @@ pub(super) async fn assert_session(
         &resources.evidence,
     )
     .await?;
-    workload::hosts_ready(
-        &workload::HostsReadyInput {
-            lifecycle: &resources.lifecycle,
-            cluster: &resources.name,
-            work: &resources.work,
-            namespace: &resources.name,
-            image: &resources.host_image,
-            runtime_digest: &host_digest,
-            replicas: 2,
-            evidence: &resources.evidence,
-        },
-    )
+    workload::hosts_ready(&workload::HostsReadyInput {
+        lifecycle: &resources.lifecycle,
+        cluster: &resources.name,
+        work: &resources.work,
+        namespace: &resources.name,
+        image: &resources.host_image,
+        runtime_digest: &host_digest,
+        replicas: 2,
+        evidence: &resources.evidence,
+    })
     .await?;
     let deployment = read_object(
         resources,
@@ -1848,7 +1846,8 @@ fn assert_job(
     text(job, "/metadata/uid")?;
     occurred_after(text(job, "/metadata/creationTimestamp")?, started)?;
     let transition = array(job, "/status/conditions")?
-        .iter().rfind(|condition| condition["type"] == "Complete" && condition["status"] == "True")
+        .iter()
+        .rfind(|condition| condition["type"] == "Complete" && condition["status"] == "True")
         .context("the Job has its Complete condition")?;
     occurred_after(text(transition, "/lastTransitionTime")?, started)?;
     let pods = array(pods, "/items")?;

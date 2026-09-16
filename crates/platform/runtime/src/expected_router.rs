@@ -153,11 +153,8 @@ mod tests {
             BTreeMap::new(),
         )
         .expect("fixture manifest");
-        LoadedRelease::load_canonical_bytes(
-            &manifest.canonical_bytes(),
-            "expected-router-test",
-        )
-        .expect("fixture release passes the production reader")
+        LoadedRelease::load_canonical_bytes(&manifest.canonical_bytes(), "expected-router-test")
+            .expect("fixture release passes the production reader")
     }
 
     async fn request(

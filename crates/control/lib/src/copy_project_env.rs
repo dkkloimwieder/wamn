@@ -162,10 +162,9 @@ pub async fn copy_project_env(
         .as_deref()
         .context("copy needs a superuser URL to the SOURCE cluster")?;
     let dst_admin = request.dst_admin_url.as_deref().unwrap_or(src_admin);
-    let system_url = request
-        .system_database_url
-        .as_deref()
-        .context("copy requires the system database URL to resolve both stored instance suffixes")?;
+    let system_url = request.system_database_url.as_deref().context(
+        "copy requires the system database URL to resolve both stored instance suffixes",
+    )?;
     let src_instance =
         crate::provision_project_env::read_project_env_instance(system_url, &src).await?;
     let dst_instance =
@@ -466,7 +465,8 @@ async fn exec_deprovision_old(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     tracing::info!(
         "  dropped src database {:?} (delete its Database CR too: kubectl -n wamn-system \
          delete database {:?})",
-        ctx.src_db, ctx.src_db
+        ctx.src_db,
+        ctx.src_db
     );
     Ok(())
 }

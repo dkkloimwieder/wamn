@@ -420,7 +420,8 @@ mod tests {
             field: SortField::LocationId,
             direction: CursorDirection::Descending,
         };
-        let encoded = row_cursor(&row(FIRST, "2026-08-29T12:34:56.000000Z"), location_sort).unwrap();
+        let encoded =
+            row_cursor(&row(FIRST, "2026-08-29T12:34:56.000000Z"), location_sort).unwrap();
         assert!(matches!(
             decode(location_sort, Some(&encoded)).unwrap(),
             Cursor::Id(Some(_), Some(_))

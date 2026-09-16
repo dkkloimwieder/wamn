@@ -122,11 +122,14 @@ fn virtualized_digests(directory: &Path) -> Vec<(String, String)> {
                 .to_string();
             let mut hasher = Sha256::new();
             hasher.update(&bytes);
-            let hex = hasher.finalize().iter().fold(String::new(), |mut out, byte| {
-                use std::fmt::Write as _;
-                write!(out, "{byte:02x}").expect("writing to a string is infallible");
-                out
-            });
+            let hex = hasher
+                .finalize()
+                .iter()
+                .fold(String::new(), |mut out, byte| {
+                    use std::fmt::Write as _;
+                    write!(out, "{byte:02x}").expect("writing to a string is infallible");
+                    out
+                });
             digests.push((name, hex));
         }
     }

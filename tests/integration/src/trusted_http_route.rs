@@ -218,7 +218,9 @@ async fn build_with_credentials(
             postgres,
             Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
             Arc::new(credentials),
-            Arc::new(WamnLogging::new(&WamnLoggingConfig::default()).context("build wamn:logging")?),
+            Arc::new(
+                WamnLogging::new(&WamnLoggingConfig::default()).context("build wamn:logging")?,
+            ),
             // The upstream is a loopback origin the test owns; the cluster
             // ceiling is Kubernetes' job, not this fixture's.
             Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
@@ -1606,8 +1608,8 @@ mod tests {
             Duration::from_secs(180),
             test_connection_reuse(),
         ))
-            .await
-            .context("real HTTP guest connection reuse test exceeded 180 seconds")?
+        .await
+        .context("real HTTP guest connection reuse test exceeded 180 seconds")?
     }
 
     async fn test_connection_reuse() -> anyhow::Result<()> {
@@ -1828,8 +1830,8 @@ mod tests {
             Duration::from_secs(180),
             test_nested_authority(),
         ))
-            .await
-            .context("real nested HTTP authority test exceeded 180 seconds")?
+        .await
+        .context("real nested HTTP authority test exceeded 180 seconds")?
     }
 
     async fn test_nested_authority() -> anyhow::Result<()> {

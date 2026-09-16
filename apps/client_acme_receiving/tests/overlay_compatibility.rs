@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use wamn_control::apply_package::{
     self, ApplyPackageError, ApplyPackageErrorKind, ApplyPackageRequest,
 };
-use wamn_runtime::component_admission::component_digest;
 use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase};
+use wamn_runtime::component_admission::component_digest;
 use wamn_schema_introspection::ir::{
     Constraint, ForeignKeyAction, ForeignKeyColumn, postgres_type,
 };
@@ -83,13 +83,15 @@ pub(super) async fn after_install(
     let metadata: Value =
         serde_json::from_slice(&std::fs::read(overlay.join("generated/package-weld.json"))?)?;
     let (project, connection_task) = super::connect(project_url).await?;
-    let observation = observe_installed_contract(&project, &metadata["required_schema_contract"]).await;
+    let observation =
+        observe_installed_contract(&project, &metadata["required_schema_contract"]).await;
     drop(project);
     connection_task
         .await
         .context("join installed schema observer")?;
     let observed = observation?;
-    let requirements = required_contract_observation(&metadata["required_schema_contract"], &observed)?;
+    let requirements =
+        required_contract_observation(&metadata["required_schema_contract"], &observed)?;
     let purchase_order = observed["tables"]
         .as_array()
         .context("catalog tables must be an array")?

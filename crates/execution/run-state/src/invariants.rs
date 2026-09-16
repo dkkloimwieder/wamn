@@ -87,7 +87,10 @@ fn run_2_one_live_lease(state: &QueueState<'_>) -> Result<(), Violation> {
         if lease_live(state.now, row.lease_expires_at) && !leased.insert(row.run_id.as_str()) {
             return Err(violated(
                 "RUN-2",
-                format!("run {:?} carries two live leases at {}", row.run_id, state.now),
+                format!(
+                    "run {:?} carries two live leases at {}",
+                    row.run_id, state.now
+                ),
             ));
         }
     }

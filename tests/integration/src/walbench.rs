@@ -979,7 +979,8 @@ mod tests {
             for b in a.bytes() {
                 counts[b as usize] += 1;
             }
-            crate::measure::len_f64(*counts.iter().max().unwrap()) / crate::measure::len_f64(a.len())
+            crate::measure::len_f64(*counts.iter().max().unwrap())
+                / crate::measure::len_f64(a.len())
         };
         assert!(
             max_share < 0.05,

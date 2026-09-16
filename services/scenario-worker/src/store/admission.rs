@@ -538,15 +538,17 @@ impl AdmissionSurface {
         }
         let graph_json = serde_json::to_string(&document)
             .context("serialize the validated wiring document for storage")?;
-        Ok(PreparePublishResult::Ready(Box::new(PreparedWiringPublication {
-            tenant_id: self.tenant_id.clone(),
-            package_id: package_id.into(),
-            package_version: package_version.into(),
-            document,
-            stored_version,
-            graph_json,
-            wiring_hash: wiring_hash.into(),
-        })))
+        Ok(PreparePublishResult::Ready(Box::new(
+            PreparedWiringPublication {
+                tenant_id: self.tenant_id.clone(),
+                package_id: package_id.into(),
+                package_version: package_version.into(),
+                document,
+                stored_version,
+                graph_json,
+                wiring_hash: wiring_hash.into(),
+            },
+        )))
     }
 
     /// Append one validated publication after the management verb's green-report

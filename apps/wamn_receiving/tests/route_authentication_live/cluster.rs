@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
+use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
-use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
@@ -351,8 +351,7 @@ async fn install_host(
     carrier: &ReleaseCarrier,
     binding: &HostBinding<'_>,
 ) -> anyhow::Result<()> {
-    let (base, overlay) = prepare_host(cluster, inputs, carrier, binding)
-    .await?;
+    let (base, overlay) = prepare_host(cluster, inputs, carrier, binding).await?;
     checked(
         Command::new(&cluster.lifecycle)
             .arg("install-host")
@@ -593,14 +592,15 @@ async fn with_signals(
         }
     };
     if let Err(error) = &result
-        && evidence.is_dir() {
-            fs::write(
-                evidence.join("failure.json"),
-                serde_json::to_vec_pretty(&json!({
-                    "verdict":"fail", "failure":format!("{error:#}"),
-                }))?,
-            )?;
-        }
+        && evidence.is_dir()
+    {
+        fs::write(
+            evidence.join("failure.json"),
+            serde_json::to_vec_pretty(&json!({
+                "verdict":"fail", "failure":format!("{error:#}"),
+            }))?,
+        )?;
+    }
     result
 }
 
@@ -700,18 +700,16 @@ async fn released_http(
         )
         .await?;
     }
-    let hosts = workload::hosts_ready(
-        &workload::HostsReadyInput {
-            lifecycle: &resources.lifecycle,
-            cluster: &resources.name,
-            work: &resources.work,
-            namespace: &resources.name,
-            image: &resources.host_image,
-            runtime_digest: &digest,
-            replicas,
-            evidence: &resources.evidence,
-        },
-    )
+    let hosts = workload::hosts_ready(&workload::HostsReadyInput {
+        lifecycle: &resources.lifecycle,
+        cluster: &resources.name,
+        work: &resources.work,
+        namespace: &resources.name,
+        image: &resources.host_image,
+        runtime_digest: &digest,
+        replicas,
+        evidence: &resources.evidence,
+    })
     .await?;
     let image = deployment::publish_http(cluster).await?;
     deployment::install_http(cluster, &image).await?;

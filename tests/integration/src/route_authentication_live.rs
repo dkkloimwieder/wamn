@@ -1,28 +1,36 @@
 //! Production route authentication and shared test-document checks.
 
-
-use std::collections::{BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use tokio_postgres::Client;
-use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION};
+use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
+use wamn_execution_host::authorize_attachment_for_test;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
-use wamn_execution_host::{authorize_attachment_for_test};
-use wamn_platform_identity::{PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat, resolve_subject, revoke_pat, route_caller_subject};
-use wamn_runtime::plugins::flow_http_routing::{FlowHttpRouting, RouteAuthentication, RouteInFlightLimit};
-use wamn_runtime::plugins::wamn_postgres::{AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
+use wamn_platform_identity::{
+    PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat,
+    resolve_subject, revoke_pat, route_caller_subject,
+};
+use wamn_runtime::plugins::flow_http_routing::{
+    FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,
+};
+use wamn_runtime::plugins::wamn_postgres::{
+    AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
+};
 use wamn_runtime::release_manifest::LoadedRelease;
 
-use wamn_ctl::dev::environment::{ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route, reset_control_store};
+use wamn_ctl::dev::environment::{
+    ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route,
+    reset_control_store,
+};
 use wamn_test_infrastructure::scratch::ScratchRoot;
-
 
 const OTHER_PROJECT: &str = "other";
 const OTHER_ENVIRONMENT: &str = "prod";
@@ -260,8 +268,8 @@ async fn routing(
     loaded_release: Arc<LoadedRelease>,
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
-        FlowHttpRouting::new(Some(loaded_release), RouteInFlightLimit::default()).with_authentication(
-            Arc::new(
+        FlowHttpRouting::new(Some(loaded_release), RouteInFlightLimit::default())
+            .with_authentication(Arc::new(
                 RouteAuthentication::new(
                     identity_reader,
                     postgres,
@@ -270,8 +278,7 @@ async fn routing(
                     route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
                 )
                 .await?,
-            ),
-        ),
+            )),
     )
 }
 
@@ -419,13 +426,25 @@ async fn assert_human_environment_membership(
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
     let mut admissions = 0;
     assert_eq!(
-        invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+        invoke(
+            route_auth,
+            loaded_release,
+            Some(&authorization),
+            &mut admissions
+        )
+        .await,
         Err(unauthorized.clone())
     );
     for (org, env) in [(ORG, OTHER_ENVIRONMENT), ("other-org", ENVIRONMENT)] {
         project_env_membership::grant(membership(org, env, human.id().as_str())).await?;
         assert_eq!(
-            invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+            invoke(
+                route_auth,
+                loaded_release,
+                Some(&authorization),
+                &mut admissions
+            )
+            .await,
             Err(unauthorized.clone()),
             "membership in {org}/{PROJECT}/{env} authorized a different environment"
         );
@@ -434,7 +453,13 @@ async fn assert_human_environment_membership(
     other_project.project = OTHER_PROJECT.to_owned();
     project_env_membership::grant(other_project).await?;
     assert_eq!(
-        invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+        invoke(
+            route_auth,
+            loaded_release,
+            Some(&authorization),
+            &mut admissions
+        )
+        .await,
         Err(unauthorized.clone()),
         "membership in another project authorized this route"
     );
@@ -444,7 +469,13 @@ async fn assert_human_environment_membership(
         .await
         .expect_err("the identity reader cannot provision membership");
     assert_eq!(
-        invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+        invoke(
+            route_auth,
+            loaded_release,
+            Some(&authorization),
+            &mut admissions
+        )
+        .await,
         Err(unauthorized.clone())
     );
     assert_eq!(admissions, 0, "a nonmember reached application admission");
@@ -463,9 +494,14 @@ async fn assert_human_environment_membership(
             .get::<_, i64>(0),
         1
     );
-    invoke(route_auth, loaded_release, Some(&authorization), &mut admissions)
-        .await
-        .expect("the exact member reaches application admission");
+    invoke(
+        route_auth,
+        loaded_release,
+        Some(&authorization),
+        &mut admissions,
+    )
+    .await
+    .expect("the exact member reaches application admission");
     let caller = route_auth
         .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&authorization))
         .await
@@ -549,7 +585,13 @@ async fn assert_human_environment_membership(
         &[&TENANT, &human.id().as_str()],
     ).await?;
     assert_eq!(
-        invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+        invoke(
+            route_auth,
+            loaded_release,
+            Some(&authorization),
+            &mut admissions
+        )
+        .await,
         Err(Refusal::Permission(OPERATION.into())),
         "role removal must affect the next request"
     );
@@ -562,27 +604,50 @@ async fn assert_human_environment_membership(
         &[&TENANT, &human.id().as_str()],
     ).await?;
     assert_eq!(
-        invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+        invoke(
+            route_auth,
+            loaded_release,
+            Some(&authorization),
+            &mut admissions
+        )
+        .await,
         Err(Refusal::Permission(OPERATION.into()))
     );
     project.execute(
         "UPDATE app_system.users SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &human.id().as_str()],
     ).await?;
-    invoke(route_auth, loaded_release, Some(&authorization), &mut admissions)
-        .await
-        .expect("restored environment role authorizes again");
+    invoke(
+        route_auth,
+        loaded_release,
+        Some(&authorization),
+        &mut admissions,
+    )
+    .await
+    .expect("restored environment role authorizes again");
     for _ in 0..2 {
         project_env_membership::revoke(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
         assert_eq!(
-            invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+            invoke(
+                route_auth,
+                loaded_release,
+                Some(&authorization),
+                &mut admissions
+            )
+            .await,
             Err(unauthorized.clone())
         );
     }
     project_env_membership::grant(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
     disable_principal(admin, human.id()).await?;
     assert_eq!(
-        invoke(route_auth, loaded_release, Some(&authorization), &mut admissions).await,
+        invoke(
+            route_auth,
+            loaded_release,
+            Some(&authorization),
+            &mut admissions
+        )
+        .await,
         Err(unauthorized)
     );
     assert_eq!(
@@ -696,9 +761,14 @@ async fn production_route_caller_authentication_and_operation_authorization() {
 
     let mut router_admissions = 0;
     let valid = format!("Bearer {}", route.token);
-    invoke(&route_auth, &loaded_release, Some(&valid), &mut router_admissions)
-        .await
-        .expect("production-minted caller reaches the production router authorization boundary");
+    invoke(
+        &route_auth,
+        &loaded_release,
+        Some(&valid),
+        &mut router_admissions,
+    )
+    .await
+    .expect("production-minted caller reaches the production router authorization boundary");
     assert_eq!(router_admissions, 1);
 
     let forged = format!("Bearer {}", flip_last_hex_digit(&route.token));
@@ -787,7 +857,13 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .await
         .expect("remove the route-caller role");
     assert_eq!(
-        invoke(&route_auth, &loaded_release, Some(&valid), &mut router_admissions).await,
+        invoke(
+            &route_auth,
+            &loaded_release,
+            Some(&valid),
+            &mut router_admissions
+        )
+        .await,
         Err(unauthorized.clone()),
         "role removal must refuse an otherwise valid PAT on the next request"
     );
@@ -800,7 +876,13 @@ async fn production_route_caller_authentication_and_operation_authorization() {
             .await
             .expect("assign a role that cannot authorize this route");
         assert_eq!(
-            invoke(&route_auth, &loaded_release, Some(&valid), &mut router_admissions).await,
+            invoke(
+                &route_auth,
+                &loaded_release,
+                Some(&valid),
+                &mut router_admissions
+            )
+            .await,
             Err(unauthorized.clone()),
             "the role {org}/{project}/{role} authorized the wrong route"
         );
@@ -818,7 +900,13 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .await
         .expect("disable the configured service principal");
     assert_eq!(
-        invoke(&route_auth, &loaded_release, Some(&valid), &mut router_admissions).await,
+        invoke(
+            &route_auth,
+            &loaded_release,
+            Some(&valid),
+            &mut router_admissions
+        )
+        .await,
         Err(unauthorized.clone()),
         "a disabled service passed with a valid PAT and project role"
     );
@@ -875,9 +963,14 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .await
         .expect("remove the exact operation grant");
     assert_eq!(
-        invoke(&route_auth, &loaded_release, Some(&valid), &mut router_admissions,)
-            .await
-            .expect_err("missing permission must refuse"),
+        invoke(
+            &route_auth,
+            &loaded_release,
+            Some(&valid),
+            &mut router_admissions,
+        )
+        .await
+        .expect_err("missing permission must refuse"),
         Refusal::Permission(OPERATION.into())
     );
     assert_eq!(
@@ -915,9 +1008,14 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     identity_task.abort();
     let _ = identity_task.await;
     assert_eq!(
-        invoke(&route_auth, &loaded_release, Some(&valid), &mut router_admissions,)
-            .await
-            .expect_err("identity outage must be availability"),
+        invoke(
+            &route_auth,
+            &loaded_release,
+            Some(&valid),
+            &mut router_admissions,
+        )
+        .await
+        .expect_err("identity outage must be availability"),
         Refusal::Authentication(503, "authentication-unavailable".to_owned())
     );
     assert_eq!(

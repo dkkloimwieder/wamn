@@ -87,18 +87,16 @@ async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow:
             evidence,
         )
         .await?;
-        workload::hosts_ready(
-            &workload::HostsReadyInput {
-                lifecycle: &resources.lifecycle,
-                cluster: &resources.name,
-                work: &resources.work,
-                namespace: &resources.name,
-                image: &resources.host_image,
-                runtime_digest: &digest,
-                replicas: 2,
-                evidence,
-            },
-        )
+        workload::hosts_ready(&workload::HostsReadyInput {
+            lifecycle: &resources.lifecycle,
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+            image: &resources.host_image,
+            runtime_digest: &digest,
+            replicas: 2,
+            evidence,
+        })
         .await?;
         let http = deployment::publish_http(&cluster).await?;
         Box::pin(session_cluster::assert_session(

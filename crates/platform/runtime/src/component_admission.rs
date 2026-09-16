@@ -387,10 +387,19 @@ mod tests {
             // unregistered but platform-family: the import policy's to refuse, by name
             "wasi:sockets/tcp@0.2.3",
         ] {
-            assert!(!super::is_application_operation_import(platform), "{platform} is a platform capability");
+            assert!(
+                !super::is_application_operation_import(platform),
+                "{platform} is a platform capability"
+            );
         }
-        for application in ["acme:orders/record@1.0.0", "wamn-receiving:receiving/record-receipt@1.0.0"] {
-            assert!(super::is_application_operation_import(application), "{application} is an application call");
+        for application in [
+            "acme:orders/record@1.0.0",
+            "wamn-receiving:receiving/record-receipt@1.0.0",
+        ] {
+            assert!(
+                super::is_application_operation_import(application),
+                "{application} is an application call"
+            );
         }
     }
 
@@ -459,7 +468,11 @@ mod tests {
     /// The same fixture with a chosen lift/lower ABI, so an ASYNC-LIFTED
     /// export can be built: the legacy mangling with the async-callback ABI
     /// lifts every export `async`.
-    fn component_bytes_with_abi(imports: &str, extra_exports: &str, abi: ManglingAndAbi) -> Vec<u8> {
+    fn component_bytes_with_abi(
+        imports: &str,
+        extra_exports: &str,
+        abi: ManglingAndAbi,
+    ) -> Vec<u8> {
         component_bytes_exporting(OPERATION, imports, extra_exports, abi)
     }
 

@@ -163,10 +163,7 @@ async fn inactive(admin: &Client, generation: CredentialGeneration) -> anyhow::R
 
 async fn stable_acl(admin: &Client) -> anyhow::Result<Vec<String>> {
     Ok(admin
-        .query(
-            sql::role_database_grants_sql(),
-            &[&IDENTITY_ISSUER_ROLE],
-        )
+        .query(sql::role_database_grants_sql(), &[&IDENTITY_ISSUER_ROLE])
         .await?
         .iter()
         .map(|row| {
@@ -645,9 +642,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compiled_cli_publishes_rolls_back_and_retires_identity_generations() {
     let database = locked_database::database(wamn_test_postgres::database);
-    let maintenance = connect(&database)
-        .await
-        .expect("connect the test database");
+    let maintenance = connect(&database).await.expect("connect the test database");
     maintenance
         .batch_execute("DROP DATABASE IF EXISTS wamn_system WITH (FORCE)")
         .await

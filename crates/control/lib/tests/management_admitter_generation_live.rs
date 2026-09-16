@@ -284,11 +284,8 @@ fn run_plane_fixture() -> String {
             )
             .expect("writing to a String cannot fail");
         } else {
-            write!(
-                ddl,
-                " CREATE TABLE catalog.\"{relation}\" (id bigint);"
-            )
-            .expect("writing to a String cannot fail");
+            write!(ddl, " CREATE TABLE catalog.\"{relation}\" (id bigint);")
+                .expect("writing to a String cannot fail");
         }
     }
     ddl
@@ -326,10 +323,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         .get::<_, String>(0)
         .parse()
         .expect("numeric PG version");
-    assert!(
-        version >= 180_000,
-        "credential test requires PostgreSQL 18"
-    );
+    assert!(version >= 180_000, "credential test requires PostgreSQL 18");
 
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
     let role_a = management_admitter_generation_role(

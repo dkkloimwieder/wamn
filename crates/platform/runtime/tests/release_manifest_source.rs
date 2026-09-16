@@ -246,7 +246,10 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     // Both identity halves come out of the transferred content, and they agree
     // with the name the pod template gave — the check the mount carrier cannot
     // make, made here against a third party that stored the bytes.
-    assert_eq!(loaded_release.release().manifest_digest.as_str(), manifest_digest);
+    assert_eq!(
+        loaded_release.release().manifest_digest.as_str(),
+        manifest_digest
+    );
     assert_eq!(
         loaded_release.release().effective_release_id,
         effective_release_id,

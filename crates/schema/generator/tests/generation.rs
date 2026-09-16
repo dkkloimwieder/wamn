@@ -2017,10 +2017,8 @@ const ALL_STAMP_COLUMNS: [&str; 4] = ["created_at", "created_by", "updated_at", 
 fn audit_log_retention_is_none_unlimited_or_whole_days() {
     for retention in ["none", "unlimited", "P1D", "P30D", "P365D"] {
         for columns in [json!([]), json!(ALL_STAMP_COLUMNS)] {
-            validate_operation_vocabulary(&parsed_manifest(&with_audit_log(
-                &columns, retention,
-            )))
-            .unwrap_or_else(|error| panic!("{retention} with {columns} refused: {error:?}"));
+            validate_operation_vocabulary(&parsed_manifest(&with_audit_log(&columns, retention)))
+                .unwrap_or_else(|error| panic!("{retention} with {columns} refused: {error:?}"));
         }
         run(
             &all_stamps_catalog(),

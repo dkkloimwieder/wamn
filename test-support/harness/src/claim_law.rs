@@ -208,7 +208,10 @@ pub fn load(package_root: &Path, claim_tests: &Path) -> Result<ClaimContract> {
             canonical_command: text(expect, "canonical_command")?,
             claim: text(expect, "claim")?,
             writes: text(expect, "writes")?,
-            result: expect.get("result").and_then(Value::as_str).map(str::to_owned),
+            result: expect
+                .get("result")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             refusal: expect
                 .get("refusal")
                 .and_then(Value::as_str)
@@ -291,13 +294,22 @@ impl ClaimContract {
         // FIRST CALL. This is the call the law makes immutable.
         let transaction = client.transaction().await.context("begin the first call")?;
         let first = self
-            .run_call(&transaction, &case.first_call, &claim_name, fixture, original_command)
+            .run_call(
+                &transaction,
+                &case.first_call,
+                &claim_name,
+                fixture,
+                original_command,
+            )
             .await?;
         let first_call_transaction_id = first
             .transaction_id
             .clone()
             .context("the first call wrote, so PostgreSQL must have assigned it an id")?;
-        transaction.commit().await.context("commit the first call")?;
+        transaction
+            .commit()
+            .await
+            .context("commit the first call")?;
 
         let claim_identity = first
             .rows
@@ -324,7 +336,10 @@ impl ClaimContract {
         } else {
             original_command
         };
-        let transaction = client.transaction().await.context("begin the second call")?;
+        let transaction = client
+            .transaction()
+            .await
+            .context("begin the second call")?;
         let second = self
             .run_call(&transaction, &case.second_call, &claim_name, fixture, sent)
             .await?;
@@ -343,7 +358,10 @@ impl ClaimContract {
                  expects none"
             );
         }
-        transaction.commit().await.context("commit the second call")?;
+        transaction
+            .commit()
+            .await
+            .context("commit the second call")?;
 
         let replay = second
             .rows
@@ -382,7 +400,10 @@ impl ClaimContract {
         let after = self
             .read_one(client, &replay_name, fixture, original_command)
             .await?;
-        ensure!(after == original_result, "the second call changed the durable row");
+        ensure!(
+            after == original_result,
+            "the second call changed the durable row"
+        );
 
         Ok(CaseReport {
             id: case.id.clone(),
@@ -501,8 +522,13 @@ fn claim_statement(case: &Case) -> Result<String> {
 
 /// The replay read is the second call's other statement.
 fn replay_statement(case: &Case, claim: &str) -> Result<String> {
-    let mut rest = case.second_call.iter().filter(|name| name.as_str() != claim);
-    let replay = rest.next().context("the second call reads no durable result")?;
+    let mut rest = case
+        .second_call
+        .iter()
+        .filter(|name| name.as_str() != claim);
+    let replay = rest
+        .next()
+        .context("the second call reads no durable result")?;
     ensure!(
         rest.next().is_none(),
         "the second call reads the durable result with more than one statement"

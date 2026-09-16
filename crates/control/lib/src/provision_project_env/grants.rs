@@ -6,7 +6,8 @@ use wamn_control_provision::audit_retention::{
 };
 
 use super::{
-    BTreeMap, BTreeSet, GenericClient, PgConfig, SystemReader, WorkloadRoleFamily, connect_config, sql,
+    BTreeMap, BTreeSet, GenericClient, PgConfig, SystemReader, WorkloadRoleFamily, connect_config,
+    sql,
 };
 
 pub(super) async fn verify_public_access_floor(
@@ -92,12 +93,9 @@ impl StableGrantSet {
         retention_targets: &[(String, String)],
     ) -> anyhow::Result<()> {
         match self {
-            Self::ManagementAdmitter => verify_management_admitter_grants(
-                role,
-                database,
-                required_database,
-                grants,
-            ),
+            Self::ManagementAdmitter => {
+                verify_management_admitter_grants(role, database, required_database, grants)
+            }
             Self::RegistryReader => verify_system_reader_grants(
                 SystemReader::Registry,
                 "registry",
@@ -116,34 +114,20 @@ impl StableGrantSet {
                 required_database,
                 grants,
             ),
-            Self::SessionRoleReader => verify_session_role_reader_grants(
-                role,
-                database,
-                required_database,
-                grants,
-            ),
-            Self::Retention => verify_retention_grants(role, database, grants),
-            Self::DispatchReader => {
-                verify_dispatch_reader_grants(role, database, grants)
+            Self::SessionRoleReader => {
+                verify_session_role_reader_grants(role, database, required_database, grants)
             }
-            Self::ExecutorPlatform => verify_executor_platform_grants(
-                role,
-                database,
-                required_database,
-                grants,
-            ),
-            Self::HttpAdmitter => verify_http_admitter_grants(
-                role,
-                database,
-                required_database,
-                grants,
-            ),
-            Self::EventMaterializer => verify_event_materializer_grants(
-                role,
-                database,
-                required_database,
-                grants,
-            ),
+            Self::Retention => verify_retention_grants(role, database, grants),
+            Self::DispatchReader => verify_dispatch_reader_grants(role, database, grants),
+            Self::ExecutorPlatform => {
+                verify_executor_platform_grants(role, database, required_database, grants)
+            }
+            Self::HttpAdmitter => {
+                verify_http_admitter_grants(role, database, required_database, grants)
+            }
+            Self::EventMaterializer => {
+                verify_event_materializer_grants(role, database, required_database, grants)
+            }
             Self::AuditRetention => {
                 verify_audit_retention_grants(role, database, grants, retention_targets)
             }
@@ -293,11 +277,7 @@ pub(super) struct RoleAcl {
 /// between a retention credential and every tenant's run payloads. A
 /// `("relation", "runs", "SELECT")` entry appearing here is that regression, and
 /// it fails as an unexpected member of the exact set.
-fn verify_retention_grants(
-    role: &str,
-    database: &str,
-    grants: &[RoleAcl],
-) -> anyhow::Result<()> {
+fn verify_retention_grants(role: &str, database: &str, grants: &[RoleAcl]) -> anyhow::Result<()> {
     let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
     for acl in grants {
         anyhow::ensure!(

@@ -20,8 +20,8 @@ use wash_runtime::wasmtime::component::Component;
 
 use super::{
     BASE_RECORD_RECEIPT, JourneyRuntime, OPERATION, assert_direct_route_trace, fresh_only,
-    invoke_journey_route,
-    journey_trace, nested_receipt_state, span_attribute, trace_component_invocations,
+    invoke_journey_route, journey_trace, nested_receipt_state, span_attribute,
+    trace_component_invocations,
 };
 
 fn transport_failure() -> ClientError {

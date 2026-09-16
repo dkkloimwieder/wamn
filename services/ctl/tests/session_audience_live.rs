@@ -444,9 +444,7 @@ async fn compiled_session_reader_refuses_invalid_tenants_before_io() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations() {
     let database = locked_database::database(wamn_test_postgres::database);
-    let maintenance = connect(&database)
-        .await
-        .expect("connect the test database");
+    let maintenance = connect(&database).await.expect("connect the test database");
     maintenance
         .batch_execute("DROP DATABASE IF EXISTS wamn_system WITH (FORCE)")
         .await

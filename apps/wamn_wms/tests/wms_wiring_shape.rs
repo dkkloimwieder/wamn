@@ -100,8 +100,14 @@ fn label_render_declares_the_envelope_on_both_ports() {
     let document = declaration("apps/platform/no-std/label-render/declaration.json.in");
     let node = handler(&document);
     let envelope = entry_envelope_schema();
-    assert_eq!(node["input-ports"][0]["schema"], envelope, "input is the envelope");
-    assert_eq!(node["output-ports"][0]["schema"], envelope, "output is the envelope");
+    assert_eq!(
+        node["input-ports"][0]["schema"], envelope,
+        "input is the envelope"
+    );
+    assert_eq!(
+        node["output-ports"][0]["schema"], envelope,
+        "output is the envelope"
+    );
     assert_eq!(parameter_names(node), ["template_id"]);
 }
 
@@ -111,7 +117,11 @@ fn entry_envelope_schema() -> serde_json::Value {
     let document = declaration("apps/wamn_wms/publication/components/wms.json.in");
     let operation = &document["operations"]["wamn-wms:inventory/move@1.0.0"];
     let schema = operation["output-ports"][0]["schema"].clone();
-    assert_eq!(schema, serde_json::json!({"type": "array"}), "the entry emits the envelope");
+    assert_eq!(
+        schema,
+        serde_json::json!({"type": "array"}),
+        "the entry emits the envelope"
+    );
     schema
 }
 
@@ -157,7 +167,10 @@ fn blob_put_locates_its_key_and_body_by_wiring_parameter() {
     );
     let envelope = entry_envelope_schema();
     assert_eq!(*input, envelope, "input is the envelope");
-    assert_eq!(node["output-ports"][0]["schema"], envelope, "output is the envelope");
+    assert_eq!(
+        node["output-ports"][0]["schema"], envelope,
+        "output is the envelope"
+    );
 }
 
 /// THE CHAIN, end to end on paper: the fields a wirer would point at exist.

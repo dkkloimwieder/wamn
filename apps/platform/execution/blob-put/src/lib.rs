@@ -63,10 +63,7 @@ use bindings::wamn::node::types::ErrorDetail;
 /// Same contract as `transform`'s `pointer`: a RFC 6901 pointer, empty meaning
 /// the whole document. Required, because a default would silently pick a
 /// member name and reintroduce the coupling the pointer removes.
-fn pointer_param<'a>(
-    config: &'a serde_json::Value,
-    name: &str,
-) -> Result<&'a str, NodeError> {
+fn pointer_param<'a>(config: &'a serde_json::Value, name: &str) -> Result<&'a str, NodeError> {
     let pointer = config
         .get(name)
         .and_then(serde_json::Value::as_str)
@@ -143,7 +140,9 @@ impl Guest for Component {
                 .ok_or_else(|| {
                     invalid_input(
                         "missing_body",
-                        format!("body_field {body_field:?} resolves to no string in an item's value"),
+                        format!(
+                            "body_field {body_field:?} resolves to no string in an item's value"
+                        ),
                     )
                 })?
                 .as_bytes()

@@ -310,8 +310,9 @@ mod tests {
 
     #[test]
     fn an_empty_coordinate_is_refused_by_name() {
-        let error = blobstore(&serde_json::json!({"endpoint": "", "container": "c", "prefix": "p"}))
-            .expect_err("an empty endpoint is not an endpoint");
+        let error =
+            blobstore(&serde_json::json!({"endpoint": "", "container": "c", "prefix": "p"}))
+                .expect_err("an empty endpoint is not an endpoint");
         assert!(
             format!("{error:#}").contains("endpoint is empty"),
             "{error:#}"
@@ -386,9 +387,7 @@ pub struct PreparedLocalInstance {
     credential_handle: String,
 }
 
-pub fn read_local_instance(
-    input: &LocalInstanceInput,
-) -> anyhow::Result<PreparedLocalInstance> {
+pub fn read_local_instance(input: &LocalInstanceInput) -> anyhow::Result<PreparedLocalInstance> {
     ensure!(
         input.definition.is_absolute(),
         "local connection definition path must be absolute"

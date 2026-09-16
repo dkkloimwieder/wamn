@@ -1,7 +1,8 @@
 //! Workload credential preparation, retirement, and observed role state.
 
 use super::{
-    WorkloadRoleFamily, platform_group_membership_sql, quote_ident, quote_literal, stable_surface_sql,
+    WorkloadRoleFamily, platform_group_membership_sql, quote_ident, quote_literal,
+    stable_surface_sql,
 };
 
 /// Idempotently create or harden one stable workload ACL role as NOLOGIN.

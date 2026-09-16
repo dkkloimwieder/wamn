@@ -28,7 +28,10 @@ pub fn system() -> wamn_test_postgres::Database {
             SYSTEM_ROLE_SQL,
             &sql::ensure_control_author_acl_role_sql(),
             sql::ensure_db_owner_role_sql(),
-            &format!("ALTER DATABASE \"{}\" OWNER TO wamn_system", database.name()),
+            &format!(
+                "ALTER DATABASE \"{}\" OWNER TO wamn_system",
+                database.name()
+            ),
             "SET ROLE wamn_system",
             SYSTEM_SCHEMA_SQL,
             CONTROL_PORTABLE_STORE_SQL,

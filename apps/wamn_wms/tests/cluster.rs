@@ -3,8 +3,8 @@
 mod application;
 mod bootstrap;
 mod build;
-mod demo;
 mod delivery_case;
+mod demo;
 mod deployment;
 mod reader;
 mod startup;
@@ -61,8 +61,7 @@ async fn generated_wms_terminal_reports_success_and_partial_completion() -> anyh
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
-async fn restarted_wms_host_retains_compiled_code_and_serves_requests()
--> anyhow::Result<()> {
+async fn restarted_wms_host_retains_compiled_code_and_serves_requests() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run_case(Case::Startup).await
 }
@@ -159,87 +158,106 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         .context("create the private owned WMS directory")?;
     let work = ScratchRoot(work_path);
     let delivery_cancelled = pg_walstream::CancellationToken::new();
-    let mut run = Box::pin(std::panic::AssertUnwindSafe(async {
-        build::build(&repository, &target, &evidence, generated_terminal, matches!(case, Case::Delivery)).await?;
-        let files = bootstrap::prepare(&repository, work.path())?;
-        let scope = Triple::new(
-            crate::environment::ORG,
-            crate::environment::PROJECT,
-            crate::environment::ENVIRONMENT,
-        );
-        let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-        let advisory = advisory_stream_config(&scope, source.num_replicas);
-        let broker = event_broker::prepare(
-            work.path(),
-            &scope,
-            crate::environment::TENANT,
-            &source,
-            &advisory,
-            &[],
-        )?;
-        if matches!(case, Case::Delivery) {
-            checked(Command::new(repository.join("tools/delivery-owned"))
-                .arg("build-host").arg(&cluster).arg(work.path()).arg(&head)).await?;
-        } else if candidate.is_none() {
-            deployment::prepare_image(&target, work.path(), &head)?;
+    let mut run = Box::pin(
+        std::panic::AssertUnwindSafe(async {
+            build::build(
+                &repository,
+                &target,
+                &evidence,
+                generated_terminal,
+                matches!(case, Case::Delivery),
+            )
+            .await?;
+            let files = bootstrap::prepare(&repository, work.path())?;
+            let scope = Triple::new(
+                crate::environment::ORG,
+                crate::environment::PROJECT,
+                crate::environment::ENVIRONMENT,
+            );
+            let source = source_stream_config(&scope, 1, Duration::from_secs(120));
+            let advisory = advisory_stream_config(&scope, source.num_replicas);
+            let broker = event_broker::prepare(
+                work.path(),
+                &scope,
+                crate::environment::TENANT,
+                &source,
+                &advisory,
+                &[],
+            )?;
+            if matches!(case, Case::Delivery) {
+                checked(
+                    Command::new(repository.join("tools/delivery-owned"))
+                        .arg("build-host")
+                        .arg(&cluster)
+                        .arg(work.path())
+                        .arg(&head),
+                )
+                .await?;
+            } else if candidate.is_none() {
+                deployment::prepare_image(&target, work.path(), &head)?;
+                checked(
+                    Command::new(&lifecycle)
+                        .arg("build-images")
+                        .arg(&cluster)
+                        .arg(work.path())
+                        .arg(&image),
+                )
+                .await?;
+            }
+            if let Some((candidate, _)) = &candidate {
+                crate::delivery::registry_files(candidate, work.path())?;
+            }
             checked(
                 Command::new(&lifecycle)
-                    .arg("build-images")
+                    .arg("create")
                     .arg(&cluster)
                     .arg(work.path())
+                    .arg(&repository)
                     .arg(&image),
             )
             .await?;
-        }
-        if let Some((candidate, _)) = &candidate {
-            crate::delivery::registry_files(candidate, work.path())?;
-        }
-        checked(
-            Command::new(&lifecycle)
-                .arg("create")
-                .arg(&cluster)
-                .arg(work.path())
-                .arg(&repository)
-                .arg(&image),
-        )
-        .await?;
-        let digest = workload::image_ready(
-            &lifecycle,
-            &cluster,
-            work.path(),
-            &image,
-            &head,
-            if candidate.is_some() || matches!(case, Case::Delivery) { "release" } else { "debug" },
-            &evidence,
-        )
-        .await?;
-        checked(kubectl(&cluster, work.path()).args(["create", "namespace", &cluster])).await?;
-        let result = Box::pin(run_created(
-            &CaseContext {
-                repository: &repository,
-                lifecycle: &lifecycle,
-                cluster: &cluster,
-                work: work.path(),
-                target: &target,
-                evidence: &evidence,
-                image: &image,
-                tag: &tag,
-                source_head: &head,
-                runtime_digest: &digest,
-                files: &files,
-                broker: &broker,
-                source: &source,
-            },
-            &scope,
-            case,
-            browser,
-            &delivery_cancelled,
-        ))
-        .await;
-        demo::hold(work.path(), browser && result.is_ok()).await?;
-        result
-    })
-    .catch_unwind());
+            let digest = workload::image_ready(
+                &lifecycle,
+                &cluster,
+                work.path(),
+                &image,
+                &head,
+                if candidate.is_some() || matches!(case, Case::Delivery) {
+                    "release"
+                } else {
+                    "debug"
+                },
+                &evidence,
+            )
+            .await?;
+            checked(kubectl(&cluster, work.path()).args(["create", "namespace", &cluster])).await?;
+            let result = Box::pin(run_created(
+                &CaseContext {
+                    repository: &repository,
+                    lifecycle: &lifecycle,
+                    cluster: &cluster,
+                    work: work.path(),
+                    target: &target,
+                    evidence: &evidence,
+                    image: &image,
+                    tag: &tag,
+                    source_head: &head,
+                    runtime_digest: &digest,
+                    files: &files,
+                    broker: &broker,
+                    source: &source,
+                },
+                &scope,
+                case,
+                browser,
+                &delivery_cancelled,
+            ))
+            .await;
+            demo::hold(work.path(), browser && result.is_ok()).await?;
+            result
+        })
+        .catch_unwind(),
+    );
     let observed = tokio::select! {
         result = &mut run => Ok(result),
         _ = interrupt.recv() => Err("the WMS test received SIGINT"),
@@ -478,31 +496,38 @@ async fn run_created(
     drop(advisory_observed);
     drop(context);
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()?
-        && let Some(image) = &candidate.executor_image {
-            let binary = crate::delivery::executor_launcher(work, image, &format!("{cluster}-executor"))?;
-            wamn_test_infrastructure::executor::assert_idle_lifecycle(
-                &wamn_test_infrastructure::executor::ExecutorInput {
-                    binary: &binary,
-                    host_secrets: &document.host_secret_directory,
-                    component_artifact_base: &document.component_artifact_base,
-                    release_artifact_base: &release.artifact_base,
-                    manifest_digest: release.manifest_digest.as_str(),
-                    registry_auth: &document.registry_auth_file,
-                    nats_url: &nats_url,
-                    event_scope: scope,
-                    project: crate::environment::PROJECT,
-                    schema: crate::environment::SCHEMA,
-                    credentials: &broker.runtime,
-                    source: source_head,
-                    stream: source,
-                },
-                evidence,
-            ).await?;
-            write_result(evidence, "candidate-executor.json", &json!({
+        && let Some(image) = &candidate.executor_image
+    {
+        let binary =
+            crate::delivery::executor_launcher(work, image, &format!("{cluster}-executor"))?;
+        wamn_test_infrastructure::executor::assert_idle_lifecycle(
+            &wamn_test_infrastructure::executor::ExecutorInput {
+                binary: &binary,
+                host_secrets: &document.host_secret_directory,
+                component_artifact_base: &document.component_artifact_base,
+                release_artifact_base: &release.artifact_base,
+                manifest_digest: release.manifest_digest.as_str(),
+                registry_auth: &document.registry_auth_file,
+                nats_url: &nats_url,
+                event_scope: scope,
+                project: crate::environment::PROJECT,
+                schema: crate::environment::SCHEMA,
+                credentials: &broker.runtime,
+                source: source_head,
+                stream: source,
+            },
+            evidence,
+        )
+        .await?;
+        write_result(
+            evidence,
+            "candidate-executor.json",
+            &json!({
                 "image":image,"manifest_digest":release.manifest_digest,
                 "boundary":"idle-readiness-and-signal-shutdown","result":"pass",
-            }))?;
-        }
+            }),
+        )?;
+    }
     observer
         .drain()
         .await
@@ -592,18 +617,16 @@ async fn run_created(
         } else {
             None
         };
-        let hosts = workload::hosts_ready(
-            &workload::HostsReadyInput {
-                lifecycle,
-                cluster,
-                work,
-                namespace: cluster,
-                image,
-                runtime_digest,
-                replicas: if measure_startup { 1 } else { 3 },
-                evidence,
-            },
-        )
+        let hosts = workload::hosts_ready(&workload::HostsReadyInput {
+            lifecycle,
+            cluster,
+            work,
+            namespace: cluster,
+            image,
+            runtime_digest,
+            replicas: if measure_startup { 1 } else { 3 },
+            evidence,
+        })
         .await?;
         let flow_http = deployment::publish_runtime(
             repository,
@@ -627,14 +650,7 @@ async fn run_created(
         if let Some(cold) = &cold {
             return startup::requests(cluster, work, image, &document, cold, evidence).await;
         }
-        workload::unknown_route(
-            cluster,
-            work,
-            cluster,
-            &document.route_host,
-            evidence,
-        )
-        .await?;
+        workload::unknown_route(cluster, work, cluster, &document.route_host, evidence).await?;
         let endpoint =
             deployment::expose_route(cluster, work, cluster, lifecycle, &document.route_host)
                 .await?;

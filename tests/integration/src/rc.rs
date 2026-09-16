@@ -202,18 +202,16 @@ async fn execute(
     .await?;
     jobs::inspect_image(resources).await?;
     deployment::install(resources, &broker, &source, &server).await?;
-    workload::hosts_ready(
-        &workload::HostsReadyInput {
-            lifecycle: &resources.lifecycle,
-            cluster: CLUSTER,
-            work: &resources.work,
-            namespace: NAMESPACE,
-            image: &resources.host_image,
-            runtime_digest: &host_digest,
-            replicas: 3,
-            evidence: &resources.evidence,
-        },
-    )
+    workload::hosts_ready(&workload::HostsReadyInput {
+        lifecycle: &resources.lifecycle,
+        cluster: CLUSTER,
+        work: &resources.work,
+        namespace: NAMESPACE,
+        image: &resources.host_image,
+        runtime_digest: &host_digest,
+        replicas: 3,
+        evidence: &resources.evidence,
+    })
     .await?;
     bootstrap::run(resources).await?;
     save(

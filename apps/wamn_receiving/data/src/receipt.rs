@@ -177,8 +177,7 @@ mod tests {
 
     #[test]
     fn complete_page_has_no_continuation_cursor() {
-        let page =
-            page_from_rows(vec![row(FIRST_ID, "2026-08-29T12:00:00.000000Z")], 2).unwrap();
+        let page = page_from_rows(vec![row(FIRST_ID, "2026-08-29T12:00:00.000000Z")], 2).unwrap();
 
         assert_eq!(page.item.len(), 1);
         assert!(page.next_cursor.is_none());

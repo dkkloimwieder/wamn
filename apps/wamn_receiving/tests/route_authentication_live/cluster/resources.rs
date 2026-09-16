@@ -28,7 +28,10 @@ pub(super) struct Resources {
     pub host_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
-    pub candidate: Option<(wamn_control::delivery::Candidate, wamn_catalog::ServingManifest)>,
+    pub candidate: Option<(
+        wamn_control::delivery::Candidate,
+        wamn_catalog::ServingManifest,
+    )>,
     pub reader: Option<(
         pg_walstream::CancellationToken,
         tokio::task::JoinHandle<anyhow::Result<()>>,
@@ -453,9 +456,10 @@ pub(super) async fn capture_failure(cluster: &Resources) {
             .output()
             .await;
         if let Ok(output) = output
-            && output.status.success() {
-                let _ = fs::write(cluster.evidence.join(name), output.stdout);
-            }
+            && output.status.success()
+        {
+            let _ = fs::write(cluster.evidence.join(name), output.stdout);
+        }
     }
     let pods = fs::read(cluster.evidence.join("failure-pods.json"))
         .ok()
@@ -499,7 +503,8 @@ pub(super) async fn capture_failure(cluster: &Resources) {
 pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
     let reader_result = if let Some((cancellation, mut task)) = cluster.reader.take() {
         cancellation.cancel();
-        if let Ok(result) = tokio::time::timeout(std::time::Duration::from_secs(10), &mut task).await
+        if let Ok(result) =
+            tokio::time::timeout(std::time::Duration::from_secs(10), &mut task).await
         {
             result
                 .context("join the production CDC reader")

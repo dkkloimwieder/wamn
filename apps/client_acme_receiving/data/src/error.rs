@@ -325,9 +325,10 @@ mod tests {
             .collect();
         let exclusions = crate::generated::purchase_order::UPDATE_EXCLUSION_CONSTRAINTS;
         let update: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-                "../generated/contracts/purchase_order/update.errors.json",
-            ))
+            &std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../generated/contracts/purchase_order/update.errors.json"),
+            )
             .unwrap(),
         )
         .unwrap();

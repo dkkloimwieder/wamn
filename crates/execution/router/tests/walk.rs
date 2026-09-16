@@ -888,11 +888,12 @@ struct Scenario {
 fn node_spec() -> impl Strategy<Value = NodeSpec> {
     // A zero base keeps some cases free of `Wait` steps entirely; the others
     // exercise the backoff curve and the clock the harness moves.
-    (1u32..=3, prop::sample::select(vec![0u64, 10, 100]))
-        .prop_map(|(max_attempts, base_ms)| NodeSpec {
+    (1u32..=3, prop::sample::select(vec![0u64, 10, 100])).prop_map(|(max_attempts, base_ms)| {
+        NodeSpec {
             max_attempts,
             base_ms,
-        })
+        }
+    })
 }
 
 fn edge_spec(node_count: usize) -> impl Strategy<Value = EdgeSpec> {

@@ -13,9 +13,9 @@ mod tests {
     use wamn_execution_contract::canonical_json_bytes;
 
     const MANIFEST: &[u8] = include_bytes!("../../../apps/wamn_receiving/wamn.json");
-    const OVERLAY_MANIFEST: &[u8] =
-        include_bytes!("../../../apps/client_acme_receiving/wamn.json");
-    const MIGRATION: &str = include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
+    const OVERLAY_MANIFEST: &[u8] = include_bytes!("../../../apps/client_acme_receiving/wamn.json");
+    const MIGRATION: &str =
+        include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
     const RECORD_HISTORY_APP_GRANTS_SQL: &str =
         include_str!("../../../deploy/sql/record-history-app-grants.sql");
@@ -54,18 +54,14 @@ mod tests {
     const OVERLAY_FIELDS_MIGRATION: &str = include_str!(
         "../../../apps/client_acme_receiving/migrations/0001_add_inspection_required.sql"
     );
-    const OVERLAY_INSPECTION_MIGRATION: &str = include_str!(
-        "../../../apps/client_acme_receiving/migrations/0002_quality_inspection.sql"
-    );
-    const OVERLAY_GET_SQL: &str = include_str!(
-        "../../../apps/client_acme_receiving/generated/sql/purchase_order/get.sql"
-    );
-    const OVERLAY_UPDATE_SQL: &str = include_str!(
-        "../../../apps/client_acme_receiving/generated/sql/purchase_order/update.sql"
-    );
-    const OVERLAY_LOAD_DETAIL_SQL: &str = include_str!(
-        "../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql"
-    );
+    const OVERLAY_INSPECTION_MIGRATION: &str =
+        include_str!("../../../apps/client_acme_receiving/migrations/0002_quality_inspection.sql");
+    const OVERLAY_GET_SQL: &str =
+        include_str!("../../../apps/client_acme_receiving/generated/sql/purchase_order/get.sql");
+    const OVERLAY_UPDATE_SQL: &str =
+        include_str!("../../../apps/client_acme_receiving/generated/sql/purchase_order/update.sql");
+    const OVERLAY_LOAD_DETAIL_SQL: &str =
+        include_str!("../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql");
     const OVERLAY_APPROVE_INSPECTION_SQL: &str = include_str!(
         "../../../apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql"
     );

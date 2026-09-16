@@ -149,7 +149,9 @@ fn validate_release_load_precedes_bind(
 ) -> Result<(), String> {
     let production = production_half(source, seam)?;
     let Some(entry_at) = production.find(entry) else {
-        return Err(format!("{seam} must reach its loaded release through `{entry}`"));
+        return Err(format!(
+            "{seam} must reach its loaded release through `{entry}`"
+        ));
     };
     let Some(bind_at) = production.find(bind) else {
         return Err(format!(
@@ -172,7 +174,11 @@ fn validate_release_load_precedes_bind(
 /// next `}` — every production construction is a flat struct literal of two
 /// scalar fields, so no nesting can hide inside it — and both field
 /// initializers must name `loaded_release`, the expression that reaches this file's loaded release.
-fn validate_release_identity_from_loaded_release(source: &str, loaded_release: &str, seam: &str) -> Result<(), String> {
+fn validate_release_identity_from_loaded_release(
+    source: &str,
+    loaded_release: &str,
+    seam: &str,
+) -> Result<(), String> {
     let production = production_half(source, seam)?;
     validate_one(production, RELEASE_IDENTITY_CONSTRUCTION, seam)?;
     let opened = production
@@ -624,16 +630,21 @@ fn loaded_release_identity() -> String {
 
 #[test]
 fn release_identity_list_accepts_the_loaded_shape() {
-    validate_release_identity_from_loaded_release(&loaded_release_identity(), "release.release()", "seam")
-        .expect("both halves read off the loaded release must pass");
+    validate_release_identity_from_loaded_release(
+        &loaded_release_identity(),
+        "release.release()",
+        "seam",
+    )
+    .expect("both halves read off the loaded release must pass");
 }
 
 #[test]
 fn release_identity_list_rejects_a_removed_or_duplicated_construction() {
     let duplicated = format!("{}{}", loaded_release_identity(), loaded_release_identity());
     for source in [String::new(), duplicated] {
-        let error = validate_release_identity_from_loaded_release(&source, "release.release()", "seam")
-            .expect_err("a missing or duplicated construction must be rejected");
+        let error =
+            validate_release_identity_from_loaded_release(&source, "release.release()", "seam")
+                .expect_err("a missing or duplicated construction must be rejected");
         assert!(
             error.contains("exactly one"),
             "the refusal must name the count it required: {error}"
@@ -648,8 +659,9 @@ fn release_identity_list_rejects_a_half_read_from_elsewhere() {
             &format!("{stolen}: release.release()."),
             &format!("{stolen}: config.get("),
         );
-        let error = validate_release_identity_from_loaded_release(&mutant, "release.release()", "seam")
-            .expect_err("a half read from anywhere but the loaded release must be rejected");
+        let error =
+            validate_release_identity_from_loaded_release(&mutant, "release.release()", "seam")
+                .expect_err("a half read from anywhere but the loaded release must be rejected");
         assert!(
             error.contains("second carrier"),
             "the refusal must name why a second source matters: {error}"
@@ -742,7 +754,10 @@ fn release_load_rejects_construction_after_the_first_bind() {
     );
 
     for (name, mutant) in [
-        ("release-load-unreachable", "ClusterHostBuilder::default()\n"),
+        (
+            "release-load-unreachable",
+            "ClusterHostBuilder::default()\n",
+        ),
         ("bind-removed", "let release = load_release(root)?;\n"),
     ] {
         let error = validate_release_load_precedes_bind(

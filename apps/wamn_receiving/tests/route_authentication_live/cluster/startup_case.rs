@@ -646,13 +646,16 @@ fn phases(
 }
 
 fn number(value: &Value) -> anyhow::Result<u64> {
-    value.as_u64().map_or_else(|| {
-        value
-            .as_str()
-            .context("a time value is numeric text")?
-            .parse()
-            .context("a time value is valid")
-    }, Ok)
+    value.as_u64().map_or_else(
+        || {
+            value
+                .as_str()
+                .context("a time value is numeric text")?
+                .parse()
+                .context("a time value is valid")
+        },
+        Ok,
+    )
 }
 fn attribute<'a>(span: &'a Value, name: &str) -> Option<&'a str> {
     span["attributes"]

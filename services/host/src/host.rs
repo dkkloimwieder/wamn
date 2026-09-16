@@ -645,8 +645,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         http_admitter_url
             .as_deref()
             .context("a PAT-protected route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-        let subject = route_caller_subject(org, project, &loaded_release.manifest().release.environment)
-            .context("derive the scoped route-caller subject")?;
+        let subject =
+            route_caller_subject(org, project, &loaded_release.manifest().release.environment)
+                .context("derive the scoped route-caller subject")?;
         parse_system_reader_url(
             SystemReader::Identity,
             &system_url,

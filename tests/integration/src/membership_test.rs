@@ -310,8 +310,12 @@ async fn membership(
     };
     tokio::time::timeout(OPERATION_TIMEOUT, async {
         match verb {
-            "grant-project-env-membership" => wamn_control::project_env_membership::grant(arguments).await,
-            "revoke-project-env-membership" => wamn_control::project_env_membership::revoke(arguments).await,
+            "grant-project-env-membership" => {
+                wamn_control::project_env_membership::grant(arguments).await
+            }
+            "revoke-project-env-membership" => {
+                wamn_control::project_env_membership::revoke(arguments).await
+            }
             _ => unreachable!("the membership test names only its two control operations"),
         }
     })

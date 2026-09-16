@@ -230,9 +230,7 @@ const MATRIX: [FamilyReach; 10] = [
             "wamn_run.runs|SELECT|table",
             "wamn_run.runs|UPDATE|column",
         ],
-        routines: &[
-            "wamn_authority.tenant_key(text)",
-        ],
+        routines: &["wamn_authority.tenant_key(text)"],
     },
     FamilyReach {
         family: WorkloadRoleFamily::HttpAdmitter,

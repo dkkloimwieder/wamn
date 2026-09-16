@@ -5,9 +5,7 @@ use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
 use anyhow::Context as _;
 
-use super::{
-    AtomicU64, File, OpenOptions, Ordering, OsString, Path, PathBuf, Permissions, Value,
-};
+use super::{AtomicU64, File, OpenOptions, Ordering, OsString, Path, PathBuf, Permissions, Value};
 
 pub fn ensure_secret_path(path: &Path, flag: &str) -> anyhow::Result<()> {
     anyhow::ensure!(

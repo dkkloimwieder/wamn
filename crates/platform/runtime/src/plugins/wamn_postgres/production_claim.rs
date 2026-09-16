@@ -869,9 +869,7 @@ async fn finish_queue_transaction<T>(
     }
 }
 
-async fn require_executor_authority(
-    connection: &Object,
-) -> Result<(), ProductionClaimError> {
+async fn require_executor_authority(connection: &Object) -> Result<(), ProductionClaimError> {
     let row = connection
         .query_one(
             CURRENT_USER_ROLE_MEMBERSHIP_SQL,
@@ -1728,11 +1726,23 @@ mod tests {
                 let error = result.expect_err("a different role must not enter executor work");
                 assert_eq!(error.kind(), ProductionClaimErrorKind::Identity);
                 assert_eq!(error.operation(), "check executor authority");
-                assert!(error.to_string().contains("executor-platform-authority-required"));
+                assert!(
+                    error
+                        .to_string()
+                        .contains("executor-platform-authority-required")
+                );
             }
-            assert_eq!(connection.query_one("SELECT 1", &[]).await?.get::<_, i32>(0), 1);
+            assert_eq!(
+                connection
+                    .query_one("SELECT 1", &[])
+                    .await?
+                    .get::<_, i32>(0),
+                1
+            );
         }
-        connection.batch_execute("RESET ROLE; SAVEPOINT missing_role").await?;
+        connection
+            .batch_execute("RESET ROLE; SAVEPOINT missing_role")
+            .await?;
         connection
             .batch_execute(&format!(
                 "ALTER ROLE wamn_executor_platform RENAME TO wamn_authority_missing_{}",
@@ -1743,8 +1753,14 @@ mod tests {
             .await
             .expect_err("an absent role must return the native refusal");
         assert_eq!(missing.kind(), ProductionClaimErrorKind::Identity);
-        assert!(missing.to_string().contains("executor-platform-authority-required"));
-        connection.batch_execute("ROLLBACK TO missing_role; ROLLBACK").await?;
+        assert!(
+            missing
+                .to_string()
+                .contains("executor-platform-authority-required")
+        );
+        connection
+            .batch_execute("ROLLBACK TO missing_role; ROLLBACK")
+            .await?;
         Ok(())
     }
 

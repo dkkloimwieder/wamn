@@ -69,8 +69,7 @@ fn building_a_pool_requires_a_probeable_credential() {
         row_limit: 10,
     };
     assert!(
-        WamnPostgres::build_pool(&unprobeable, AuthorityClass::GuestSql, DEFAULT_PROJECT)
-            .is_err(),
+        WamnPostgres::build_pool(&unprobeable, AuthorityClass::GuestSql, DEFAULT_PROJECT).is_err(),
         "a pool whose credential cannot be probed must not be built"
     );
 }
@@ -229,9 +228,9 @@ fn an_explicit_project_credential_refuses_a_second_source() {
     let error = bind_composed_project(projects, "receiving", Some(credentials), &cfg)
         .expect_err("two credential sources for one project must refuse");
     assert!(
-        error.to_string().contains(
-            "both an explicit composition credential and a WAMN_PG_PROJECTS_FILE entry"
-        )
+        error
+            .to_string()
+            .contains("both an explicit composition credential and a WAMN_PG_PROJECTS_FILE entry")
     );
 }
 
@@ -546,8 +545,7 @@ fn validate_claims_rejects_malformed_identities() {
 
 #[test]
 fn set_and_clear_current_run_is_per_component() {
-    let pg =
-        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
     assert!(pg.current_run_for("c1").is_none());
     pg.set_current_run(
         "c1",
@@ -572,8 +570,7 @@ fn set_and_clear_current_run_is_per_component() {
 // workload id is a no-op.
 #[test]
 fn clear_component_claims_reaps_all_registries_for_the_workload() {
-    let pg =
-        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
     // Two components under workload "wl-a", one under "wl-b".
     for c in ["wl-a-component-0", "wl-b-component-0"] {
         pg.set_tenant(c, "acme").unwrap();

@@ -234,7 +234,11 @@ fn walk_4_retry_budget(state: &WalkState<'_>) -> Result<(), Violation> {
         let retried = previous.node == next.node
             && previous.occurrence == next.occurrence
             && next.attempt == previous.attempt + 1;
-        if retried && !matches!(previous.outcome, OutcomeKind::Retryable | OutcomeKind::RateLimited)
+        if retried
+            && !matches!(
+                previous.outcome,
+                OutcomeKind::Retryable | OutcomeKind::RateLimited
+            )
         {
             return Err(violated(
                 "WALK-4",

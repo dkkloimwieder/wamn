@@ -608,10 +608,7 @@ async fn observe(
         ..Default::default()
     };
     for row in client
-        .query(
-            select_effect_table_privileges_sql(),
-            &[&schema.as_str()],
-        )
+        .query(select_effect_table_privileges_sql(), &[&schema.as_str()])
         .await
         .context("read direct effect-table privileges")?
     {

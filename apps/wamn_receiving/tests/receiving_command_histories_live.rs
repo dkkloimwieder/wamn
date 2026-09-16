@@ -973,15 +973,25 @@ pub(crate) fn assert_histories_with_cancellation(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let db = run_before(&runtime, deadline, cancellation, connect(&inputs.project_pg_url))?;
+    let db = run_before(
+        &runtime,
+        deadline,
+        cancellation,
+        connect(&inputs.project_pg_url),
+    )?;
     run_before(
         &runtime,
         deadline,
         cancellation,
         bind_fixture_principal(&db.client, &inputs.tenant),
     )?;
-    let version: String = run_before(&runtime, deadline, cancellation, db.client.query_one("SHOW server_version_num", &[]))?
-        .get(0);
+    let version: String = run_before(
+        &runtime,
+        deadline,
+        cancellation,
+        db.client.query_one("SHOW server_version_num", &[]),
+    )?
+    .get(0);
     ensure!(
         version.parse::<u32>()? >= 180_000,
         "Receiving correctness requires PostgreSQL 18"
@@ -1003,12 +1013,12 @@ pub(crate) fn assert_histories_with_cancellation(
             "REC-ROLLBACK","REC-LOST-RESPONSE","REC-REVISION","REC-AUTHORITY"]}),
     )?;
     if let Some(selected) = &inputs.history {
-        run_before(&runtime, deadline, cancellation, explicit_history(
-            &db.client,
-            &route,
-            selected,
-            &mut evidence,
-        ))?;
+        run_before(
+            &runtime,
+            deadline,
+            cancellation,
+            explicit_history(&db.client, &route, selected, &mut evidence),
+        )?;
         record(
             &mut evidence,
             &json!({"case":"summary","result":"pass","reproduction":true}),
@@ -1016,12 +1026,12 @@ pub(crate) fn assert_histories_with_cancellation(
         return Ok(());
     }
     for example in model::examples() {
-        run_before(&runtime, deadline, cancellation, explicit_history(
-            &db.client,
-            &route,
-            &example,
-            &mut evidence,
-        ))?;
+        run_before(
+            &runtime,
+            deadline,
+            cancellation,
+            explicit_history(&db.client, &route, &example, &mut evidence),
+        )?;
     }
     let config = Config {
         cases: inputs.cases,
@@ -1040,12 +1050,12 @@ pub(crate) fn assert_histories_with_cancellation(
             if failures.borrow().infrastructure.is_some() {
                 return Ok(());
             }
-            let result = run_before(&runtime, deadline, cancellation, history(
-                &db.client,
-                &route,
-                &case,
-                &mut evidence_cell.borrow_mut(),
-            ));
+            let result = run_before(
+                &runtime,
+                deadline,
+                cancellation,
+                history(&db.client, &route, &case, &mut evidence_cell.borrow_mut()),
+            );
             shrink_result(&mut failures.borrow_mut(), &case, result)
         })
     };
@@ -1060,15 +1070,20 @@ pub(crate) fn assert_histories_with_cancellation(
             )?;
         }
         if let TestError::Fail(reason, minimized) = error {
-            let reproduction = run_before(&runtime, deadline, cancellation, reproduce_history(
-                &db.client,
-                &route,
-                &minimized,
-                &mut evidence,
-                failures.target.as_ref(),
-                "generated-minimized",
-                failures.infrastructure.is_some(),
-            ))?;
+            let reproduction = run_before(
+                &runtime,
+                deadline,
+                cancellation,
+                reproduce_history(
+                    &db.client,
+                    &route,
+                    &minimized,
+                    &mut evidence,
+                    failures.target.as_ref(),
+                    "generated-minimized",
+                    failures.infrastructure.is_some(),
+                ),
+            )?;
             if let Some((_, infrastructure)) = failures.infrastructure {
                 return Err(infrastructure).with_context(|| {
                     format!(

@@ -2,18 +2,14 @@
 
 use std::fmt::Write as _;
 
-use super::schema::{
-    normalize_observed_schema, quote_ident,
-};
+use super::schema::{normalize_observed_schema, quote_ident};
 
-use super::{
-    BareSchemaName, RunPlaneObservation, rewrite_schema,
-};
+use super::{BareSchemaName, RunPlaneObservation, rewrite_schema};
 
 use super::declarations::{
     CHECK_SPECS, EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF, EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF,
-    EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF, EFFECT_DISPATCH_ATTEMPT_FK_DEF,
-    EFFECT_DISPATCH_ATTEMPT_FK_NAME, EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_FRAME_CHECKS,
+    EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
+    EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF, EFFECT_FRAME_CHECKS,
     EFFECT_FRAME_COLUMNS, RETIRED_EFFECT_ATTEMPT_COLUMNS, RUNS_EXECUTION_GRAIN_CHECK_DEF,
     RUNS_ROOT_INDEX_DEF, RUNS_WIRING_IDENTITY_CHECK_DEF,
 };
@@ -279,7 +275,10 @@ ALTER TABLE {schema}.effect_attempts
     sql
 }
 
-pub(super) fn effect_table_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+pub(super) fn effect_table_cutover_sql(
+    schema: &BareSchemaName,
+    obs: &RunPlaneObservation,
+) -> String {
     let target = schema;
     let schema = target.quoted();
     let table_cutover_needed = effect_table_cutover_needed(target, obs);
@@ -431,7 +430,10 @@ ALTER TABLE {schema}.effect_attempt_dispatches
     sql
 }
 
-pub(super) fn effect_table_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
+pub(super) fn effect_table_cutover_needed(
+    schema: &BareSchemaName,
+    obs: &RunPlaneObservation,
+) -> bool {
     let attempts_need_cutover = obs.tables.get("effect_attempts").is_some_and(|columns| {
         RETIRED_EFFECT_ATTEMPT_COLUMNS
             .iter()
@@ -630,7 +632,10 @@ pub(super) fn run_queue_claim_index_ready(obs: &RunPlaneObservation) -> bool {
     })
 }
 
-pub(super) fn partition_plane_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+pub(super) fn partition_plane_cutover_sql(
+    schema: &BareSchemaName,
+    obs: &RunPlaneObservation,
+) -> String {
     let target = schema.quoted();
     let run_queue_present = obs.tables.contains_key("run_queue");
     let dead_letters_present = obs.tables.contains_key("run_dead_letters");
@@ -808,7 +813,10 @@ pub(super) fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
         || !retired_test_set_reference_columns(obs).is_empty()
 }
 
-pub(super) fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+pub(super) fn stored_suite_cutover_sql(
+    schema: &BareSchemaName,
+    obs: &RunPlaneObservation,
+) -> String {
     let mut statements = Vec::new();
     // The FK-carrying columns go FIRST: `authoring_test_sets` is the parent of
     // both, and a plain DROP TABLE on a referenced relation refuses. Dropping
@@ -862,7 +870,10 @@ pub(super) fn execution_bundle_cutover_needed(obs: &RunPlaneObservation) -> bool
             .is_some_and(|columns| columns.contains(RETIRED_EXECUTION_BUNDLE_COLUMN))
 }
 
-pub(super) fn execution_bundle_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+pub(super) fn execution_bundle_cutover_sql(
+    schema: &BareSchemaName,
+    obs: &RunPlaneObservation,
+) -> String {
     let mut dependents = Vec::new();
     if obs.tables.contains_key("runs") {
         dependents.push(format!("{}.runs", schema.quoted()));

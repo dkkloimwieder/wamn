@@ -100,7 +100,12 @@ impl fmt::Display for BareSchemaName {
 /// `run_id` never matches inside `event_root_run_id`). This is deliberately the
 /// narrow, real drift class — notably the pre-E4 `run_queue_claimable` without
 /// `stream_seq` — not a general definition difference.
-pub(super) fn index_definition_stale(file: &str, table: &str, record_stmt: &str, live_def: &str) -> bool {
+pub(super) fn index_definition_stale(
+    file: &str,
+    table: &str,
+    record_stmt: &str,
+    live_def: &str,
+) -> bool {
     // Unit observations intentionally use the schema-of-record statement as
     // the live definition. PostgreSQL's `pg_indexes` rendering is checked
     // below; the record itself is already canonical by construction.

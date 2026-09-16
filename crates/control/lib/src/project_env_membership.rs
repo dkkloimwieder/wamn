@@ -3,9 +3,9 @@
 //! These commands use the provisioning administrator for the system database.
 //! They change membership only and do not create users, roles, or tokens.
 
+use crate::provision_project_env::provisioning_transaction;
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
-use crate::provision_project_env::provisioning_transaction;
 use wamn_control_provision::validate_project_env;
 use wamn_platform_identity::{
     PrincipalId, grant_project_env_membership, revoke_project_env_membership,

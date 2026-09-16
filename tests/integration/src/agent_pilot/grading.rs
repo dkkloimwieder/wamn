@@ -201,7 +201,8 @@ impl Grading {
                 let resolved = result_path(path);
                 let actual = string(at(value, &resolved));
                 let wanted = string(wanted);
-                write!(evidence, " {resolved}={actual} want={wanted}").expect("writing to a String cannot fail");
+                write!(evidence, " {resolved}={actual} want={wanted}")
+                    .expect("writing to a String cannot fail");
                 if actual != wanted {
                     pass = false;
                 }
@@ -214,7 +215,8 @@ impl Grading {
                 let (prior, path) = source.split_once('.').unwrap_or((source, source));
                 let mine = string(at(value, &resolved));
                 let theirs = self.read_result(prior, path)?;
-                write!(evidence, " {resolved}={mine} vs {theirs}").expect("writing to a String cannot fail");
+                write!(evidence, " {resolved}={mine} vs {theirs}")
+                    .expect("writing to a String cannot fail");
                 if mine != theirs || mine.is_empty() || mine == "null" {
                     pass = false;
                 }
@@ -235,7 +237,8 @@ impl Grading {
                     .to_string(),
                 Value::Bool(_) => anyhow::bail!("the count predicate cannot read a boolean"),
             };
-            write!(evidence, " count:{path}={got} want={wanted}").expect("writing to a String cannot fail");
+            write!(evidence, " count:{path}={got} want={wanted}")
+                .expect("writing to a String cannot fail");
             if got != wanted {
                 pass = false;
             }
@@ -265,7 +268,8 @@ impl Grading {
             } else {
                 "false"
             };
-            write!(evidence, " sorted_by:{path}.{field}={verdict}").expect("writing to a String cannot fail");
+            write!(evidence, " sorted_by:{path}.{field}={verdict}")
+                .expect("writing to a String cannot fail");
             if verdict != "true" {
                 pass = false;
             }

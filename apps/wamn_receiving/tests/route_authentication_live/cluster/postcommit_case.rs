@@ -30,7 +30,11 @@ async fn additive_overlay_and_materializer_progress() -> anyhow::Result<()> {
 
 async fn run(base: BaseCandidate) -> anyhow::Result<()> {
     let evidence = super::evidence_directory()?;
-    Box::pin(super::with_signals(&evidence, run_selected(base, &evidence))).await
+    Box::pin(super::with_signals(
+        &evidence,
+        run_selected(base, &evidence),
+    ))
+    .await
 }
 
 pub(super) async fn run_selected(
@@ -153,18 +157,16 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &gates_evidence,
     )
     .await?;
-    let hosts = workload::hosts_ready(
-        &workload::HostsReadyInput {
-            lifecycle: &resources.lifecycle,
-            cluster: &resources.name,
-            work: &resources.work,
-            namespace: &resources.name,
-            image: &resources.host_image,
-            runtime_digest: &digest,
-            replicas: 3,
-            evidence: &resources.evidence,
-        },
-    )
+    let hosts = workload::hosts_ready(&workload::HostsReadyInput {
+        lifecycle: &resources.lifecycle,
+        cluster: &resources.name,
+        work: &resources.work,
+        namespace: &resources.name,
+        image: &resources.host_image,
+        runtime_digest: &digest,
+        replicas: 3,
+        evidence: &resources.evidence,
+    })
     .await?;
     let (http_image, materializer_image) = deployment::publish_platform_components(cluster).await?;
     deployment::install_http(cluster, &http_image).await?;

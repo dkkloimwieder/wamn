@@ -70,10 +70,12 @@ impl Backend for GuestBackend {
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection> {
         let headers = headers
             .iter()
-            .map(|header| bindings::wamn::flow_http_routing::routing::Header {
-                name: header.name.clone(),
-                value: header.value.clone(),
-            })
+            .map(
+                |header| bindings::wamn::flow_http_routing::routing::Header {
+                    name: header.name.clone(),
+                    value: header.value.clone(),
+                },
+            )
             .collect::<Vec<_>>();
         bindings::wamn::flow_http_routing::routing::authenticate(attachment_id, &headers).map_err(
             |rejection| AuthRejection {
@@ -98,7 +100,9 @@ impl Backend for GuestBackend {
 
     fn new_delivery_id(&mut self) -> String {
         const RANDOM_BYTES: u64 = 16;
-        hex(&bindings::wasi::random::random::get_random_bytes(RANDOM_BYTES))
+        hex(&bindings::wasi::random::random::get_random_bytes(
+            RANDOM_BYTES,
+        ))
     }
 
     fn deliver(

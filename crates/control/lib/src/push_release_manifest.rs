@@ -12,6 +12,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::publish_release::{
+    DeploymentCoordinate, read_release_snapshot, report_deployment_coordinate,
+};
 use anyhow::Context as _;
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::errors::{OciDistributionError, OciErrorCode};
@@ -20,9 +23,6 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
-use crate::publish_release::{
-    DeploymentCoordinate, read_release_snapshot, report_deployment_coordinate,
-};
 use wamn_runtime::component_artifact_source::read_ca_bundles;
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_runtime::release_manifest_artifact::{
@@ -230,9 +230,7 @@ pub async fn push_release_manifest(
 }
 
 /// Read the bytes to publish from the release that minted them.
-async fn canonical_release_bytes(
-    request: &PushReleaseManifestRequest,
-) -> anyhow::Result<Vec<u8>> {
+async fn canonical_release_bytes(request: &PushReleaseManifestRequest) -> anyhow::Result<Vec<u8>> {
     let effective_release_id = i32::try_from(request.effective_release_id)
         .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
 

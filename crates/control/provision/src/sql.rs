@@ -20,6 +20,7 @@ pub use database::{
     ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
 };
 
+pub(crate) use credentials::{ensure_acl_role_sql, retire_acl_generation_sql};
 #[doc(inline)]
 pub use credentials::{
     ensure_control_author_acl_role_sql, ensure_workload_acl_role_sql,
@@ -29,7 +30,6 @@ pub use credentials::{
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
     workload_scope_lock_sql,
 };
-pub(crate) use credentials::{ensure_acl_role_sql, retire_acl_generation_sql};
 
 #[doc(inline)]
 pub use database_grants::{
@@ -1059,9 +1059,7 @@ mod tests {
             )
             .expect("blanket table revoke");
         let usage = sql
-            .find(
-                "GRANT USAGE ON SCHEMA catalog TO \"wamn_management_admitter\"",
-            )
+            .find("GRANT USAGE ON SCHEMA catalog TO \"wamn_management_admitter\"")
             .expect("exact schema usage");
         assert!(revoke < usage);
         let column_revoke = sql

@@ -1561,13 +1561,15 @@ async fn persist_with_client(
     // One transaction per plane: a library fact without its connection facts,
     // or the reverse, is never visible inside that plane.
     for requirement in requirements {
-        requirements_inserted += usize::from(append_or_verify_requirement(
-            &transaction,
-            &component.scope.tenant_id,
-            environment_instance.as_deref(),
-            requirement,
-        )
-        .await?);
+        requirements_inserted += usize::from(
+            append_or_verify_requirement(
+                &transaction,
+                &component.scope.tenant_id,
+                environment_instance.as_deref(),
+                requirement,
+            )
+            .await?,
+        );
     }
     verify_requirements(
         &transaction,

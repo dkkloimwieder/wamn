@@ -415,8 +415,8 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         .iter()
         .map(|input| input.root.join("wamn.json"))
         .collect::<Vec<_>>();
-    let (manifests, manifest_hashes) =
-        read_package_manifests(&manifest_paths).expect("consume exact package manifests and package contracts");
+    let (manifests, manifest_hashes) = read_package_manifests(&manifest_paths)
+        .expect("consume exact package manifests and package contracts");
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())

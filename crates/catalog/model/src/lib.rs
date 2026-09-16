@@ -798,7 +798,6 @@ fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(value);
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{ManifestDigest, digest, frames};

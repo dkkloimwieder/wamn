@@ -395,9 +395,7 @@ pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const TRACE: &str = include_str!(
-        "../fixtures/traces/receiving-update.json"
-    );
+    const TRACE: &str = include_str!("../fixtures/traces/receiving-update.json");
     const ID: &str = "655833bf599cf31d4f5422f6e06c7347";
 
     fn observed(document: &Value) -> anyhow::Result<Value> {

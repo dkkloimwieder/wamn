@@ -14,9 +14,7 @@ use wamn_control::prune_record_history::{
     PruneRecordHistoryRequest, PrunedHistory, prune_expired_record_history,
 };
 use wamn_control::prune_run_history::{PruneRunHistoryRequest, prune_terminal_run_history};
-use wamn_control::restore_project_env::{
-    DumpSelection, RestoreOutcome, RestoreProjectEnvRequest,
-};
+use wamn_control::restore_project_env::{DumpSelection, RestoreOutcome, RestoreProjectEnvRequest};
 use wamn_control_provision::{DEFAULT_BUCKET, DEFAULT_DUMP_SCHEDULE};
 use wamn_control_registry::Triple;
 
@@ -269,8 +267,7 @@ pub async fn dump_project_env(args: DumpProjectEnvArgs) -> anyhow::Result<()> {
             "dumped {} -> {} ({} bytes); object key {}",
             report.triple,
             run.directory.display(),
-            run.byte_size
-                .map_or_else(|| "?".into(), |b| b.to_string()),
+            run.byte_size.map_or_else(|| "?".into(), |b| b.to_string()),
             run.object_key
         );
         if run.recorded {
@@ -359,21 +356,20 @@ pub struct RestoreProjectEnvArgs {
 /// Restore one project-env dump and print which dump it chose and what it wrote.
 pub async fn restore_project_env(args: RestoreProjectEnvArgs) -> anyhow::Result<()> {
     let admin_url = args.database_url.clone();
-    let report =
-        wamn_control::restore_project_env::restore_project_env(RestoreProjectEnvRequest {
-            org: args.org,
-            project: args.project,
-            env: args.env,
-            system_database_url: args.system_database_url,
-            database_url: args.database_url,
-            dump_dir: args.dump_dir,
-            dump_root: args.dump_root,
-            object_key: args.object_key,
-            scratch_db: args.scratch_db,
-            in_place: args.in_place,
-            confirm: args.confirm,
-        })
-        .await?;
+    let report = wamn_control::restore_project_env::restore_project_env(RestoreProjectEnvRequest {
+        org: args.org,
+        project: args.project,
+        env: args.env,
+        system_database_url: args.system_database_url,
+        database_url: args.database_url,
+        dump_dir: args.dump_dir,
+        dump_root: args.dump_root,
+        object_key: args.object_key,
+        scratch_db: args.scratch_db,
+        in_place: args.in_place,
+        confirm: args.confirm,
+    })
+    .await?;
 
     match &report.selection {
         Some(DumpSelection::Catalog) => println!(
@@ -524,7 +520,11 @@ pub async fn copy_project_env(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
     );
     println!(
         "data copy {src} -> {dst} ({}):",
-        if cutover { "MOVE with cutover" } else { "clone" }
+        if cutover {
+            "MOVE with cutover"
+        } else {
+            "clone"
+        }
     );
     for (i, step) in steps.iter().enumerate() {
         println!("  {}. {}", i + 1, step.label());

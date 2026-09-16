@@ -10,7 +10,11 @@ pub(super) async fn assert_materializer_causation(
     phase: &MaterializerPhase,
     nats: async_nats::Client,
 ) -> anyhow::Result<()> {
-    let MaterializerPhase {project_pg_url: project_url, receipt_id, ..} = phase.clone();
+    let MaterializerPhase {
+        project_pg_url: project_url,
+        receipt_id,
+        ..
+    } = phase.clone();
     let (project, project_task) = connect(&project_url).await?;
 
     let registrations = project
@@ -185,7 +189,9 @@ pub(super) async fn assert_materializer_causation(
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
     let mut delivery_advisories = jetstream
-        .get_stream(wamn_event_wire::delivery_advisory_stream(MATERIALIZER_STREAM))
+        .get_stream(wamn_event_wire::delivery_advisory_stream(
+            MATERIALIZER_STREAM,
+        ))
         .await
         .context("read the production reader's broker advisory stream")?;
     anyhow::ensure!(

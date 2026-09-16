@@ -176,7 +176,11 @@ pub async fn deploy_release(
     let body = pinned_bytes(&qualification, &request.request_body)?;
     let expected: Value =
         serde_json::from_slice(&pinned_bytes(&qualification, &request.expected_response)?)?;
-    require_released_route(&snapshot.manifest, &request.interaction_url, &request.route_host)?;
+    require_released_route(
+        &snapshot.manifest,
+        &request.interaction_url,
+        &request.route_host,
+    )?;
     let token = fs::read_to_string(&request.bearer_file)
         .context("read the private deployment caller credential")?;
     ensure!(

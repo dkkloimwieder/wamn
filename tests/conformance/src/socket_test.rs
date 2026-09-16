@@ -67,7 +67,9 @@ fn synth_component(import_names: &[&str]) -> Vec<u8> {
     for (i, name) in import_names.iter().enumerate() {
         imports.import(
             *name,
-            ComponentTypeRef::Instance(u32::try_from(i).expect("the fixture import count fits a u32")),
+            ComponentTypeRef::Instance(
+                u32::try_from(i).expect("the fixture import count fits a u32"),
+            ),
         );
     }
 

@@ -12,22 +12,22 @@ use wamn_authoring_model::AuthoringScope;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
+use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
 use wamn_control::pat_client::PatIssuerConfig;
+use wamn_control::print_release_env::{self, ReleaseCarrier};
+use wamn_control::provision_org::{self, ProvisionOrgRequest};
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
     secret_value,
 };
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
+use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
 use wamn_ctl::dev::environment::{JourneyCredentials, connect};
-use wamn_control::print_release_env::{self, ReleaseCarrier};
-use wamn_control::provision_org::{self, ProvisionOrgRequest};
-use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_test_infrastructure::declarations::{
     GateInput, gate_document, render_component_declaration,
@@ -520,17 +520,17 @@ pub async fn publish(
     if !mint_only {
         push_release_manifest::push_release_manifest(
             &PushReleaseManifestRequest {
-        database_url: route.database_url.clone(),
-        control_database_url: inputs.system_pg_url.clone(),
-        org: ORG.into(),
-        project: PROJECT.into(),
-        tenant: TENANT.into(),
-        effective_release_id: RELEASE_ID,
-        artifact_base: inputs.release_artifact_base.clone(),
-        registry_auth_file: inputs.registry_auth_file.clone(),
-        insecure_registry: true,
-        oci_ca_paths: Vec::new(),
-    },
+                database_url: route.database_url.clone(),
+                control_database_url: inputs.system_pg_url.clone(),
+                org: ORG.into(),
+                project: PROJECT.into(),
+                tenant: TENANT.into(),
+                effective_release_id: RELEASE_ID,
+                artifact_base: inputs.release_artifact_base.clone(),
+                registry_auth_file: inputs.registry_auth_file.clone(),
+                insecure_registry: true,
+                oci_ca_paths: Vec::new(),
+            },
             None,
         )
         .await?;

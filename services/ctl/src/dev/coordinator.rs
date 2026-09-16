@@ -687,9 +687,9 @@ impl ProductionDevStageRunner {
             .await
             .map_err(|source| ProductionDevStageError::owner("read SQLx CLI version", source))?;
             require_command_success("read SQLx CLI version", &output)?;
-            wamn_control::delivery::sqlx::require_cli_version(&output.stdout).map_err(|source| {
-                ProductionDevStageError::owner("require pinned SQLx CLI", source)
-            })?;
+            wamn_control::delivery::sqlx::require_cli_version(&output.stdout).map_err(
+                |source| ProductionDevStageError::owner("require pinned SQLx CLI", source),
+            )?;
         }
         for package in selected {
             let package_id = &package.manifest.package.id;

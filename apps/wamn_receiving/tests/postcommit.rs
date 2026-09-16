@@ -9,8 +9,8 @@ use futures_util::StreamExt as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
-use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryKind, Envelope, Op};
+use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_runtime::plugins::wamn_jetstream::{
     RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, router_tap_environment_filter,
 };
@@ -305,7 +305,9 @@ async fn matching_delivery_advisory(
     sequence: u64,
 ) -> anyhow::Result<Option<(String, DeliveryAdvisory)>> {
     let mut stream = jetstream
-        .get_stream(wamn_event_wire::delivery_advisory_stream(MATERIALIZER_STREAM))
+        .get_stream(wamn_event_wire::delivery_advisory_stream(
+            MATERIALIZER_STREAM,
+        ))
         .await?;
     let state = stream.info().await?.state.clone();
     if state.messages == 0 {

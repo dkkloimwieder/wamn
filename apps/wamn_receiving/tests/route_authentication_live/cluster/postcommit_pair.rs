@@ -14,10 +14,16 @@ async fn unchanged_overlay_across_baseline_and_additive_installations() -> anyho
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         fs::create_dir(&evidence)?;
-        Box::pin(super::postcommit_case::run_selected(BaseCandidate::Baseline, &evidence.join("baseline")))
-            .await?;
-        Box::pin(super::postcommit_case::run_selected(BaseCandidate::Additive, &evidence.join("additive")))
-            .await?;
+        Box::pin(super::postcommit_case::run_selected(
+            BaseCandidate::Baseline,
+            &evidence.join("baseline"),
+        ))
+        .await?;
+        Box::pin(super::postcommit_case::run_selected(
+            BaseCandidate::Additive,
+            &evidence.join("additive"),
+        ))
+        .await?;
         let (source, baseline) = installation(&evidence.join("baseline"), "baseline")?;
         let (additive_source, additive) = installation(&evidence.join("additive"), "additive")?;
         ensure!(
