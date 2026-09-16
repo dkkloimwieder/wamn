@@ -446,6 +446,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
             &"wamn-db-ccdc--app--dev",
             &None::<&str>,
             &INSTANCE,
+            &false,
         ],
     )
     .await
