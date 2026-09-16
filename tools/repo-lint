@@ -196,7 +196,10 @@ def source(path):
     # Comments and string literals cannot stand in for required declarations.
     text = re.sub(r'/\*.*?\*/|//[^\n]*|r(#+)".*?"\1|"(?:\\.|[^"\\])*"',
                   " ", text, flags=re.S)
-    return text.split("#[cfg(test)]", 1)[0]
+    # Cut the test module, not the first `#[cfg(test)]`. An item-level one
+    # above it is ordinary source, and cutting there hides the declarations
+    # this guard exists to read.
+    return re.split(r"#\[cfg\(test\)\]\s*mod\s+tests\b", text, maxsplit=1)[0]
 
 
 def compact(text):
