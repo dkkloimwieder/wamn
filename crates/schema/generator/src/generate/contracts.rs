@@ -11,15 +11,15 @@ use super::{
     CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT, CREATE_STATEMENT, CREATE_STATEMENTS,
     CURSOR_VERSION, CatalogIr, ColumnType, CommandIdempotence, ConstraintKind,
     ContractFieldDeclaration, CrudAction, CustomOperationDeclaration, CustomOperationKind,
-    CustomOperationResultDeclaration, GenerateError, GenerateErrorKind, InheritedClaimDeclaration,
-    ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest,
-    Projection, ProjectionContents, RequiredConstraint, RequiredField, RequiredSchemaContract,
-    RequiredTable, ResultClass, StateGuardDeclaration, StatementContract,
-    StatementTransactionality, StatementValueContract, Table, Value, WamnApi,
-    canonical_operation_identity, column, constraint_error, constraint_error_code,
-    custom_artifact_stem, custom_operation_constraint_origin, insert_bytes, insert_json,
-    insert_json_line, json, operation_constraints, operation_exclusions, query_variants, relation,
-    rust_type_identifier, server_owned_fields, sha256, sql,
+    CustomOperationResultDeclaration, DeleteMode, GenerateError, GenerateErrorKind,
+    InheritedClaimDeclaration, ModelDeclaration, OperationDeclaration,
+    OperationErrorDetailDeclaration, PackageManifest, Projection, ProjectionContents,
+    RequiredConstraint, RequiredField, RequiredSchemaContract, RequiredTable, ResultClass,
+    StateGuardDeclaration, StatementContract, StatementTransactionality, StatementValueContract,
+    Table, Value, WamnApi, canonical_operation_identity, column, constraint_error,
+    constraint_error_code, custom_artifact_stem, custom_operation_constraint_origin, insert_bytes,
+    insert_json, insert_json_line, json, operation_constraints, operation_exclusions,
+    query_variants, relation, rust_type_identifier, server_owned_fields, sha256, sql,
 };
 use wamn_record_history::HISTORY_COLUMNS;
 
@@ -61,15 +61,24 @@ pub(super) fn emit_model(
             claim.as_ref(),
             *action,
             operation,
+            model.delete_mode,
         )?;
         operation_sql.insert(action.as_str().to_owned(), paths);
     }
 
     let native_operation_rows =
         operation_result_rows(model_name, model, table, claim.as_ref(), Projection::Native);
-    let wamn_api = wamn_api(model_name, model, table, claim.as_ref(), &operation_sql);
+    let wamn_api = wamn_api(
+        catalog,
+        model_name,
+        model,
+        table,
+        claim.as_ref(),
+        &operation_sql,
+    );
     for (action, operation) in &model.operations {
         emit_operation_contracts(
+            catalog,
             files,
             sql_corpus,
             transactional,
@@ -836,6 +845,10 @@ fn emit_model_contract(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "statement generation owns this complete validated context"
+)]
 fn emit_operation_sql(
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &mut BTreeMap<String, Vec<u8>>,
@@ -844,7 +857,9 @@ fn emit_operation_sql(
     claim: Option<&sql::Claim<'_>>,
     action: CrudAction,
     operation: &OperationDeclaration,
+    delete_mode: Option<DeleteMode>,
 ) -> Result<Vec<String>, GenerateError> {
+    let tombstoned = delete_mode == Some(DeleteMode::Tombstone);
     if action == CrudAction::Create {
         let claim = claim.expect("create validation resolved the command claim");
         let mut paths = Vec::with_capacity(CREATE_STATEMENTS.len());
@@ -882,7 +897,7 @@ fn emit_operation_sql(
                 "generated/sql/{model_name}/query_{field}_{}.sql",
                 sql::direction_name(direction)
             );
-            let bytes = sql::query(table, operation, field, direction).into_bytes();
+            let bytes = sql::query(table, operation, field, direction, tombstoned).into_bytes();
             insert_bytes(files, &path, bytes.clone())?;
             if sql_corpus.insert(path.clone(), bytes).is_some() {
                 return Err(GenerateError::for_path(
@@ -897,9 +912,13 @@ fn emit_operation_sql(
     }
 
     let sql = match action {
-        CrudAction::Get => sql::get(table),
-        CrudAction::Update => sql::update(table, operation),
-        CrudAction::Delete => sql::delete(table, operation),
+        CrudAction::Get => sql::get(table, tombstoned),
+        CrudAction::Update => sql::update(table, operation, tombstoned),
+        CrudAction::Delete => sql::delete(
+            table,
+            operation,
+            delete_mode.expect("delete validation requires a declared mode"),
+        ),
         CrudAction::Create | CrudAction::Query => {
             unreachable!("create and query returned above")
         }
@@ -922,6 +941,7 @@ fn emit_operation_sql(
     reason = "operation contract generation owns this complete validated context"
 )]
 fn emit_operation_contracts(
+    catalog: &CatalogIr,
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &BTreeMap<String, Vec<u8>>,
     transactional: &StatementTransactionality,
@@ -1048,7 +1068,7 @@ fn emit_operation_contracts(
     insert_json(
         files,
         &format!("{root}.errors.json"),
-        &error_contract(table, action, operation),
+        &error_contract(catalog, table, action, operation, model.delete_mode),
     )?;
     if claim.is_some() && action == CrudAction::Create {
         insert_json(
@@ -1185,7 +1205,13 @@ fn input_contract(
     }
 }
 
-fn error_contract(table: &Table, action: CrudAction, operation: &OperationDeclaration) -> Value {
+fn error_contract(
+    catalog: &CatalogIr,
+    table: &Table,
+    action: CrudAction,
+    operation: &OperationDeclaration,
+    delete_mode: Option<DeleteMode>,
+) -> Value {
     use AccessOperationErrorLiteral as Code;
 
     let mut cases = vec![
@@ -1235,7 +1261,7 @@ fn error_contract(table: &Table, action: CrudAction, operation: &OperationDeclar
             }),
         ));
     }
-    for constraint in operation_constraints(table, action, operation) {
+    for constraint in operation_constraints(catalog, table, action, operation, delete_mode) {
         let code = constraint_error_code(constraint.kind());
         cases.push((
             code,

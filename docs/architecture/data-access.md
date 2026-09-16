@@ -62,6 +62,15 @@ The host resolves those identities to admitted SQL bytes and the operation's all
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
 SQLx metadata is compilation data, not the SQL or package contract.
 
+A model that removes rows declares `delete_mode`, and only the package that owns the relation declares it.
+A `hard` delete removes the row, and the record history keeps its contents in the `before` image of the delete entry.
+A `tombstone` delete keeps the row and sets `deleted_at` and `deleted_by`.
+Every generated read, every generated update, and a second delete then hide that row, so it behaves as `not_found`.
+A tombstone model carries both reserved columns, and every other model carries neither.
+Neither column is writable, because the delete statement sets both.
+A hard delete of a row that another row still references refuses with `foreign_key_violation`, which names the inbound constraint.
+No application foreign key declares `ON DELETE CASCADE`.
+
 Generation plans every authored and generated statement as `wamn_app` under exactly the grants that the package declaration derives.
 PostgreSQL checks column privileges at plan time, so a statement that reads a column outside those grants fails at generate time.
 If the grants do not cover every column, the check refuses a whole-row reference such as `to_jsonb(item)`, `RETURNING item`, or `(item).sku`.

@@ -1,6 +1,7 @@
 use wamn_schema_introspection::ir::{Column, ColumnType, Table};
 
 use crate::generate::{CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN};
+use crate::manifest::DeleteMode;
 use crate::{CursorDirection, OperationDeclaration};
 
 /// One create's resolved claim, as the emitters need it.
@@ -24,9 +25,30 @@ impl Claim<'_> {
     }
 }
 
-pub(crate) fn get(table: &Table) -> String {
+/// The tombstone marker column.
+///
+/// It is set once by the tombstone delete and never cleared, so one predicate
+/// hides the row from every read, every update, and a second delete.
+const TOMBSTONE_MARKER: &str = "deleted_at";
+
+/// The same predicate where the statement carries the `model` alias.
+const LIVE_ROW: &str = "model.deleted_at IS NULL";
+
+/// The tombstone marker, as the delete statement writes it.
+///
+/// The actor reads the same setting that `wamn_history.stamp_row` reads. That
+/// trigger fires on this UPDATE and refuses an unbound actor first, so an
+/// actorless tombstone never reaches the row.
+const TOMBSTONE_ASSIGNMENT: &str = "        deleted_at = transaction_timestamp(),\n        deleted_by = NULLIF(current_setting('app.user_id', true), '')::uuid";
+
+pub(crate) fn get(table: &Table, tombstoned: bool) -> String {
+    let live = if tombstoned {
+        format!("\n  AND {LIVE_ROW}")
+    } else {
+        String::new()
+    };
     format!(
-        "SELECT\n    {}\nFROM {} AS model\nWHERE model.id = $1::uuid;\n",
+        "SELECT\n    {}\nFROM {} AS model\nWHERE model.id = $1::uuid{live};\n",
         select_columns(table),
         table.name()
     )
@@ -99,11 +121,17 @@ pub(crate) fn create(table: &Table, claim: &Claim<'_>, operation: &OperationDecl
     )
 }
 
-pub(crate) fn update(table: &Table, operation: &OperationDeclaration) -> String {
+pub(crate) fn update(table: &Table, operation: &OperationDeclaration, tombstoned: bool) -> String {
     let revision = operation
         .revision_field
         .as_deref()
         .expect("update validation requires revision");
+    // A tombstoned row has no target, so an update of one reads as not_found.
+    let live = if tombstoned {
+        format!("\n      AND {TOMBSTONE_MARKER} IS NULL")
+    } else {
+        String::new()
+    };
     // Each writable field binds a presence flag, then its value.
     let binds = operation
         .writable_fields
@@ -148,20 +176,40 @@ pub(crate) fn update(table: &Table, operation: &OperationDeclaration) -> String 
         .collect::<Vec<_>>()
         .join(",\n    ");
     format!(
-        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE {} AS model\n    SET\n{assignments}\n    FROM target\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING\n    {returning}\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision},\n    {returned}\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE {} AS model\n    SET\n{assignments}\n    FROM target\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING\n    {returning}\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision},\n    {returned}\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
         table.name(),
         table.name()
     )
 }
 
-pub(crate) fn delete(table: &Table, operation: &OperationDeclaration) -> String {
+/// The delete statement of the declared mode.
+///
+/// A hard delete removes the row, and an inbound foreign key can refuse it. A
+/// tombstone sets the marker instead, so it removes nothing and violates
+/// nothing. Both report the same three outcomes.
+pub(crate) fn delete(table: &Table, operation: &OperationDeclaration, mode: DeleteMode) -> String {
     let revision = operation
         .revision_field
         .as_deref()
         .expect("delete validation requires revision");
+    let (live, removal) = match mode {
+        DeleteMode::Hard => (
+            String::new(),
+            format!(
+                "    DELETE FROM {} AS model\n    USING target",
+                table.name()
+            ),
+        ),
+        DeleteMode::Tombstone => (
+            format!("\n      AND {TOMBSTONE_MARKER} IS NULL"),
+            format!(
+                "    UPDATE {} AS model\n    SET\n{TOMBSTONE_ASSIGNMENT}\n    FROM target",
+                table.name()
+            ),
+        ),
+    };
     format!(
-        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\ndeleted AS (\n    DELETE FROM {} AS model\n    USING target\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN 'concurrency_conflict'\n    ELSE 'deleted'\nEND AS outcome;\n",
-        table.name(),
+        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\ndeleted AS (\n{removal}\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN 'concurrency_conflict'\n    ELSE 'deleted'\nEND AS outcome;\n",
         table.name()
     )
 }
@@ -171,8 +219,12 @@ pub(crate) fn query(
     operation: &OperationDeclaration,
     sort_field: &str,
     direction: CursorDirection,
+    tombstoned: bool,
 ) -> String {
     let mut predicates = Vec::new();
+    if tombstoned {
+        predicates.push(format!("    {LIVE_ROW}"));
+    }
     for (index, filter) in operation.filters.iter().enumerate() {
         let field = &filter.field;
         predicates.push(format!(

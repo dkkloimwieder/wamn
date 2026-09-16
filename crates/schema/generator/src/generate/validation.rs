@@ -288,19 +288,28 @@ fn validate_operation(
             require_mutation_shape(&context, operation, true)?;
         }
     }
-    validate_constraint_error_details(&context, table, action, operation)?;
+    validate_constraint_error_details(
+        catalog,
+        &context,
+        table,
+        action,
+        operation,
+        model.delete_mode,
+    )?;
     Ok(())
 }
 
 fn validate_constraint_error_details(
+    catalog: &CatalogIr,
     context: &str,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
+    delete_mode: Option<DeleteMode>,
 ) -> Result<(), GenerateError> {
     use AccessOperationErrorLiteral as Code;
 
-    let mut expected = operation_constraints(table, action, operation)
+    let mut expected = operation_constraints(catalog, table, action, operation, delete_mode)
         .into_iter()
         .map(|constraint| constraint_error_code(constraint.kind()))
         .collect::<BTreeSet<_>>();

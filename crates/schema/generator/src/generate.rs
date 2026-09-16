@@ -15,7 +15,8 @@ use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_record_history::history_table_name;
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind, Exclusion, Table,
+    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind, Exclusion,
+    ForeignKeyAction, Table,
 };
 
 use crate::manifest::{
@@ -565,15 +566,28 @@ fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
     }
 }
 
+/// Constraints the operation can violate.
+///
+/// An INSERT or an UPDATE can violate a constraint OF ITS OWN TABLE. A DELETE
+/// cannot: removing a row breaks no primary key, unique key, check, or outbound
+/// foreign key that the row itself carries. What a DELETE breaks is an INBOUND
+/// foreign key, held by another table whose row still references this one, and
+/// PostgreSQL names THAT constraint in its 23503. A tombstone removes no row,
+/// so it violates nothing.
 fn operation_constraints<'a>(
+    catalog: &'a CatalogIr,
     table: &'a Table,
     action: CrudAction,
     operation: &OperationDeclaration,
+    delete_mode: Option<DeleteMode>,
 ) -> Vec<&'a Constraint> {
-    if !matches!(
-        action,
-        CrudAction::Create | CrudAction::Update | CrudAction::Delete
-    ) {
+    if action == CrudAction::Delete {
+        if delete_mode != Some(DeleteMode::Hard) {
+            return Vec::new();
+        }
+        return inbound_foreign_keys(catalog, table);
+    }
+    if !matches!(action, CrudAction::Create | CrudAction::Update) {
         return Vec::new();
     }
     table
@@ -582,6 +596,35 @@ fn operation_constraints<'a>(
         .filter(|constraint| {
             action != CrudAction::Update
                 || update_can_violate(constraint.kind(), &operation.writable_fields)
+        })
+        .collect()
+}
+
+/// Every foreign key in the catalog that references this relation and can
+/// refuse a delete.
+///
+/// A key whose `on_delete` removes or clears the referencing row cannot refuse,
+/// so it is not a constraint the caller ever sees.
+fn inbound_foreign_keys<'a>(catalog: &'a CatalogIr, table: &'a Table) -> Vec<&'a Constraint> {
+    catalog
+        .tables()
+        .iter()
+        .flat_map(Table::constraints)
+        .filter(|constraint| match constraint.kind() {
+            ConstraintKind::ForeignKey {
+                referenced_schema,
+                referenced_table,
+                on_delete,
+                ..
+            } => {
+                referenced_schema.as_ref() == table.schema()
+                    && referenced_table.as_ref() == table.name()
+                    && matches!(
+                        on_delete,
+                        ForeignKeyAction::NoAction | ForeignKeyAction::Restrict
+                    )
+            }
+            _ => false,
         })
         .collect()
 }

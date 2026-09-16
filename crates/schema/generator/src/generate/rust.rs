@@ -4,12 +4,13 @@ use std::fmt::Write as _;
 
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN,
-    CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT, CREATE_STATEMENT, Column, ColumnType,
-    ConstraintKind, ConstraintNameSlice, CrudAction, CustomOperationDeclaration, GenerateError,
-    ModelDeclaration, MutationConstraintNames, NativeBindFixture, OperationDeclaration, Projection,
-    ProjectionContents, RustMember, RustRow, RustVisibility, StaticSqlAccessor, StaticSqlFetch,
-    Table, WamnAccessor, WamnApi, column, insert_bytes, insert_json, json, operation_constraints,
-    operation_exclusions, query_variants, rust_identifier, rust_type_identifier, sha256, sql,
+    CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT, CREATE_STATEMENT, CatalogIr, Column,
+    ColumnType, ConstraintKind, ConstraintNameSlice, CrudAction, CustomOperationDeclaration,
+    DeleteMode, GenerateError, ModelDeclaration, MutationConstraintNames, NativeBindFixture,
+    OperationDeclaration, Projection, ProjectionContents, RustMember, RustRow, RustVisibility,
+    StaticSqlAccessor, StaticSqlFetch, Table, WamnAccessor, WamnApi, column, insert_bytes,
+    insert_json, json, operation_constraints, operation_exclusions, query_variants,
+    rust_identifier, rust_type_identifier, sha256, sql,
 };
 
 /// Clippy's default `too-many-arguments-threshold`. The repository declares no
@@ -384,6 +385,7 @@ pub(super) fn emit_parity(
 }
 
 pub(super) fn wamn_api(
+    catalog: &CatalogIr,
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
@@ -403,7 +405,13 @@ pub(super) fn wamn_api(
             action,
             CrudAction::Create | CrudAction::Update | CrudAction::Delete
         ) {
-            mutation_constraints.push(mutation_constraint_names(table, *action, operation));
+            mutation_constraints.push(mutation_constraint_names(
+                catalog,
+                table,
+                *action,
+                operation,
+                model.delete_mode,
+            ));
         }
         match action {
             CrudAction::Get => accessors.push(WamnAccessor {
@@ -608,14 +616,16 @@ pub(super) fn wamn_api(
 }
 
 fn mutation_constraint_names(
+    catalog: &CatalogIr,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
+    delete_mode: Option<DeleteMode>,
 ) -> MutationConstraintNames {
     let mut unique = Vec::new();
     let mut foreign_key = Vec::new();
     let mut check = Vec::new();
-    for constraint in operation_constraints(table, action, operation) {
+    for constraint in operation_constraints(catalog, table, action, operation, delete_mode) {
         match constraint.kind() {
             ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
                 unique.push(constraint.name().to_owned());
