@@ -23,6 +23,7 @@ pub mod identity_issuer;
 #[cfg(feature = "ops")]
 mod ops_schema;
 pub mod pat_client;
+pub mod print_release_env;
 pub mod project_env_membership;
 pub mod promote;
 pub mod provision_project_env;
@@ -32,6 +33,7 @@ pub mod prune_record_history;
 pub mod prune_run_history;
 pub mod publish_release;
 pub mod push_component;
+pub mod push_release_manifest;
 pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;

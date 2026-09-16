@@ -17,10 +17,10 @@ pub mod identity_verbs;
 pub mod ops_verbs;
 mod owned_command;
 pub mod package_verbs;
-pub mod print_release_env;
+pub use wamn_control::print_release_env;
 pub mod provision_org;
 pub mod provisioning_verbs;
-pub mod push_release_manifest;
+pub use wamn_control::push_release_manifest;
 pub mod release_verbs;
 #[cfg(target_os = "linux")]
 pub mod ui;

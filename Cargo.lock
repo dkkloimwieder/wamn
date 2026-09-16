@@ -5708,6 +5708,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "chrono",
+ "clap",
  "futures-util",
  "hex",
  "oci-client",
