@@ -819,13 +819,53 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .expect("disable the configured service principal");
     assert_eq!(
         invoke(&route_auth, &loaded_release, Some(&valid), &mut router_admissions).await,
-        Err(unauthorized),
+        Err(unauthorized.clone()),
         "a disabled service passed with a valid PAT and project role"
     );
     admin.execute(
         "UPDATE identity.principals SET status = 'active', disabled_at = NULL WHERE id = $1::text::uuid",
         &[&principal.id().as_str()],
     ).await.expect("restore the service principal for permission tests");
+
+    // An operator revokes a credential that is IN USE. The case above revokes
+    // before the first request, which every read path refuses by arriving at a
+    // dead row. This one authenticates first, so a request that never re-reads
+    // identity.pats keeps passing. It is the sibling of the permission case
+    // below, and the assertion an authorization cache breaks first
+    // (wamn-0h0g.17.21).
+    let in_use = issue_pat_for_subject(&admin, &route.principal_subject, "revoked in use")
+        .await
+        .expect("mint a PAT to revoke after it authenticates");
+    let in_use_authorization = format!("Bearer {}", in_use.0);
+    let mut in_use_admissions = 0;
+    invoke(
+        &route_auth,
+        &loaded_release,
+        Some(&in_use_authorization),
+        &mut in_use_admissions,
+    )
+    .await
+    .expect("a live PAT reaches router admission before its revocation");
+    assert_eq!(in_use_admissions, 1);
+    revoke_pat(admin.as_ref(), &in_use.1)
+        .await
+        .expect("revoke the PAT that just authenticated");
+    assert_eq!(
+        invoke(
+            &route_auth,
+            &loaded_release,
+            Some(&in_use_authorization),
+            &mut in_use_admissions,
+        )
+        .await,
+        Err(unauthorized),
+        "a PAT revoked after it authenticated passed the next request"
+    );
+    assert_eq!(
+        in_use_admissions, 1,
+        "the revoked PAT reached router admission"
+    );
+
     project
         .execute(
             "DELETE FROM app_system.permissions \
