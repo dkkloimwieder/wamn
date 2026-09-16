@@ -107,7 +107,14 @@ ensure() {
 context_identity() {
   local context=$1
   [[ -d $context ]] || { printf 'the build context %s is absent\n' "$context" >&2; exit 64; }
-  (cd "$context" && find . -type f -print0 | sort -z | xargs -0 sha256sum) |
+  # An empty context would otherwise hash to the digest of nothing, and every
+  # empty context would share one identity. A missing Dockerfile is the shape
+  # that produces one, so it is refused here rather than at the build.
+  [[ -f $context/Dockerfile ]] ||
+    { printf 'the build context %s has no Dockerfile\n' "$context" >&2; exit 64; }
+  # xargs -r keeps sha256sum from reading standard input when find lists
+  # nothing, and pipefail turns an unreadable file into a refusal.
+  (cd "$context" && find . -type f -print0 | sort -z | xargs -0 -r sha256sum) |
     sha256sum | cut -c1-16
 }
 

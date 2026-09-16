@@ -395,3 +395,55 @@ fn a_prepared_context_is_identified_by_its_own_content() {
         "a changed binary reused the old identity"
     );
 }
+
+/// A context nobody could read must refuse, not produce a confident identity.
+///
+/// A file listing has two silent failures: an unreadable file that contributes
+/// nothing, and an empty directory that hashes to the same value every time.
+/// Either one hands back an identity for a context that was never read, and
+/// every such context shares it (wamn-szr0).
+#[test]
+fn an_unreadable_context_is_refused_instead_of_identified() {
+    let directory = TestDirectory::new();
+    executable(&directory.path("docker"), FAKE_DOCKER_ABSENT);
+    let empty = directory.path("empty");
+    fs::create_dir_all(&empty).expect("create the empty context");
+
+    let absent = run(
+        &directory,
+        &[
+            "ensure-context",
+            directory.path("nowhere").to_str().expect("path"),
+            "host",
+            HEAD_LABEL,
+            CLUSTER,
+            CLUSTER,
+            "debug",
+        ],
+    );
+    assert_eq!(absent.status.code(), Some(64));
+    assert!(
+        String::from_utf8_lossy(&absent.stderr).contains("is absent"),
+        "the refusal must name the missing context"
+    );
+
+    let without_dockerfile = run(
+        &directory,
+        &[
+            "ensure-context",
+            empty.to_str().expect("path"),
+            "host",
+            HEAD_LABEL,
+            CLUSTER,
+            CLUSTER,
+            "debug",
+        ],
+    );
+
+    assert_eq!(without_dockerfile.status.code(), Some(64));
+    assert!(
+        String::from_utf8_lossy(&without_dockerfile.stderr).contains("no Dockerfile"),
+        "an empty context must refuse rather than hash to nothing"
+    );
+    assert_eq!(calls(&directory), "", "a refused context reached Docker");
+}
