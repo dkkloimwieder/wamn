@@ -14,139 +14,20 @@ use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Output, Stdio};
+use std::process::Stdio;
 
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use tokio::io::AsyncWriteExt as _;
 use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
+use wamn_control::git_source;
 use wamn_schema_generator::PackageManifest;
 
-use super::{DevInvalidation, DevInvalidationSource, DevSourceState, DevStage};
+pub use wamn_control::git_source::{GitSourceError, GitSourceErrorKind, GitSourceSnapshot};
+
+use super::{DevInvalidation, DevInvalidationSource, DevStage};
 
 const INOTIFY_BUFFER_BYTES: usize = 64 * 1024;
-
-/// Stable category of a Git source-state failure.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GitSourceErrorKind {
-    Discover,
-    Inspect,
-}
-
-/// Failure to discover or inspect one originating Git repository.
-#[derive(Debug)]
-pub struct GitSourceError {
-    kind: GitSourceErrorKind,
-    operation: &'static str,
-    repository: PathBuf,
-    detail: Box<str>,
-    source: Option<io::Error>,
-}
-
-impl GitSourceError {
-    fn io(
-        kind: GitSourceErrorKind,
-        operation: &'static str,
-        repository: &Path,
-        source: io::Error,
-    ) -> Self {
-        Self {
-            kind,
-            operation,
-            repository: repository.to_owned(),
-            detail: "Git process could not be executed".into(),
-            source: Some(source),
-        }
-    }
-
-    fn command(
-        kind: GitSourceErrorKind,
-        operation: &'static str,
-        repository: &Path,
-        output: &Output,
-    ) -> Self {
-        let detail = String::from_utf8_lossy(trim_ascii(&output.stderr));
-        let detail = if detail.is_empty() {
-            format!("git exited with {}", output.status)
-        } else {
-            detail.into_owned()
-        };
-        Self {
-            kind,
-            operation,
-            repository: repository.to_owned(),
-            detail: detail.into_boxed_str(),
-            source: None,
-        }
-    }
-
-    fn output(
-        kind: GitSourceErrorKind,
-        operation: &'static str,
-        repository: &Path,
-        detail: impl Into<Box<str>>,
-    ) -> Self {
-        Self {
-            kind,
-            operation,
-            repository: repository.to_owned(),
-            detail: detail.into(),
-            source: None,
-        }
-    }
-
-    /// Stable error category.
-    pub const fn kind(&self) -> GitSourceErrorKind {
-        self.kind
-    }
-}
-
-impl fmt::Display for GitSourceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "cannot {} Git repository {}: {}",
-            self.operation,
-            self.repository.display(),
-            self.detail
-        )?;
-        if let Some(source) = &self.source {
-            write!(formatter, ": {source}")?;
-        }
-        Ok(())
-    }
-}
-
-impl Error for GitSourceError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.source.as_ref().map(|source| source as _)
-    }
-}
-
-/// One repository-grained source observation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GitSourceSnapshot {
-    repository_root: PathBuf,
-    source_commit: Box<str>,
-    state: DevSourceState,
-}
-
-impl GitSourceSnapshot {
-    /// Originating repository shared by the commit and cleanliness result.
-    pub fn repository_root(&self) -> &Path {
-        &self.repository_root
-    }
-
-    /// Commit at `HEAD` when this state was read.
-    pub fn source_commit(&self) -> &str {
-        &self.source_commit
-    }
-
-    /// Whole-worktree source state, including untracked non-ignored files.
-    pub const fn state(&self) -> DevSourceState {
-        self.state
-    }
-}
 
 /// Production Git adapter pinned to one originating repository.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -157,16 +38,9 @@ pub struct GitSource {
 impl GitSource {
     /// Discover the repository worktree root from `path`.
     pub async fn discover(path: impl AsRef<Path>) -> Result<Self, GitSourceError> {
-        let path = path.as_ref();
-        let repository_root = git_path_output(
-            path,
-            &["rev-parse", "--path-format=absolute", "--show-toplevel"],
-            GitSourceErrorKind::Discover,
-            "discover worktree root",
-        )
-        .await?;
-
-        Ok(Self { repository_root })
+        Ok(Self {
+            repository_root: git_source::discover_repository_root(path.as_ref()).await?,
+        })
     }
 
     /// Stable root of the originating worktree.
@@ -176,86 +50,7 @@ impl GitSource {
 
     /// Read `HEAD` and whole-worktree cleanliness from the same repository.
     pub async fn snapshot(&self) -> Result<GitSourceSnapshot, GitSourceError> {
-        let status = git_output(
-            &self.repository_root,
-            &[
-                "status",
-                "--porcelain=v2",
-                "--branch",
-                "--untracked-files=normal",
-                "--ignored=no",
-            ],
-            GitSourceErrorKind::Inspect,
-            "read whole-worktree state",
-        )
-        .await?;
-        let source_commit = status
-            .stdout
-            .split(|byte| *byte == b'\n')
-            .find_map(|line| line.strip_prefix(b"# branch.oid "))
-            .filter(|commit| !commit.is_empty() && *commit != b"(initial)")
-            .ok_or_else(|| {
-                GitSourceError::output(
-                    GitSourceErrorKind::Inspect,
-                    "read HEAD",
-                    &self.repository_root,
-                    "Git status did not return a committed HEAD",
-                )
-            })?;
-        let source_commit = std::str::from_utf8(source_commit).map_err(|_| {
-            GitSourceError::output(
-                GitSourceErrorKind::Inspect,
-                "read HEAD",
-                &self.repository_root,
-                "Git returned a non-UTF-8 commit identity",
-            )
-        })?;
-        let state = status
-            .stdout
-            .split(|byte| *byte == b'\n')
-            .any(|line| !line.is_empty() && !line.starts_with(b"# "))
-            .then_some(DevSourceState::Dirty)
-            .unwrap_or(DevSourceState::Clean);
-        Ok(GitSourceSnapshot {
-            repository_root: self.repository_root.clone(),
-            source_commit: source_commit.to_owned().into_boxed_str(),
-            state,
-        })
-    }
-}
-
-async fn git_path_output(
-    repository: &Path,
-    args: &[&str],
-    kind: GitSourceErrorKind,
-    operation: &'static str,
-) -> Result<PathBuf, GitSourceError> {
-    let output = git_output(repository, args, kind, operation).await?;
-    let bytes = one_output_line(&output.stdout, kind, operation, repository)?;
-    Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
-}
-
-async fn git_output(
-    repository: &Path,
-    args: &[&str],
-    kind: GitSourceErrorKind,
-    operation: &'static str,
-) -> Result<Output, GitSourceError> {
-    let output = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(repository)
-        .args(args)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|source| GitSourceError::io(kind, operation, repository, source))?;
-    if output.status.success() {
-        Ok(output)
-    } else {
-        Err(GitSourceError::command(
-            kind, operation, repository, &output,
-        ))
+        git_source::read_status(&self.repository_root).await
     }
 }
 
@@ -330,35 +125,6 @@ async fn git_ignored(
             &output,
         )),
     }
-}
-
-fn one_output_line<'a>(
-    output: &'a [u8],
-    kind: GitSourceErrorKind,
-    operation: &'static str,
-    repository: &Path,
-) -> Result<&'a [u8], GitSourceError> {
-    let line = trim_ascii(output);
-    if line.is_empty() || line.contains(&b'\n') || line.contains(&b'\r') {
-        Err(GitSourceError::output(
-            kind,
-            operation,
-            repository,
-            "Git did not return exactly one nonempty line",
-        ))
-    } else {
-        Ok(line)
-    }
-}
-
-fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
-    while bytes
-        .last()
-        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
-    {
-        bytes = &bytes[..bytes.len() - 1];
-    }
-    bytes
 }
 
 /// Stable category of a filesystem invalidation failure.
@@ -1357,6 +1123,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
+    use super::super::DevSourceState;
     use super::*;
 
     static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);

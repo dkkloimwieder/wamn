@@ -17,6 +17,7 @@ pub mod env_policies;
 #[cfg(feature = "ops")]
 pub mod event_advisories;
 pub mod event_streams;
+pub mod git_source;
 pub mod ident;
 pub mod identity_issuer;
 #[cfg(feature = "ops")]

@@ -105,11 +105,7 @@ impl fmt::Display for DevStage {
 }
 
 /// Whole-worktree source state observed through Git.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DevSourceState {
-    Clean,
-    Dirty,
-}
+pub use wamn_control::git_source::GitSourceState as DevSourceState;
 
 /// One client-owned invalidation delivered to the watch engine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
