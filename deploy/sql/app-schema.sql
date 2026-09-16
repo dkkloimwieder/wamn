@@ -88,7 +88,7 @@
 -- session management here. `api_keys.key_hash` is a one-way digest column (the
 -- raw key is shown once at creation, never stored; hashing is 4.2's job).
 
-CREATE SCHEMA app_system AUTHORIZATION postgres;
+CREATE SCHEMA app_system AUTHORIZATION CURRENT_USER;
 
 -- The shared platform group role every non-guest tenant-floor arm below targets
 -- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason

@@ -145,11 +145,11 @@ END $platform_group$;
 -- for authoring is `wamn-0h0g.22.25`'s question and is not decided here.
 GRANT wamn_platform TO wamn_run_retention WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 
-CREATE DATABASE wamn OWNER postgres;
+CREATE DATABASE wamn;
 
 \connect wamn
 
-CREATE SCHEMA s2 AUTHORIZATION postgres;
+CREATE SCHEMA s2 AUTHORIZATION CURRENT_USER;
 GRANT USAGE ON SCHEMA s2 TO wamn_app;
 
 -- ---------------------------------------------------------------------------

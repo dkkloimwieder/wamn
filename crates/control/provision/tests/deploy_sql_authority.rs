@@ -52,7 +52,8 @@ const RECORD_HISTORY_APP_GRANTS: &str =
 const PLATFORM_PROBE_OUTSIDER: &str = "wamn_floor_outsider";
 
 /// The superuser login, not named `postgres`, that one case installs the
-/// catalog schema as (`wamn-txmd`). Named here so `reset` can drop it.
+/// catalog schema and the `app_system` schema as (`wamn-txmd`, `wamn-ccj4`).
+/// Named here so `reset` can drop it.
 const CATALOG_INSTALLER: &str = "wamn_floor_installer";
 
 /// The PLATFORM-GRAIN generation login the shared `TO wamn_platform` arm is
@@ -920,12 +921,16 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     );
 }
 
-/// The catalog schema names no installing role (`wamn-txmd`).
+/// The catalog and `app_system` schemas name no installing role (`wamn-txmd`,
+/// `wamn-ccj4`).
 ///
-/// A superuser with any name installs `CATALOG_SCHEMA_SQL` through its own
-/// login, and the catalog schema belongs to that superuser.
+/// A superuser with any name installs `CATALOG_SCHEMA_SQL` and then
+/// `deploy/sql/app-schema.sql` through its own login, and both schemas belong to
+/// that superuser. `app-schema.sql` is the file the `wamn-0h0g.9` tenant schema
+/// leg applies in production, so a hard-coded owner there refuses the whole
+/// install on a server whose superuser carries another name.
 #[test]
-fn the_catalog_schema_installs_under_a_superuser_not_named_postgres() {
+fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
     const PASSWORD: &str = "floor-installer-probe";
     let (_server, admin) = owned_server();
 
@@ -955,6 +960,19 @@ fn the_catalog_schema_installs_under_a_superuser_not_named_postgres() {
         ),
         CATALOG_INSTALLER,
         "CATALOG_SCHEMA_SQL applied as {CATALOG_INSTALLER} gave the catalog schema \
+         another owner"
+    );
+
+    apply(installer_url, APP_SCHEMA);
+    assert_eq!(
+        psql(
+            installer_url,
+            None,
+            "SELECT nspowner::regrole::text FROM pg_catalog.pg_namespace \
+              WHERE nspname = 'app_system'"
+        ),
+        CATALOG_INSTALLER,
+        "app-schema.sql applied as {CATALOG_INSTALLER} gave the app_system schema \
          another owner"
     );
 }
