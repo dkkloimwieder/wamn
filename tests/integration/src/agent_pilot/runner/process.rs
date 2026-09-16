@@ -3,11 +3,11 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, symlink};
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -56,7 +56,7 @@ fn alive(pid: i32) -> bool {
 fn fingerprint(root: &Path) -> anyhow::Result<String> {
     fn visit(root: &Path, hash: &mut Sha256) -> anyhow::Result<()> {
         let mut entries = fs::read_dir(root)?.collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
+        entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             if ["target", ".git", "node_modules"]
                 .iter()
@@ -91,16 +91,13 @@ async fn stop(child: &mut Child) -> anyhow::Result<()> {
         if !signal(-pid, libc::SIGTERM) {
             signal(pid, libc::SIGTERM);
         }
-        match tokio::time::timeout(Duration::from_secs(15), child.wait()).await {
-            Ok(result) => {
-                result?;
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(15), child.wait()).await {
+            result?;
+        } else {
+            if !signal(-pid, libc::SIGKILL) {
+                signal(pid, libc::SIGKILL);
             }
-            Err(_) => {
-                if !signal(-pid, libc::SIGKILL) {
-                    signal(pid, libc::SIGKILL);
-                }
-                child.wait().await?;
-            }
+            child.wait().await?;
         }
     }
     Ok(())
@@ -111,9 +108,9 @@ fn timeout_reason(
     last_line: Duration,
     last_change: Duration,
 ) -> Option<&'static str> {
-    if elapsed > Duration::from_secs(5400) {
+    if elapsed > Duration::from_mins(90) {
         Some("run-cap")
-    } else if elapsed.saturating_sub(last_line) > Duration::from_secs(1200) {
+    } else if elapsed.saturating_sub(last_line) > Duration::from_mins(20) {
         Some("step-timeout")
     } else if elapsed.saturating_sub(last_line) > Duration::from_secs(300)
         && elapsed.saturating_sub(last_change) > Duration::from_secs(300)
@@ -174,7 +171,7 @@ fn first_green(run: &Path, rows: &[Value], started: &str) -> anyhow::Result<i64>
     for row in rows {
         let prefix = format!("{}-", text(&row["n"]));
         let mut entries = fs::read_dir(run.join("dev-logs"))?.collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
+        entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             let name = entry.file_name();
             let name = name.to_string_lossy();
@@ -205,7 +202,7 @@ fn owned_processes(run: &Path) -> anyhow::Result<Vec<i32>> {
         else {
             continue;
         };
-        if pid == std::process::id() as i32 {
+        if i32::try_from(std::process::id()).is_ok_and(|current| pid == current) {
             continue;
         }
         if let Ok(bytes) = fs::read(entry.path().join("cmdline")) {
@@ -332,7 +329,6 @@ impl Run {
             .spawn()?;
         let reason = watch(&mut child, &self.directory).await?;
         let status = child.wait().await?;
-        use std::os::unix::process::ExitStatusExt as _;
         let exit = status
             .code()
             .unwrap_or_else(|| 128 + status.signal().unwrap_or(0));
@@ -373,21 +369,21 @@ impl Run {
             return Ok(0);
         }
         let mut residue = Vec::new();
-        if let Ok(pid) = fs::read_to_string(self.directory.join("env/standup.pid")) {
-            if let Ok(pid) = pid.trim().parse::<i32>() {
-                if alive(pid) && !owned_processes(&self.directory)?.contains(&pid) {
-                    residue.push(format!("standup PID {pid} no longer belongs to this run"));
-                } else if alive(pid) {
-                    signal(pid, libc::SIGINT);
-                    for _ in 0..30 {
-                        if !alive(pid) {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+        if let Ok(pid) = fs::read_to_string(self.directory.join("env/standup.pid"))
+            && let Ok(pid) = pid.trim().parse::<i32>()
+        {
+            if alive(pid) && !owned_processes(&self.directory)?.contains(&pid) {
+                residue.push(format!("standup PID {pid} no longer belongs to this run"));
+            } else if alive(pid) {
+                signal(pid, libc::SIGINT);
+                for _ in 0..30 {
+                    if !alive(pid) {
+                        break;
                     }
-                    if owned_processes(&self.directory)?.contains(&pid) {
-                        signal(pid, libc::SIGKILL);
-                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                if owned_processes(&self.directory)?.contains(&pid) {
+                    signal(pid, libc::SIGKILL);
                 }
             }
         }

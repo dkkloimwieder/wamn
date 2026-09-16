@@ -772,9 +772,9 @@ mod tests {
     #[test]
     fn oha_json_yields_rate_percentiles_and_errors_against_the_expected_status() {
         let got = parse_oha(OHA, Some(200)).expect("parse");
-        assert!((got.requests_per_second - 4081.211897645458).abs() < 1e-9);
-        assert!((got.p50_ms - 0.931111).abs() < 1e-9);
-        assert!((got.p99_ms - 1.877135).abs() < 1e-9);
+        assert!((got.requests_per_second - 4_081.211_897_645_458).abs() < 1e-9);
+        assert!((got.p50_ms - 0.931_111).abs() < 1e-9);
+        assert!((got.p99_ms - 1.877_135).abs() < 1e-9);
         // 8164 requests were answered; the four the deadline cut off are the
         // four clients' last requests, neither answered nor errors.
         assert_eq!(got.total_requests, 8164);
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn pgbench_summary_and_log_yield_tps_and_sampled_percentiles() {
         let got = parse_pgbench(PGBENCH).expect("parse");
-        assert!((got.requests_per_second - 34879.230595).abs() < 1e-9);
+        assert!((got.requests_per_second - 34_879.230_595).abs() < 1e-9);
         assert_eq!(got.total_requests, 69457);
         assert_eq!(got.errors, 0);
         assert!((got.duration_seconds - 2.0).abs() < 1e-9);
@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn cpu_stat_usage_reads_in_seconds() {
         assert!(
-            (cpu_usage_seconds("usage_usec 20558\nuser_usec 14390\n").unwrap() - 0.020558).abs()
+            (cpu_usage_seconds("usage_usec 20558\nuser_usec 14390\n").unwrap() - 0.020_558).abs()
                 < 1e-12
         );
         assert!(cpu_usage_seconds("user_usec 1\n").is_err());

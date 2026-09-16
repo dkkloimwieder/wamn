@@ -44,7 +44,7 @@ const CANONICAL_CREATE: &str = r#"{"canonicalization":{"payload":"canonical_comp
   {"path":"value.idempotency_key","type":"text","nullable":false},
   {"path":"value.name","type":"text","nullable":false}]}"#;
 
-const ONE_ROW: &str = r#"| `carrier.create` | `name` text | `carrier_id` uuid |"#;
+const ONE_ROW: &str = r"| `carrier.create` | `name` text | `carrier_id` uuid |";
 
 fn directory() -> ScratchRoot {
     let path = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
@@ -176,7 +176,7 @@ fn placed(root: &Path) -> Vec<Value> {
     })
     .unwrap();
     let records = read_lines(&root.join("grade/http.jsonl")).unwrap_or_default();
-    context.grading.placement(&records).unwrap()
+    context.grading.placement(&records)
 }
 
 fn row<'a>(rows: &'a [Value], id: &str) -> &'a Value {
@@ -551,7 +551,7 @@ fn run_markers_change_only_marked_values_and_keep_explicit_keys() {
             steps: steps.as_array().unwrap().clone(),
             results: Vec::new(),
         };
-        let rows = grading.placement(&[]).unwrap();
+        let rows = grading.placement(&[]);
         bodies.push(row(&rows, "book-replay")["body"].clone());
     }
     assert_eq!(bodies[0]["value"]["name"], "Door 7 place-alpha");

@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     );
     for path in &paths {
         let bytes = std::fs::read(path).with_context(|| format!("read {path}"))?;
-        let mib = bytes.len() as f64 / (1024.0 * 1024.0);
+        let mib = wamn_integration_tests::measure::len_f64(bytes.len()) / (1024.0 * 1024.0);
 
         let started = Instant::now();
         let component = Component::new(engine.inner(), &bytes)
@@ -86,7 +86,8 @@ async fn main() -> anyhow::Result<()> {
                 samples.push(elapsed.as_secs_f64() * 1_000_000.0);
             }
         }
-        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let mean =
+            samples.iter().sum::<f64>() / wamn_integration_tests::measure::len_f64(samples.len());
         let min = samples.iter().copied().fold(f64::INFINITY, f64::min);
         println!(
             "{:<34} {mib:>9.2} {compile_ms:>10.0} {pre_ms:>9.2} {mean:>11.1} {min:>11.1}",

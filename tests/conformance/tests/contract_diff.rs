@@ -9,9 +9,11 @@
 //!
 //! Guard health is tested by running the leg targets for real, which is what
 //! `tools/contract-diff run` does and what this file never does:
+//!
 //!   * `-p wamn-authoring-model --test contract`
 //!   * `-p wamn-runtime --test flow_http_routing_wit_coherence`
 //!   * `-p http-route --test adversarial` (the components workspace)
+//!
 //! Read a green here as "the orchestration is intact", never as "the contracts
 //! have not drifted".
 //!

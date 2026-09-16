@@ -315,10 +315,11 @@ fn hash_evidence(directory: &Path, result: &[u8]) -> anyhow::Result<()> {
         hex::encode(sha2::Sha256::digest(result)),
     ));
     rows.sort_by(|left, right| left.0.cmp(&right.0));
-    let text = rows
-        .into_iter()
-        .map(|(path, digest)| format!("{digest}  {}\n", path.display()))
-        .collect::<String>();
+    let text = rows.into_iter().fold(String::new(), |mut out, (path, digest)| {
+        use std::fmt::Write as _;
+        writeln!(out, "{digest}  {}", path.display()).expect("writing to a string is infallible");
+        out
+    });
     write_private(&directory.join("evidence.sha256"), text.as_bytes())
 }
 

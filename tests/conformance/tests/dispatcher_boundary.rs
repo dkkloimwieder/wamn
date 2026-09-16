@@ -9,7 +9,6 @@ const DISPATCHER_SOURCE: &str = "services/dispatcher/src/lib.rs";
 const DISPATCHER_MAIN: &str = "services/dispatcher/src/main.rs";
 const DISPATCHER_MANIFEST: &str = "services/dispatcher/Cargo.toml";
 const DISPATCHER_DEPLOYMENT: &str = "deploy/platform/dispatcher.yaml";
-const EXECUTION_HOST_SOURCE: &str = "crates/execution/host/src/lib.rs";
 const RUN_STATE_SQL_SOURCE: &str = "crates/execution/run-state/src/sql.rs";
 const RUN_STATE_QUEUE_SQL_SOURCE: &str = "crates/execution/run-state/src/queue/sql.rs";
 const RUN_STATE_TRANSITIONS_SOURCE: &str = "crates/execution/run-state/src/transitions.rs";
@@ -19,8 +18,6 @@ const FRESH_RUN_STATE_CARRIERS: &[&str] = &[
     "tests/conformance/src/schema_drift.rs",
     "crates/platform/runtime/tests/common/mod.rs",
 ];
-const EXECUTOR_SOURCE: &str = "services/executor/src/lib.rs";
-const EXECUTOR_MANIFEST: &str = "services/executor/Cargo.toml";
 const WAKER_SOURCE: &str = "services/waker/src/lib.rs";
 const WAKER_MANIFEST: &str = "services/waker/Cargo.toml";
 const WAKER_DEPLOYMENT: &str = "deploy/platform/waker.yaml";

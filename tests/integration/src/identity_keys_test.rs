@@ -76,10 +76,10 @@ async fn exercise(args: IdentityKeysTestArgs) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow!("configured JWKS listener has no port"))?;
     plaintext
         .set_scheme("http")
-        .map_err(|_| anyhow!("construct plaintext control"))?;
+        .map_err(|()| anyhow!("construct plaintext control"))?;
     plaintext
         .set_port(Some(tls_port))
-        .map_err(|_| anyhow!("preserve TLS listener port for plaintext control"))?;
+        .map_err(|()| anyhow!("preserve TLS listener port for plaintext control"))?;
     ensure!(
         IssuerKeysConfig::new(&args.issuer, plaintext.as_str(), &ca).is_err(),
         "public cache admitted plaintext configuration"

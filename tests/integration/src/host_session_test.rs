@@ -202,7 +202,7 @@ async fn read_file(path: &Path, private: bool) -> anyhow::Result<Vec<u8>> {
         .await
         .map_err(|_| anyhow!("read host test input metadata failed"))?;
     ensure!(
-        metadata.is_file() && (!private || metadata.permissions().mode() & 0o077 == 0),
+        metadata.is_file() && (!private || metadata.permissions().mode().trailing_zeros() >= 6),
         "host test credential input must be an owner-only regular file"
     );
     let mut body = Vec::new();
@@ -411,7 +411,7 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     ensure!(
         claims.exp
             > unix_seconds()?
-                .checked_add(KEY_MAX_AGE.as_secs() as i64)
+                .checked_add(KEY_MAX_AGE.as_secs().cast_signed())
                 .ok_or_else(|| anyhow!("host test remaining lifetime overflowed"))?,
         "host test token cannot outlive the key-freshness observation"
     );

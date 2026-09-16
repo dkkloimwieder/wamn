@@ -147,7 +147,7 @@ fn event(args: &StreamBenchArgs, i: usize) -> (String, u64, String, Bytes) {
         entity: entity.to_string(),
         table: entity.to_string(),
         lsn,
-        txid: 1 + i as u32,
+        txid: 1 + crate::measure::narrow_len(i),
         commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
             .expect("valid rfc3339")
             .with_timezone(&chrono::Utc),
@@ -333,7 +333,7 @@ async fn publish_phase(
     check(
         &mut pass,
         &format!("stored == {n} after publish"),
-        stored as usize == n,
+        crate::measure::index(stored) == n,
     );
     check(
         &mut pass,
@@ -367,7 +367,7 @@ async fn publish_phase(
     check(
         &mut pass,
         &format!("stored still {n} after re-publish (no growth)"),
-        stored_again as usize == n,
+        crate::measure::index(stored_again) == n,
     );
     Ok(pass)
 }
@@ -428,7 +428,7 @@ async fn txn_distinctness_phase(
     check(
         &mut pass,
         &format!("stream grew by exactly {n} (no Nats-Msg-Id silently deduped)"),
-        delta as usize == n,
+        crate::measure::index(delta) == n,
     );
 
     println!(
@@ -541,8 +541,7 @@ async fn consume_phase(
                 .headers
                 .as_ref()
                 .and_then(|h| h.get(NATS_MESSAGE_ID))
-                .map(|v| v.as_str().starts_with(&format!("{}:", args.project_env())))
-                .unwrap_or(false);
+                .is_some_and(|v| v.as_str().starts_with(&format!("{}:", args.project_env())));
             if !id_ok {
                 all_have_id = false;
             }
@@ -611,7 +610,7 @@ async fn stepdown_phase(
     check(
         &mut pass,
         "stepdown accepted",
-        resp.get("success").and_then(|v| v.as_bool()) == Some(true),
+        resp.get("success").and_then(serde_json::Value::as_bool) == Some(true),
     );
 
     // Wait for a new leader to settle.
@@ -672,7 +671,7 @@ async fn heal_phase(
     check(
         &mut pass,
         &format!("all {expect} messages survived ({stored} present)"),
-        stored as usize == expect,
+        crate::measure::index(stored) == expect,
     );
     // And they are still consumable end-to-end.
     pass &= consume_phase(js, args, expect).await?;

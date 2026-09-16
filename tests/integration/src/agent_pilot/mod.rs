@@ -124,8 +124,7 @@ fn loop_result(output: &str) -> Value {
     let base = output
         .lines()
         .filter_map(|line| line.strip_prefix("run served: "))
-        .filter_map(|line| line.split_once(" host=").map(|(url, _)| url))
-        .next()
+        .find_map(|line| line.split_once(" host=").map(|(url, _)| url))
         .unwrap_or_default();
     json!({"pass":stages==DEV_STAGE_ORDER.len() && !base.is_empty(),"stages":stages,"base_url":base})
 }
@@ -135,12 +134,12 @@ fn expand_run(value: &mut Value, run: &str) {
         Value::String(value) => *value = value.replace("{{run}}", run),
         Value::Array(values) => {
             for value in values {
-                expand_run(value, run)
+                expand_run(value, run);
             }
         }
         Value::Object(values) => {
             for value in values.values_mut() {
-                expand_run(value, run)
+                expand_run(value, run);
             }
         }
         _ => (),
@@ -331,7 +330,7 @@ async fn grade_inner(args: GradeArgs) -> Result<u8, GradeFailure> {
     if args.placement.is_some() {
         let records =
             read_lines(&context.grading.directory.join("grade/http.jsonl")).unwrap_or_default();
-        let rows = context.grading.placement(&records)?;
+        let rows = context.grading.placement(&records);
         for row in &rows {
             println!("{}", serde_json::to_string(row)?);
         }
@@ -380,9 +379,9 @@ async fn grade_started(context: &mut GradeContext) -> Result<Value, GradeFailure
             .await
             .map_err(anyhow::Error::from)?;
         if result.status.success() {
-            tracker = String::from_utf8_lossy(&result.stdout)
+            String::from_utf8_lossy(&result.stdout)
                 .trim_end_matches('\n')
-                .to_owned();
+                .clone_into(&mut tracker);
         }
     }
     let outside = context.recorded["git"]

@@ -44,6 +44,8 @@
 //! `wal_level=logical` server, + `--nats-url` (JetStream). Recipe:
 //! docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [EVT-C-CDC].
 
+use std::fmt::Write as _;
+
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -240,8 +242,7 @@ async fn slot_lag(db: &Client, slot: &str) -> anyhow::Result<i64> {
             &[&slot],
         )
         .await?
-        .map(|r| r.get(0))
-        .unwrap_or(-1))
+        .map_or(-1, |r| r.get(0)))
 }
 
 /// `pg_stat_replication_slots` spill/stream/total counters — the reorder-buffer
@@ -311,7 +312,7 @@ async fn drop_slot(db: &Client, slot: &str) {
 /// Server-side stream depth (0 while the reader hasn't created it yet).
 async fn stream_msgs(js: &async_nats::jetstream::Context, name: &str) -> u64 {
     match js.get_stream(name).await {
-        Ok(mut s) => s.info().await.map(|i| i.state.messages).unwrap_or(0),
+        Ok(mut s) => s.info().await.map_or(0, |i| i.state.messages),
         Err(_) => 0,
     }
 }
@@ -546,7 +547,7 @@ async fn teardown(admin_url: &str, nats_url: &str) {
 /// Launch the REAL reader executable — the same process boundary deployment runs.
 fn spawn_reader(admin_url: &str, nats_url: &str) -> anyhow::Result<ReaderProcess> {
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    ReaderProcess::spawn(ReaderArgs {
+    ReaderProcess::spawn(&ReaderArgs {
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENV.into(),
@@ -750,11 +751,13 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
         let drain_secs = loop {
             let msgs = stream_msgs(&js, &stream_name).await;
             let lag = slot_lag(&db, &cdc_name).await?;
-            series.push_str(&format!(
-                "{},{},{msgs},{lag}\n",
+            writeln!(
+                series,
+                "{},{},{msgs},{lag}",
                 v.name,
                 t0.elapsed().as_millis()
-            ));
+            )
+            .expect("writing to a String cannot fail");
             if msgs >= v.rows as u64 {
                 break t0.elapsed().as_secs_f64();
             }
@@ -808,16 +811,17 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
         );
         drop_slot(&db, &cdc_name).await;
 
-        let rows_per_sec = v.rows as f64 / drain_secs;
-        let mb_per_sec = backlog as f64 / drain_secs / 1e6;
+        let rows_per_sec = crate::measure::len_f64(v.rows) / drain_secs;
+        let mb_per_sec = crate::measure::signed_count_f64(backlog) / drain_secs / 1e6;
         println!(
             "  drained in {drain_secs:.2}s — {rows_per_sec:.0} rows/s, {mb_per_sec:.1} MB/s of backlog; \
              spill: txns {} count {} bytes {}",
             stats.spill_txns, stats.spill_count, stats.spill_bytes
         );
-        csv.push_str(&format!(
+        writeln!(
+            csv,
             "{},{},{txns},{import_secs:.1},{import_wal},{backlog},{drain_secs:.2},{rows_per_sec:.0},\
-             {mb_per_sec:.2},{},{},{},{},{},{},{}\n",
+             {mb_per_sec:.2},{},{},{},{},{},{},{}",
             v.name,
             v.rows,
             stats.spill_txns,
@@ -827,7 +831,8 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
             stats.stream_bytes,
             stats.total_txns,
             stats.total_bytes,
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
 
     emit_csv("ccdc-drain", &csv, &args.out);
@@ -894,7 +899,7 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
     let mut series = String::from("rate_target,t_ms,stream_msgs,lag_bytes\n");
 
     for &rate in &rates {
-        let per_writer = rate / args.lag_writers as f64;
+        let per_writer = rate / crate::measure::len_f64(args.lag_writers);
         let msgs_start = stream_msgs(&js, &stream_name).await;
         let lag_start = slot_lag(&db, &cdc_name).await?;
         let mut handles = Vec::new();
@@ -911,8 +916,9 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
                     .await?;
                 let start = Instant::now();
                 let mut sent: u64 = 0;
-                while start.elapsed().as_secs_f64() < step_secs as f64 {
-                    let due = (start.elapsed().as_secs_f64() * per_writer) as u64 + 1;
+                while start.elapsed().as_secs_f64() < crate::measure::count_f64(step_secs) {
+                    let due =
+                        crate::measure::whole_count(start.elapsed().as_secs_f64() * per_writer) + 1;
                     while sent < due {
                         app.execute(&ins, &[&TENANT, &format!("lag-{rate}-{w}-{sent}")])
                             .await?;
@@ -930,11 +936,13 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
             let msgs = stream_msgs(&js, &stream_name).await;
             let lag = slot_lag(&db, &cdc_name).await?;
             lag_max = lag_max.max(lag);
-            series.push_str(&format!(
-                "{rate},{},{msgs},{lag}\n",
+            writeln!(
+                series,
+                "{rate},{},{msgs},{lag}",
                 t0.elapsed().as_millis()
-            ));
-            if handles.iter().all(|h| h.is_finished()) {
+            )
+            .expect("writing to a String cannot fail");
+            if handles.iter().all(tokio::task::JoinHandle::is_finished) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -947,17 +955,19 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
         let elapsed = t0.elapsed().as_secs_f64();
         let msgs_end = stream_msgs(&js, &stream_name).await;
         let lag_end = slot_lag(&db, &cdc_name).await?;
-        let achieved = written as f64 / elapsed;
+        let achieved = crate::measure::count_f64(written) / elapsed;
         let published = msgs_end.saturating_sub(msgs_start);
-        let pub_rate = published as f64 / elapsed;
+        let pub_rate = crate::measure::count_f64(published) / elapsed;
         println!(
             "  rate {rate:>6.0}/s  wrote {written:>6} ({achieved:>6.0}/s)  published {published:>6} \
              ({pub_rate:>6.0}/s)  lag start/end/max {lag_start}/{lag_end}/{lag_max} B"
         );
-        csv.push_str(&format!(
-            "{rate:.0},{},{},{written},{achieved:.0},{published},{pub_rate:.0},{lag_start},{lag_end},{lag_max}\n",
+        writeln!(
+            csv,
+            "{rate:.0},{},{},{written},{achieved:.0},{published},{pub_rate:.0},{lag_start},{lag_end},{lag_max}",
             args.lag_writers, args.lag_step_secs
-        ));
+        )
+        .expect("writing to a String cannot fail");
         if reader.is_finished()? {
             bail!("reader died mid-lag-step: {}", reader.wait().await?);
         }
@@ -1024,22 +1034,22 @@ async fn op_batch(
     normalize(admin, tables).await?;
     let wal0 = wal_lsn(admin).await?;
     let mut samples: Vec<Duration> = Vec::with_capacity(n);
-    let mut wals: Vec<i64> = Vec::with_capacity(n);
+    let mut wal_deltas: Vec<i64> = Vec::with_capacity(n);
     for i in 0..n {
         let w0 = wal_lsn(admin).await?;
         let t = Instant::now();
         op(i).await?;
         samples.push(t.elapsed());
-        wals.push(wal_since(admin, &w0).await?);
+        wal_deltas.push(wal_since(admin, &w0).await?);
     }
     let wal = wal_since(admin, &wal0).await?;
     samples.sort();
-    wals.sort_unstable();
+    wal_deltas.sort_unstable();
     Ok(OpStats {
         p50_ms: percentile(&samples, 0.50).as_secs_f64() * 1e3,
         p99_ms: percentile(&samples, 0.99).as_secs_f64() * 1e3,
-        wal_mean: wal as f64 / n as f64,
-        wal_p50: wals.get(wals.len() / 2).copied().unwrap_or(0) as f64,
+        wal_mean: crate::measure::signed_count_f64(wal) / crate::measure::len_f64(n),
+        wal_p50: crate::measure::signed_count_f64(wal_deltas.get(wal_deltas.len() / 2).copied().unwrap_or(0)),
     })
 }
 
@@ -1068,10 +1078,12 @@ async fn ri_leg(
              wal/op p50 {:>7.0}B  mean {:>7.0}B",
             s.p50_ms, s.p99_ms, s.wal_p50, s.wal_mean
         );
-        csv.push_str(&format!(
-            "{shape},{op},{regime},{n},{:.3},{:.3},{:.0},{:.0}\n",
+        writeln!(
+            csv,
+            "{shape},{op},{regime},{n},{:.3},{:.3},{:.0},{:.0}",
             s.p50_ms, s.p99_ms, s.wal_p50, s.wal_mean
-        ));
+        )
+        .expect("writing to a String cannot fail");
         out.insert((shape.to_string(), op.to_string()), s.wal_p50);
     };
 
@@ -1239,8 +1251,7 @@ async fn ri_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyho
     let cleanup = std::fs::remove_dir_all(&package).context("remove RI package fixture");
     let reconcile = match (reconcile, cleanup) {
         (Ok(reconcile), Ok(())) => reconcile,
-        (Err(error), _) => return Err(error),
-        (Ok(_), Err(error)) => return Err(error),
+        (Err(error), _) | (Ok(_), Err(error)) => return Err(error),
     };
     let reconcile = String::from_utf8(reconcile.stdout).context("RI output is UTF-8")?;
     let flips = reconcile

@@ -175,7 +175,7 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
                 .headers
                 .as_ref()
                 .and_then(|h| h.get(NATS_MESSAGE_ID))
-                .map(|v| v.to_string())
+                .map(std::string::ToString::to_string)
                 .unwrap_or_default();
             let envelope: Envelope = serde_json::from_slice(&m.payload)
                 .map_err(|e| anyhow::anyhow!("envelope does not deserialize: {e}"))?;

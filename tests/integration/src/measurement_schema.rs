@@ -6,7 +6,6 @@
 
 use std::path::Path;
 
-use wamn_schema_control::ManagedModel;
 
 pub const PACKAGE_ID: &str = "poc_material_receiving";
 
@@ -21,17 +20,6 @@ const MODEL_TABLES: [(&str, &str); 9] = [
     ("dispositions", "dispositions"),
     ("disposition_reviews", "disposition_reviews"),
 ];
-
-pub fn models(schema: &str) -> Vec<ManagedModel> {
-    MODEL_TABLES
-        .into_iter()
-        .map(|(model_id, table)| ManagedModel {
-            model_id: model_id.to_owned(),
-            schema: schema.to_owned(),
-            table: table.to_owned(),
-        })
-        .collect()
-}
 
 pub fn model_tables() -> impl Iterator<Item = (&'static str, &'static str)> {
     MODEL_TABLES.into_iter()
@@ -84,7 +72,7 @@ pub fn write_package_directory(root: &Path, schema: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-const FLOOR_SQL_TEMPLATE: &str = r#"
+const FLOOR_SQL_TEMPLATE: &str = r"
 CREATE TABLE __SCHEMA__.users (
     id uuid CONSTRAINT users_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id text NOT NULL,
@@ -178,4 +166,4 @@ BEGIN
     END LOOP;
 END
 $tenant_floor$;
-"#;
+";

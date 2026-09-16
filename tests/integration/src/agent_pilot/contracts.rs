@@ -285,7 +285,7 @@ fn assert_field(
             .iter()
             .map(|field| text(&field["path"]))
             .collect::<Vec<_>>();
-        paths.sort();
+        paths.sort_unstable();
         json!({"ok":false,"evidence":format!("the package declares no {side} field named {name}. it declares {}",paths.join(", "))})
     } else if types != [wanted] {
         json!({"ok":false,"declared":named[0]["path"],"evidence":format!("declared {}, the brief says {kind}, which the platform publishes as {wanted}",types.join(", "))})

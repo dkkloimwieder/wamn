@@ -890,7 +890,7 @@ impl Run {
             worktree.join(".claude/settings.json"),
         ] {
             if path.is_file() {
-                settings.push(json!({"path":path.strip_prefix(&user_home).map(|path|format!("~/{}",path.display())).unwrap_or_else(|_|path.display().to_string()),"sha256":hex::encode(Sha256::digest(fs::read(&path)?))}));
+                settings.push(json!({"path":path.strip_prefix(&user_home).map_or_else(|_|path.display().to_string(),|path|format!("~/{}",path.display())),"sha256":hex::encode(Sha256::digest(fs::read(&path)?))}));
             }
         }
         write_json(&self.directory.join("settings.json"), &settings)

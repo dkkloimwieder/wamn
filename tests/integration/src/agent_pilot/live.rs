@@ -30,14 +30,11 @@ impl HeldLoop {
                 libc::kill(pid as libc::pid_t, libc::SIGINT);
             }
         }
-        match tokio::time::timeout(Duration::from_secs(30), self.child.wait()).await {
-            Ok(result) => {
-                result?;
-            }
-            Err(_) => {
-                self.child.start_kill()?;
-                self.child.wait().await?;
-            }
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(30), self.child.wait()).await {
+            result?;
+        } else {
+            self.child.start_kill()?;
+            self.child.wait().await?;
         }
         Ok(())
     }
@@ -179,8 +176,7 @@ pub(super) async fn steps(
             };
             let expected = step["expect"]["rows"]
                 .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| step["expect"]["rows"].to_string());
+                .map_or_else(|| step["expect"]["rows"].to_string(), str::to_owned);
             let record = json!({"id":id,"sql":sql,"rows":rows});
             append(&log, format!("{record}\n").as_bytes())?;
             (

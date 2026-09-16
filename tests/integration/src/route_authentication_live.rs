@@ -624,7 +624,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     reset_and_install_control(&admin)
         .await
         .expect("install the control plane");
-    let route = provision_route(&admin_url, &admin, &root, None)
+    let route = provision_route(&admin_url, &admin, root, None)
         .await
         .expect("mint the production route caller");
     assert_eq!(

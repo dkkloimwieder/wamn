@@ -1,5 +1,7 @@
 //! Exact kind gate-image cleanup over deterministic fake CLIs.
 
+use std::fmt::Write as _;
+
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -176,7 +178,7 @@ fn setup(retained: bool, containers: &[Value]) -> TestDirectory {
             "{CANONICAL}\t{TARGET_DIGEST}\n{CONFIG_ID}\t{TARGET_DIGEST}\n{IMPORT_ALIAS}\t{TARGET_DIGEST}\n"
         );
         if retained {
-            image_lines.push_str(&format!("{RETAINED}\t{TARGET_DIGEST}\n"));
+            writeln!(image_lines, "{RETAINED}\t{TARGET_DIGEST}").expect("writing to a String cannot fail");
         }
         image_lines.push_str(
             "docker.io/library/unrelated:keep\tsha256:2222222222222222222222222222222222222222222222222222222222222222\n",
@@ -203,7 +205,7 @@ fn add_second_selected_tag(directory: &TestDirectory) {
     for node in ["node-a", "node-b"] {
         let image_path = directory.path(&format!("{node}.images"));
         let mut images = fs::read_to_string(&image_path).expect("read image list");
-        images.push_str(&format!("{SECOND_CANONICAL}\t{TARGET_DIGEST}\n"));
+        writeln!(images, "{SECOND_CANONICAL}\t{TARGET_DIGEST}").expect("writing to a String cannot fail");
         fs::write(image_path, images).expect("extend image list");
 
         let cri_path = directory.path(&format!("{node}.cri-images.json"));

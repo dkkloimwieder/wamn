@@ -107,7 +107,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
                 &system,
                 human.id(),
                 "Disposable fresh-auth benchmark",
-                Duration::from_secs(2 * 60 * 60),
+                Duration::from_hours(2),
             )
             .await
             .context("issue the two-hour benchmark PAT")?;

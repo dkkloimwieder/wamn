@@ -34,6 +34,8 @@
 //! flushed position, so the byte counts do not depend on flush settings (the C2
 //! instrument lesson).
 
+use std::fmt::Write as _;
+
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -130,8 +132,8 @@ pub(crate) fn wide_blob(seed: usize, size: usize) -> String {
     let mut s = String::with_capacity(size);
     for _ in 0..size {
         x = x
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         s.push(ALPHA[((x >> 33) as usize) & 63] as char);
     }
     s
@@ -489,7 +491,7 @@ async fn op_batch(
     Ok(OpStats {
         p50_ms: percentile(&samples, 0.50).as_secs_f64() * 1e3,
         p99_ms: percentile(&samples, 0.99).as_secs_f64() * 1e3,
-        wal_per_op: wal as f64 / n as f64,
+        wal_per_op: crate::measure::signed_count_f64(wal) / crate::measure::len_f64(n),
     })
 }
 
@@ -498,10 +500,12 @@ fn push_row(csv: &mut String, shape: &str, op: &str, n: usize, s: &OpStats) {
         "  {shape:<6} {op:<6}  p50 {:>7.3}ms  p99 {:>7.3}ms  wal/op {:>8.0}B",
         s.p50_ms, s.p99_ms, s.wal_per_op
     );
-    csv.push_str(&format!(
-        "{shape},{op},{n},{:.3},{:.3},{:.0}\n",
+    writeln!(
+        csv,
+        "{shape},{op},{n},{:.3},{:.3},{:.0}",
         s.p50_ms, s.p99_ms, s.wal_per_op
-    ));
+    )
+    .expect("writing to a String cannot fail");
 }
 
 async fn perop_phase(
@@ -583,7 +587,7 @@ async fn perop_phase(
             "narrow: inserted exactly {n} supplier rows (got {})",
             count(&admin, "suppliers").await?
         ),
-        count(&admin, "suppliers").await? == n as i64,
+        count(&admin, "suppliers").await? == crate::measure::signed_len(n),
     );
     let n_upd = op_batch(&admin, &["suppliers"], n, async |i| {
         app.execute(&s_upd, &[&ids[i], &Some("touched")]).await?;
@@ -648,7 +652,7 @@ async fn perop_phase(
             "wide: inserted exactly {n} user rows (got {})",
             count(&admin, "users").await?
         ),
-        count(&admin, "users").await? == n as i64,
+        count(&admin, "users").await? == crate::measure::signed_len(n),
     );
     // The wide leg's whole point: the rows genuinely TOASTed out-of-line.
     let ts = toast_size(&admin, "users").await?;
@@ -837,8 +841,8 @@ async fn receiving_event(
     seq: u64,
     lines: usize,
 ) -> anyhow::Result<()> {
-    let supplier = &r.suppliers[(seq as usize) % r.suppliers.len()];
-    let site = &r.sites[(seq as usize) % r.sites.len()];
+    let supplier = &r.suppliers[crate::measure::index(seq) % r.suppliers.len()];
+    let site = &r.sites[crate::measure::index(seq) % r.sites.len()];
     app.batch_execute("BEGIN").await?;
     let receipt: String = app
         .query_one(&stmts.receipt, &[&format!("R-{seq}"), supplier, site])
@@ -846,7 +850,7 @@ async fn receiving_event(
         .get(0);
     let mut first_line: Option<String> = None;
     for k in 0..lines {
-        let material = &r.materials[(seq as usize + k) % r.materials.len()];
+        let material = &r.materials[(crate::measure::index(seq) + k) % r.materials.len()];
         let line: String = app
             .query_one(&stmts.line, &[&receipt, material, &"1.500"])
             .await?
@@ -857,7 +861,7 @@ async fn receiving_event(
         && let Some(line) = &first_line
     {
         let hold: String = app.query_one(&stmts.hold, &[line, site]).await?.get(0);
-        let inspector = &r.users[(seq as usize) % r.users.len()];
+        let inspector = &r.users[crate::measure::index(seq) % r.users.len()];
         app.execute(&stmts.disposition, &[&hold, inspector]).await?;
     }
     app.batch_execute("COMMIT").await?;
@@ -909,8 +913,8 @@ async fn mixed_phase(
         let mut per_event: Vec<i64> = Vec::new();
         let start = Instant::now();
         let mut sent: u64 = 0;
-        while start.elapsed().as_secs_f64() < args.mixed_secs as f64 {
-            let due = (start.elapsed().as_secs_f64() * rate) as u64 + 1;
+        while start.elapsed().as_secs_f64() < crate::measure::count_f64(args.mixed_secs) {
+            let due = crate::measure::whole_count(start.elapsed().as_secs_f64() * rate) + 1;
             while sent < due {
                 let w0 = wal_lsn(&admin).await?;
                 receiving_event(&app, &stmts, &reference, sent, args.mixed_lines).await?;
@@ -921,21 +925,23 @@ async fn mixed_phase(
         }
         let elapsed = start.elapsed().as_secs_f64();
         let total: i64 = per_event.iter().sum();
-        let mean = total as f64 / sent.max(1) as f64;
+        let mean = crate::measure::signed_count_f64(total) / crate::measure::count_f64(sent.max(1));
         let p50 = {
             let mut v = per_event.clone();
             v.sort_unstable();
             v.get(v.len() / 2).copied().unwrap_or(0)
         };
-        let per_sec = total as f64 / elapsed;
-        let ev_per_sec = sent as f64 / elapsed;
+        let per_sec = crate::measure::signed_count_f64(total) / elapsed;
+        let ev_per_sec = crate::measure::count_f64(sent) / elapsed;
         println!(
             "  rate {rate:>5.0}/s  events {sent:>6}  {elapsed:>5.1}s  our-wal {total:>11}B  \
              mean {mean:>6.0}B/event  p50 {p50:>5}B  {per_sec:>10.0}B/s  {ev_per_sec:>6.1} ev/s"
         );
-        csv.push_str(&format!(
-            "{rate:.0},{sent},{elapsed:.1},{total},{mean:.0},{p50},{per_sec:.0},{ev_per_sec:.1}\n"
-        ));
+        writeln!(
+            csv,
+            "{rate:.0},{sent},{elapsed:.1},{total},{mean:.0},{p50},{per_sec:.0},{ev_per_sec:.1}"
+        )
+        .expect("writing to a String cannot fail");
         check(
             &mut pass,
             &format!(
@@ -973,7 +979,7 @@ mod tests {
             for b in a.bytes() {
                 counts[b as usize] += 1;
             }
-            *counts.iter().max().unwrap() as f64 / a.len() as f64
+            crate::measure::len_f64(*counts.iter().max().unwrap()) / crate::measure::len_f64(a.len())
         };
         assert!(
             max_share < 0.05,

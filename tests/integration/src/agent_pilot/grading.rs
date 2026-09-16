@@ -1,5 +1,7 @@
 //! Apply the pilot's retained response and field-placement predicates.
 
+use std::fmt::Write as _;
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fs;
@@ -132,14 +134,14 @@ impl Grading {
     pub fn remember(&mut self, id: &str, payload: &str) {
         let parsed = serde_json::from_str::<Value>(payload)
             .ok()
-            .filter(|value| !value.is_null() && value != &false)
+            .filter(|value| !value.is_null() && *value != false)
             .unwrap_or_else(|| json!({}));
         let value = if let Some(array) = parsed.as_array() {
             array
                 .first()
                 .and_then(|first| first.get("value"))
                 .cloned()
-                .filter(|value| !value.is_null() && value != &false)
+                .filter(|value| !value.is_null() && *value != false)
                 .unwrap_or_else(|| json!({}))
         } else {
             parsed
@@ -158,8 +160,7 @@ impl Grading {
         let result_path = |name: &str| map.get(name).cloned().unwrap_or_else(|| name.to_owned());
         let expected_status = step["expect"]
             .get("status")
-            .map(string)
-            .unwrap_or_else(|| "200".to_owned());
+            .map_or_else(|| "200".to_owned(), string);
         let mut evidence = format!("status={status}");
         if status != expected_status {
             return Ok((false, evidence));
@@ -170,7 +171,7 @@ impl Grading {
             .map_or(&parsed, |values| values.first().unwrap_or(&Value::Null));
         if step["expect"]["item"] == "error" {
             let got = optional(&first["error"]["code"]);
-            evidence.push_str(&format!(" error_code={got}"));
+            write!(evidence, " error_code={got}").expect("writing to a String cannot fail");
             return Ok((got == optional(&step["expect"]["error_code"]), evidence));
         }
         let Some(value) = first.get("value") else {
@@ -185,10 +186,12 @@ impl Grading {
         {
             let path = result_path(path);
             let got = optional(at(value, &path));
-            evidence.push_str(&format!(
+            write!(
+                evidence,
                 " present:{path}={}",
                 if got.is_empty() { "<empty>" } else { &got }
-            ));
+            )
+            .expect("writing to a String cannot fail");
             if got.is_empty() || got == "null" {
                 pass = false;
             }
@@ -198,7 +201,7 @@ impl Grading {
                 let resolved = result_path(path);
                 let actual = string(at(value, &resolved));
                 let wanted = string(wanted);
-                evidence.push_str(&format!(" {resolved}={actual} want={wanted}"));
+                write!(evidence, " {resolved}={actual} want={wanted}").expect("writing to a String cannot fail");
                 if actual != wanted {
                     pass = false;
                 }
@@ -211,7 +214,7 @@ impl Grading {
                 let (prior, path) = source.split_once('.').unwrap_or((source, source));
                 let mine = string(at(value, &resolved));
                 let theirs = self.read_result(prior, path)?;
-                evidence.push_str(&format!(" {resolved}={mine} vs {theirs}"));
+                write!(evidence, " {resolved}={mine} vs {theirs}").expect("writing to a String cannot fail");
                 if mine != theirs || mine.is_empty() || mine == "null" {
                     pass = false;
                 }
@@ -232,7 +235,7 @@ impl Grading {
                     .to_string(),
                 Value::Bool(_) => anyhow::bail!("the count predicate cannot read a boolean"),
             };
-            evidence.push_str(&format!(" count:{path}={got} want={wanted}"));
+            write!(evidence, " count:{path}={got} want={wanted}").expect("writing to a String cannot fail");
             if got != wanted {
                 pass = false;
             }
@@ -242,7 +245,7 @@ impl Grading {
             let field = text(&sorted["field"]);
             let declared = map.get(field).map(String::as_str).unwrap_or_default();
             if let Some((list, _)) = declared.split_once("[]") {
-                path = list.trim_end_matches('.').to_owned();
+                list.trim_end_matches('.').clone_into(&mut path);
             }
             let keys = at(value, &path)
                 .as_array()
@@ -262,7 +265,7 @@ impl Grading {
             } else {
                 "false"
             };
-            evidence.push_str(&format!(" sorted_by:{path}.{field}={verdict}"));
+            write!(evidence, " sorted_by:{path}.{field}={verdict}").expect("writing to a String cannot fail");
             if verdict != "true" {
                 pass = false;
             }
@@ -335,7 +338,7 @@ impl Grading {
         Ok(output)
     }
 
-    pub fn placement(&mut self, records: &[Value]) -> anyhow::Result<Vec<Value>> {
+    pub fn placement(&mut self, records: &[Value]) -> Vec<Value> {
         let mut output = Vec::new();
         for step in self.steps.clone() {
             let id = text(&step["id"]);
@@ -350,7 +353,7 @@ impl Grading {
                 .unwrap_or_default();
             self.remember(id, &payload);
         }
-        Ok(output)
+        output
     }
 }
 

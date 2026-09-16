@@ -635,8 +635,9 @@ fn synchronous_host_groups_keep_a_warm_replica() {
             synchronous_groups += 1;
             assert!(
                 replicas >= 1,
-                "host group {:?} enables the chart's native HTTP listener, Service port, and readiness probe, so it serves synchronous work and must keep at least one warm replica",
-                name
+                "host group {name:?} enables the chart's native HTTP listener, Service port, \
+                 and readiness probe, so it serves synchronous work and must keep at least one \
+                 warm replica"
             );
         }
     }

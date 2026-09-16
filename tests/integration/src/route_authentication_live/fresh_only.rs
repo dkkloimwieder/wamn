@@ -203,7 +203,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
 
     let definition = json!({"id": WIRING, "kind": "http",
         "route": {"path": ROUTE, "method": "POST"},
-        "raw-body-bytes": {"maximum": 1048576},
+        "raw-body-bytes": {"maximum": 1_048_576},
         "input-schema": ports["input-ports"][0]["schema"]});
     let attachment = root.join("attachment.json");
     write_json(
@@ -421,7 +421,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                 )
                 .await;
             super::session_client::assert_value(
-                result,
+                &result,
                 "session-nested-replay",
                 test.expected_base,
             )?;
@@ -945,7 +945,7 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
         wamn_runtime::component_admission::ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages: ["wamn:node".to_owned(), "wamn:postgres".to_owned()].into(),
-            effect_free_operation_dependencies: Default::default(),
+            effect_free_operation_dependencies: std::collections::BTreeSet::default(),
         },
     )?;
     anyhow::ensure!(
@@ -1299,7 +1299,7 @@ mod execution_tests {
                 .get_export_index(&mut store, Some(&handler), "run")
                 .context("fixture run export")?;
             let run: TypedFunc<(&NodeContext, &str), (Result<Emission, NodeError>,)> =
-                instance.get_typed_func(&mut store, &export)?;
+                instance.get_typed_func(&mut store, export)?;
             let result = run.call_async(&mut store, (&context, input)).await;
             if refuse_nested {
                 let error = result.expect_err("the nested host error must propagate");

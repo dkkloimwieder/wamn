@@ -219,7 +219,7 @@ pub(super) fn route(path: &str) -> RouteMetadata {
 }
 
 pub(super) fn assert_value(
-    result: Result<Vec<ItemOutcome>, ClientError>,
+    result: &Result<Vec<ItemOutcome>, ClientError>,
     request_id: &str,
     expected: &Value,
 ) -> anyhow::Result<()> {
@@ -265,7 +265,7 @@ pub(super) async fn assert_session_client(
         [json!({"request_id": "session-client-get", "id": "00000000-0000-0000-0000-000000000301"})];
     for index in 0..2 {
         assert_value(
-            client
+            &client
                 .invoke(&route("/purchase_order/get"), &BTreeMap::new(), &get)
                 .await,
             "session-client-get",
@@ -286,7 +286,7 @@ pub(super) async fn assert_session_client(
     }
     let body: Vec<Value> = serde_json::from_slice(&test.body)?;
     assert_value(
-        client
+        &client
             .invoke_fresh(&route(direct_path), &BTreeMap::new(), &body)
             .await,
         "session-nested-replay",

@@ -102,12 +102,24 @@ pub struct RouteOptions {
 
 /// One live driver over the seeded closure, plus the identities a test needs
 /// to address it.
+impl std::fmt::Debug for TrustedHttpRoute {
+    /// Names the identity only: the driver and the loaded release carry live
+    /// host state that must not reach a log.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TrustedHttpRoute")
+            .field("component_digest", &self.component_digest)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct TrustedHttpRoute {
     pub driver: Arc<RouterDriver>,
     /// The same loaded release the driver authorizes. Callers that exercise a
     /// release-owned ingress plugin must share this exact loaded release rather than mint
     /// a second view of the closure.
-    pub(crate) release: Arc<LoadedRelease>,
+    /// Read by the callers that share the exact loaded release.
+    pub release: Arc<LoadedRelease>,
     /// The digest OCI serves the guest under and every seeded row keys on.
     pub component_digest: String,
     /// The wiring document's own canonical hash — `catalog.wirings.wiring_hash`,
@@ -1590,7 +1602,10 @@ mod tests {
             "WAMN_HTTP_REUSE_ARTIFACT_BASE",
             "WAMN_HTTP_REUSE_COMPONENT_WASM",
         ]);
-        tokio::time::timeout(Duration::from_secs(180), test_connection_reuse())
+        Box::pin(tokio::time::timeout(
+            Duration::from_secs(180),
+            test_connection_reuse(),
+        ))
             .await
             .context("real HTTP guest connection reuse test exceeded 180 seconds")?
     }
@@ -1809,7 +1824,10 @@ mod tests {
             "WAMN_HTTP_REUSE_ARTIFACT_BASE",
             "WAMN_HTTP_REUSE_COMPONENT_WASM",
         ]);
-        tokio::time::timeout(Duration::from_secs(180), test_nested_authority())
+        Box::pin(tokio::time::timeout(
+            Duration::from_secs(180),
+            test_nested_authority(),
+        ))
             .await
             .context("real nested HTTP authority test exceeded 180 seconds")?
     }

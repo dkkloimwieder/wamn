@@ -27,16 +27,16 @@ pub(crate) struct ReaderProcess {
 }
 
 impl ReaderProcess {
-    pub(crate) fn spawn(args: ReaderArgs) -> anyhow::Result<Self> {
+    pub(crate) fn spawn(args: &ReaderArgs) -> anyhow::Result<Self> {
         Self::spawn_with_dup_window(args, 120)
     }
 
     pub(crate) fn spawn_with_dup_window(
-        args: ReaderArgs,
+        args: &ReaderArgs,
         dup_window_secs: u64,
     ) -> anyhow::Result<Self> {
         let binary = reader_binary();
-        let mut command = reader_command_with_dup_window(&binary, &args, dup_window_secs);
+        let mut command = reader_command_with_dup_window(&binary, args, dup_window_secs);
         command.kill_on_drop(true);
         let child = command
             .spawn()
@@ -83,15 +83,14 @@ impl ReaderProcess {
             }
         }
 
-        match tokio::time::timeout(timeout, self.child.wait()).await {
-            Ok(status) => Ok(status.context("wait for CDC reader shutdown")?.success()),
-            Err(_) => {
-                self.child
-                    .start_kill()
-                    .context("kill CDC reader after shutdown timeout")?;
-                let _ = self.child.wait().await;
-                Ok(false)
-            }
+        if let Ok(status) = tokio::time::timeout(timeout, self.child.wait()).await {
+            Ok(status.context("wait for CDC reader shutdown")?.success())
+        } else {
+            self.child
+                .start_kill()
+                .context("kill CDC reader after shutdown timeout")?;
+            let _ = self.child.wait().await;
+            Ok(false)
         }
     }
 }
@@ -106,8 +105,7 @@ fn reader_binary() -> OsString {
         .and_then(|exe| exe.parent().map(|dir| dir.join("wamn-cdc-reader")));
     sibling
         .filter(|path| path.is_file())
-        .map(PathBuf::into_os_string)
-        .unwrap_or_else(|| OsString::from("wamn-cdc-reader"))
+        .map_or_else(|| OsString::from("wamn-cdc-reader"), PathBuf::into_os_string)
 }
 
 #[cfg(test)]
