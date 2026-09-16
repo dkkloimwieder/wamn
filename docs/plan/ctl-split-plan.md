@@ -83,7 +83,9 @@ The delivery code runs its `git`, `docker`, `kubectl`, and `cargo` processes ins
 The child process group and the signals that shut that group down moved with it.
 The deploy verb keeps its own interrupt, termination, and hangup arms in `services/ctl`.
 
-The separation of the dev loop in `services/ctl/src/dev/` is the one piece of work this page still names.
+`wamn-wk1j` owns the separation of the dev loop in `services/ctl/src/dev/`.
+That is the one piece of work this page still names, and the issue carries its scope and its method.
+When `wamn-wk1j` closes, this page is archived.
 
 ## 5. Tests
 
