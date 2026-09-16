@@ -62,7 +62,9 @@ pub fn ensure_schema_sql(schema: &str) -> String {
 /// with `ALTER PUBLICATION … SET TABLES IN SCHEMA`. The reader compares the
 /// live publication against this declaration at preflight and refuses a
 /// publication that differs, so a manual change stops capture instead of
-/// passing unnoticed (wamn-0h0g.19.19).
+/// passing unnoticed (wamn-0h0g.19.19). A publication created before this
+/// change carries `pubtruncate`, so the reader refuses it, and the remedy is a
+/// fresh environment rather than a repair.
 ///
 /// Run connected to the project-env database.
 pub fn create_publication_sql(publication: &str, schema: &str) -> String {

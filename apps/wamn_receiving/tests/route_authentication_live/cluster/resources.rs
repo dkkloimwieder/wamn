@@ -33,7 +33,7 @@ pub(super) struct Resources {
         wamn_catalog::ServingManifest,
     )>,
     pub reader: Option<(
-        pg_walstream::CancellationToken,
+        wamn_cdc_reader::ReaderShutdown,
         tokio::task::JoinHandle<anyhow::Result<()>>,
     )>,
     owned: bool,
@@ -502,7 +502,7 @@ pub(super) async fn capture_failure(cluster: &Resources) {
 
 pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
     let reader_result = if let Some((cancellation, mut task)) = cluster.reader.take() {
-        cancellation.cancel();
+        cancellation.shutdown();
         if let Ok(result) =
             tokio::time::timeout(std::time::Duration::from_secs(10), &mut task).await
         {
@@ -559,7 +559,7 @@ pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
 impl Drop for Resources {
     fn drop(&mut self) {
         if let Some((cancellation, task)) = &self.reader {
-            cancellation.cancel();
+            cancellation.shutdown();
             task.abort();
         }
         if self.owned {
