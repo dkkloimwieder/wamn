@@ -1087,9 +1087,22 @@ fn database_error(error: &tokio_postgres::Error) -> IdentityError {
         Some(code) if code == &SqlState::FOREIGN_KEY_VIOLATION => IdentityErrorKind::NotFound,
         _ => IdentityErrorKind::Database,
     };
+    // `tokio_postgres::Error` displays as the bare string "db error", so the
+    // readable half is taken from its database error. That value's own Display
+    // carries PostgreSQL's DETAIL, which repeats the offending key, so the
+    // message and the constraint name are read directly instead. An operator
+    // learns which rule refused the write, and the row's data stays out of the
+    // log.
+    let reason = error.as_db_error().map_or_else(
+        || error.to_string(),
+        |database| match database.constraint() {
+            Some(constraint) => format!("{} ({constraint})", database.message()),
+            None => database.message().to_owned(),
+        },
+    );
     IdentityError::new(
         kind,
-        format!("platform identity database operation failed: {error}"),
+        format!("platform identity database operation failed: {reason}"),
     )
 }
 
