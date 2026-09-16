@@ -833,19 +833,19 @@ mod tests {
             &definition,
             r#"{"endpoint":"https://objects.invalid","container":"fixture","prefix":"local/"}"#,
         )?;
-        let mut input = crate::bind_connection::LocalInstanceInput {
-            requirement_type: crate::bind_connection::RequirementType::Blobstore,
+        let mut input = wamn_control::bind_connection::LocalInstanceInput {
+            requirement_type: wamn_control::bind_connection::RequirementType::Blobstore,
             definition,
             credential_handle: "fixture-vault-handle".to_owned(),
         };
-        let prepared_instance = crate::bind_connection::read_local_instance(&input)?;
+        let prepared_instance = wamn_control::bind_connection::read_local_instance(&input)?;
         let requirement = wamn_catalog::ComponentConnectionRequirement::new(
             &format!("sha256:{}", "7".repeat(64)),
             "objects",
             wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
         );
         target.batch_execute("BEGIN").await?;
-        crate::bind_connection::prepare_local_instance(
+        wamn_control::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant,
             &identity.environment,
@@ -875,9 +875,9 @@ mod tests {
         );
         let definition_bytes = std::fs::read(&input.definition)?;
         std::fs::remove_file(&input.definition)?;
-        assert!(crate::bind_connection::read_local_instance(&input).is_err());
+        assert!(wamn_control::bind_connection::read_local_instance(&input).is_err());
         target.batch_execute("BEGIN").await?;
-        crate::bind_connection::prepare_local_instance(
+        wamn_control::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant,
             &identity.environment,
@@ -886,7 +886,7 @@ mod tests {
         )
         .await?;
         target.batch_execute("COMMIT").await?;
-        crate::bind_connection::prepare_local_instance(
+        wamn_control::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant,
             &identity.environment,
@@ -908,12 +908,12 @@ mod tests {
         std::fs::write(&input.definition, definition_bytes)?;
         input.credential_handle = "changed-handle".to_owned();
         assert!(
-            crate::bind_connection::prepare_local_instance(
+            wamn_control::bind_connection::prepare_local_instance(
                 &target,
                 &identity.tenant,
                 &identity.environment,
                 "objects-a",
-                &crate::bind_connection::read_local_instance(&input)?
+                &wamn_control::bind_connection::read_local_instance(&input)?
             )
             .await
             .is_err()
@@ -982,7 +982,7 @@ mod tests {
             0
         );
         target.batch_execute("BEGIN").await?;
-        crate::bind_connection::prepare_local_instance(
+        wamn_control::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant,
             &identity.environment,

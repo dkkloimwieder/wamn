@@ -41,7 +41,7 @@ use super::read::{
 use super::target_database;
 use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
-use crate::print_release_env::ReleaseCarrier;
+use wamn_control::print_release_env::ReleaseCarrier;
 
 const BUILD_TOOL: &str = "tools/build-components";
 const PACKAGE_WELD: &str = "generated/package-weld.json";
@@ -674,7 +674,7 @@ impl ProductionDevStageRunner {
         }
         let selected = self.package_inputs()?;
         if selected.iter().any(|package| {
-            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
+            wamn_control::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
         }) {
             let output = super::execute_preparation(
                 Command::new("cargo").args(["sqlx", "--version"]),
@@ -683,13 +683,13 @@ impl ProductionDevStageRunner {
             .await
             .map_err(|source| ProductionDevStageError::owner("read SQLx CLI version", source))?;
             require_command_success("read SQLx CLI version", &output)?;
-            crate::delivery::sqlx::require_cli_version(&output.stdout).map_err(|source| {
+            wamn_control::delivery::sqlx::require_cli_version(&output.stdout).map_err(|source| {
                 ProductionDevStageError::owner("require pinned SQLx CLI", source)
             })?;
         }
         for package in selected {
             let package_id = &package.manifest.package.id;
-            if let Some(verifier) = crate::delivery::sqlx::verifier_for(package_id) {
+            if let Some(verifier) = wamn_control::delivery::sqlx::verifier_for(package_id) {
                 let current =
                     sqlx_metadata_inputs_on_disk(self.git.repository_root(), &package.root)
                         .map_err(|source| {
@@ -709,14 +709,14 @@ impl ProductionDevStageRunner {
                 }
                 // Until a preparation succeeds, the metadata on disk is unknown.
                 self.sqlx_metadata_inputs.insert(package_id.clone(), None);
-                let database_url = crate::delivery::sqlx::package_database_url(
+                let database_url = wamn_control::delivery::sqlx::package_database_url(
                     self.config.target_database_url(),
                     &package.manifest,
                 )
                 .map_err(|source| {
                     ProductionDevStageError::owner("scope SQLx to the package schemas", source)
                 })?;
-                let mut command = crate::delivery::sqlx::prepare_command(
+                let mut command = wamn_control::delivery::sqlx::prepare_command(
                     &package.root.join("tests"),
                     &database_url,
                     verifier,
@@ -1341,7 +1341,7 @@ impl ProductionDevStageRunner {
             inputs.push((path.display().to_string(), file_digest(path)?));
         }
         if self.package_inputs()?.iter().any(|package| {
-            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
+            wamn_control::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
         }) {
             let path = std::env::var_os("PATH")
                 .and_then(|path| {
@@ -1620,7 +1620,7 @@ fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, Product
     let mut files = Vec::new();
     for package in packages {
         let mut roots = vec![("generated", package.root.join("generated"))];
-        if crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some() {
+        if wamn_control::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some() {
             roots.push(("sqlx", package.root.join("tests/.sqlx")));
         }
         for (kind, root) in roots {
@@ -1978,14 +1978,14 @@ struct LocalBindingSelection {
     store_alias: String,
     instance_id: String,
     #[serde(default)]
-    instance: Option<crate::bind_connection::LocalInstanceInput>,
+    instance: Option<wamn_control::bind_connection::LocalInstanceInput>,
 }
 
 #[derive(Debug)]
 struct PreparedLocalBinding {
     requirement: wamn_catalog::ComponentConnectionRequirement,
     instance_id: String,
-    instance: Option<crate::bind_connection::PreparedLocalInstance>,
+    instance: Option<wamn_control::bind_connection::PreparedLocalInstance>,
 }
 
 fn prepare_local_bindings(
@@ -2049,7 +2049,7 @@ fn prepare_local_bindings(
                     &input.requirement_type.descriptor() == requirement.requirement(),
                     "local instance type differs from the declared requirement"
                 );
-                crate::bind_connection::read_local_instance(input)
+                wamn_control::bind_connection::read_local_instance(input)
             })
             .transpose()?;
         prepared.push(PreparedLocalBinding {
@@ -2088,7 +2088,7 @@ async fn resolve_local_bindings(
         let mut bindings = Vec::new();
         for binding in prepared {
             if let Some(input) = &binding.instance {
-                crate::bind_connection::prepare_local_instance(
+                wamn_control::bind_connection::prepare_local_instance(
                     &client,
                     &config.activation_identity().tenant,
                     &config.activation_identity().environment,

@@ -10,16 +10,6 @@
 //! separate `wamn-ctl-ops` binary. The development loop in `dev/` is the one
 //! part of this crate that is not a verb surface.
 
-// `dev/coordinator.rs` still reaches the delivery SQLx helpers and the release
-// carrier through `crate::`. Session wamn-52 holds that file, so this private
-// alias stands in until it can name `wamn_control` itself.
-#[cfg(target_os = "linux")]
-use wamn_control::{delivery, print_release_env};
-
-// `dev/coordinator.rs` and `dev/target_database.rs` still reach this through
-// `crate::`. Session wamn-52 holds those files, so this private alias stands
-// in until wamn-wk1j names `wamn_control` in them.
-use wamn_control::bind_connection;
 pub mod component_verbs;
 pub mod delivery_verbs;
 pub mod dev;
