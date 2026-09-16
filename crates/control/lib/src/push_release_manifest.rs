@@ -332,7 +332,7 @@ pub async fn publish_release_manifest(
             source,
         )
     })?;
-    let client = registry_client(artifact.registry(), insecure_registry, ca_bundles);
+    let client = registry_client(artifact.registry(), insecure_registry, ca_bundles)?;
     let auth = registry_auth(&credentials);
 
     if probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
@@ -387,13 +387,22 @@ pub async fn publish_release_manifest(
 /// `OciErrorCode::ManifestUnknown` discrimination for the exact-retry probe,
 /// neither of which survives that API. See standing trigger 5 in
 /// `docs/architecture/native-alignment.md#retained-wamn-implementations` (`wamn-kdhw`).
-fn registry_client(registry: &str, insecure_registry: bool, ca_bundles: Vec<Vec<u8>>) -> OciClient {
+///
+/// It is built through `TryFrom`, not `Client::new`: that constructor answers a
+/// rejected configuration with a warning and a wholly default client, which
+/// drops the trust roots, the protocol and the timeouts and turns an unusable
+/// CA bundle into a confusing TLS failure on the push itself.
+fn registry_client(
+    registry: &str,
+    insecure_registry: bool,
+    ca_bundles: Vec<Vec<u8>>,
+) -> Result<OciClient, ReleaseManifestPublishError> {
     let protocol = if insecure_registry {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])
     } else {
         ClientProtocol::Https
     };
-    OciClient::new(ClientConfig {
+    OciClient::try_from(ClientConfig {
         protocol,
         read_timeout: Some(REGISTRY_IO_TIMEOUT),
         connect_timeout: Some(REGISTRY_IO_TIMEOUT),
@@ -405,6 +414,14 @@ fn registry_client(registry: &str, insecure_registry: bool, ca_bundles: Vec<Vec<
             })
             .collect(),
         ..ClientConfig::default()
+    })
+    .map_err(|source| {
+        ReleaseManifestPublishError::with_source(
+            ReleaseManifestPublishErrorKind::TrustAnchor,
+            "release-manifest-registry-client-unusable",
+            format!("build the push client for registry {registry}"),
+            source,
+        )
     })
 }
 

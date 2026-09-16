@@ -273,7 +273,8 @@ pub async fn promote(args: PromoteRequest) -> anyhow::Result<PromoteOutcome> {
     .context("load component registry pull credential")?
     .with_ca_paths(&args.oci_ca_paths)
     .context("read component registry CA bundles")?;
-    let artifact_source = ComponentArtifactSource::new(artifact_config);
+    let artifact_source = ComponentArtifactSource::new(artifact_config)
+        .context("configure component artifact registry client")?;
 
     let (mut target, target_connection) = tokio_postgres::connect(&args.target_database_url, NoTls)
         .await

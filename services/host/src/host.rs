@@ -806,6 +806,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .with_ca_paths(&args.oci_ca_paths)
                 .context("trust the configured OCI CA bundles for component pulls")?;
                 ComponentArtifactSource::new(source_config)
+                    .context("configure the component artifact registry client")?
             };
             let credentials = Arc::new(match &args.credentials_file {
                 Some(path) => WamnCredentials::from_file(path)?,

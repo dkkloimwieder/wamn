@@ -210,7 +210,8 @@ async fn build_with_credentials(
     let source = ComponentArtifactSource::new(
         ComponentArtifactSourceConfig::new(&options.artifact_base, true, REGISTRY_IO_TIMEOUT)
             .context("configure the component puller")?,
-    );
+    )
+    .context("build the component puller registry client")?;
 
     let driver = Arc::new(
         RouterDriver::new(
@@ -1217,7 +1218,7 @@ mod tests {
                 &options.artifact_base,
                 true,
                 REGISTRY_IO_TIMEOUT,
-            )?),
+            )?)?,
             RouterDriverConfig {
                 owner_prefix: "nested-http-authority".to_owned(),
                 project: PROJECT.to_owned(),

@@ -48,6 +48,8 @@ pub enum ReleaseManifestFetchErrorKind {
     Credential,
     /// A configured PEM CA bundle could not be read as a trust root.
     TrustAnchor,
+    /// `oci-client` rejected the transport configuration, so no client exists.
+    RegistryClient,
     /// The registry or the named artifact is not currently available.
     Unavailable,
     /// The registry answered with bytes or metadata the named digest contradicts.
@@ -93,6 +95,15 @@ impl ReleaseManifestFetchError {
             kind: ReleaseManifestFetchErrorKind::TrustAnchor,
             reference: None,
             refusal: "release-manifest-artifact-ca-bundle-unreadable",
+        }
+    }
+
+    /// The bundles were readable but at least one is not usable as a trust root.
+    fn registry_client() -> Self {
+        Self {
+            kind: ReleaseManifestFetchErrorKind::RegistryClient,
+            reference: None,
+            refusal: "release-manifest-artifact-registry-client-unusable",
         }
     }
 
@@ -188,7 +199,7 @@ impl ReleaseManifestSource {
             .map_err(|_| ReleaseManifestFetchError::invalid_reference())?;
         let credentials = read_registry_credentials(registry_auth_file, base.registry())
             .map_err(|error| ReleaseManifestFetchError::credential(error.refusal()))?;
-        let client = registry_client(base.registry(), insecure_registry, Vec::new());
+        let client = registry_client(base.registry(), insecure_registry, Vec::new())?;
         Ok(Self {
             client,
             base,
@@ -229,7 +240,7 @@ impl ReleaseManifestSource {
             bundles
                 .push(std::fs::read(path).map_err(|_| ReleaseManifestFetchError::trust_anchor())?);
         }
-        self.client = registry_client(self.base.registry(), self.insecure_registry, bundles);
+        self.client = registry_client(self.base.registry(), self.insecure_registry, bundles)?;
         Ok(self)
     }
 
@@ -312,13 +323,22 @@ impl fmt::Debug for ReleaseManifestSource {
 }
 
 /// One registry client for this release repository, over these trust roots.
-fn registry_client(registry: &str, insecure_registry: bool, ca_bundles: Vec<Vec<u8>>) -> OciClient {
+///
+/// Built through `TryFrom`, not `Client::new`: that constructor answers a
+/// rejected configuration with a warning and a wholly default client, which
+/// drops the trust roots, the protocol and the timeouts and turns an unusable
+/// CA bundle into a confusing TLS failure on the first pull.
+fn registry_client(
+    registry: &str,
+    insecure_registry: bool,
+    ca_bundles: Vec<Vec<u8>>,
+) -> Result<OciClient, ReleaseManifestFetchError> {
     let protocol = if insecure_registry {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])
     } else {
         ClientProtocol::Https
     };
-    OciClient::new(ClientConfig {
+    OciClient::try_from(ClientConfig {
         protocol,
         read_timeout: Some(REGISTRY_IO_TIMEOUT),
         connect_timeout: Some(REGISTRY_IO_TIMEOUT),
@@ -331,6 +351,7 @@ fn registry_client(registry: &str, insecure_registry: bool, ca_bundles: Vec<Vec<
             .collect(),
         ..ClientConfig::default()
     })
+    .map_err(|_| ReleaseManifestFetchError::registry_client())
 }
 
 /// The mint and the mount reader share this ceiling; the puller enforces it too.

@@ -370,7 +370,7 @@ pub(super) async fn build_journey_runtime(
             REGISTRY_IO_TIMEOUT,
         )?
         .with_registry_auth_file(&inputs.registry_auth_file)?,
-    );
+    )?;
     let engine = Arc::new(
         build_engine_with_host_memory_and_compilation_cache(
             &[],

@@ -1142,7 +1142,11 @@ async fn publish_and_verify(
     // `docs/architecture/native-alignment.md#retained-wamn-implementations`
     // (`wamn-kdhw`).
     let ca_bundles = read_ca_bundles(oci_ca_paths).context("read component registry CA bundles")?;
-    let client = OciClient::new(ClientConfig {
+    // `TryFrom`, not `Client::new`: that constructor answers a rejected
+    // configuration with a warning and a wholly default client, which drops the
+    // trust roots, the protocol and the timeouts and turns an unusable CA
+    // bundle into a confusing TLS failure on the push itself.
+    let client = OciClient::try_from(ClientConfig {
         protocol,
         read_timeout: Some(REGISTRY_IO_TIMEOUT),
         connect_timeout: Some(REGISTRY_IO_TIMEOUT),
@@ -1154,7 +1158,8 @@ async fn publish_and_verify(
             })
             .collect(),
         ..ClientConfig::default()
-    });
+    })
+    .context("configure component registry push client")?;
     let auth = RegistryAuth::Basic(
         credentials.username().to_owned(),
         credentials.password().to_owned(),
@@ -1182,6 +1187,7 @@ async fn publish_and_verify(
             .context("read component registry CA bundles")?
             .with_credentials(credentials.clone());
     ComponentArtifactSource::new(source_config)
+        .context("configure published component verification client")?
         .pull_verified(component)
         .await
         .with_context(|| format!("verify published component artifact {reference}"))?;

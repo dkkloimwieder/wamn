@@ -79,11 +79,13 @@ impl ComponentArtifactSourceConfig {
     /// Pass the same paths the host passed to that call, and call it first:
     /// validation lives there, and it refuses a bundle that is unreadable or
     /// unusable as a trust root rather than starting a host that will reject
-    /// every pull. That refusal is load-bearing for this side too, because
-    /// `oci-client` builds its client through `Client::new`, which logs and
-    /// falls back to a wholly default configuration when a certificate fails to
-    /// parse — discarding the registry protocol and the timeouts along with the
-    /// trust roots, and leaving only a warning to say so.
+    /// every pull. That refusal names the exact unreadable path.
+    /// [`ComponentArtifactSource::new`] catches the rest: a bundle that reads
+    /// but does not parse is refused there, without a name. It is refused
+    /// rather than tolerated because `oci-client`'s `Client::new` answers a
+    /// rejected configuration with a wholly default client, discarding the
+    /// registry protocol and the timeouts along with the trust roots and
+    /// leaving only a warning to say so.
     ///
     /// Empty `paths` leave this source on the compiled-in roots.
     pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ComponentArtifactCaError> {
@@ -179,6 +181,8 @@ impl std::error::Error for ComponentArtifactCaError {
 pub enum ComponentArtifactFetchErrorKind {
     /// The supplied admitted digest cannot name an immutable artifact.
     InvalidReference,
+    /// `oci-client` rejected the transport configuration, so no client exists.
+    RegistryClient,
     /// The registry or named artifact is not currently available.
     Unavailable,
     /// The registry answered with bytes or metadata that contradict admission.
@@ -208,6 +212,15 @@ impl ComponentArtifactFetchError {
             kind: ComponentArtifactFetchErrorKind::InvalidReference,
             reference: None,
             refusal: "component-artifact-digest-invalid",
+        }
+    }
+
+    /// The bundles were readable but at least one is not usable as a trust root.
+    fn registry_client() -> Self {
+        Self {
+            kind: ComponentArtifactFetchErrorKind::RegistryClient,
+            reference: None,
+            refusal: "component-artifact-registry-client-unusable",
         }
     }
 
@@ -288,13 +301,20 @@ struct RegistrySource {
 
 impl ComponentArtifactSource {
     /// Construct a source from explicit validated transport configuration.
-    pub fn new(config: ComponentArtifactSourceConfig) -> Self {
+    ///
+    /// Built through `TryFrom`, not `Client::new`: that constructor answers a
+    /// rejected configuration with a warning and a wholly default client, which
+    /// drops the trust roots, the protocol and the timeouts and turns an
+    /// unusable CA bundle into a confusing TLS failure on the first pull.
+    pub fn new(
+        config: ComponentArtifactSourceConfig,
+    ) -> Result<Self, ComponentArtifactFetchError> {
         let protocol = if config.insecure_registry {
             ClientProtocol::HttpsExcept(vec![config.base.registry().to_owned()])
         } else {
             ClientProtocol::Https
         };
-        let client = OciClient::new(ClientConfig {
+        let client = OciClient::try_from(ClientConfig {
             protocol,
             read_timeout: Some(config.fetch_timeout),
             connect_timeout: Some(config.fetch_timeout),
@@ -307,8 +327,9 @@ impl ComponentArtifactSource {
                 })
                 .collect(),
             ..ClientConfig::default()
-        });
-        Self {
+        })
+        .map_err(|_| ComponentArtifactFetchError::registry_client())?;
+        Ok(Self {
             source: ArtifactSource::Registry(RegistrySource {
                 client,
                 base: config.base,
@@ -321,7 +342,7 @@ impl ComponentArtifactSource {
                         )
                     }),
             }),
-        }
+        })
     }
 
     /// Read digest-addressed local files through the same component validation.
@@ -855,7 +876,7 @@ mod tests {
             Duration::from_millis(1),
         )
         .expect("source config validates");
-        let source = ComponentArtifactSource::new(config);
+        let source = ComponentArtifactSource::new(config).expect("registry client builds");
         let mut component = admitted(b"component-bytes");
         component.component_digest = "not-a-digest-containing-private-context".to_owned();
 

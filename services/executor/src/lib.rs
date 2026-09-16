@@ -475,7 +475,8 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     .context("load component registry pull credential")?
     .with_ca_paths(&args.oci_ca_paths)
     .context("trust the configured OCI CA bundles for component pulls")?;
-    let source = ComponentArtifactSource::new(source_config);
+    let source = ComponentArtifactSource::new(source_config)
+        .context("configure the component artifact registry client")?;
     let engine = Arc::new(build_engine_with_host_memory(&[], host_memory(&args)?)?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let driver = Arc::new(RouterDriver::new(
