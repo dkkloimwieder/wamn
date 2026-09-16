@@ -441,6 +441,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
             &"wamn-db-rl0--app--dev",
             &None::<&str>,
             &INSTANCE,
+            &false,
         ],
     )
     .await
