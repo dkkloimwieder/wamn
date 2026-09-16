@@ -277,7 +277,8 @@ fn run_state_live() {
     let release = release_caller_sql();
     let terminalize = terminalize_sql();
     // D2b: the two transitions take their instant from the caller. This test
-    // picks the instants, so the stored stamps are exact and reproducible.
+    // picks the instants, so the stored stamps are exact and reproducible. A
+    // server clock could not produce either literal, which is the proof.
     let released_at = "2024-03-04 05:06:07.000008+00";
     let terminal_at = "2024-03-04 05:06:09.000010+00";
 
@@ -1043,7 +1044,7 @@ fn run_state_live() {
            EXECUTE $statement${}$statement$ INTO STRICT reaped \
              USING 'reap-exhausted'::text, \
                    '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::text, \
-                   'sha256:reaped'::text; \
+                   'sha256:reaped'::text,'{terminal_at}'::timestamptz; \
            ASSERT candidate_count = 1, \
                   'the janitor locked no crash-budget-exhausted candidate'; \
            ASSERT reap_candidate.run_id = 'reap-exhausted', \

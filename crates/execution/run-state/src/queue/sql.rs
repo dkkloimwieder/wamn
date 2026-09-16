@@ -222,10 +222,14 @@ pub fn renew_production_lease_sql() -> String {
 
 /// Store exact effect uncertainty and dequeue without granting execution.
 ///
-/// Params: run id, exact flat body JSON, RFC 8785 body hash. An attached,
-/// unreleased caller stores HTTP 500; caller adapters map this fixed persisted
-/// identity to HTTP 502. Callerless fields remain NULL and a released winner is
-/// preserved exactly.
+/// Params: run id, exact flat body JSON, RFC 8785 body hash, terminal instant.
+/// An attached, unreleased caller stores HTTP 500; caller adapters map this
+/// fixed persisted identity to HTTP 502. Callerless fields remain NULL and a
+/// released winner is preserved exactly.
+///
+/// The caller supplies the instant (D2b). Both stamps here, `caller_released_at`
+/// and `updated_at`, take it. The eligibility test beside them stays
+/// `caller_released_at IS NULL`, so no comparison leaves the server.
 pub fn terminalize_effect_uncertain_claim_sql() -> String {
     format!(
         "WITH updated AS ( \
@@ -247,9 +251,9 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
                         WHEN {unreleased_attached} THEN $3 \
                         ELSE r.caller_outcome_hash END, \
                     caller_released_at = CASE \
-                        WHEN {unreleased_attached} THEN now() \
+                        WHEN {unreleased_attached} THEN $4::timestamptz \
                         ELSE r.caller_released_at END, \
-                    updated_at = now() \
+                    updated_at = $4::timestamptz \
               WHERE r.tenant_id = current_setting('app.tenant', true) \
                 AND r.run_id = $1 \
               RETURNING r.tenant_id, r.run_id, r.status \
@@ -305,11 +309,16 @@ pub fn select_exhausted_production_sql() -> String {
 
 /// Mark one already locked, effect-free exhausted run and dequeue it.
 ///
-/// Params: run id, exact generic failure JSON, RFC 8785 body hash. Caller
-/// outcome compare-and-set semantics match claim refusals: callerless fields
-/// stay NULL and an existing released winner is preserved byte-for-byte. A
-/// component-era management run stores the same truthful failure as its result
-/// because it has no durable caller row for reconciliation to observe.
+/// Params: run id, exact generic failure JSON, RFC 8785 body hash, terminal
+/// instant. Caller outcome compare-and-set semantics match claim refusals:
+/// callerless fields stay NULL and an existing released winner is preserved
+/// byte-for-byte. A component-era management run stores the same truthful
+/// failure as its result because it has no durable caller row for
+/// reconciliation to observe.
+///
+/// The caller supplies the instant (D2b). Both stamps here, `caller_released_at`
+/// and `updated_at`, take it. The status test beside them stays a literal
+/// comparison, so no comparison leaves the server.
 pub fn terminalize_exhausted_production_sql() -> String {
     format!(
         "WITH updated AS ( \
@@ -334,9 +343,9 @@ pub fn terminalize_exhausted_production_sql() -> String {
                     WHEN {unreleased_attached} THEN $3 \
                     ELSE r.caller_outcome_hash END, \
                 caller_released_at = CASE \
-                    WHEN {unreleased_attached} THEN now() \
+                    WHEN {unreleased_attached} THEN $4::timestamptz \
                     ELSE r.caller_released_at END, \
-                updated_at = now() \
+                updated_at = $4::timestamptz \
            WHERE r.tenant_id = current_setting('app.tenant', true) \
              AND r.run_id = $1 \
              AND r.status IN ('{dispatched}', '{running}') \

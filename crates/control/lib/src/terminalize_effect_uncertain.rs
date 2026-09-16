@@ -1,5 +1,7 @@
 //! Project-admin terminalization of one effect-uncertain run.
 
+use std::time::SystemTime;
+
 use anyhow::{Context as _, bail};
 use tokio_postgres::{Client, NoTls, Transaction, error::SqlState};
 use wamn_run_state::operator_action::{
@@ -252,10 +254,12 @@ async fn terminalize_in_transaction(
             ],
         )
         .await?;
+    // D2b: this host owns the instant the operator terminalization stamps.
+    let terminalized_at = SystemTime::now();
     let updated = transaction
         .execute(
             terminalize_operator_run_sql(),
-            &[&request.tenant, &request.run],
+            &[&request.tenant, &request.run, &terminalized_at],
         )
         .await?;
     if updated != 1 {

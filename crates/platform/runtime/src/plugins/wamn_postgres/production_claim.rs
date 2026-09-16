@@ -1373,8 +1373,13 @@ async fn reap_in_transaction(
         .prepare_cached(&terminalize_sql)
         .await
         .map_err(|error| storage("prepare exhausted terminalization", &error))?;
+    // D2b: this host owns the instant the reap stamps.
+    let reaped_at = SystemTime::now();
     let row = connection
-        .query_opt(&terminalize, &[&selected.run_id, &body, &body_hash])
+        .query_opt(
+            &terminalize,
+            &[&selected.run_id, &body, &body_hash, &reaped_at],
+        )
         .await
         .map_err(|error| storage("terminalize exhausted run", &error))?
         .ok_or_else(|| {
@@ -1444,8 +1449,10 @@ async fn terminalize_effect_uncertain(
         .prepare_cached(&sql)
         .await
         .map_err(|error| storage("prepare effect-uncertain terminalization", &error))?;
+    // D2b: this host owns the instant the effect-uncertain hand-off stamps.
+    let uncertain_at = SystemTime::now();
     let row = connection
-        .query_opt(&statement, &[&selected.run_id, &body, &hash])
+        .query_opt(&statement, &[&selected.run_id, &body, &hash, &uncertain_at])
         .await
         .map_err(|error| storage("terminalize effect uncertainty", &error))?
         .ok_or_else(|| {

@@ -373,6 +373,45 @@ fn janitor_excludes_effect_attempts() {
     assert!(!select.contains("partition_policy"));
 }
 
+/// D2b, and the line the owner drew through it: a STAMP takes the instant from
+/// the caller, a COMPARISON keeps the server clock.
+///
+/// The split is authority, not taste. A caller-supplied instant inside a lease
+/// or visibility test would let a worker decide whether its own lease had
+/// expired, which moves that decision out of the database. So the two queue
+/// terminalizations lose `now()` from every column they write, and the claim,
+/// renewal, and wake predicates keep it.
+#[test]
+fn queue_stamps_take_the_caller_instant_and_comparisons_keep_the_server_clock() {
+    for sql in [
+        terminalize_effect_uncertain_claim_sql(),
+        terminalize_exhausted_production_sql(),
+    ] {
+        assert!(sql.contains("caller_released_at = CASE"), "{sql}");
+        assert!(sql.contains("THEN $4::timestamptz"), "{sql}");
+        assert!(sql.contains("updated_at = $4::timestamptz"), "{sql}");
+        assert!(!sql.contains("now()"), "{sql}");
+        assert!(!sql.contains("statement_timestamp()"), "{sql}");
+    }
+
+    // The comparisons the ruling protects. Each is a read, not a write.
+    let claim = select_production_claim_sql();
+    assert!(claim.contains("q.available_at <= now()"), "{claim}");
+    assert!(claim.contains("q.lease_expires_at <= now()"), "{claim}");
+    let grant = grant_production_claim_sql();
+    assert!(
+        grant.contains("lease_expires_at = statement_timestamp()"),
+        "{grant}"
+    );
+    let renew = renew_production_lease_sql();
+    assert!(
+        renew.contains("q.lease_expires_at > statement_timestamp()"),
+        "{renew}"
+    );
+    let wake = parked_due_sql(32);
+    assert!(wake.contains("q.available_at <= now()"), "{wake}");
+}
+
 #[test]
 fn dispatcher_reconciliation_mirrors_claim_eligibility_and_order() {
     let wake = parked_due_sql(100);

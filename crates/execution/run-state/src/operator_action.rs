@@ -142,11 +142,15 @@ pub fn insert_operator_action_sql() -> &'static str {
 }
 
 /// Terminalize the run without rewriting its evidence or caller outcome.
+///
+/// Params: tenant id, run id, terminal instant. The caller supplies the instant
+/// (D2b). The two tests beside the stamp compare status literals, so no
+/// comparison leaves the server.
 pub fn terminalize_operator_run_sql() -> &'static str {
     "UPDATE runs \
         SET status = 'failed', \
             terminal_reason = 'operator-terminalized-effect-uncertain', \
-            updated_at = now() \
+            updated_at = $3::timestamptz \
       WHERE tenant_id = $1 AND run_id = $2 \
         AND status = 'effect-uncertain' AND fail_kind = 'effect-uncertain'"
 }
@@ -229,5 +233,13 @@ mod tests {
         ] {
             assert!(!run.contains(preserved), "run update rewrites {preserved}");
         }
+    }
+
+    /// D2b: the operator terminalization stamps an instant the caller supplies.
+    #[test]
+    fn operator_terminalization_takes_the_instant_from_the_caller() {
+        let run = terminalize_operator_run_sql();
+        assert!(run.contains("updated_at = $3::timestamptz"), "{run}");
+        assert!(!run.contains("now()"), "{run}");
     }
 }
