@@ -10,6 +10,7 @@ license.workspace = true
 default = []
 ops = [
     "dep:wamn-event-wire",
+    "wamn-control/ops",
     "wamn-control-provision/ops",
 ]
 

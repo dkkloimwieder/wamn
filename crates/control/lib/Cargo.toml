@@ -5,10 +5,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# The operational verbs that ship in the separate `wamn-ctl-ops` binary.
+ops = ["wamn-control-provision/ops"]
+
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 chrono = { workspace = true, features = ["clock"] }
+clap = { workspace = true, features = ["derive", "env"] }
 hex = { workspace = true }
 oci-client = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }

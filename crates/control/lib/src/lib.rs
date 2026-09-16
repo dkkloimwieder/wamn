@@ -17,6 +17,10 @@ pub mod pat_client;
 pub mod project_env_membership;
 pub mod promote;
 pub mod provision_project_env;
+#[cfg(feature = "ops")]
+pub mod prune_record_history;
+#[cfg(feature = "ops")]
+pub mod prune_run_history;
 pub mod publish_release;
 pub mod push_component;
 pub mod reconcile_package_data_access;

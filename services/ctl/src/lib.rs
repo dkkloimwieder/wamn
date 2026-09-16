@@ -27,9 +27,9 @@ pub mod print_release_env;
 pub mod provision_org;
 pub mod provisioning_verbs;
 #[cfg(feature = "ops")]
-pub mod prune_record_history;
+pub use wamn_control::prune_record_history;
 #[cfg(feature = "ops")]
-pub mod prune_run_history;
+pub use wamn_control::prune_run_history;
 pub mod push_release_manifest;
 pub mod release_verbs;
 #[cfg(feature = "ops")]
