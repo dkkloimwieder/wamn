@@ -10,6 +10,12 @@ default = []
 # The operational verbs that ship in the separate `wamn-ctl-ops` binary.
 ops = ["dep:wamn-event-wire", "wamn-control-provision/ops"]
 
+# `create_human` is an `ops` verb, so its live test needs the feature.
+[[test]]
+name = "create_human_live"
+path = "tests/create_human_live.rs"
+required-features = ["ops"]
+
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
