@@ -425,24 +425,30 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         Some(postgres_credentials),
     )?);
     postgres.register_pool_metrics();
-    postgres.bind_session_claims(
-        QUEUE_CLAIM_SCOPE,
-        &SessionClaims {
-            tenant: scope.tenant_id.clone(),
-            project: Some(args.project.clone()),
-            schema: args.schema.clone(),
-            runner: Some(owner.clone()),
-            role: None,
-            // Queue claims, renewals and completions run as wamn:executor,
-            // outside a registered operation.
-            user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
-            operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
-            release: Some(ReleaseIdentity {
-                effective_release_id: release.release().effective_release_id,
-                manifest_digest: release.release().manifest_digest.clone(),
-            }),
-        },
-    )?;
+    // The bind reads `wamn:executor`'s own `app_system.users` row in the tenant
+    // and refuses to start when the row is missing (`wamn-0h0g.9.19`). The
+    // queue scope holds that binding for the life of the process, so the read
+    // happens once here.
+    postgres
+        .bind_session_claims(
+            QUEUE_CLAIM_SCOPE,
+            &SessionClaims {
+                tenant: scope.tenant_id.clone(),
+                project: Some(args.project.clone()),
+                schema: args.schema.clone(),
+                runner: Some(owner.clone()),
+                role: None,
+                // Queue claims, renewals and completions run as wamn:executor,
+                // outside a registered operation.
+                user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
+                operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
+                release: Some(ReleaseIdentity {
+                    effective_release_id: release.release().effective_release_id,
+                    manifest_digest: release.release().manifest_digest.clone(),
+                }),
+            },
+        )
+        .await?;
     let credentials = Arc::new(match &args.credentials_file {
         Some(path) => WamnCredentials::from_file(path)?,
         None => WamnCredentials::empty(),
