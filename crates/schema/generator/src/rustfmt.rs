@@ -13,6 +13,12 @@ use std::process::{Command, Stdio};
 /// The style the emitted Rust is formatted in. Every workspace here is edition
 /// 2024, which selects the 2024 style edition, so `cargo fmt` over the tree
 /// produces these same bytes.
+///
+/// The repository has no `rustfmt.toml`, so the crate edition alone sets the
+/// style and this one flag is the whole configuration. Anyone who adds a
+/// `rustfmt.toml` must make this flag agree with it: a `style_edition` there is
+/// not guaranteed to format the same as the edition default, and a difference
+/// would split what the generator writes from what `cargo fmt` produces.
 const EDITION: &str = "2024";
 
 /// Format one emitted Rust source file.
