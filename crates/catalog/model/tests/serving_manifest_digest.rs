@@ -408,9 +408,17 @@ fn add_operation_import(
 fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them() {
     // The platform interface is exported by an application component under the
     // application's own package id, the shape a published manifest carries.
-    for (package, export, version) in [
-        ("orders", "wamn:node/handler@0.1.0", "0.1.0"),
-        ("provider", "provider:entry/run@1.0.0", "1.0.0"),
+    //
+    // Only the second entry reaches the import half, and the asymmetry is the
+    // point rather than an omission. An import names its provider through a
+    // dependency operation token, and
+    // `validate_canonical_operation_for_package` requires that token to carry
+    // its dependency package's own id. No application package may be `wamn`, so
+    // no publisher can mint an import of `wamn:node/handler@0.1.0`. Asserting a
+    // refusal on it would pin a path production cannot reach.
+    for (package, export, version, importable) in [
+        ("orders", "wamn:node/handler@0.1.0", "0.1.0", false),
+        ("provider", "provider:entry/run@1.0.0", "1.0.0", true),
     ] {
         let mut candidate = operation_provider_manifest(package, export, version);
         let mut other = candidate
@@ -430,6 +438,10 @@ fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them()
         let (admitted, _) = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
             .expect("the host can address duplicate export-only interfaces directly");
         assert_eq!(admitted, candidate);
+
+        if !importable {
+            continue;
+        }
 
         add_operation_import(&mut candidate, package, export, version);
         let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
