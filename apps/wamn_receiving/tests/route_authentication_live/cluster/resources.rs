@@ -43,13 +43,13 @@ pub(super) struct Resources {
 pub(super) async fn prepare(
     repository: &Path,
     evidence: &Path,
-    standard_images: bool,
+    gates_image: bool,
     session_host: bool,
 ) -> anyhow::Result<Resources> {
     let candidate = super::super::delivery::candidate()?;
     if let Some((candidate, _)) = &candidate {
         ensure!(
-            !standard_images || candidate.gates_image.is_some(),
+            !gates_image || candidate.gates_image.is_some(),
             "this Receiving case requires a supplied gates image"
         );
         ensure!(
@@ -119,7 +119,7 @@ pub(super) async fn prepare(
                 .map(super::super::delivery::image_reference)
                 .transpose()?
         } else {
-            standard_images.then(|| format!("wamn-gates:{name}"))
+            gates_image.then(|| format!("wamn-gates:{name}"))
         },
         identity_image: if let Some((candidate, _)) = &candidate {
             candidate
@@ -189,14 +189,13 @@ pub(super) async fn prepare_files(cluster: &Resources) -> anyhow::Result<String>
     Ok(password)
 }
 
-pub(super) async fn build_images(
-    cluster: &mut Resources,
-    standard_images: bool,
-) -> anyhow::Result<()> {
+pub(super) async fn build_images(cluster: &mut Resources) -> anyhow::Result<()> {
     if cluster.candidate.is_some() {
         return Ok(());
     }
     cluster.owned = true;
+    // Every case builds the host image from the repository Dockerfile, and
+    // only a case that uses the gates image builds it (wamn-szr0).
     record_build(
         &cluster.evidence,
         "build-images",
@@ -208,7 +207,8 @@ pub(super) async fn build_images(
             .arg(&cluster.repository)
             .arg(&cluster.source)
             .arg(&cluster.name)
-            .arg(if standard_images { "standard" } else { "local" }),
+            .arg("host")
+            .args(cluster.gates_image.is_some().then_some("gates")),
     )
     .await?;
     if cluster.identity_image.is_some() {

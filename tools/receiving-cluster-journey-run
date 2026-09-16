@@ -13,17 +13,12 @@ case "$action" in
   images) docker image ls --format '{{json .Repository}} {{json .Tag}}' ;;
   prepare-registry) docker run --rm -i --entrypoint htpasswd httpd:2-alpine -Bni "${3:?username}" ;;
   build-images)
-    work=${3:?work directory}; repository=${4:?repository}; source=${5:?source}; tag=${6:?tag}; kind=${7:?build kind}
-    if [[ $kind == standard ]]; then
-      # An image of this source is reused when one exists, and relabeled to the
-      # run's own tag. Only the identity image survives the run (wamn-szr0).
-      for target in host gates; do
-        "$cache" ensure "$repository" "$target" "$target" "$source" "$tag" "$cluster"
-      done
-    else
-      docker build --platform=linux/amd64 --provenance=false --file "$work/host-image/Dockerfile" \
-        --tag "wamn-host:$tag" "$work/host-image"
-    fi
+    repository=${4:?repository}; source=${5:?source}; tag=${6:?tag}; shift 6
+    # An image of this source is reused when one exists, and relabeled to the
+    # run's own tag. Only the identity image survives the run (wamn-szr0).
+    for target in "$@"; do
+      "$cache" ensure "$repository" "$target" "$target" "$source" "$tag" "$cluster"
+    done
     ;;
   build-identity)
     repository=${3:?repository}; source=${4:?source}; tag=${5:?tag}

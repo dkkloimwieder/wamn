@@ -23,7 +23,6 @@ pub(super) struct Artifacts {
 pub(super) async fn components_and_tools(
     repository: &Path,
     evidence: &Path,
-    standard_images: bool,
 ) -> anyhow::Result<Artifacts> {
     let candidate = wamn_control::delivery::Candidate::from_env()?;
     let target = candidate
@@ -51,17 +50,6 @@ pub(super) async fn components_and_tools(
             &evidence.join("build-components.log"),
         )
         .await?;
-        if !standard_images {
-            let mut host = Command::new("cargo");
-            host.args(["build", "--locked", "--release", "-p", "wamn-host"]);
-            run_build(
-                &mut host,
-                repository,
-                &target,
-                &evidence.join("build-host.log"),
-            )
-            .await?;
-        }
         let mut tools = Command::new("cargo");
         tools.args([
             "build",
@@ -136,32 +124,6 @@ pub(super) async fn components_and_tools(
     }
     fs::write(evidence.join("component-bytes.sha256"), component_hashes)?;
     Ok(artifacts)
-}
-
-pub(super) fn prepare_host_image(work: &Path, target: &Path, source: &str) -> anyhow::Result<()> {
-    let directory = work.join("host-image");
-    fs::create_dir(&directory)?;
-    fs::copy(
-        target.join("release/wamn-host"),
-        directory.join("wamn-host"),
-    )?;
-    fs::set_permissions(
-        directory.join("wamn-host"),
-        fs::Permissions::from_mode(0o755),
-    )?;
-    fs::write(
-        directory.join("Dockerfile"),
-        format!(
-            "FROM debian:trixie-slim\n\
-         RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \\\n\
-          && rm -rf /var/lib/apt/lists/*\n\
-         COPY wamn-host /usr/local/bin/wamn-host\n\
-         ENV HOME=/tmp\n\
-         LABEL wamn.dev/source-head=\"{source}\" wamn.dev/build-profile=\"release\"\n\
-         ENTRYPOINT [\"/usr/local/bin/wamn-host\"]\n"
-        ),
-    )?;
-    Ok(())
 }
 
 async fn run_build(

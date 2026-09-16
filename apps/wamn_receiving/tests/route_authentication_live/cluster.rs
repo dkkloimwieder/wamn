@@ -56,14 +56,12 @@ struct ReceivingCluster {
 
 async fn start(
     evidence: &Path,
-    standard_images: bool,
+    gates_image: bool,
     session_host: bool,
 ) -> anyhow::Result<ReceivingCluster> {
     let repository = repository_root()?;
-    let mut cluster =
-        resources::prepare(&repository, evidence, standard_images, session_host).await?;
-    let artifacts =
-        build::components_and_tools(&repository, &cluster.evidence, standard_images).await?;
+    let mut cluster = resources::prepare(&repository, evidence, gates_image, session_host).await?;
+    let artifacts = build::components_and_tools(&repository, &cluster.evidence).await?;
     let registry_password = resources::prepare_files(&cluster).await?;
     let scope = Triple::new(ORG, PROJECT, ENVIRONMENT);
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
@@ -77,10 +75,7 @@ async fn start(
         &advisory,
         &consumers,
     )?;
-    if !standard_images && cluster.candidate.is_none() {
-        build::prepare_host_image(&cluster.work, &artifacts.target, &cluster.source)?;
-    }
-    resources::build_images(&mut cluster, standard_images).await?;
+    resources::build_images(&mut cluster).await?;
     resources::create(&mut cluster).await?;
     checked(kubectl(&cluster).args([
         "wait",
