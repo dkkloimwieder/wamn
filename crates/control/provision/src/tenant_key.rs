@@ -97,12 +97,11 @@ pub fn current_tenant_key_pattern() -> String {
 /// Owner the bootstrap rendering gives the schema and both functions.
 ///
 /// `CURRENT_USER`, not the named platform role. The static DDL files that carry
-/// this bootstrap already declare `AUTHORIZATION postgres` or `AUTHORIZATION
-/// CURRENT_USER`, and naming a role that may not exist would add a new
-/// precondition to every applier — seven live gates plus the production path in
-/// `services/ctl`. The applier IS the platform role in every real deployment,
-/// so `CURRENT_USER` satisfies the ownership rider without inventing a
-/// requirement.
+/// this bootstrap already declare `AUTHORIZATION CURRENT_USER`, and naming a
+/// role that may not exist would add a new precondition to every applier —
+/// seven live gates plus the production path in `services/ctl`. The applier IS
+/// the platform role in every real deployment, so `CURRENT_USER` satisfies the
+/// ownership rider without inventing a requirement.
 const BOOTSTRAP_OWNER: &str = "CURRENT_USER";
 
 /// Placeholder the bootstrap rendering substitutes with the quoted database name.
