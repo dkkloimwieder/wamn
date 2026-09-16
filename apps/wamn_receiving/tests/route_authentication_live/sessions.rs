@@ -127,6 +127,7 @@ pub(super) async fn prepare_session_host_fixture(
     let human = create_human(
         admin.as_ref(),
         "session-host@example.test",
+        "session-host@example.test",
         "Session host test",
     )
     .await?;
@@ -428,6 +429,7 @@ pub(super) async fn assert_nested_session(
 
     let human = create_human(
         admin.as_ref(),
+        "session-nested@example.test",
         "session-nested@example.test",
         "Nested session test",
     )

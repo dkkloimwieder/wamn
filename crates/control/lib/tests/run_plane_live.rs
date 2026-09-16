@@ -193,24 +193,39 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
        VALUES ('0.1', 'example.invalid'); \
      CREATE TABLE identity.principals ( \
        id uuid PRIMARY KEY, kind text NOT NULL, subject text NOT NULL, \
-       display_name text NOT NULL, status text NOT NULL DEFAULT 'active'); \
+       email text, display_name text NOT NULL, \
+       status text NOT NULL DEFAULT 'active'); \
      CREATE TABLE identity.project_roles ( \
        principal_id uuid NOT NULL REFERENCES identity.principals (id), \
        org text NOT NULL, project text NOT NULL, role text NOT NULL, \
        PRIMARY KEY (principal_id, org, project, role)); \
-     INSERT INTO identity.principals (id, kind, subject, display_name) VALUES \
+     CREATE TABLE identity.project_env_memberships ( \
+       principal_id uuid NOT NULL REFERENCES identity.principals (id), \
+       org text NOT NULL, project text NOT NULL, env text NOT NULL, \
+       PRIMARY KEY (principal_id, org, project, env)); \
+     INSERT INTO identity.principals (id, kind, subject, email, display_name) VALUES \
        ('11111111-1111-4111-8111-111111111111', 'service', \
-        'wamn-management-author-acme--billing--dev', \
+        'wamn-management-author-acme--billing--dev', NULL, \
         'WAMN management author acme/billing/dev'), \
        ('22222222-2222-4222-8222-222222222222', 'human', \
-        'person@example.invalid', 'A person'); \
+        'person@example.invalid', 'person@example.invalid', 'A person'), \
+       ('33333333-3333-4333-8333-333333333333', 'human', \
+        'other-env@example.invalid', 'other-env@example.invalid', \
+        'A person in another environment'); \
      INSERT INTO identity.project_roles (principal_id, org, project, role) VALUES \
        ('11111111-1111-4111-8111-111111111111', 'acme', 'billing', 'project-author'), \
-       ('22222222-2222-4222-8222-222222222222', 'acme', 'billing', 'project-author'); \
+       ('22222222-2222-4222-8222-222222222222', 'acme', 'billing', 'project-author'), \
+       ('33333333-3333-4333-8333-333333333333', 'acme', 'billing', 'project-author'); \
+     INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES \
+       ('22222222-2222-4222-8222-222222222222', 'acme', 'billing', 'dev'), \
+       ('33333333-3333-4333-8333-333333333333', 'acme', 'billing', 'prod'); \
      RESET ROLE";
 
 /// The one service principal the fixture gives project `acme/billing`.
 const FIXTURE_SERVICE_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+/// The one human the fixture admits to `acme/billing/dev` (`wamn-0h0g.9.18`).
+const FIXTURE_PERSON_ID: &str = "22222222-2222-4222-8222-222222222222";
 
 async fn seed_pre_durability_system_env_policy(su: &Client) {
     su.batch_execute(
@@ -253,8 +268,11 @@ async fn seed_pre_durability_system_env_policy(su: &Client) {
 /// hand. Every row is written as `wamn:provisioning`, and the
 /// `wamn:provisioning` row stamps itself.
 ///
-/// The fixture's human principal holds the same project role as its service
-/// principal and gets NO row: person rows are `wamn-0h0g.9.18`.
+/// The fixture's first human holds a membership in `acme/billing/dev` and gets
+/// a person row carrying its own `identity.principals.email`
+/// (`wamn-0h0g.9.18`). The second human holds the same project role but its
+/// membership names `prod`, so this tenant gives it NO row: the membership
+/// admits a person, and it admits one environment.
 ///
 /// Called after each apply in this leg, so a second run writing a second time
 /// fails here.
@@ -299,6 +317,12 @@ async fn tenant_identity_leg(su: &Client) {
                 provisioning.to_string(),
             ),
             (
+                FIXTURE_PERSON_ID.to_string(),
+                "person".to_string(),
+                "person@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
+            (
                 provisioning.to_string(),
                 "platform".to_string(),
                 "provisioning@example.invalid".to_string(),
@@ -311,8 +335,21 @@ async fn tenant_identity_leg(su: &Client) {
                 provisioning.to_string(),
             ),
         ],
-        "the tenant carries its five platform rows and one service row, each stamped by \
-         wamn:provisioning, and no person row",
+        "the tenant carries its five platform rows, one service row and one person row, each \
+         stamped by wamn:provisioning, and no row for the member of another environment",
+    );
+    let person_display_name: String = su
+        .query_one(
+            "SELECT display_name FROM app_system.users \
+              WHERE tenant_id = 't1' AND id = $1::text::uuid",
+            &[&FIXTURE_PERSON_ID],
+        )
+        .await
+        .expect("read the person row display name")
+        .get(0);
+    assert_eq!(
+        person_display_name, "A person",
+        "a person row carries the display name of its identity.principals row",
     );
 }
 

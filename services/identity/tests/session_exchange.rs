@@ -145,12 +145,22 @@ async fn session_exchange_uses_fresh_scoped_authority_without_session_state() {
 async fn exercise(fixture: &Fixture, https: &Https) {
     let system = &fixture.system.client;
     let dev = &fixture.environments[0].client;
-    let alice = create_human(system, "session-alice", "Session Alice")
-        .await
-        .expect_redacted("human fixture");
-    let bob = create_human(system, "session-bob", "Session Bob")
-        .await
-        .expect_redacted("other human fixture");
+    let alice = create_human(
+        system,
+        "session-alice",
+        "session-alice@example.invalid",
+        "Session Alice",
+    )
+    .await
+    .expect_redacted("human fixture");
+    let bob = create_human(
+        system,
+        "session-bob",
+        "session-bob@example.invalid",
+        "Session Bob",
+    )
+    .await
+    .expect_redacted("other human fixture");
     let service = create_service(system, "session-machine", "Session Machine")
         .await
         .expect_redacted("service fixture");

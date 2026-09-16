@@ -965,7 +965,7 @@ async fn admitted_human(
     project: &str,
     role: &str,
 ) -> anyhow::Result<IssuedPat> {
-    let principal = create_human(admin, subject, subject).await?;
+    let principal = create_human(admin, subject, subject, subject).await?;
     assign_project_role(admin, principal.id(), ORG, project, role).await?;
     issue_pat(admin, principal.id(), "gate", TTL)
         .await
@@ -1338,9 +1338,14 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     )
     .await
     .expect("admit the stranger elsewhere");
-    let roleless = create_human(&admin, "roleless@example.com", "Roleless")
-        .await
-        .expect("create a roleless principal");
+    let roleless = create_human(
+        &admin,
+        "roleless@example.com",
+        "roleless@example.com",
+        "Roleless",
+    )
+    .await
+    .expect("create a roleless principal");
     let roleless_token = issue_pat(&admin, roleless.id(), "gate", TTL)
         .await
         .expect("mint a roleless token");

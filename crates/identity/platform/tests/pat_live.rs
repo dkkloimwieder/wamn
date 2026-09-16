@@ -46,9 +46,14 @@ async fn platform_pat_round_trip_on_postgres() {
 
     // Issuance binds wamn:provisioning in its own transaction.
     let transaction = provisioning_transaction(&mut client).await;
-    let human = create_human(&transaction, "author@example.com", "Receiving Author")
-        .await
-        .expect("create human principal");
+    let human = create_human(
+        &transaction,
+        "author@example.com",
+        "author@example.com",
+        "Receiving Author",
+    )
+    .await
+    .expect("create human principal");
     let issued = issue_pat(&transaction, human.id(), " laptop ", TTL)
         .await
         .expect("issue human token from trusted context");

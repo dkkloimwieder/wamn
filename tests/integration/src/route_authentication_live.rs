@@ -358,8 +358,20 @@ async fn assert_human_environment_membership(
     route_auth: &FlowHttpRouting,
     loaded_release: &LoadedRelease,
 ) -> anyhow::Result<()> {
-    let human = create_human(admin, "member@example.test", "Environment member").await?;
-    let other = create_human(admin, "other@example.test", "Other member").await?;
+    let human = create_human(
+        admin,
+        "member@example.test",
+        "member@example.test",
+        "Environment member",
+    )
+    .await?;
+    let other = create_human(
+        admin,
+        "other@example.test",
+        "other@example.test",
+        "Other member",
+    )
+    .await?;
     let token = issue_pat(
         admin,
         human.id(),

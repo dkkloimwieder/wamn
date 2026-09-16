@@ -234,11 +234,21 @@ CREATE TABLE registry.projects (
 -- The subject pattern refuses a colon on another kind. PostgreSQL has no
 -- UUIDv5, so a Rust test compares the literal with the derivation. A platform
 -- principal cannot authenticate.
+--
+-- `email` is the deliverable address of a human. `reconcile-run-plane` copies
+-- it into the `app_system.users` person row of every tenant the human can write
+-- in (wamn-0h0g.9.18). Only a human carries one: `principals_email_check`
+-- refuses an email on another kind and refuses a human without one. `subject`
+-- is email-shaped by its own CHECK, but it is an authentication token, so
+-- nothing reads it as an address. A service and a platform row take
+-- `<subject>@<platform-domain>` in the tenant, built from
+-- `registry.meta.platform_domain`, so neither needs a column here.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principals (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     kind         text NOT NULL,
     subject      text NOT NULL,
+    email        text,
     display_name text NOT NULL,
     status       text NOT NULL DEFAULT 'active',
     disabled_at  timestamptz,
@@ -254,6 +264,11 @@ CREATE TABLE identity.principals (
         CHECK (kind = 'platform'
                OR (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
                    AND char_length(subject) <= 254)),
+    CONSTRAINT principals_email_check
+        CHECK ((kind = 'human') = (email IS NOT NULL)
+               AND (email IS NULL
+                    OR (email ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+                        AND char_length(email) <= 254))),
     CONSTRAINT principals_display_name_check
         CHECK (btrim(display_name) <> '' AND char_length(display_name) <= 200),
     CONSTRAINT principals_status_check

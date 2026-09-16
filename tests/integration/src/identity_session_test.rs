@@ -389,7 +389,9 @@ async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {
         // The fixture identity is platform setup, so it writes as wamn:provisioning.
         transaction.batch_execute(&bind_platform_principal_sql(PlatformComponent::Provisioning)).await
             .map_err(|_| anyhow!("bind identity session fixture actor failed"))?;
-        let human = create_human(&transaction, &format!("session-fixture-human-{suffix}-{}", std::process::id()), "Disposable session test human").await
+        let human_subject = format!("session-fixture-human-{suffix}-{}", std::process::id());
+        let human_email = format!("{human_subject}@example.invalid");
+        let human = create_human(&transaction, &human_subject, &human_email, "Disposable session test human").await
             .map_err(|_| anyhow!("create identity session fixture human failed"))?;
         let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service").await
             .map_err(|_| anyhow!("create identity session fixture service failed"))?;

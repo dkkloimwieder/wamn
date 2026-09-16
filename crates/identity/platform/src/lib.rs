@@ -36,7 +36,7 @@ const PAT_COLUMNS: [&str; 6] = [
     "to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
 ];
 const INSERT_HUMAN_SQL: &str = "INSERT INTO identity.principals \
-    (kind, subject, display_name) VALUES ('human', $1, $2) \
+    (kind, subject, email, display_name) VALUES ('human', $1, $2, $3) \
     RETURNING id::text, kind, subject, display_name, status";
 const INSERT_SERVICE_SQL: &str = "INSERT INTO identity.principals \
     (kind, subject, display_name) VALUES ('service', $1, $2) \
@@ -483,16 +483,25 @@ impl fmt::Display for IdentityError {
 
 impl std::error::Error for IdentityError {}
 
-/// Create a passwordless human principal for an externally authenticated subject.
+/// Create a passwordless human principal for an externally authenticated
+/// subject.
+///
+/// `email` is the person's deliverable address. It is separate from `subject`,
+/// which authenticates and carries no promise of delivery.
+/// `reconcile-run-plane` copies the email into the `app_system.users` person
+/// row of every tenant this human can write in (`wamn-0h0g.9.18`), so a human
+/// principal always has one.
 pub async fn create_human(
     client: &(impl GenericClient + Sync),
     subject: &str,
+    email: &str,
     display_name: &str,
 ) -> Result<Principal, IdentityError> {
     let subject = canonical_subject(subject)?;
+    let email = checked_email(email)?;
     let display_name = checked_display_name(display_name)?;
     let row = client
-        .query_one(INSERT_HUMAN_SQL, &[&subject, &display_name])
+        .query_one(INSERT_HUMAN_SQL, &[&subject, &email, &display_name])
         .await
         .map_err(|error| database_error(&error))?;
     decode_principal(&row)
@@ -994,6 +1003,35 @@ fn canonical_subject(value: &str) -> Result<String, IdentityError> {
         ));
     }
     Ok(value)
+}
+
+/// Accept the same human email `principals_email_check` accepts: one `@`, no
+/// space on either side, a dot in the domain, and at most 254 bytes. The rule
+/// is deliberately loose, because the address is delivered to, not parsed.
+fn checked_email(value: &str) -> Result<String, IdentityError> {
+    let value = value.trim();
+    let Some((local, domain)) = value.split_once('@') else {
+        return Err(invalid_email());
+    };
+    if value.len() > MAX_SUBJECT_LEN
+        || local.is_empty()
+        || domain.is_empty()
+        || value.contains(char::is_whitespace)
+        || domain.contains('@')
+        || !domain.contains('.')
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+    {
+        return Err(invalid_email());
+    }
+    Ok(value.to_owned())
+}
+
+fn invalid_email() -> IdentityError {
+    IdentityError::new(
+        IdentityErrorKind::InvalidInput,
+        "email must be a local part, an @, and a dotted domain, in at most 254 bytes",
+    )
 }
 
 fn checked_display_name(value: &str) -> Result<String, IdentityError> {

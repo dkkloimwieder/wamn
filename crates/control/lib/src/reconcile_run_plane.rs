@@ -343,9 +343,13 @@ pub async fn reconcile_run_plane(
         .await?;
         // After the catalog schema, because app-schema.sql's stamp triggers
         // call the record-history function that composition installs.
-        let identity_source =
-            read_tenant_identity_source(&args.system_database_url, &args.org, &args.project)
-                .await?;
+        let identity_source = read_tenant_identity_source(
+            &args.system_database_url,
+            &args.org,
+            &args.project,
+            &args.env,
+        )
+        .await?;
         let tenant_identity =
             converge_tenant_identity(&mut client, &args.tenant, &identity_source, !args.dry_run)
                 .await?;
@@ -371,15 +375,29 @@ struct ServicePrincipal {
     display_name: String,
 }
 
+/// One human principal with a membership in the project environment being
+/// reconciled (`wamn-0h0g.9.18`).
+///
+/// A person carries a real address, so this holds `identity.principals.email`
+/// and never the subject, which only authenticates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PersonPrincipal {
+    id: String,
+    email: String,
+    display_name: String,
+}
+
 /// The deployment and registry facts a tenant's identity rows are built from.
 ///
-/// Both come from the system registry, never from the tenant database, so a
-/// tenant cannot name its own platform rows or invent a service principal.
+/// All of them come from the system registry, never from the tenant database,
+/// so a tenant cannot name its own platform rows, invent a service principal,
+/// or admit a person who was never granted a membership.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TenantIdentitySource {
     /// `registry.meta.platform_domain`, absent until the bootstrap sets it.
     platform_domain: Option<String>,
     services: Vec<ServicePrincipal>,
+    people: Vec<PersonPrincipal>,
 }
 
 /// Every service principal holding a role in one project, with the deployment
@@ -392,10 +410,25 @@ const TENANT_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.displa
      GROUP BY p.id, p.subject, p.display_name \
      ORDER BY p.subject";
 
+/// Every human principal that `grant-project-env-membership` admitted to ONE
+/// project environment (`wamn-0h0g.9.18`).
+///
+/// `identity.project_env_memberships` carries `org`, `project` and `env`
+/// itself, so the tenant needs no join beyond the principal that names the
+/// person. The env narrows the read: one tenant database serves one project
+/// environment, and a member of `dev` gets no row in the `prod` tenant.
+const TENANT_IDENTITY_PEOPLE_SQL: &str = "SELECT p.id::text, p.email, p.display_name \
+     FROM identity.project_env_memberships AS m \
+     JOIN identity.principals AS p ON p.id = m.principal_id \
+     WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
+       AND p.kind = 'human' AND p.status = 'active' \
+     ORDER BY p.email";
+
 async fn read_tenant_identity_source(
     system_database_url: &str,
     org: &str,
     project: &str,
+    env: &str,
 ) -> anyhow::Result<TenantIdentitySource> {
     let (client, connection) = tokio_postgres::connect(system_database_url, NoTls)
         .await
@@ -422,9 +455,21 @@ async fn read_tenant_identity_source(
                 display_name: row.get(2),
             })
             .collect();
+        let people = client
+            .query(TENANT_IDENTITY_PEOPLE_SQL, &[&org, &project, &env])
+            .await
+            .context("read the project environment's human members")?
+            .into_iter()
+            .map(|row| PersonPrincipal {
+                id: row.get(0),
+                email: row.get(1),
+                display_name: row.get(2),
+            })
+            .collect();
         Ok::<_, anyhow::Error>(TenantIdentitySource {
             platform_domain,
             services,
+            people,
         })
     }
     .await;
@@ -442,6 +487,8 @@ pub struct TenantIdentityOutcome {
     pub platform_rows_written: usize,
     /// Service rows written for principals holding a role in this project.
     pub service_rows_written: usize,
+    /// Person rows written for humans with a membership in this environment.
+    pub person_rows_written: usize,
 }
 
 /// Install the tenant's `app_system` schema and its identity rows
@@ -460,8 +507,13 @@ pub struct TenantIdentityOutcome {
 /// A service row is written for every service principal holding a role in the
 /// project. Its email is `<subject>@<platform-domain>`: a service is not a
 /// person, so it carries the deployment's own domain, like a platform row, and
-/// the subject keeps it unique inside the tenant. Person rows are not written
-/// here, and `wamn-0h0g.9.18` owns them with the operator flow that needs them.
+/// the subject keeps it unique inside the tenant.
+///
+/// A person row is written for every human that `grant-project-env-membership`
+/// admitted to this environment (`wamn-0h0g.9.18`). It carries the human's own
+/// `identity.principals.email` and display name. A new member gets the row at
+/// the next reconcile, not at the moment of the grant, because the grant flow
+/// holds no tenant connection.
 ///
 /// `apply=false` observes only and writes nothing.
 async fn converge_tenant_identity(
@@ -517,8 +569,8 @@ async fn converge_tenant_identity(
         PlatformComponent::ALL.into_iter().collect()
     };
 
-    let missing_services: Vec<&ServicePrincipal> = if app_schema_present {
-        let present: BTreeSet<String> = client
+    let present_users: BTreeSet<String> = if app_schema_present {
+        client
             .query(
                 "SELECT id::text FROM app_system.users WHERE tenant_id = $1",
                 &[&tenant_id],
@@ -527,20 +579,30 @@ async fn converge_tenant_identity(
             .context("read the tenant's users rows")?
             .into_iter()
             .map(|row| row.get::<_, String>(0))
-            .collect();
-        source
-            .services
-            .iter()
-            .filter(|service| !present.contains(&service.id))
             .collect()
     } else {
-        source.services.iter().collect()
+        BTreeSet::new()
     };
+    let missing_services: Vec<&ServicePrincipal> = source
+        .services
+        .iter()
+        .filter(|service| !present_users.contains(&service.id))
+        .collect();
+    let missing_people: Vec<&PersonPrincipal> = source
+        .people
+        .iter()
+        .filter(|person| !present_users.contains(&person.id))
+        .collect();
 
     outcome.app_schema_installed = !app_schema_present;
     outcome.platform_rows_written = missing_platform.len();
     outcome.service_rows_written = missing_services.len();
-    if !apply || (app_schema_present && missing_platform.is_empty() && missing_services.is_empty())
+    outcome.person_rows_written = missing_people.len();
+    if !apply
+        || (app_schema_present
+            && missing_platform.is_empty()
+            && missing_services.is_empty()
+            && missing_people.is_empty())
     {
         return Ok(outcome);
     }
@@ -577,13 +639,13 @@ async fn converge_tenant_identity(
         .batch_execute(&platform_rows)
         .await
         .context("write the tenant's platform principal rows")?;
-    if !missing_services.is_empty() {
+    if !missing_services.is_empty() || !missing_people.is_empty() {
         transaction
             .batch_execute(&bind_platform_principal_sql(
                 PlatformComponent::Provisioning,
             ))
             .await
-            .context("bind wamn:provisioning for the service rows")?;
+            .context("bind wamn:provisioning for the service and person rows")?;
         for service in &missing_services {
             transaction
                 .execute(
@@ -600,6 +662,16 @@ async fn converge_tenant_identity(
                 .with_context(|| {
                     format!("write the service row of principal {:?}", service.subject)
                 })?;
+        }
+        for person in &missing_people {
+            transaction
+                .execute(
+                    "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                     VALUES ($1, $2::text::uuid, 'person', $3, $4)",
+                    &[&tenant_id, &person.id, &person.email, &person.display_name],
+                )
+                .await
+                .with_context(|| format!("write the person row of principal {}", person.id))?;
         }
     }
     transaction

@@ -334,10 +334,15 @@ pub fn print_reconciled(
     if identity.app_schema_installed {
         println!("  {verb} app_system schema tenant={tenant:?}");
     }
-    if identity.platform_rows_written > 0 || identity.service_rows_written > 0 {
+    if identity.platform_rows_written > 0
+        || identity.service_rows_written > 0
+        || identity.person_rows_written > 0
+    {
         println!(
-            "  {verb} identity rows tenant={tenant:?} platform={} service={}",
-            identity.platform_rows_written, identity.service_rows_written,
+            "  {verb} identity rows tenant={tenant:?} platform={} service={} person={}",
+            identity.platform_rows_written,
+            identity.service_rows_written,
+            identity.person_rows_written,
         );
     }
 }

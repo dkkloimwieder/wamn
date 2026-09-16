@@ -201,15 +201,25 @@ async fn operator_pat_issuance_over_https() {
         )
         .await
         .expect_redacted("bind wamn:provisioning for the fixture session");
-    let human = create_human(&system, "pat-human", "PAT Human")
-        .await
-        .expect_redacted("human fixture");
+    let human = create_human(
+        &system,
+        "pat-human",
+        "pat-human@example.invalid",
+        "PAT Human",
+    )
+    .await
+    .expect_redacted("human fixture");
     let machine = create_service(&system, "pat-machine", "PAT Machine")
         .await
         .expect_redacted("service fixture");
-    let disabled = create_human(&system, "pat-disabled", "PAT Disabled")
-        .await
-        .expect_redacted("disabled fixture");
+    let disabled = create_human(
+        &system,
+        "pat-disabled",
+        "pat-disabled@example.invalid",
+        "PAT Disabled",
+    )
+    .await
+    .expect_redacted("disabled fixture");
     disable_principal(&system, disabled.id())
         .await
         .expect_redacted("disable fixture principal");

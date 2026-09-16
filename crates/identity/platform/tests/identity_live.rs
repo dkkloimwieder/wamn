@@ -62,16 +62,26 @@ async fn platform_identity_round_trip_on_postgres() {
         .expect("bind wamn:provisioning for the fixture session");
     platform_principal_check_refuses_other_rows(&client).await;
 
-    let human = create_human(&client, "Author@Example.com", "Receiving Author")
-        .await
-        .expect("create human principal");
+    let human = create_human(
+        &client,
+        "Author@Example.com",
+        "author@example.com",
+        "Receiving Author",
+    )
+    .await
+    .expect("create human principal");
     assert_eq!(human.kind(), PrincipalKind::Human);
     assert_eq!(human.subject(), "author@example.com");
     assert_eq!(human.status(), PrincipalStatus::Active);
 
-    let duplicate = create_human(&client, "author@example.com", "Duplicate")
-        .await
-        .expect_err("duplicate human identity must fail");
+    let duplicate = create_human(
+        &client,
+        "author@example.com",
+        "author@example.com",
+        "Duplicate",
+    )
+    .await
+    .expect_err("duplicate human identity must fail");
     assert_eq!(duplicate.kind(), IdentityErrorKind::Conflict);
 
     let service = create_service(&client, "agent-ci", "CI Agent")
@@ -197,9 +207,14 @@ async fn project_environment_membership_round_trip(
             "a valid PAT without its kind's authority passed"
         );
     }
-    let other_human = create_human(client, "other@example.com", "Other Human")
-        .await
-        .expect("create another human");
+    let other_human = create_human(
+        client,
+        "other@example.com",
+        "other@example.com",
+        "Other Human",
+    )
+    .await
+    .expect("create another human");
     assert!(
         !has_project_env_membership(client, human.id(), "acme", "receiving", "dev")
             .await
@@ -561,49 +576,61 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
 /// `principals_platform_principal_check` admits only the pinned
 /// wamn:provisioning row for kind platform, and the other kinds refuse a
 /// `wamn:` name.
+///
+/// The last two rows pin `principals_email_check` instead (`wamn-0h0g.9.18`):
+/// a human needs an email, and no other kind carries one. Every other row here
+/// gets a valid email, so it still fails on the platform check alone.
 async fn platform_principal_check_refuses_other_rows(client: &tokio_postgres::Client) {
     const OTHER: &str = "00000000-0000-4000-8000-0000000000f2";
+    const ADDRESS: Option<&str> = Some("refused@example.invalid");
     let provisioning = PlatformComponent::Provisioning;
     let executor = PlatformComponent::Executor;
-    for (kind, id, subject, display_name) in [
+    for (kind, id, subject, email, display_name) in [
         (
             "platform",
             OTHER.to_owned(),
             provisioning.principal_name(),
+            None,
             provisioning.principal_name(),
         ),
         (
             "platform",
             executor.principal_id().to_string(),
             provisioning.principal_name(),
+            None,
             provisioning.principal_name(),
         ),
         (
             "platform",
             executor.principal_id().to_string(),
             executor.principal_name(),
+            None,
             executor.principal_name(),
         ),
         (
             "platform",
             provisioning.principal_id().to_string(),
             provisioning.principal_name(),
+            None,
             "Provisioning",
         ),
-        ("human", OTHER.to_owned(), "person", "wamn:person"),
-        ("service", OTHER.to_owned(), "station", "wamn:station"),
+        ("human", OTHER.to_owned(), "person", ADDRESS, "wamn:person"),
+        ("service", OTHER.to_owned(), "station", None, "wamn:station"),
         (
             "human",
             OTHER.to_owned(),
             provisioning.principal_name(),
+            ADDRESS,
             "Person",
         ),
+        ("human", OTHER.to_owned(), "mailless", None, "Mailless"),
+        ("service", OTHER.to_owned(), "mailed", ADDRESS, "Mailed"),
     ] {
         let error = client
             .execute(
-                "INSERT INTO identity.principals (id, kind, subject, display_name) \
-                 VALUES ($1::text::uuid, $2, $3, $4)",
-                &[&id, &kind, &subject, &display_name],
+                "INSERT INTO identity.principals (id, kind, subject, email, display_name) \
+                 VALUES ($1::text::uuid, $2, $3, $4, $5)",
+                &[&id, &kind, &subject, &email, &display_name],
             )
             .await
             .expect_err("the principal CHECKs must refuse this row");

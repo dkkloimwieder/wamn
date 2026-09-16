@@ -95,7 +95,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         .context("allocate a unique test identity")?
         .get(0);
     let subject = format!("membership-test-{nonce}@example.test");
-    let human = create_human(&system, &subject, "Disposable membership test")
+    let human = create_human(&system, &subject, &subject, "Disposable membership test")
         .await
         .context("create the test human")?;
     let role = format!("membership-test-{nonce}");
