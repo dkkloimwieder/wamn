@@ -2384,34 +2384,20 @@ async fn live_a_bind_refuses_a_principal_with_no_users_row() {
     assert_eq!(denial.principal_id(), ABSENT_PRINCIPAL);
     assert_eq!(denial.tenant(), TENANT);
     assert_eq!(denial.project(), DEFAULT_PROJECT);
-    assert_eq!(
-        pg.provisioned_principal_for(scope),
-        None,
-        "a refused bind caches nothing"
-    );
 
-    // CONTROL: the provisioned principal binds, and the answer is cached for
-    // the life of the binding.
+    // CONTROL: the provisioned principal binds.
     pg.bind_session_claims(scope, &claims(LIVE_PRINCIPAL))
         .await
         .expect("a provisioned principal binds");
-    assert_eq!(
-        pg.provisioned_principal_for(scope),
-        Some(LIVE_PRINCIPAL.to_string())
-    );
+    assert_eq!(pg.user_id_for(scope), Some(LIVE_PRINCIPAL.to_string()));
     pg.revoke_session_claims(scope);
-    assert_eq!(
-        pg.provisioned_principal_for(scope),
-        None,
-        "the cache lives exactly as long as the binding"
-    );
 
     // And a platform principal is a principal like any other.
     pg.bind_session_claims(scope, &claims(LIVE_PLATFORM_PRINCIPAL))
         .await
         .expect("the platform principal's own row binds");
     assert_eq!(
-        pg.provisioned_principal_for(scope),
+        pg.user_id_for(scope),
         Some(LIVE_PLATFORM_PRINCIPAL.to_string())
     );
 
@@ -2425,6 +2411,9 @@ async fn live_a_bind_refuses_a_principal_with_no_users_row() {
 
 /// A row removed after the credential was issued is refused on the next bind,
 /// and the binding that already read it is unaffected (`wamn-0h0g.9.19`).
+///
+/// This is the whole consequence of reading once per invocation. Nothing
+/// re-reads inside a live binding, so the removal lands on the next bind.
 #[tokio::test]
 async fn live_a_removed_users_row_is_refused_on_the_next_bind() {
     const TENANT: &str = "removed";
@@ -2465,9 +2454,9 @@ async fn live_a_removed_users_row_is_refused_on_the_next_bind() {
         .await
         .expect("remove the users row after issuance");
     assert_eq!(
-        pg.provisioned_principal_for(scope),
+        pg.user_id_for(scope),
         Some(LIVE_PRINCIPAL.to_string()),
-        "the live binding holds the answer it read"
+        "the live binding still carries the principal it read"
     );
 
     let refused = pg

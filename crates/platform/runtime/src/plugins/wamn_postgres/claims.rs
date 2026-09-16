@@ -149,15 +149,6 @@ pub struct WamnPostgres {
     /// coordinates an effect span names, and the run half is
     /// [`current_run_for`](Self::current_run_for).
     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
-    /// component id → the principal id whose `app_system.users` row this
-    /// binding verified (`wamn-0h0g.9.19`). This is the per-invocation cache of
-    /// the provisioning check: [`bind_session_claims`](WamnPostgres::bind_session_claims)
-    /// reads the tenant once and records the answer here, and the entry lives
-    /// exactly as long as the binding does. A users row deleted in the middle
-    /// of an invocation therefore stays accepted until the next bind reads
-    /// again. Absent ⇒ the binding carries no executing principal, which the
-    /// record-history triggers already refuse with actor-required.
-    provisioned_principals: std::sync::RwLock<HashMap<String, String>>,
     /// Verified SQL facts bound by operation plus the one invocation-active
     /// scope. The active scope is host-selected; a guest can only name a digest
     /// inside it.
@@ -781,7 +772,6 @@ impl WamnPostgres {
             release_identities: std::sync::RwLock::new(HashMap::new()),
             current_run: std::sync::RwLock::new(HashMap::new()),
             invocations: std::sync::RwLock::new(HashMap::new()),
-            provisioned_principals: std::sync::RwLock::new(HashMap::new()),
             statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
@@ -1195,9 +1185,10 @@ impl WamnPostgres {
     /// function once per invocation, so the cost is one read per invocation
     /// rather than one per transactional statement.
     ///
-    /// The answer is cached for the life of the binding in
-    /// `provisioned_principals`. A users row deleted in the middle of an
-    /// invocation therefore stays accepted until the next bind reads again.
+    /// The answer holds for the life of the binding because the bind IS the
+    /// read. Nothing re-reads inside one invocation, so a users row deleted in
+    /// the middle of an invocation stays accepted until the next bind. No cache
+    /// carries that fact, because one call per invocation already gives it.
     ///
     /// The read runs LAST, after every claim is written and validated, so a
     /// bind that is going to be refused for a malformed claim never opens a
@@ -1290,25 +1281,13 @@ impl WamnPostgres {
             .write()
             .expect("current_run lock poisoned")
             .remove(component_id);
-        // The provisioning check and its per-binding cache. An acquisition that
-        // names no principal clears the cache, exactly as every optional claim
-        // above clears its own registry.
-        match claims.user_id.as_deref() {
-            Some(user_id) => {
-                let project = claims.project.as_deref().unwrap_or(DEFAULT_PROJECT);
-                self.require_provisioned_principal(&claims.tenant, project, user_id)
-                    .await?;
-                self.provisioned_principals
-                    .write()
-                    .expect("provisioned principals lock poisoned")
-                    .insert(component_id.to_owned(), user_id.to_owned());
-            }
-            None => drop(
-                self.provisioned_principals
-                    .write()
-                    .expect("provisioned principals lock poisoned")
-                    .remove(component_id),
-            ),
+        // An acquisition that names no principal reads nothing. The
+        // record-history triggers already refuse such a write with
+        // actor-required.
+        if let Some(user_id) = claims.user_id.as_deref() {
+            let project = claims.project.as_deref().unwrap_or(DEFAULT_PROJECT);
+            self.require_provisioned_principal(&claims.tenant, project, user_id)
+                .await?;
         }
         Ok(())
     }
@@ -1365,19 +1344,6 @@ impl WamnPostgres {
             .into());
         }
         Ok(())
-    }
-
-    /// The principal whose users row this component id's binding verified.
-    ///
-    /// `None` means the binding named no executing principal, or that no
-    /// binding is live. This is the read half of the per-invocation cache.
-    #[must_use]
-    pub fn provisioned_principal_for(&self, component_id: &str) -> Option<String> {
-        self.provisioned_principals
-            .read()
-            .expect("provisioned principals lock poisoned")
-            .get(component_id)
-            .cloned()
     }
 
     /// Read back the claim set one component id currently resolves to.
@@ -1453,10 +1419,6 @@ impl WamnPostgres {
             .write()
             .expect("current_run lock poisoned")
             .remove(component_id);
-        self.provisioned_principals
-            .write()
-            .expect("provisioned principals lock poisoned")
-            .remove(component_id);
     }
 
     /// Reap EVERY per-component-id claim, workload-authority, and verified
@@ -1515,10 +1477,6 @@ impl WamnPostgres {
         self.current_run
             .write()
             .expect("current_run lock poisoned")
-            .retain(|c, _| retain(c));
-        self.provisioned_principals
-            .write()
-            .expect("provisioned principals lock poisoned")
             .retain(|c, _| retain(c));
         if let Ok(mut invocations) = self.invocations.write() {
             invocations.retain(|c, _| retain(c));
