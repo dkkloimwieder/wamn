@@ -313,8 +313,17 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
     }
 }
 
-fn operation_provider_manifest(export: &str, version: &str) -> ServingManifest {
-    let package = export.split_once(':').expect("full interface identity").0;
+/// A provider and a consumer, where `package` owns the component that exports
+/// `export`.
+///
+/// The owning package id is a parameter rather than the export's namespace,
+/// because production does not tie the two together: a component that exports
+/// the platform interface `wamn:node/handler@0.1.0` carries the application's own
+/// package id, as `crates/control/lib/src/push_release_manifest.rs:529` shows
+/// with `http-request` under `"package-id":"orders"`. Deriving the id from the
+/// namespace produced the reserved id `wamn`, which is not a manifest any
+/// publisher can mint.
+fn operation_provider_manifest(package: &str, export: &str, version: &str) -> ServingManifest {
     let operation = ServingComponentOperation {
         registered_operation: None,
         fresh_only: false,
@@ -341,7 +350,15 @@ fn operation_provider_manifest(export: &str, version: &str) -> ServingManifest {
                 operations: BTreeMap::from([(
                     export.into(),
                     ServingComponentOperation {
-                        registered_operation: Some(export.into()),
+                        // Registered only when `package` owns the export's
+                        // namespace, which is the rule
+                        // `validate_canonical_operation_for_package` enforces. A
+                        // platform interface is exported as a palette operation,
+                        // and a palette operation carries no registered
+                        // operation.
+                        registered_operation: export
+                            .starts_with(&format!("{package}:"))
+                            .then(|| export.to_owned()),
                         ..operation.clone()
                     },
                 )]),
@@ -361,7 +378,12 @@ fn operation_provider_manifest(export: &str, version: &str) -> ServingManifest {
     .expect("one provider and one consumer form a valid manifest")
 }
 
-fn add_operation_import(manifest: &mut ServingManifest, export: &str, version: &str) {
+fn add_operation_import(
+    manifest: &mut ServingManifest,
+    package: &str,
+    export: &str,
+    version: &str,
+) {
     let mut consumer = manifest
         .components
         .iter()
@@ -374,11 +396,7 @@ fn add_operation_import(manifest: &mut ServingManifest, export: &str, version: &
         .get_mut("consumer:entry/run@1.0.0")
         .expect("consumer operation")
         .dependencies = vec![ComponentOperationDependency {
-        package: export
-            .split_once(':')
-            .expect("full interface identity")
-            .0
-            .into(),
+        package: package.into(),
         version: version.into(),
         digest: COMPONENT_A.into(),
         operation: export.into(),
@@ -388,11 +406,13 @@ fn add_operation_import(manifest: &mut ServingManifest, export: &str, version: &
 
 #[test]
 fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them() {
-    for (export, version) in [
-        ("wamn:node/handler@0.1.0", "0.1.0"),
-        ("provider:entry/run@1.0.0", "1.0.0"),
+    // The platform interface is exported by an application component under the
+    // application's own package id, the shape a published manifest carries.
+    for (package, export, version) in [
+        ("orders", "wamn:node/handler@0.1.0", "0.1.0"),
+        ("provider", "provider:entry/run@1.0.0", "1.0.0"),
     ] {
-        let mut candidate = operation_provider_manifest(export, version);
+        let mut candidate = operation_provider_manifest(package, export, version);
         let mut other = candidate
             .components
             .iter()
@@ -411,7 +431,7 @@ fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them()
             .expect("the host can address duplicate export-only interfaces directly");
         assert_eq!(admitted, candidate);
 
-        add_operation_import(&mut candidate, export, version);
+        add_operation_import(&mut candidate, package, export, version);
         let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
             .expect_err("one selected digest cannot disambiguate an imported interface");
         let detail = error.to_string();
@@ -430,8 +450,8 @@ fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them()
 fn imported_provider_ambiguity_does_not_deduplicate_coordinates_or_digests() {
     let export = "provider:entry/run@1.0.0";
     for same_digest in [false, true] {
-        let mut candidate = operation_provider_manifest(export, "1.0.0");
-        add_operation_import(&mut candidate, export, "1.0.0");
+        let mut candidate = operation_provider_manifest("provider", export, "1.0.0");
+        add_operation_import(&mut candidate, "provider", export, "1.0.0");
         ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
             .expect("one exact imported provider is admitted");
         let mut other = candidate
@@ -455,8 +475,8 @@ fn imported_provider_ambiguity_does_not_deduplicate_coordinates_or_digests() {
 #[test]
 fn imported_interface_identity_includes_the_complete_version() {
     let export = "provider:entry/run@1.0.0";
-    let mut candidate = operation_provider_manifest(export, "1.0.0");
-    add_operation_import(&mut candidate, export, "1.0.0");
+    let mut candidate = operation_provider_manifest("provider", export, "1.0.0");
+    add_operation_import(&mut candidate, "provider", export, "1.0.0");
     let mut other = candidate
         .components
         .iter()
@@ -479,8 +499,8 @@ fn imported_interface_identity_includes_the_complete_version() {
 #[test]
 fn a_unique_imported_provider_must_still_match_the_exact_dependency_digest() {
     let export = "provider:entry/run@1.0.0";
-    let mut candidate = operation_provider_manifest(export, "1.0.0");
-    add_operation_import(&mut candidate, export, "1.0.0");
+    let mut candidate = operation_provider_manifest("provider", export, "1.0.0");
+    add_operation_import(&mut candidate, "provider", export, "1.0.0");
     let mut provider = candidate
         .components
         .iter()
