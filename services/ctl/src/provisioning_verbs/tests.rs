@@ -909,3 +909,33 @@ mod enable_cdc {
         );
     }
 }
+
+/// The CLI's template values name the shipped presets the library stamps from.
+#[test]
+fn every_template_arg_names_a_shipped_template() {
+    for (arg, name) in [
+        (TemplateArg::Trials, "trials"),
+        (TemplateArg::Standard, "standard"),
+        (TemplateArg::Dedicated, "dedicated"),
+    ] {
+        assert_eq!(arg.template().name, name);
+    }
+}
+
+/// The render path emits the Cluster + WAL/PITR CRs wrapped in `List`s (wamn-e1g).
+#[test]
+#[cfg(feature = "ops")]
+fn render_path_emits_lists() {
+    let (org, _) = Template::standard().stamp("acme", "wamn-pg");
+    let set =
+        wamn_control_provision::org::render_org_cluster_set(&org, &Template::standard().policies)
+            .unwrap();
+    let clusters = k8s_list(&set.clusters);
+    assert_eq!(clusters["kind"], "List");
+    assert_eq!(clusters["items"][0]["kind"], "Cluster");
+    assert_eq!(set.object_stores.len(), 1, "prod is backed");
+    let stores = k8s_list(&set.object_stores);
+    assert_eq!(stores["items"][0]["kind"], "ObjectStore");
+    // An empty List (a pooled org has no clusters) is a harmless no-op apply.
+    assert_eq!(k8s_list(&[])["items"].as_array().unwrap().len(), 0);
+}

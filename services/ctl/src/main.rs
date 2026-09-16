@@ -6,8 +6,8 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    bind_connection, component_verbs, delivery_verbs, identity_verbs, package_verbs,
-    provision_org, provisioning_verbs, release_verbs,
+    component_verbs, delivery_verbs, identity_verbs, package_verbs, provisioning_verbs,
+    release_verbs,
 };
 
 #[derive(Parser)]
@@ -37,7 +37,7 @@ enum Command {
     /// Qualify the exact release artifacts from a clean selected revision.
     QualifyRelease(delivery_verbs::QualifyReleaseArgs),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
-    ProvisionOrg(provision_org::ProvisionOrgArgs),
+    ProvisionOrg(provisioning_verbs::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
     ProvisionProjectEnv(provisioning_verbs::ProvisionProjectEnvArgs),
     /// Provision the scoped database credential for the identity service.
@@ -58,7 +58,7 @@ enum Command {
     AuthorWiring(release_verbs::AuthorWiringArgs),
     /// Bind one admitted component's declared connection alias to an
     /// environment-owned instance carrying a host-held credential handle.
-    BindConnection(bind_connection::BindConnectionArgs),
+    BindConnection(component_verbs::BindConnectionArgs),
     /// Mint one immutable format-1 effective release from exact package-owned facts.
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
@@ -100,14 +100,14 @@ async fn main() -> anyhow::Result<()> {
         Command::PrepareRelease(args) => delivery_verbs::prepare(args).await,
         Command::CheckChanges(args) => delivery_verbs::check_changes(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
-        Command::ProvisionOrg(args) => provision_org::run(args).await,
+        Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
         Command::GrantProjectEnvMembership(args) => identity_verbs::grant(args).await,
         Command::RevokeProjectEnvMembership(args) => identity_verbs::revoke(args).await,
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
-        Command::BindConnection(args) => bind_connection::run(args).await,
+        Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await
         }

@@ -39,106 +39,56 @@
 //! `provision-project-env` then reads that placement and derives the pool
 //! cluster via [`cluster_of`](wamn_control_registry::cluster_of).
 
-use std::path::PathBuf;
-
 use anyhow::Context as _;
-use clap::{Args, ValueEnum};
 use tokio_postgres::NoTls;
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policies};
+use wamn_control_provision::org::OrgClusters;
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 
-/// The named org preset `provision-org` stamps (the `Tier` successor —
-/// [`wamn_control_registry::Template`]).
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum TemplateArg {
-    /// Pre-contract: placed on the shared `--pool` cluster (owns no clusters;
-    /// the RLS floor is load-bearing there); stamps `dev` + `prod`.
-    Trials,
-    /// Standard paying tier: owns per-recovery-domain clusters; stamps `dev` /
-    /// `prod` (own) + `canary` sharing prod's recovery domain (T2).
-    Standard,
-    /// Regulated tier: like standard, but `canary` owns its recovery domain — a
-    /// third cluster (T4).
-    Dedicated,
-}
-
-impl TemplateArg {
-    fn template(self) -> Template {
-        match self {
-            TemplateArg::Trials => Template::trials(),
-            TemplateArg::Standard => Template::standard(),
-            TemplateArg::Dedicated => Template::dedicated(),
-        }
-    }
-}
-
-#[derive(Debug, Args)]
-pub struct ProvisionOrgArgs {
+/// Inputs that name one org, the preset to stamp it from, and where to record it.
+#[derive(Debug)]
+pub struct ProvisionOrgRequest {
     /// Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names the
     /// derived `<org>-<owner>` clusters; the reserved `wamn` prefix is rejected.
-    #[arg(long)]
     pub org: String,
 
-    /// The template preset to stamp: `trials` (pooled, record-only), `standard`
-    /// (dedicated, canary shared-with prod), or `dedicated` (canary own).
-    #[arg(long, value_enum)]
-    pub template: TemplateArg,
+    /// The preset to stamp: its placement shape and its env-policy set.
+    pub template: Template,
 
-    /// The shared pool cluster a `trials` org is placed on. Ignored for
-    /// dedicated templates. Default: the shipped `wamn-pg` pool.
-    #[arg(long, default_value = "wamn-pg")]
+    /// The shared pool cluster a pooled org is placed on. Ignored for a
+    /// dedicated template.
     pub pool: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`), where the org
-    /// and its policy rows are recorded and read back (for cluster sizing). Env
-    /// `WAMN_SYSTEM_ADMIN_URL`. Omit to render/plan only (with template policies).
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    /// and its policy rows are recorded and read back (for cluster sizing).
+    /// Absent to render or plan only, with the template's policies.
     pub system_database_url: Option<String>,
-
-    /// Write the rendered `Cluster` CRs (a JSON `List`) here; `-` = stdout
-    /// (default). Empty for a pooled org (no owned clusters).
-    #[arg(long)]
-    pub emit_clusters: Option<PathBuf>,
-
-    /// Write the WAL/PITR `ObjectStore` CRs (a JSON `List`, wamn-e1g) here; `-` =
-    /// stdout (default). Apply these **before** the clusters — the Barman plugin
-    /// references them.
-    #[cfg(feature = "ops")]
-    #[arg(long)]
-    pub emit_object_store: Option<PathBuf>,
-
-    /// Write the WAL/PITR `ScheduledBackup` CRs (a JSON `List`, wamn-e1g) here;
-    /// `-` = stdout (default). Apply these **after** the clusters exist.
-    #[cfg(feature = "ops")]
-    #[arg(long)]
-    pub emit_scheduled_backup: Option<PathBuf>,
 }
 
-/// Build organization arguments with the optional output fields unset.
-pub fn provision_org_args(
-    org: String,
-    template: TemplateArg,
-    pool: String,
-    system_database_url: Option<String>,
-) -> ProvisionOrgArgs {
-    ProvisionOrgArgs {
-        org,
-        template,
-        pool,
-        system_database_url,
-        emit_clusters: None,
-        #[cfg(feature = "ops")]
-        emit_object_store: None,
-        #[cfg(feature = "ops")]
-        emit_scheduled_backup: None,
-    }
+/// What one org provisioning run recorded and rendered.
+#[derive(Debug)]
+pub struct ProvisionedOrg {
+    /// The org as the template stamped it, placement included.
+    pub org: Org,
+
+    /// The stamped preset's name.
+    pub template_name: &'static str,
+
+    /// How many policy rows were stamped, or absent when no system database URL
+    /// was given and the org was not recorded.
+    pub stamped_policies: Option<usize>,
+
+    /// The rendered cluster set of a dedicated org; absent for a pooled org,
+    /// which owns no clusters.
+    pub clusters: Option<OrgClusters>,
 }
 
-pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
+/// Stamp one org from its template, record it, and render the clusters it owns.
+pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<ProvisionedOrg> {
     // The template stamps the placement + the org's env-policy set in one step.
-    let template = args.template.template();
-    let (org, stamped) = template.stamp(&args.org, &args.pool);
+    let template = request.template;
+    let (org, stamped) = template.stamp(&request.org, &request.pool);
 
     // Validate the org id (slug / reserved-prefix), placement, and the stamped
     // policy set by running the one-org registry through the model's validator.
@@ -155,7 +105,7 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     // Connect to the system DB once (if given) — used to record the org + stamp
     // its policies, then read the org's (possibly customized) set back for
     // cluster sizing.
-    let client = match &args.system_database_url {
+    let client = match &request.system_database_url {
         Some(url) => {
             let (client, conn) = tokio_postgres::connect(url, NoTls)
                 .await
@@ -168,81 +118,36 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     // Record FIRST (one txn: org row + policy stamps), so the render below reads
     // the org's post-stamp truth — existing customizations kept (insert-if-
     // absent), missing template envs added.
-    let policies = match &client {
+    let (policies, stamped_policies) = match &client {
         Some((c, _)) => {
             record_org(c, &org, &stamped).await?;
-            println!(
-                "recorded org {id:?} (template {tpl:?}) in registry.orgs + {n} env \
-                 policy row(s) stamped insert-if-absent (wamn_system)",
-                id = org.id,
-                tpl = template.name,
-                n = stamped.len(),
-            );
-            read_env_policies(c, &org.id).await?
+            (read_env_policies(c, &org.id).await?, Some(stamped.len()))
         }
-        None => {
-            println!("(no --system-database-url: org not recorded; template policies used)");
-            template.policies.clone()
-        }
+        None => (template.policies.clone(), None),
     };
 
-    match &org.placement {
+    let clusters = match &org.placement {
         // Pooled: no cluster set — the org shares the pool.
-        wamn_control_registry::Placement::Pooled { pool } => {
-            println!(
-                "org {id:?} (template {tpl:?}, pooled): placed on the shared pool {pool:?} \
-                 (owns no clusters)",
-                id = org.id,
-                tpl = template.name,
-            );
-        }
+        wamn_control_registry::Placement::Pooled { .. } => None,
         // Dedicated: render one cluster per recovery-domain owner, sized by the
-        // org's policy for the owner env, and emit the CRs to apply.
-        wamn_control_registry::Placement::Dedicated => {
-            let set = wamn_control_provision::org::render_org_cluster_set(&org, &policies)
-                .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?;
-            let names: Vec<String> = set
-                .clusters
-                .iter()
-                .map(|c| c["metadata"]["name"].as_str().unwrap_or("?").to_string())
-                .collect();
-            println!(
-                "org {id:?} (template {tpl:?}, dedicated): {n} cluster(s) [{names}], \
-                 sized by the org's env policies",
-                id = org.id,
-                tpl = template.name,
-                n = set.clusters.len(),
-                names = names.join(", "),
-            );
-            #[cfg(feature = "ops")]
-            if !set.object_stores.is_empty() {
-                println!(
-                    "  WAL/PITR: {} backed cluster(s); apply the ObjectStore(s) before the clusters, the ScheduledBackup(s) after",
-                    set.object_stores.len(),
-                );
-            }
-            let emit_clusters = args.emit_clusters.unwrap_or_else(|| PathBuf::from("-"));
-            #[cfg(feature = "ops")]
-            let emit_os = args.emit_object_store.unwrap_or_else(|| PathBuf::from("-"));
-            #[cfg(feature = "ops")]
-            let emit_sb = args
-                .emit_scheduled_backup
-                .unwrap_or_else(|| PathBuf::from("-"));
-            write_json(&emit_clusters, &k8s_list(&set.clusters)).context("emit Cluster CRs")?;
-            #[cfg(feature = "ops")]
-            write_json(&emit_os, &k8s_list(&set.object_stores)).context("emit ObjectStore CRs")?;
-            #[cfg(feature = "ops")]
-            write_json(&emit_sb, &k8s_list(&set.scheduled_backups))
-                .context("emit ScheduledBackup CRs")?;
-        }
-    }
+        // org's policy for the owner env.
+        wamn_control_registry::Placement::Dedicated => Some(
+            wamn_control_provision::org::render_org_cluster_set(&org, &policies)
+                .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?,
+        ),
+    };
 
     if let Some((c, conn_task)) = client {
         drop(c);
         let _ = conn_task.await;
     }
 
-    Ok(())
+    Ok(ProvisionedOrg {
+        org,
+        template_name: template.name,
+        stamped_policies,
+        clusters,
+    })
 }
 
 /// Record the org (placement upsert) and stamp its template policy rows
@@ -324,27 +229,6 @@ fn fmt_issues(issues: &[wamn_control_registry::Issue]) -> String {
         .join("; ")
 }
 
-/// Wrap CRs in a Kubernetes `v1` `List` so `kubectl apply -f` accepts the whole
-/// set from one file/stream. An empty items list is a valid, harmless no-op apply.
-fn k8s_list(items: &[serde_json::Value]) -> serde_json::Value {
-    serde_json::json!({
-        "apiVersion": "v1",
-        "kind": "List",
-        "items": items,
-    })
-}
-
-fn write_json(path: &PathBuf, doc: &serde_json::Value) -> anyhow::Result<()> {
-    let text = serde_json::to_string_pretty(doc)?;
-    if path.as_os_str() == "-" {
-        println!("{text}");
-    } else {
-        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
-        println!("wrote {}", path.display());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,40 +295,16 @@ mod tests {
         );
     }
 
-    /// Every shipped template's one-org stamp validates (placement + policy set
-    /// are self-consistent), and the TemplateArg CLI values map onto them.
+    /// Every shipped template's one-org stamp validates: its placement and its
+    /// policy set are self-consistent.
     #[test]
-    fn every_template_arg_stamps_a_valid_org() {
-        for (arg, name) in [
-            (TemplateArg::Trials, "trials"),
-            (TemplateArg::Standard, "standard"),
-            (TemplateArg::Dedicated, "dedicated"),
-        ] {
-            let t = arg.template();
+    fn every_template_stamps_a_valid_org() {
+        for name in Template::NAMES {
+            let t = Template::by_name(name).expect("a shipped preset");
             assert_eq!(t.name, name);
             let reg = one_org_registry(&t, "acme");
             assert!(reg.validate().is_ok(), "{name}: {:?}", reg.issues());
         }
-    }
-
-    /// The render path emits the Cluster + WAL/PITR CRs wrapped in `List`s (wamn-e1g).
-    #[test]
-    #[cfg(feature = "ops")]
-    fn render_path_emits_lists() {
-        let (org, _) = Template::standard().stamp("acme", "wamn-pg");
-        let set = wamn_control_provision::org::render_org_cluster_set(
-            &org,
-            &Template::standard().policies,
-        )
-        .unwrap();
-        let clusters = k8s_list(&set.clusters);
-        assert_eq!(clusters["kind"], "List");
-        assert_eq!(clusters["items"][0]["kind"], "Cluster");
-        assert_eq!(set.object_stores.len(), 1, "prod is backed");
-        let stores = k8s_list(&set.object_stores);
-        assert_eq!(stores["items"][0]["kind"], "ObjectStore");
-        // An empty List (a pooled org has no clusters) is a harmless no-op apply.
-        assert_eq!(k8s_list(&[])["items"].as_array().unwrap().len(), 0);
     }
 
     #[test]

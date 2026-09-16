@@ -27,7 +27,7 @@ use wamn_catalog::{
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{AuthorWiringRequest, author_wiring};
 use wamn_control::push_component::admitted_projection_hash;
-use wamn_control::bind_connection::{self, BindConnectionArgs, RequirementType};
+use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT, WamnPostgres, WamnPostgresConfig,
@@ -296,8 +296,8 @@ fn args(
     definition: std::path::PathBuf,
     store_alias: &str,
     digest: &str,
-) -> BindConnectionArgs {
-    BindConnectionArgs {
+) -> BindConnectionRequest {
+    BindConnectionRequest {
         database_url: project_url.to_owned(),
         tenant: TENANT.to_owned(),
         environment: ENVIRONMENT.to_owned(),

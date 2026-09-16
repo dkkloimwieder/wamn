@@ -14,7 +14,6 @@ ops = ["dep:wamn-event-wire", "wamn-control-provision/ops"]
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 chrono = { workspace = true, features = ["clock"] }
-clap = { workspace = true, features = ["derive", "env"] }
 hex = { workspace = true }
 oci-client = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }

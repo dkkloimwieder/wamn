@@ -9,7 +9,7 @@ use tokio::process::Command;
 use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 use wamn_control_provision::sql;
 use wamn_ctl::dev::{environment::connect, pat_issuer};
-use wamn_ctl::provision_org::{self, TemplateArg};
+use wamn_control::provision_org::{self, ProvisionOrgRequest};
 
 use super::{NAMESPACE, Resources, TENANT, apply, command_json, kubectl, save};
 
@@ -71,14 +71,13 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
     drop(system);
     system_task.abort();
     installed?;
-    let mut org = provision_org::provision_org_args(
-        "rc".into(),
-        TemplateArg::Trials,
-        "rc-pg".into(),
-        Some(system_url.clone()),
-    );
-    org.emit_clusters = Some(resources.work.join("bootstrap-clusters.json"));
-    provision_org::run(org).await?;
+    provision_org::provision_org(ProvisionOrgRequest {
+        org: "rc".into(),
+        template: wamn_control_registry::Template::trials(),
+        pool: "rc-pg".into(),
+        system_database_url: Some(system_url.clone()),
+    })
+    .await?;
     save(
         resources,
         "bootstrap-substrate.json",

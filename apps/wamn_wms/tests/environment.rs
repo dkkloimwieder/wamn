@@ -23,10 +23,10 @@ use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedCompone
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
+use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
 use wamn_ctl::dev::environment::{JourneyCredentials, connect};
 use wamn_control::print_release_env::{self, ReleaseCarrier};
-use wamn_ctl::provision_org::{self, TemplateArg};
+use wamn_control::provision_org::{self, ProvisionOrgRequest};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_test_infrastructure::declarations::{
@@ -95,12 +95,12 @@ pub async fn provision_project(
     admin_url: &str,
     pat_issuer: PatIssuerConfig,
 ) -> anyhow::Result<ProvisionedRoute> {
-    provision_org::run(provision_org::provision_org_args(
-        ORG.to_owned(),
-        TemplateArg::Trials,
-        CLUSTER.to_owned(),
-        Some(inputs.system_pg_url.clone()),
-    ))
+    provision_org::provision_org(ProvisionOrgRequest {
+        org: ORG.to_owned(),
+        template: wamn_control_registry::Template::trials(),
+        pool: CLUSTER.to_owned(),
+        system_database_url: Some(inputs.system_pg_url.clone()),
+    })
     .await?;
     let database_config: tokio_postgres::Config =
         admin_url.parse().context("parse WMS cluster URL")?;
@@ -493,7 +493,7 @@ pub async fn publish(
             &json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"}),
         )?,
     )?;
-    bind_connection::run(BindConnectionArgs {
+    bind_connection::bind(&BindConnectionRequest {
         database_url: route.database_url.clone(),
         tenant: TENANT.into(),
         environment: ENVIRONMENT.into(),

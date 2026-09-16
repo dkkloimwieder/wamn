@@ -24,7 +24,6 @@ pub mod identity_verbs;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
 pub mod package_verbs;
-pub use wamn_control::provision_org;
 pub mod provisioning_verbs;
 pub mod release_verbs;
 #[cfg(target_os = "linux")]

@@ -1,22 +1,24 @@
-//! Arguments and output of the `provision-project-env` and `enable-cdc-project-env` verbs.
+//! Arguments and output of the `provision-org`, `provision-project-env`, and
+//! `enable-cdc-project-env` verbs.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde_json::Value;
 use wamn_control::enable_cdc_project_env::{
     self, EnableCdcProjectEnvOutcome, EnableCdcProjectEnvRequest,
 };
 use wamn_control::pat_client::PatIssuerConfig;
+use wamn_control::provision_org::{self, ProvisionOrgRequest, ProvisionedOrg};
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest, WorkloadActionOutcome,
     WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, ensure_secret_path,
     parse_pat_prefix, workload_action_flag, workload_secret_flag,
 };
 use wamn_control_provision::{CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily};
-use wamn_control_registry::Triple;
+use wamn_control_registry::{Template, Triple};
 
 #[derive(Debug, Args)]
 pub struct ProvisionProjectEnvArgs {
@@ -804,6 +806,160 @@ fn emit_text(path: Option<&Path>, label: &str, text: &str) {
         Some(p) if p.as_os_str() != "-" => println!("wrote {} ({label})", p.display()),
         _ => println!("--- {label} ---\n{text}"),
     }
+}
+
+/// The named org preset `provision-org` stamps (the `Tier` successor —
+/// [`wamn_control_registry::Template`]).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum TemplateArg {
+    /// Pre-contract: placed on the shared `--pool` cluster (owns no clusters;
+    /// the RLS floor is load-bearing there); stamps `dev` + `prod`.
+    Trials,
+    /// Standard paying tier: owns per-recovery-domain clusters; stamps `dev` /
+    /// `prod` (own) + `canary` sharing prod's recovery domain (T2).
+    Standard,
+    /// Regulated tier: like standard, but `canary` owns its recovery domain — a
+    /// third cluster (T4).
+    Dedicated,
+}
+
+impl TemplateArg {
+    pub(crate) fn template(self) -> Template {
+        match self {
+            TemplateArg::Trials => Template::trials(),
+            TemplateArg::Standard => Template::standard(),
+            TemplateArg::Dedicated => Template::dedicated(),
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ProvisionOrgArgs {
+    /// Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names the
+    /// derived `<org>-<owner>` clusters; the reserved `wamn` prefix is rejected.
+    #[arg(long)]
+    pub org: String,
+
+    /// The template preset to stamp: `trials` (pooled, record-only), `standard`
+    /// (dedicated, canary shared-with prod), or `dedicated` (canary own).
+    #[arg(long, value_enum)]
+    pub template: TemplateArg,
+
+    /// The shared pool cluster a `trials` org is placed on. Ignored for
+    /// dedicated templates. Default: the shipped `wamn-pg` pool.
+    #[arg(long, default_value = "wamn-pg")]
+    pub pool: String,
+
+    /// Superuser Postgres URL to the T1 system DB (`wamn_system`), where the org
+    /// and its policy rows are recorded and read back (for cluster sizing). Env
+    /// `WAMN_SYSTEM_ADMIN_URL`. Omit to render/plan only (with template policies).
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    pub system_database_url: Option<String>,
+
+    /// Write the rendered `Cluster` CRs (a JSON `List`) here; `-` = stdout
+    /// (default). Empty for a pooled org (no owned clusters).
+    #[arg(long)]
+    pub emit_clusters: Option<PathBuf>,
+
+    /// Write the WAL/PITR `ObjectStore` CRs (a JSON `List`, wamn-e1g) here; `-` =
+    /// stdout (default). Apply these **before** the clusters — the Barman plugin
+    /// references them.
+    #[cfg(feature = "ops")]
+    #[arg(long)]
+    pub emit_object_store: Option<PathBuf>,
+
+    /// Write the WAL/PITR `ScheduledBackup` CRs (a JSON `List`, wamn-e1g) here;
+    /// `-` = stdout (default). Apply these **after** the clusters exist.
+    #[cfg(feature = "ops")]
+    #[arg(long)]
+    pub emit_scheduled_backup: Option<PathBuf>,
+}
+
+/// Stamp one org, then print what was recorded and write the CRs it owns.
+pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
+    let provisioned = provision_org::provision_org(ProvisionOrgRequest {
+        org: args.org,
+        template: args.template.template(),
+        pool: args.pool,
+        system_database_url: args.system_database_url,
+    })
+    .await?;
+    print_provisioned_org(&provisioned);
+    let Some(set) = &provisioned.clusters else {
+        return Ok(());
+    };
+    let emit_clusters = args.emit_clusters.unwrap_or_else(|| PathBuf::from("-"));
+    #[cfg(feature = "ops")]
+    let emit_os = args.emit_object_store.unwrap_or_else(|| PathBuf::from("-"));
+    #[cfg(feature = "ops")]
+    let emit_sb = args
+        .emit_scheduled_backup
+        .unwrap_or_else(|| PathBuf::from("-"));
+    write_json(&emit_clusters, &k8s_list(&set.clusters)).context("emit Cluster CRs")?;
+    #[cfg(feature = "ops")]
+    write_json(&emit_os, &k8s_list(&set.object_stores)).context("emit ObjectStore CRs")?;
+    #[cfg(feature = "ops")]
+    write_json(&emit_sb, &k8s_list(&set.scheduled_backups)).context("emit ScheduledBackup CRs")?;
+    Ok(())
+}
+
+/// Print the lines that report one org provisioning run.
+fn print_provisioned_org(provisioned: &ProvisionedOrg) {
+    let id = &provisioned.org.id;
+    let tpl = provisioned.template_name;
+    match provisioned.stamped_policies {
+        Some(n) => println!(
+            "recorded org {id:?} (template {tpl:?}) in registry.orgs + {n} env \
+             policy row(s) stamped insert-if-absent (wamn_system)"
+        ),
+        None => println!("(no --system-database-url: org not recorded; template policies used)"),
+    }
+    if let Some(set) = &provisioned.clusters {
+        let names: Vec<String> = set
+            .clusters
+            .iter()
+            .map(|c| c["metadata"]["name"].as_str().unwrap_or("?").to_string())
+            .collect();
+        println!(
+            "org {id:?} (template {tpl:?}, dedicated): {n} cluster(s) [{names}], \
+             sized by the org's env policies",
+            n = set.clusters.len(),
+            names = names.join(", "),
+        );
+        #[cfg(feature = "ops")]
+        if !set.object_stores.is_empty() {
+            println!(
+                "  WAL/PITR: {} backed cluster(s); apply the ObjectStore(s) before the clusters, the ScheduledBackup(s) after",
+                set.object_stores.len(),
+            );
+        }
+    } else if let wamn_control_registry::Placement::Pooled { pool } = &provisioned.org.placement {
+        println!(
+            "org {id:?} (template {tpl:?}, pooled): placed on the shared pool {pool:?} \
+             (owns no clusters)"
+        );
+    }
+}
+
+/// Wrap CRs in a Kubernetes `v1` `List` so `kubectl apply -f` accepts the whole
+/// set from one file/stream. An empty items list is a valid, harmless no-op apply.
+fn k8s_list(items: &[Value]) -> Value {
+    serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "List",
+        "items": items,
+    })
+}
+
+fn write_json(path: &PathBuf, doc: &Value) -> anyhow::Result<()> {
+    let text = serde_json::to_string_pretty(doc)?;
+    if path.as_os_str() == "-" {
+        println!("{text}");
+    } else {
+        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
+        println!("wrote {}", path.display());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

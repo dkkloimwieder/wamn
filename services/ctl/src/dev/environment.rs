@@ -39,8 +39,7 @@ use wamn_control_provision::{
 use wamn_pg_core::Identifier;
 
 use crate::dev::activation::DevActivationIdentity;
-use crate::provision_org::{self, ProvisionOrgArgs, TemplateArg};
-use crate::provisioning_verbs;
+use crate::provisioning_verbs::{self, ProvisionOrgArgs, TemplateArg};
 
 /// The deployment-owned inputs a standing development environment needs.
 ///
@@ -374,13 +373,13 @@ pub struct JourneyCredentials {
 pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyhow::Result<()> {
     super::pat_issuer::preflight(system_url)?;
     reset_control_store(admin).await?;
-    provision_org::run(ProvisionOrgArgs {
+    provisioning_verbs::provision_org(ProvisionOrgArgs {
         org: ORG.to_owned(),
         template: TemplateArg::Trials,
         pool: "route-auth-pg18".to_owned(),
         system_database_url: Some(system_url.to_owned()),
         emit_clusters: None,
-        // The journey org is POOLED, so `provision_org::run` never reaches the
+        // The journey org is POOLED, so `provision-org` never reaches the
         // dedicated-org arm that reads these. They carry the same `cfg` as the
         // fields themselves, which are `ops`-only (wamn-0h0g.10.20).
         #[cfg(feature = "ops")]

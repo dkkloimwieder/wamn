@@ -31,7 +31,6 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail, ensure};
-use clap::Args;
 use serde_json::Value;
 use tokio_postgres::NoTls;
 use wamn_catalog::ConnectionTypeDescriptor;
@@ -47,10 +46,10 @@ SELECT requirement_json::text, requirement_hash FROM catalog.connection_requirem
  WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3";
 const FIRST_GENERATION: i64 = 1;
 
-/// The one connection type this verb can bind today. The enum is the CLI's
-/// closed vocabulary: a type not listed here cannot be named on the command
-/// line, so a descriptor is never authored from a string.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum, serde::Deserialize)]
+/// The one connection type this verb can bind today. The enum is the closed
+/// vocabulary a caller chooses from, so a descriptor is never authored from
+/// a string.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequirementType {
     Blobstore,
@@ -73,45 +72,35 @@ impl RequirementType {
     }
 }
 
-#[derive(Debug, Args)]
-pub struct BindConnectionArgs {
+#[derive(Debug)]
+pub struct BindConnectionRequest {
     /// The project-environment database holding the catalog schema.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
 
-    #[arg(long)]
     pub tenant: String,
 
-    #[arg(long)]
     pub environment: String,
 
     /// The environment-owned, stable identity of the connection instance.
-    #[arg(long)]
     pub instance_id: String,
 
     /// Which platform descriptor the instance carries. Minted, never authored.
-    #[arg(long, value_enum)]
     pub requirement_type: RequirementType,
 
     /// The generation's non-secret definition: a JSON object of exactly the
     /// coordinates the requirement type's plugin reads.
-    #[arg(long, value_name = "PATH")]
     pub definition: PathBuf,
 
     /// The host-held credential's handle. Never the credential.
-    #[arg(long)]
     pub credential_handle: String,
 
     /// The release whose component is being bound.
-    #[arg(long)]
     pub effective_release_id: u32,
 
     /// The admitted component's digest, as push-component printed it.
-    #[arg(long)]
     pub component_digest: String,
 
     /// The store alias that component declared for this connection.
-    #[arg(long)]
     pub store_alias: String,
 }
 
@@ -164,22 +153,8 @@ pub fn validate_definition(
 #[doc(inline)]
 pub use wamn_runtime::connection_generation::binding_validation_subject as validation_subject;
 
-pub async fn run(args: BindConnectionArgs) -> anyhow::Result<()> {
-    let bound = bind(&args).await?;
-    println!(
-        "bound {}:{} to {} generation {} in release {} (definition {}, validation {})",
-        args.component_digest,
-        args.store_alias,
-        bound.instance_id,
-        bound.generation,
-        args.effective_release_id,
-        bound.definition_hash,
-        bound.validation_hash
-    );
-    Ok(())
-}
-
-pub async fn bind(args: &BindConnectionArgs) -> anyhow::Result<BoundConnection> {
+/// Write the instance, its first generation, and the release-scoped binding.
+pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnection> {
     let definition_bytes = std::fs::read(&args.definition).with_context(|| {
         format!(
             "read the generation definition {}",
@@ -210,7 +185,7 @@ pub async fn bind(args: &BindConnectionArgs) -> anyhow::Result<BoundConnection> 
 
 async fn bind_in(
     client: &mut tokio_postgres::Client,
-    args: &BindConnectionArgs,
+    args: &BindConnectionRequest,
     descriptor: &ConnectionTypeDescriptor,
     definition: &Value,
 ) -> anyhow::Result<BoundConnection> {

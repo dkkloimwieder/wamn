@@ -1,8 +1,9 @@
-//! Arguments and output of the `push-component` verb.
+//! Arguments and output of the `push-component` and `bind-connection` verbs.
 
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, ValueEnum};
+use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
 use wamn_control::push_component::{
     self, AdmitComponentRequest, PublishAdmittedComponentOutcome, PublishAdmittedComponentRequest,
 };
@@ -96,4 +97,89 @@ pub fn print_published(outcome: &PublishAdmittedComponentOutcome) {
         }
     );
     println!("{}", outcome.component_digest);
+}
+
+/// The one connection type the CLI can name today. The enum is the command
+/// line's closed vocabulary, so a descriptor is never authored from a string.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum RequirementTypeArg {
+    Blobstore,
+}
+
+impl RequirementTypeArg {
+    fn requirement_type(self) -> RequirementType {
+        match self {
+            Self::Blobstore => RequirementType::Blobstore,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct BindConnectionArgs {
+    /// The project-environment database holding the catalog schema.
+    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    pub database_url: String,
+
+    #[arg(long)]
+    pub tenant: String,
+
+    #[arg(long)]
+    pub environment: String,
+
+    /// The environment-owned, stable identity of the connection instance.
+    #[arg(long)]
+    pub instance_id: String,
+
+    /// Which platform descriptor the instance carries. Minted, never authored.
+    #[arg(long, value_enum)]
+    pub requirement_type: RequirementTypeArg,
+
+    /// The generation's non-secret definition: a JSON object of exactly the
+    /// coordinates the requirement type's plugin reads.
+    #[arg(long, value_name = "PATH")]
+    pub definition: PathBuf,
+
+    /// The host-held credential's handle. Never the credential.
+    #[arg(long)]
+    pub credential_handle: String,
+
+    /// The release whose component is being bound.
+    #[arg(long)]
+    pub effective_release_id: u32,
+
+    /// The admitted component's digest, as push-component printed it.
+    #[arg(long)]
+    pub component_digest: String,
+
+    /// The store alias that component declared for this connection.
+    #[arg(long)]
+    pub store_alias: String,
+}
+
+/// Bind one declared alias to an environment-owned instance and print the result.
+pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
+    let request = BindConnectionRequest {
+        database_url: args.database_url,
+        tenant: args.tenant,
+        environment: args.environment,
+        instance_id: args.instance_id,
+        requirement_type: args.requirement_type.requirement_type(),
+        definition: args.definition,
+        credential_handle: args.credential_handle,
+        effective_release_id: args.effective_release_id,
+        component_digest: args.component_digest,
+        store_alias: args.store_alias,
+    };
+    let bound = bind_connection::bind(&request).await?;
+    println!(
+        "bound {}:{} to {} generation {} in release {} (definition {}, validation {})",
+        request.component_digest,
+        request.store_alias,
+        bound.instance_id,
+        bound.generation,
+        request.effective_release_id,
+        bound.definition_hash,
+        bound.validation_hash
+    );
+    Ok(())
 }
