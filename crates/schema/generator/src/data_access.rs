@@ -10,6 +10,7 @@ use wamn_record_history::{HISTORY_COLUMNS, POSITION_COLUMN};
 use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::{CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN, logged_history_tables};
+use crate::manifest::{DeleteMode, TombstoneColumn};
 use crate::{CrudAction, GenerateError, GenerateErrorKind, PackageManifest};
 
 /// Package-relative canonical data-access evidence artifact.
@@ -42,6 +43,9 @@ pub struct DataAccessRelation {
     select_fields: Vec<String>,
     insert_fields: Vec<String>,
     update_fields: Vec<String>,
+    /// Table-level DELETE, declared by a model whose delete mode is hard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    delete: bool,
     lock: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     lock_update_field: Option<String>,
@@ -73,6 +77,7 @@ pub struct EffectiveDataAccessRelation {
     insert_fields: Vec<String>,
     update_fields: Vec<String>,
     lock_carrier_fields: Vec<String>,
+    delete: bool,
 }
 
 impl DataAccessRelationFields {
@@ -286,6 +291,11 @@ impl DataAccessRelation {
         &self.update_fields
     }
 
+    /// Whether the declared delete removes the row with a table-level DELETE.
+    pub const fn delete(&self) -> bool {
+        self.delete
+    }
+
     pub const fn lock(&self) -> bool {
         self.lock
     }
@@ -341,6 +351,11 @@ impl EffectiveDataAccessRelation {
 
     pub fn update_fields(&self) -> &[String] {
         &self.update_fields
+    }
+
+    /// Whether any contribution grants this relation a table-level DELETE.
+    pub const fn delete(&self) -> bool {
+        self.delete
     }
 }
 
@@ -504,6 +519,15 @@ pub fn render_effective_data_access_sql(
             .expect("writing SQL to a String cannot fail");
         }
         grant_columns(&mut sql, "UPDATE", &relation.update_fields, &target, &role);
+        if relation.delete {
+            writeln!(
+                sql,
+                "-- Hard delete on {target}: PostgreSQL has no column form of DELETE, so the grant names the table."
+            )
+            .expect("writing SQL to a String cannot fail");
+            writeln!(sql, "GRANT DELETE ON TABLE {target} TO {role};")
+                .expect("writing SQL to a String cannot fail");
+        }
     }
     Ok(sql)
 }
@@ -514,6 +538,7 @@ struct EffectiveDesiredRelation {
     insert: BTreeSet<String>,
     update: BTreeSet<String>,
     lock_carriers: BTreeSet<String>,
+    delete: bool,
 }
 
 impl EffectiveDesiredRelation {
@@ -524,6 +549,7 @@ impl EffectiveDesiredRelation {
             insert: BTreeSet::new(),
             update: BTreeSet::new(),
             lock_carriers: BTreeSet::new(),
+            delete: false,
         }
     }
 
@@ -546,6 +572,7 @@ impl EffectiveDesiredRelation {
             self.update.insert(carrier.to_owned());
             self.lock_carriers.insert(carrier.to_owned());
         }
+        self.delete |= relation.delete();
         Ok(())
     }
 
@@ -564,6 +591,7 @@ impl EffectiveDesiredRelation {
             insert_fields: ordered(&self.insert),
             update_fields: ordered(&self.update),
             lock_carrier_fields: ordered(&self.lock_carriers),
+            delete: self.delete,
             all_fields: self.all_fields,
         }
     }
@@ -685,12 +713,26 @@ fn derive_data_access_overlay_for_manifest(
                         .extend(operation.revision_field.iter().cloned());
                     relation.lock = true;
                 }
-                CrudAction::Delete => {
-                    return Err(GenerateError::new(
-                        GenerateErrorKind::InvalidOperation,
-                        "generated data-access overlay has no demanded DELETE authority shape",
-                    ));
-                }
+                // A hard delete removes the row, so the relation carries
+                // table-level DELETE. A tombstone delete is an UPDATE that sets
+                // the two reserved marker columns, which no caller writes, so
+                // the shape is column UPDATE on that pair and no DELETE.
+                CrudAction::Delete => match model.delete_mode {
+                    Some(DeleteMode::Hard) => relation.delete = true,
+                    Some(DeleteMode::Tombstone) => {
+                        relation.update.extend(
+                            TombstoneColumn::ALL
+                                .into_iter()
+                                .map(|column| column.as_str().to_owned()),
+                        );
+                    }
+                    None => {
+                        return Err(GenerateError::new(
+                            GenerateErrorKind::InvalidOperation,
+                            "generated data-access overlay has a delete without a delete mode",
+                        ));
+                    }
+                },
             }
         }
     }
@@ -821,6 +863,7 @@ struct DesiredRelation {
     select: BTreeSet<String>,
     insert: BTreeSet<String>,
     update: BTreeSet<String>,
+    delete: bool,
     lock: bool,
 }
 
@@ -831,6 +874,7 @@ impl DesiredRelation {
             select: BTreeSet::new(),
             insert: BTreeSet::new(),
             update: BTreeSet::new(),
+            delete: false,
             lock: false,
         }
     }
@@ -891,6 +935,7 @@ impl DesiredRelation {
             select_fields,
             insert_fields,
             update_fields,
+            delete: self.delete,
             lock: self.lock,
             lock_update_field,
         })

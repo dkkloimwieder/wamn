@@ -645,6 +645,17 @@ fn desired_acl(effective: &EffectiveDataAccess) -> DirectAcl {
                 )
             }));
         }
+        // DELETE has no column form, so a declared hard delete is the one
+        // table-level entry the direct ACL carries.
+        if relation.delete() {
+            desired.table.insert((
+                relation.schema().to_owned(),
+                relation.table().to_owned(),
+                effective.role().to_owned(),
+                "DELETE".to_owned(),
+                false,
+            ));
+        }
     }
     desired
 }
@@ -772,6 +783,13 @@ fn desired_effective_acl(effective: &EffectiveDataAccess) -> EffectiveAcl {
                     privilege.to_owned(),
                 )
             }));
+        }
+        if relation.delete() {
+            desired.table.insert((
+                relation.schema().to_owned(),
+                relation.table().to_owned(),
+                "DELETE".to_owned(),
+            ));
         }
     }
     desired
