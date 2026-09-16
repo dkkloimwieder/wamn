@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use serde_json::Value;
-use wamn_router::{CacheInsert, Wiring, WiringCache, WiringNode};
+use wamn_router::{CacheInsert, VersionKey, Wiring, WiringCache, WiringNode};
 
 const TENANT: &str = "t1";
 const PACKAGE: &str = "shop";
@@ -52,18 +52,20 @@ fn resolve(
     graph: Wiring,
 ) -> Arc<Wiring> {
     match cache.insert_version(
-        TENANT,
-        PACKAGE,
-        environment,
-        effective_release_id,
-        wiring_id,
-        version,
+        VersionKey {
+            tenant_id: TENANT,
+            package_id: PACKAGE,
+            environment,
+            effective_release_id,
+            wiring_id,
+            version,
+        },
         graph_hash(wiring_id, version),
         graph,
         (),
     ) {
         CacheInsert::Installed(active) => active.wiring,
-        other => {
+        other @ CacheInsert::HashMismatch => {
             panic!("fixture versions use one immutable graph hash: {other:?}")
         }
     }

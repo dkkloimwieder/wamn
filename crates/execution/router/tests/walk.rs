@@ -603,7 +603,7 @@ fn retry_policy_reads_config_and_computes_backoff() {
     let p = RetryPolicy::from_config(&json!({ "retry": { "max-attempts": 5, "base-ms": 50 } }));
     assert_eq!(p.max_attempts, 5);
     assert_eq!(p.base_ms, 50);
-    assert_eq!(p.factor, RetryPolicy::DEFAULT.factor);
+    assert_eq!(p.factor.to_bits(), RetryPolicy::DEFAULT.factor.to_bits());
     // no retry object / null config -> default.
     assert_eq!(RetryPolicy::from_config(&json!({})), RetryPolicy::DEFAULT);
     assert_eq!(RetryPolicy::from_config(&Value::Null), RetryPolicy::DEFAULT);
@@ -691,9 +691,7 @@ fn retries_count_against_the_hop_limit() {
     let mut walk = w.start(delivery(json!("go")));
     let mut executions = 0;
     let status = loop {
-        if executions > 20 {
-            panic!("hop limit did not fire");
-        }
+        assert!(executions <= 20, "hop limit did not fire");
         // Jump the clock past any scheduled backoff so every retry is due.
         match w.next(&mut walk, u64::MAX / 2) {
             Step::Done(s) => break s,

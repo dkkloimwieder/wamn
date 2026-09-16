@@ -6,6 +6,8 @@
 //! `"retry"` object inside the node's opaque `config`. Absent →
 //! [`RetryPolicy::DEFAULT`].
 
+use std::time::Duration;
+
 use serde_json::Value;
 
 /// A node's retry policy. Backoff is **deterministic** exponential — no jitter —
@@ -56,8 +58,9 @@ impl RetryPolicy {
             max_attempts: retry
                 .get("max-attempts")
                 .and_then(Value::as_u64)
-                .map(|n| n.max(1) as u32)
-                .unwrap_or(d.max_attempts),
+                .map_or(d.max_attempts, |n| {
+                    u32::try_from(n.max(1)).unwrap_or(u32::MAX)
+                }),
             base_ms: retry
                 .get("base-ms")
                 .and_then(Value::as_u64)
@@ -70,8 +73,7 @@ impl RetryPolicy {
             cap_ms: retry
                 .get("cap-ms")
                 .and_then(Value::as_u64)
-                .map(|n| n.min(RetryPolicy::CAP_MS_CEILING))
-                .unwrap_or(d.cap_ms),
+                .map_or(d.cap_ms, |n| n.min(RetryPolicy::CAP_MS_CEILING)),
         }
     }
 
@@ -87,14 +89,15 @@ impl RetryPolicy {
         if self.base_ms == 0 {
             return 0;
         }
-        let scaled = (self.base_ms as f64) * self.factor.powi(attempt as i32);
-        // Saturate into u64 before the cap; a huge factor^attempt must not wrap.
-        let scaled = if scaled >= self.cap_ms as f64 {
-            self.cap_ms
-        } else {
-            scaled as u64
-        };
-        scaled.min(self.cap_ms)
+        let base = Duration::from_millis(self.base_ms);
+        let cap = Duration::from_millis(self.cap_ms);
+        let exponent = i32::try_from(attempt).unwrap_or(i32::MAX);
+        // `Duration` carries the millisecond arithmetic, so neither conversion
+        // to nor from `f64` truncates silently. A huge factor^attempt leaves
+        // the representable range, and that lands on the cap like any overshoot.
+        let scaled = Duration::try_from_secs_f64(base.as_secs_f64() * self.factor.powi(exponent))
+            .unwrap_or(cap);
+        u64::try_from(scaled.min(cap).as_millis()).unwrap_or(self.cap_ms)
     }
 }
 

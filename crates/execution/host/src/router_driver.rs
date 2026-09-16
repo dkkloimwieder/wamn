@@ -25,7 +25,7 @@ use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_router::{
     ActiveWiring, CacheInsert, Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome,
-    RateLimitDetail, Step, WiringCache, WiringCacheSnapshot,
+    RateLimitDetail, Step, VersionKey, WiringCache, WiringCacheSnapshot,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactFetchErrorKind, ComponentArtifactSource,
@@ -971,12 +971,14 @@ impl RouterDriver {
             return Ok(active);
         }
         match self.cache.insert_version(
-            &target.tenant_id,
-            &target.package_id,
-            &target.environment,
-            target.effective_release_id,
-            &target.wiring_id,
-            resolved.version,
+            VersionKey {
+                tenant_id: &target.tenant_id,
+                package_id: &target.package_id,
+                environment: &target.environment,
+                effective_release_id: target.effective_release_id,
+                wiring_id: &target.wiring_id,
+                version: resolved.version,
+            },
             Arc::clone(&resolved.graph_hash),
             resolved.wiring,
             facts,
@@ -1021,12 +1023,14 @@ impl RouterDriver {
             .ok_or_else(|| anyhow::anyhow!("release-wiring-not-found"))?;
         let facts = CatalogFacts::from_resolved(&resolved)?;
         match self.cache.insert_version(
-            &request.tenant_id,
-            &request.package_id,
-            &request.environment,
-            effective_release_id,
-            &request.wiring_id,
-            resolved.version,
+            VersionKey {
+                tenant_id: &request.tenant_id,
+                package_id: &request.package_id,
+                environment: &request.environment,
+                effective_release_id,
+                wiring_id: &request.wiring_id,
+                version: resolved.version,
+            },
             Arc::clone(&resolved.graph_hash),
             resolved.wiring,
             facts,

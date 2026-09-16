@@ -31,6 +31,32 @@ struct EntryKey {
     version: u32,
 }
 
+/// The exact release identity a caller files or reads one wiring version under.
+#[derive(Debug, Clone, Copy)]
+pub struct VersionKey<'a> {
+    pub tenant_id: &'a str,
+    pub package_id: &'a str,
+    pub environment: &'a str,
+    pub effective_release_id: u32,
+    pub wiring_id: &'a str,
+    pub version: u32,
+}
+
+impl VersionKey<'_> {
+    fn to_entry_key(self) -> EntryKey {
+        EntryKey {
+            pointer: Pointer {
+                tenant_id: Arc::from(self.tenant_id),
+                package_id: Arc::from(self.package_id),
+                environment: Arc::from(self.environment),
+                effective_release_id: self.effective_release_id,
+                wiring_id: Arc::from(self.wiring_id),
+            },
+            version: self.version,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct CachedWiring<T> {
     graph_hash: Arc<str>,
@@ -148,16 +174,15 @@ where
         wiring_id: &str,
         version: u32,
     ) -> Option<ActiveWiring<T>> {
-        let key = EntryKey {
-            pointer: Pointer {
-                tenant_id: Arc::from(tenant_id),
-                package_id: Arc::from(package_id),
-                environment: Arc::from(environment),
-                effective_release_id,
-                wiring_id: Arc::from(wiring_id),
-            },
+        let key = VersionKey {
+            tenant_id,
+            package_id,
+            environment,
+            effective_release_id,
+            wiring_id,
             version,
-        };
+        }
+        .to_entry_key();
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
         let resident = state.entries.get(&key).cloned();
         if resident.is_some() {
@@ -177,26 +202,13 @@ where
     /// identity and hash match. Different bytes under that identity are refused.
     pub fn insert_version(
         &self,
-        tenant_id: &str,
-        package_id: &str,
-        environment: &str,
-        effective_release_id: u32,
-        wiring_id: &str,
-        version: u32,
+        identity: VersionKey<'_>,
         graph_hash: impl Into<Arc<str>>,
         wiring: Wiring,
         facts: T,
     ) -> CacheInsert<T> {
-        let key = EntryKey {
-            pointer: Pointer {
-                tenant_id: Arc::from(tenant_id),
-                package_id: Arc::from(package_id),
-                environment: Arc::from(environment),
-                effective_release_id,
-                wiring_id: Arc::from(wiring_id),
-            },
-            version,
-        };
+        let version = identity.version;
+        let key = identity.to_entry_key();
         let graph_hash = graph_hash.into();
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
         if let Some(resident) = state.entries.get(&key).cloned() {
@@ -293,7 +305,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::{CacheInsert, WiringCache};
+    use super::{CacheInsert, VersionKey, WiringCache};
     use crate::wiring::{Wiring, WiringNode};
 
     fn wiring(entry: &str) -> Wiring {
@@ -328,12 +340,14 @@ mod tests {
                 "another release cannot satisfy this lookup"
             );
             let inserted = cache.insert_version(
-                TENANT,
-                PACKAGE,
-                ENVIRONMENT,
-                release_id,
-                WIRING,
-                1,
+                VersionKey {
+                    tenant_id: TENANT,
+                    package_id: PACKAGE,
+                    environment: ENVIRONMENT,
+                    effective_release_id: release_id,
+                    wiring_id: WIRING,
+                    version: 1,
+                },
                 "sha256:graph",
                 wiring(facts),
                 facts,

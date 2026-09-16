@@ -457,24 +457,24 @@ impl Wiring {
                 {
                     None => None,
                     Some(terminal) => {
-                        match terminal_verdict(walk, &call.node, terminal, &payload)? {
-                            recorded @ Some(_) => recorded,
-                            // An emit node that produced no dedup id published
-                            // nothing, so it is a node data failure taking the
-                            // ordinary error-edge route, not a verdict.
-                            None => {
-                                self.error_or_fail(
-                                    walk,
-                                    &call.node,
-                                    ErrorDetail::coded(
-                                        "missing-dedup-id",
-                                        format!("emit node emitted no {DEDUP_ID_FIELD} string"),
-                                    ),
-                                    FailureKind::MissingDedupId,
-                                );
-                                return Ok(());
-                            }
-                        }
+                        // An emit node that produced no dedup id published
+                        // nothing, so it is a node data failure taking the
+                        // ordinary error-edge route, not a verdict.
+                        let Some(recorded) =
+                            terminal_verdict(walk, &call.node, terminal, &payload)?
+                        else {
+                            self.error_or_fail(
+                                walk,
+                                &call.node,
+                                ErrorDetail::coded(
+                                    "missing-dedup-id",
+                                    format!("emit node emitted no {DEDUP_ID_FIELD} string"),
+                                ),
+                                FailureKind::MissingDedupId,
+                            );
+                            return Ok(());
+                        };
+                        Some(recorded)
                     }
                 };
                 walk.current = None;
@@ -484,7 +484,7 @@ impl Wiring {
                 if verdict.is_some() {
                     walk.verdict = verdict;
                 }
-                self.enqueue_successors(walk, &call.node, &port, payload);
+                self.enqueue_successors(walk, &call.node, &port, &payload);
             }
             NodeOutcome::Error(NodeError::Retryable(detail)) => {
                 let policy = RetryPolicy::from_config(&call.config);
@@ -555,7 +555,7 @@ impl Wiring {
     }
 
     /// Enqueue the edges leaving `node` on `port`, each carrying `payload`.
-    fn enqueue_successors(&self, walk: &mut Walk, node: &str, port: &str, payload: Value) {
+    fn enqueue_successors(&self, walk: &mut Walk, node: &str, port: &str, payload: &Value) {
         for edge in self.successors(node, port) {
             walk.frontier.push_back(Token {
                 node: edge.to.clone(),
@@ -571,7 +571,7 @@ impl Wiring {
     /// [`ERROR_PORT`](crate::ERROR_PORT) successors carrying `payload`.
     /// Deliberately leaves `step_seq` and `result` untouched: an error route is
     /// not a success completion.
-    fn route_error(&self, walk: &mut Walk, node: &str, payload: Value) {
+    fn route_error(&self, walk: &mut Walk, node: &str, payload: &Value) {
         walk.current = None;
         *walk.visits.entry(node.to_string()).or_default() += 1;
         self.enqueue_successors(walk, node, ERROR_PORT, payload);
@@ -592,7 +592,7 @@ impl Wiring {
             // An error-ROUTED emission is a COMPLETED visit, so it advances the
             // node's occurrence exactly as a success does; a walk-ending failure
             // above does not.
-            self.route_error(walk, node, detail.to_error_payload());
+            self.route_error(walk, node, &detail.to_error_payload());
         }
     }
 }
