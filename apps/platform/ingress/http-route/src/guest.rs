@@ -1,14 +1,20 @@
 //! WASI HTTP shell over authoritative routing, auth, and router delivery.
 
-wit_bindgen::generate!({
-    world: "flow-http",
-    path: "wit",
-    generate_all,
-    async: ["export:wasi:http/handler@0.3.0#handle"],
-});
+#[allow(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "flow-http",
+        path: "wit",
+        generate_all,
+        async: ["export:wasi:http/handler@0.3.0#handle"],
+    });
+}
 
-use exports::wasi::http::handler::Guest;
-use wasi::http::types::{ErrorCode, Fields, Method, Request, Response};
+use bindings::exports::wasi::http::handler::Guest;
+use bindings::wasi::http::types::{ErrorCode, Fields, Method, Request, Response};
 use wit_bindgen::rt::async_support::{
     FutureReader, FutureWriter, StreamReader, StreamResult, spawn_local,
 };
@@ -39,20 +45,20 @@ impl Guest for Component {
     }
 }
 
-export!(Component);
+bindings::export!(Component with_types_in bindings);
 
 struct GuestBackend;
 
 impl Backend for GuestBackend {
-    type RoutePermit = wamn::flow_http_routing::routing::RoutePermit;
-    type AuthenticatedCaller = wamn::flow_http_routing::routing::AuthenticatedCaller;
+    type RoutePermit = bindings::wamn::flow_http_routing::routing::RoutePermit;
+    type AuthenticatedCaller = bindings::wamn::flow_http_routing::routing::AuthenticatedCaller;
 
     fn routes(
         &mut self,
         method: &str,
         authority: &str,
     ) -> Result<Vec<RouteDefinition>, ProviderError> {
-        let routes = wamn::flow_http_routing::routing::routes(method, authority)
+        let routes = bindings::wamn::flow_http_routing::routing::routes(method, authority)
             .map_err(|_| ProviderError)?;
         routes.into_iter().map(route_definition).collect()
     }
@@ -64,12 +70,12 @@ impl Backend for GuestBackend {
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection> {
         let headers = headers
             .iter()
-            .map(|header| wamn::flow_http_routing::routing::Header {
+            .map(|header| bindings::wamn::flow_http_routing::routing::Header {
                 name: header.name.clone(),
                 value: header.value.clone(),
             })
             .collect::<Vec<_>>();
-        wamn::flow_http_routing::routing::authenticate(attachment_id, &headers).map_err(
+        bindings::wamn::flow_http_routing::routing::authenticate(attachment_id, &headers).map_err(
             |rejection| AuthRejection {
                 status: rejection.status,
                 code: rejection.code,
@@ -78,7 +84,7 @@ impl Backend for GuestBackend {
     }
 
     fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid> {
-        wamn::flow_http_routing::routing::validate_input(attachment_id, payload)
+        bindings::wamn::flow_http_routing::routing::validate_input(attachment_id, payload)
             .map_err(SchemaInvalid::from_refusal)
     }
 
@@ -86,19 +92,20 @@ impl Backend for GuestBackend {
         &mut self,
         attachment_id: &str,
     ) -> Result<Option<Self::RoutePermit>, ProviderError> {
-        wamn::flow_http_routing::routing::try_acquire(attachment_id).map_err(|_| ProviderError)
+        bindings::wamn::flow_http_routing::routing::try_acquire(attachment_id)
+            .map_err(|_| ProviderError)
     }
 
     fn new_delivery_id(&mut self) -> String {
         const RANDOM_BYTES: u64 = 16;
-        hex(&wasi::random::random::get_random_bytes(RANDOM_BYTES))
+        hex(&bindings::wasi::random::random::get_random_bytes(RANDOM_BYTES))
     }
 
     fn deliver(
         &mut self,
         request: DeliveryRequest<Self::AuthenticatedCaller>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
-        use wamn::router_delivery::delivery;
+        use bindings::wamn::router_delivery::delivery;
 
         let request = delivery::DeliveryRequest {
             source: delivery::Source::Attachment(request.attachment_id),
@@ -129,9 +136,9 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn convert_delivery_outcome(
-    outcome: wamn::router_delivery::delivery::DeliveryOutcome,
+    outcome: bindings::wamn::router_delivery::delivery::DeliveryOutcome,
 ) -> DeliveryOutcome {
-    use wamn::router_delivery::delivery;
+    use bindings::wamn::router_delivery::delivery;
 
     match outcome {
         delivery::DeliveryOutcome::Respond(payload) => DeliveryOutcome::Respond(payload),
@@ -182,9 +189,9 @@ fn convert_delivery_outcome(
 }
 
 fn convert_delivery_failure(
-    failure: wamn::router_delivery::delivery::DeliveryFailure,
+    failure: bindings::wamn::router_delivery::delivery::DeliveryFailure,
 ) -> DeliveryFailure {
-    use wamn::router_delivery::delivery;
+    use bindings::wamn::router_delivery::delivery;
     DeliveryFailure {
         kind: match failure.kind {
             delivery::FailureKind::Terminal => DeliveryFailureKind::Terminal,
@@ -203,8 +210,10 @@ fn convert_delivery_failure(
     }
 }
 
-fn convert_delivery_error(error: wamn::router_delivery::delivery::DeliveryError) -> DeliveryError {
-    use wamn::router_delivery::delivery::DeliveryError as WireError;
+fn convert_delivery_error(
+    error: bindings::wamn::router_delivery::delivery::DeliveryError,
+) -> DeliveryError {
+    use bindings::wamn::router_delivery::delivery::DeliveryError as WireError;
 
     match error {
         WireError::SourceNotFound => DeliveryError::SourceNotFound,
@@ -221,9 +230,9 @@ fn convert_delivery_error(error: wamn::router_delivery::delivery::DeliveryError)
 }
 
 fn route_definition(
-    route: wamn::flow_http_routing::routing::RouteDefinition,
+    route: bindings::wamn::flow_http_routing::routing::RouteDefinition,
 ) -> Result<RouteDefinition, ProviderError> {
-    use wamn::flow_http_routing::routing;
+    use bindings::wamn::flow_http_routing::routing;
 
     let body_limit = usize::try_from(route.body_limit).map_err(|_| ProviderError)?;
     let mapped_limit = usize::try_from(route.mapped_limit).map_err(|_| ProviderError)?;
@@ -267,7 +276,7 @@ impl BodyReader for WasiBody {
     async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
         // The adapter calls this only after route selection and authentication.
         if let Some(request) = self.request.take() {
-            let (result, receiver) = wit_future::new(|| Ok(()));
+            let (result, receiver) = bindings::wit_future::new(|| Ok(()));
             let (stream, trailers) = Request::consume_body(request, receiver);
             self.stream = Some(stream);
             self.trailers = Some(trailers);
@@ -342,8 +351,8 @@ fn send_response(response: HttpResponse) -> Response {
     if !response.body.is_empty() {
         let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
     }
-    let (mut writer, reader) = wit_stream::new::<u8>();
-    let (trailers, trailer_reader) = wit_future::new(|| Ok(None));
+    let (mut writer, reader) = bindings::wit_stream::new::<u8>();
+    let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
     let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
     let _ = outgoing.set_status_code(response.status);
     // The host consumes the stream after handle returns the response.

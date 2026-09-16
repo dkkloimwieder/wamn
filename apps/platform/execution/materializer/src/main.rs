@@ -1,10 +1,16 @@
 //! Durable JetStream registration delivery through the shared router bridge.
 
-wit_bindgen::generate!({
-    world: "materializer",
-    path: "wit",
-    generate_all,
-});
+#[allow(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "materializer",
+        path: "wit",
+        generate_all,
+    });
+}
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -19,26 +25,33 @@ use wamn_materializer::{
     verified_derived_source_event_id, verified_source_event_id,
 };
 
-use events::MessageHandle as Message;
-use wamn::jetstream::registration::{self, ConsumerConfig};
-use wamn::postgres::client;
-use wamn::postgres::types::{PgError, SqlValue};
-use wamn::router_delivery::delivery::{
+use bindings::events::MessageHandle as Message;
+use bindings::wamn::jetstream::registration::{self, ConsumerConfig};
+use bindings::wamn::postgres::client;
+use bindings::wamn::postgres::types::{PgError, SqlValue};
+use bindings::wamn::router_delivery::delivery::{
     self, DeliveryError, DeliveryOutcome, DeliveryRequest, ParentCausation, Source,
 };
-use wasmcloud::nats::types::HeaderEntry as Header;
+use bindings::wasmcloud::nats::types::HeaderEntry as Header;
 use wit_bindgen::block_on;
 
 struct Component;
 
-impl exports::wasi::cli::run::Guest for Component {
+// The WIT-generated Guest trait declares `run` async; this guest's work is
+// synchronous, and the impl cannot change the signature it must satisfy.
+#[allow(
+    clippy::unused_async,
+    clippy::unused_async_trait_impl,
+    reason = "the generated Guest trait fixes this signature"
+)]
+impl bindings::exports::wasi::cli::run::Guest for Component {
     async fn run() -> Result<(), ()> {
         main();
         Ok(())
     }
 }
 
-export!(Component);
+bindings::export!(Component with_types_in bindings);
 
 struct Config {
     stream: String,
@@ -417,8 +430,7 @@ fn prepare_message(
         Err(reason) => {
             counters.poison += 1;
             eprintln!(
-                "wamn::materializer REFUSED poison stream_seq={}: event record parse failed",
-                stream_seq,
+                "wamn::materializer REFUSED poison stream_seq={stream_seq}: event record parse failed"
             );
             return Preparation::Terminate(reason);
         }
@@ -468,8 +480,7 @@ fn prepare_message(
         PreparationGate::MissingSourceId => {
             counters.poison += 1;
             eprintln!(
-                "wamn::materializer REFUSED poison stream_seq={}: Nats-Msg-Id is missing, duplicated, or inconsistent",
-                stream_seq
+                "wamn::materializer REFUSED poison stream_seq={stream_seq}: Nats-Msg-Id is missing, duplicated, or inconsistent"
             );
             return Preparation::Terminate("poison-source-id");
         }
@@ -481,7 +492,7 @@ fn prepare_message(
     match verdict {
         Verdict::Deliver(payload) => Preparation::Deliver {
             payload,
-            stream_seq: stream_seq,
+            stream_seq,
             source_event_id,
             parent_causation,
         },
@@ -695,7 +706,7 @@ fn serve(
         );
         return;
     }
-    let consumer = match block_on(events::open_pull_consumer(
+    let consumer = match block_on(bindings::events::open_pull_consumer(
         config.stream.clone(),
         durable_name(
             &config.tenant,
@@ -714,7 +725,7 @@ fn serve(
     };
     let messages = match block_on(consumer.fetch(config.batch, config.fetch_ms)) {
         Ok(batch) => batch.messages,
-        Err(wasmcloud::nats::types::NatsError::NoMessages) => return,
+        Err(bindings::wasmcloud::nats::types::NatsError::NoMessages) => return,
         Err(error) => {
             eprintln!(
                 "wamn::materializer native fetch failed for {}: {error:?}",
@@ -843,7 +854,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn::router_delivery::delivery::{DeliveryFailure, FailureKind};
+    use bindings::wamn::router_delivery::delivery::{DeliveryFailure, FailureKind};
     use wamn_event_wire::{Causation, Op};
 
     fn serving() -> Serving {
