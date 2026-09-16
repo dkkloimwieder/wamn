@@ -1,12 +1,14 @@
-//! One-shot control-plane verbs.
+//! The command line for the one-shot control-plane verbs.
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
 //!
-//! Provisioning (`provision-org`, `provision-project-env`,
-//! `enable-cdc-project-env`), exact package application, and reconciliation
-//! ship in `wamn-ctl`. Environment
+//! `wamn-control` does the work. This crate holds the clap argument
+//! definitions, the printed output, the exit codes, and the interrupt,
+//! termination, and hangup arms of the deploy verb. Each verb parses its
+//! arguments, makes one library call, and prints the result. Environment
 //! lifecycle and reporting verbs require the `ops` feature and ship in the
-//! separate `wamn-ctl-ops` binary.
+//! separate `wamn-ctl-ops` binary. The development loop in `dev/` is the one
+//! part of this crate that is not a verb surface.
 
 // `dev/coordinator.rs` still reaches the delivery SQLx helpers and the release
 // carrier through `crate::`. Session wamn-52 holds that file, so this private

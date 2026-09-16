@@ -1,13 +1,13 @@
 # Plan — extract the control library out of `services/ctl`
 
-The [architecture overview](../architecture/overview.md#control-and-publication) describes the current `wamn-control` library and its dependency direction.
-This page keeps only the unbuilt split work. Beads records its status.
+The [architecture overview](../architecture/overview.md#control-and-publication) describes the finished split and its dependency direction.
+This page records how the split was done and what is left. Beads records its status.
 
 ## 1. Problem
 
-`services/ctl` still holds control verbs beside the CLI and the dev loop.
-`wamn-integration-tests`, `wamn-receiving-tests`, and `wamn-wms-tests` reach those verbs through the `wamn-ctl` package.
-That control logic is reachable only through the module tree of a binary package.
+`services/ctl` held control verbs beside the CLI and the dev loop.
+`wamn-integration-tests`, `wamn-receiving-tests`, and `wamn-wms-tests` reached those verbs through the `wamn-ctl` package.
+That control logic was reachable only through the module tree of a binary package.
 
 ## 2. Target
 
@@ -71,18 +71,19 @@ Serialize each extraction with the lanes that edit `services/ctl`, and serialize
 The lane owns the files of the current extraction and their manifest and module declarations.
 It does not own the two directory trees.
 
-## 4. Remaining work
+## 4. Status
 
-`wamn-df1z` extracts the remaining control code with the same method, in one lane:
+`wamn-df1z` extracted the remaining control code with this method, and the split is done.
+`wamn-control` owns the control verbs, the delivery code, and the seven `ops` feature verbs.
+`services/ctl` owns the clap argument definitions, the printed output, the exit codes, and the signal arms of the deploy verb.
+No caller reaches a control operation through the `wamn-ctl` module tree.
+`wamn-integration-tests`, `wamn-receiving-tests`, and `wamn-wms-tests` call `wamn-control` directly.
 
-- The control verbs `bind_connection`, `identity_issuer`, `project_env_membership`, `provision_org`, `push_release_manifest`, `print_release_env`, `reconcile_replica_identity`, and `terminalize_effect_uncertain`.
-- `services/ctl/src/delivery/`, which holds deployment, publication, and qualification. CI calls this code, so it must not stay in a CLI module.
-- The `ops` feature verbs `copy_project_env`, `dump_project_env`, `restore_project_env`, `prune_record_history`, `prune_run_history`, `event_advisories`, and `ops_schema`.
+The delivery code runs its `git`, `docker`, `kubectl`, and `cargo` processes inside `wamn-control`, as section 2 allows.
+The child process group and the signals that shut that group down moved with it.
+The deploy verb keeps its own interrupt, termination, and hangup arms in `services/ctl`.
 
-`delivery/` runs `git`, `docker`, `kubectl`, and `cargo` processes.
-Those process calls move into `wamn-control` with the delivery code, as section 2 allows.
-
-The separation of the dev loop in `services/ctl/src/dev/` is later work.
+The separation of the dev loop in `services/ctl/src/dev/` is the one piece of work this page still names.
 
 ## 5. Tests
 

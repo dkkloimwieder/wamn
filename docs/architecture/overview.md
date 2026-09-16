@@ -37,13 +37,27 @@ The development command selects the operator from its Cargo declaration.
 | `wamn-control-provision` | Provisioning SQL, credential roles, and native broker declarations |
 | `wamn-schema-control` | Package migration decisions and run storage declarations |
 | `wamn-catalog` | Component, wiring, and release facts |
-| `wamn-control` | Control operations that the CLI, the dev loop, and test support call |
-| `wamn-ctl` | CLI verbs and the dev loop over `wamn-control` and the lower libraries |
+| `wamn-control` | Control, delivery, and operational work that the CLI, the dev loop, and test support call |
+| `wamn-ctl` | The command line over `wamn-control`, and the development loop |
 | `wamn-scenario-worker` | The authoring admission API |
 
 The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control` calls the lower libraries.
 `wamn-control` never depends on `wamn-ctl`.
 A `wamn-control` operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
+
+`wamn-control` lives at `crates/control/lib` and owns every control verb.
+It also owns the delivery code, which prepares, qualifies, publishes, selects, and deploys a release.
+That code runs the `git`, `docker`, `kubectl`, and `cargo` processes its work needs.
+It owns the child process group those processes run in.
+The `ops` feature adds the environment lifecycle and reporting verbs.
+`wamn-ctl` turns that feature on for its separate `wamn-ctl-ops` binary.
+
+`wamn-ctl` lives at `services/ctl` and owns the command line.
+It holds the clap argument definitions, the printed output, and the exit codes.
+It also holds the interrupt, termination, and hangup arms of the deploy verb.
+That signal answers the operator, and it does not clean up after the library.
+Each verb parses its arguments, makes one library call, and prints the result.
+The `<area>_verbs.rs` modules hold that surface, and the development loop in `services/ctl/src/dev/` is the one part that is not a verb surface.
 
 `apply-package` is the sole application migration applier.
 Rust decides package registration and wiring activation from stored facts within the caller's transaction.
@@ -78,7 +92,7 @@ A rollout changes the serving release.
 Runtime requests resolve wiring from the supplied release, independently of mutable activation pointers and PostgreSQL notifications.
 Frozen candidate execution retains its own admitted facts throughout the traversal.
 
-The control CLI qualifies exact artifacts against a selected clean source revision through the existing application tests.
+The delivery code qualifies exact artifacts against a selected clean source revision through the existing application tests.
 Publication requires that qualification and the same immutable manifest.
 Deployment locks the environment's selected release through workload readiness, an authenticated operation, and activation.
 A later selection makes a superseded deployment refuse before changing workloads.
