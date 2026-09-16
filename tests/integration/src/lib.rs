@@ -23,6 +23,8 @@ pub mod membership_test;
 pub mod rc;
 pub mod readerbench;
 #[cfg(test)]
+mod reconcile_live;
+#[cfg(test)]
 mod route_authentication_live;
 mod router_tap_live;
 pub mod streambench;
