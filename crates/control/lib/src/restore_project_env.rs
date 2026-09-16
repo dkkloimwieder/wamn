@@ -31,7 +31,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command as Proc;
 
 use anyhow::Context as _;
-use clap::Args;
 use tokio_postgres::NoTls;
 
 use crate::provision_project_env::read_project_env_instance;
@@ -41,119 +40,159 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 
-#[derive(Debug, Args)]
-pub struct RestoreProjectEnvArgs {
+/// Inputs of one project-env dump restore.
+#[derive(Debug)]
+pub struct RestoreProjectEnvRequest {
     /// Org id (must already be registered — `provision-org` / the pool).
-    #[arg(long)]
     pub org: String,
 
     /// Project id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric).
-    #[arg(long)]
     pub project: String,
 
     /// Environment slug (any `registry.env_policies` name; default set `dev`/`prod`).
-    #[arg(long)]
     pub env: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the dump
-    /// catalog (`provisioning.dumps`) to pick which dump to restore. Env
-    /// `WAMN_SYSTEM_ADMIN_URL`. Not needed when `--dump-dir` is given.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    /// catalog (`provisioning.dumps`) to pick which dump to restore. Not needed
+    /// when `dump_dir` is given.
     pub system_database_url: Option<String>,
 
     /// Superuser Postgres URL to the TARGET cluster (a maintenance DB, e.g.
     /// `.../postgres`): create the scratch database + connect to run `pg_restore`.
     /// Required to perform a restore.
-    #[arg(long)]
     pub database_url: Option<String>,
 
     /// Explicit local `pg_dump -Fd` directory to restore from. When given, the
     /// catalog is not read (this exact artifact is restored).
-    #[arg(long)]
     pub dump_dir: Option<PathBuf>,
 
     /// Local root the dumps are staged under (the object-store mirror until the
-    /// restore-side fetch is wired). When `--dump-dir` is absent, the dump directory is
-    /// `<dump-root>/<timestamp>` for the catalog-selected dump.
-    #[arg(long, default_value = "/tmp/wamn-dump")]
+    /// restore-side fetch is wired). When `dump_dir` is absent, the dump directory is
+    /// `<dump_root>/<timestamp>` for the catalog-selected dump.
     pub dump_root: PathBuf,
 
     /// Restore a SPECIFIC recorded dump by its object key (from the catalog).
     /// When omitted, the latest recorded dump is restored (restore-to-last-dump).
-    #[arg(long)]
     pub object_key: Option<String>,
 
     /// Override the scratch-restore database name. Default:
     /// `wamn-restore-<org>--<project>--<env>`.
-    #[arg(long)]
     pub scratch_db: Option<String>,
 
     /// Restore IN PLACE over the LIVE project-env database (destructive:
     /// `pg_restore --clean` drops and replaces the current data). Requires
-    /// `--confirm`. Default is a non-destructive scratch restore.
-    #[arg(long)]
+    /// `confirm`. Default is a non-destructive scratch restore.
     pub in_place: bool,
 
-    /// Confirm a destructive `--in-place` restore. Without it, `--in-place` refuses
-    /// to run (it would drop and replace live data).
-    #[arg(long)]
+    /// Confirm a destructive in-place restore. Without it, an in-place restore
+    /// refuses to run (it would drop and replace live data).
     pub confirm: bool,
 }
 
-pub async fn run(args: RestoreProjectEnvArgs) -> anyhow::Result<()> {
-    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
-    validate_project_env(&args.org, &args.project, &args.env)
+/// What one restore read and did.
+#[derive(Debug)]
+pub struct RestoreProjectEnvReport {
+    /// The project-env the dump belongs to.
+    pub triple: Triple,
+    /// The `-Fd` directory the restore read.
+    pub dump_dir: PathBuf,
+    /// The catalog object key of the restored dump, when a key selected it.
+    pub object_key: Option<String>,
+    /// Where restore-to-last-dump found the newest dump, when it looked.
+    pub selection: Option<DumpSelection>,
+    /// The database the restore wrote, and how.
+    pub outcome: RestoreOutcome,
+}
+
+/// Where restore-to-last-dump found the newest dump.
+#[derive(Debug)]
+pub enum DumpSelection {
+    /// The `provisioning.dumps` catalog recorded it.
+    Catalog,
+    /// Listing this staged dump key prefix under the dump root found it, and the
+    /// catalog did NOT record it (for example a scheduled CronJob dump).
+    StagedPrefix(String),
+}
+
+/// Which database one restore wrote.
+#[derive(Debug)]
+pub enum RestoreOutcome {
+    /// A fresh scratch database, left standing for inspection.
+    Scratch {
+        /// The scratch database the dump was restored into.
+        database: String,
+    },
+    /// The live project-env database, restored over with `--clean`.
+    InPlace {
+        /// The live database the dump was restored over.
+        database: String,
+    },
+}
+
+/// Restore one project-env dump, into a fresh scratch database by default or
+/// over the live database when the request confirms an in-place restore.
+pub async fn restore_project_env(
+    request: RestoreProjectEnvRequest,
+) -> anyhow::Result<RestoreProjectEnvReport> {
+    let triple = Triple::new(&request.org, &request.project, request.env.as_str());
+    validate_project_env(&request.org, &request.project, &request.env)
         .map_err(|e| anyhow::anyhow!("project-env names: {e}"))?;
 
     // Resolve which dump directory to restore (explicit dir, or the catalog).
-    let (dump_dir, object_key) = resolve_dump_dir(&args, &triple).await?;
+    let (dump_dir, object_key, selection) = resolve_dump_dir(&request, &triple).await?;
     anyhow::ensure!(
         dump_dir.join("toc.dat").exists(),
         "dump directory {} is not a pg_dump -Fd artifact (no toc.dat) — stage the dump there \
-         (dump-project-env --run-now --out-dir) or pass --dump-dir",
+         (dump-project-env --run-now --out-dir) or pass an explicit dump directory",
         dump_dir.display()
     );
-    match &object_key {
-        Some(key) => println!(
-            "restoring {triple} from dump {key} ({})",
-            dump_dir.display()
-        ),
-        None => println!("restoring {triple} from {}", dump_dir.display()),
-    }
 
-    let admin_url = args
+    let admin_url = request
         .database_url
         .as_deref()
-        .context("restore needs --database-url (a superuser URL to the TARGET cluster)")?;
+        .context("restore needs a superuser URL to the TARGET cluster")?;
     let dump_dir_str = dump_dir.to_string_lossy().to_string();
 
-    if args.in_place {
-        let system_url = args.system_database_url.as_deref().context(
-            "--in-place requires --system-database-url to resolve the stored instance suffix",
-        )?;
+    let outcome = if request.in_place {
+        let system_url = request
+            .system_database_url
+            .as_deref()
+            .context("an in-place restore needs the system database URL to resolve the stored instance suffix")?;
         let instance = read_project_env_instance(system_url, &triple).await?;
-        restore_in_place(&args, &triple, &instance, admin_url, &dump_dir_str).await
+        restore_in_place(&request, &triple, &instance, admin_url, &dump_dir_str).await?
     } else {
-        restore_into_scratch(&args, &triple, admin_url, &dump_dir_str).await
-    }
+        restore_into_scratch(&request, &triple, admin_url, &dump_dir_str).await?
+    };
+
+    Ok(RestoreProjectEnvReport {
+        triple,
+        dump_dir,
+        object_key,
+        selection,
+        outcome,
+    })
 }
 
 /// Resolve the dump directory: an explicit `--dump-dir` wins; otherwise read the
 /// catalog (latest, or `--object-key`) and derive `<dump-root>/<timestamp>`, where
 /// the timestamp is the object key's last path segment (the `--run-now` layout).
 async fn resolve_dump_dir(
-    args: &RestoreProjectEnvArgs,
+    request: &RestoreProjectEnvRequest,
     triple: &Triple,
-) -> anyhow::Result<(PathBuf, Option<String>)> {
-    if let Some(dir) = &args.dump_dir {
-        return Ok((dir.clone(), None));
+) -> anyhow::Result<(PathBuf, Option<String>, Option<DumpSelection>)> {
+    if let Some(dir) = &request.dump_dir {
+        return Ok((dir.clone(), None, None));
     }
-    let system_url = args.system_database_url.as_deref().context(
-        "pass --dump-dir, or --system-database-url to read the dump catalog (restore-to-last-dump)",
+    let system_url = request.system_database_url.as_deref().context(
+        "pass a dump directory, or the system database URL to read the dump catalog \
+         (restore-to-last-dump)",
     )?;
-    let key = match &args.object_key {
-        Some(k) => k.clone(),
-        None => latest_dump_key(system_url, triple, &args.dump_root).await?,
+    let (key, selection) = match &request.object_key {
+        Some(k) => (k.clone(), None),
+        None => {
+            let (key, selection) = latest_dump_key(system_url, triple, &request.dump_root).await?;
+            (key, Some(selection))
+        }
     };
     // The dump is staged locally under <dump-root>/<timestamp> (the object key's
     // last segment — the dump-project-env --run-now --out-dir layout).
@@ -162,7 +201,7 @@ async fn resolve_dump_dir(
         .next()
         .filter(|s| !s.is_empty())
         .with_context(|| format!("malformed dump object key {key:?}"))?;
-    Ok((args.dump_root.join(timestamp), Some(key)))
+    Ok((request.dump_root.join(timestamp), Some(key), selection))
 }
 
 /// Resolve restore-to-last-dump's dump key: the genuinely NEWEST dump across the
@@ -173,13 +212,13 @@ async fn resolve_dump_dir(
 /// the `wamn_system` connection (wamn-cjv.19). Without it those dumps are invisible and
 /// restore-to-last-dump errors "no dump recorded" though dumps exist. Folding the
 /// catalog's own latest key into the candidate set also lets a newer STAGED dump beat a
-/// stale recorded one — the last dump, not merely the last *recorded* one. Prints WHICH
+/// stale recorded one — the last dump, not merely the last *recorded* one. Reports WHICH
 /// path found the chosen dump; errors only if neither offers one.
 async fn latest_dump_key(
     system_url: &str,
     triple: &Triple,
     dump_root: &Path,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, DumpSelection)> {
     let recorded = recorded_latest_dump_key(system_url, triple).await?;
 
     let prefix = wamn_control_provision::dump::dump_key_prefix(triple);
@@ -196,16 +235,12 @@ async fn latest_dump_key(
             )
         })?;
 
-    if recorded.as_deref() == Some(key.as_str()) {
-        println!("restore-to-last-dump: newest dump {key} (from the provisioning.dumps catalog)");
+    let selection = if recorded.as_deref() == Some(key.as_str()) {
+        DumpSelection::Catalog
     } else {
-        println!(
-            "restore-to-last-dump: newest dump {key} (found by listing the dump prefix {prefix:?} \
-             staged under --dump-root — NOT in the provisioning.dumps catalog, e.g. a scheduled \
-             CronJob dump)"
-        );
-    }
-    Ok(key)
+        DumpSelection::StagedPrefix(prefix)
+    };
+    Ok((key, selection))
 }
 
 /// The latest recorded dump's object key for a project-env from the catalog (as the
@@ -263,12 +298,12 @@ fn staged_dump_keys(dump_root: &Path, prefix: &str) -> Vec<String> {
 /// Restore into a fresh scratch database (non-destructive). The scratch DB is left
 /// standing for inspection / carve-out; the drop command is printed.
 async fn restore_into_scratch(
-    args: &RestoreProjectEnvArgs,
+    request: &RestoreProjectEnvRequest,
     triple: &Triple,
     admin_url: &str,
     dump_dir: &str,
-) -> anyhow::Result<()> {
-    let scratch = match &args.scratch_db {
+) -> anyhow::Result<RestoreOutcome> {
+    let scratch = match &request.scratch_db {
         Some(s) => s.clone(),
         None => {
             validate_restore_scratch_name(triple)
@@ -283,11 +318,7 @@ async fn restore_into_scratch(
     let conninfo = swap_db(admin_url, &scratch);
     run_pg_restore(&conninfo, dump_dir, false)?;
 
-    println!(
-        "restored into scratch database {scratch:?} (non-destructive). Inspect it, then drop:\n  \
-         psql {admin_url:?} -c 'DROP DATABASE IF EXISTS \"{scratch}\" WITH (FORCE)'"
-    );
-    Ok(())
+    Ok(RestoreOutcome::Scratch { database: scratch })
 }
 
 /// Whether a destructive in-place restore may proceed. In place `pg_restore
@@ -300,22 +331,22 @@ fn in_place_confirmed(confirm: bool) -> bool {
 /// Restore IN PLACE over the live project-env database (destructive; `--confirm`
 /// gated). `pg_restore --clean --if-exists` drops each object before recreating it.
 async fn restore_in_place(
-    args: &RestoreProjectEnvArgs,
+    request: &RestoreProjectEnvRequest,
     triple: &Triple,
     instance: &str,
     admin_url: &str,
     dump_dir: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RestoreOutcome> {
     anyhow::ensure!(
-        in_place_confirmed(args.confirm),
-        "--in-place drops and replaces the LIVE {triple} database — re-run with --confirm to proceed"
+        in_place_confirmed(request.confirm),
+        "an in-place restore drops and replaces the LIVE {triple} database — re-run with the \
+         confirmation to proceed"
     );
     let db_name =
-        project_env_database_name(&args.org, &args.project, triple.env.as_str(), instance);
+        project_env_database_name(&request.org, &request.project, triple.env.as_str(), instance);
     let conninfo = swap_db(admin_url, &db_name);
     run_pg_restore(&conninfo, dump_dir, true)?;
-    println!("restored {triple} in place over the live database {db_name:?} (--clean)");
-    Ok(())
+    Ok(RestoreOutcome::InPlace { database: db_name })
 }
 
 /// Run `pg_restore` with the pure argv builder; fail on a non-zero exit.

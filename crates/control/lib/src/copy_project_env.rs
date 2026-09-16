@@ -30,7 +30,6 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
-use clap::Args;
 use tokio_postgres::NoTls;
 use tokio_postgres::error::SqlState;
 
@@ -45,129 +44,135 @@ use wamn_control_registry::Triple;
 use crate::restore_project_env::swap_db;
 use wamn_schema_control::BareSchemaName;
 
-#[derive(Debug, Args)]
-pub struct CopyProjectEnvArgs {
+/// Inputs of one project-env data copy.
+#[derive(Debug)]
+pub struct CopyProjectEnvRequest {
     /// Source org id.
-    #[arg(long)]
     pub src_org: String,
     /// Source project id.
-    #[arg(long)]
     pub src_project: String,
     /// Source environment slug.
-    #[arg(long)]
     pub src_env: String,
 
     /// Destination org id (may differ from the source — cross-org deploy).
-    #[arg(long)]
     pub dst_org: String,
     /// Destination project id.
-    #[arg(long)]
     pub dst_project: String,
     /// Destination environment slug.
-    #[arg(long)]
     pub dst_env: String,
 
     /// This copy is a MOVE: the src's traffic cuts over to the dst. Runs the
     /// mandatory quiesce → verify → gated-cutover pipeline, recorded step by
-    /// step in the T1 registry (requires --system-database-url).
-    #[arg(long)]
+    /// step in the T1 registry (needs the system database URL).
     pub cutover: bool,
 
-    /// After a verified cutover, drop the retained src database (requires
-    /// --confirm; default keeps it through a hold window).
-    #[arg(long)]
+    /// After a verified cutover, drop the retained src database (needs
+    /// `confirm`; the default keeps it through a hold window).
     pub deprovision_old: bool,
 
-    /// Confirm the destructive --deprovision-old drop.
-    #[arg(long)]
+    /// Confirm the destructive `deprovision_old` drop.
     pub confirm: bool,
 
     /// Superuser Postgres URL to the SOURCE cluster (a maintenance DB, e.g.
     /// `.../postgres`) — quiesce, dump, and reads run through it.
-    #[arg(long)]
     pub src_admin_url: Option<String>,
 
-    /// Superuser Postgres URL to the DESTINATION cluster. Defaults to
-    /// --src-admin-url (a same-cluster copy).
-    #[arg(long)]
+    /// Superuser Postgres URL to the DESTINATION cluster. Absent means the
+    /// source cluster URL (a same-cluster copy).
     pub dst_admin_url: Option<String>,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): the copy
-    /// saga (`provisioning.copy_sagas`) + the dump/confirmation records. Env
-    /// `WAMN_SYSTEM_ADMIN_URL`. Required for destructive definition
-    /// reconciliation attestations and for --cutover.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    /// saga (`provisioning.copy_sagas`) + the dump/confirmation records.
+    /// Required for destructive definition reconciliation attestations and for
+    /// a cutover.
     pub system_database_url: Option<String>,
 
     /// The data schema the entity tables live in (verify counts it; a
     /// data-only restore is scoped to it).
-    #[arg(long, default_value = "public")]
     pub data_schema: String,
 
     /// Directory snapshots are staged under (a per-timestamp subdirectory —
     /// the `dump-project-env --run-now` layout).
-    #[arg(long, default_value = "/tmp/wamn-dump")]
     pub dump_root: PathBuf,
 
-    /// Print the step plan and exit without connecting anywhere.
-    #[arg(long)]
-    pub plan: bool,
-
-    /// Saga id the pipeline records under. Default:
+    /// Saga id the pipeline records under. Absent means
     /// `copy-<src-db>-to-<dst-db>-<unix-seconds>`.
-    #[arg(long)]
     pub saga_id: Option<String>,
 }
 
-pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
-    validate_project_env(&args.src_org, &args.src_project, &args.src_env)
+/// What one completed copy did.
+#[derive(Debug)]
+pub struct CopyProjectEnvReport {
+    /// The source project-env.
+    pub src: Triple,
+    /// The destination project-env.
+    pub dst: Triple,
+    /// The saga the pipeline recorded every step under.
+    pub saga_id: String,
+    /// The number of steps the pipeline executed.
+    pub steps: usize,
+}
+
+/// Validate both triples and plan the copy. No connection is made, so this is
+/// also the plan-only path.
+pub fn plan_project_env_copy(request: &CopyProjectEnvRequest) -> anyhow::Result<Vec<CopyStep>> {
+    validate_project_env(&request.src_org, &request.src_project, &request.src_env)
         .map_err(|e| anyhow::anyhow!("src names: {e}"))?;
-    validate_project_env(&args.dst_org, &args.dst_project, &args.dst_env)
+    validate_project_env(&request.dst_org, &request.dst_project, &request.dst_env)
         .map_err(|e| anyhow::anyhow!("dst names: {e}"))?;
-    let data_schema = BareSchemaName::new(args.data_schema.clone())
-        .with_context(|| format!("invalid --data-schema {:?}", args.data_schema))?;
-
-    let src = Triple::new(&args.src_org, &args.src_project, args.src_env.as_str());
-    let dst = Triple::new(&args.dst_org, &args.dst_project, args.dst_env.as_str());
-    let request = CopyRequest {
-        src: src.clone(),
-        dst: dst.clone(),
-        cutover: args.cutover,
-        deprovision_old: args.deprovision_old,
+    let copy = CopyRequest {
+        src: Triple::new(
+            &request.src_org,
+            &request.src_project,
+            request.src_env.as_str(),
+        ),
+        dst: Triple::new(
+            &request.dst_org,
+            &request.dst_project,
+            request.dst_env.as_str(),
+        ),
+        cutover: request.cutover,
+        deprovision_old: request.deprovision_old,
     };
-    let steps = plan_copy(&request).map_err(|e| anyhow::anyhow!("{e}"))?;
+    plan_copy(&copy).map_err(|e| anyhow::anyhow!("{e}"))
+}
 
-    println!(
-        "data copy {src} -> {dst} ({}):",
-        if args.cutover {
-            "MOVE with cutover"
-        } else {
-            "clone"
-        }
+/// Run the planned copy. Live step progress goes to `tracing`; the returned
+/// report is what the caller reports when the copy completes.
+pub async fn copy_project_env(
+    request: CopyProjectEnvRequest,
+) -> anyhow::Result<CopyProjectEnvReport> {
+    let steps = plan_project_env_copy(&request)?;
+    let data_schema = BareSchemaName::new(request.data_schema.clone())
+        .with_context(|| format!("invalid data schema {:?}", request.data_schema))?;
+
+    let src = Triple::new(
+        &request.src_org,
+        &request.src_project,
+        request.src_env.as_str(),
     );
-    for (i, step) in steps.iter().enumerate() {
-        println!("  {}. {}", i + 1, step.label());
-    }
-    if args.plan {
-        return Ok(());
-    }
+    let dst = Triple::new(
+        &request.dst_org,
+        &request.dst_project,
+        request.dst_env.as_str(),
+    );
 
-    let src_admin = args
+    let src_admin = request
         .src_admin_url
         .as_deref()
-        .context("copy needs --src-admin-url (a superuser URL to the SOURCE cluster)")?;
-    let dst_admin = args.dst_admin_url.as_deref().unwrap_or(src_admin);
-    let system_url = args
+        .context("copy needs a superuser URL to the SOURCE cluster")?;
+    let dst_admin = request.dst_admin_url.as_deref().unwrap_or(src_admin);
+    let system_url = request
         .system_database_url
         .as_deref()
-        .context("copy requires --system-database-url to resolve both stored instance suffixes")?;
+        .context("copy requires the system database URL to resolve both stored instance suffixes")?;
     let src_instance =
         crate::provision_project_env::read_project_env_instance(system_url, &src).await?;
     let dst_instance =
         crate::provision_project_env::read_project_env_instance(system_url, &dst).await?;
     let src_db = project_env_database_name(&src.org, &src.project, src.env.as_str(), &src_instance);
     let dst_db = project_env_database_name(&dst.org, &dst.project, dst.env.as_str(), &dst_instance);
-    let saga_id = args.saga_id.clone().unwrap_or_else(|| {
+    let saga_id = request.saga_id.clone().unwrap_or_else(|| {
         format!(
             "copy-{src_db}-to-{dst_db}-{}",
             crate::dump_project_env::unix_seconds()
@@ -179,11 +184,11 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         .context("system db connect (saga recording)")?;
     r.create(&format!("{src} -> {dst}"), steps.len() as i32)
         .await?;
-    println!("recording saga {saga_id:?} ({} steps)", steps.len());
+    tracing::info!("recording saga {saga_id:?} ({} steps)", steps.len());
     let recorder = Some(r);
 
     let mut ctx = ExecCtx {
-        args: &args,
+        request: &request,
         src_admin,
         dst_admin,
         src_db: &src_db,
@@ -200,16 +205,12 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
             if let Some(r) = &recorder {
                 r.complete().await?;
             }
-            println!(
-                "copy {src} -> {dst} complete ({} step(s){})",
-                steps.len(),
-                if recorder.is_some() {
-                    format!("; saga {saga_id} completed")
-                } else {
-                    String::new()
-                }
-            );
-            Ok(())
+            Ok(CopyProjectEnvReport {
+                src,
+                dst,
+                saga_id,
+                steps: steps.len(),
+            })
         }
         Err(e) => {
             if let Some(r) = &recorder {
@@ -217,7 +218,7 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
                 let _ = r.fail(&format!("step {}: {e:#}", executed + 1)).await;
             }
             if ctx.quiesced {
-                eprintln!(
+                tracing::error!(
                     "src {src_db:?} is still QUIESCED. To resume writes on the src:\n  \
                      psql <src-admin-url> -c '{}'\n  \
                      then terminate its backends so sessions re-dial.",
@@ -237,7 +238,7 @@ async fn execute_steps(
     executed: &mut usize,
 ) -> anyhow::Result<()> {
     for (i, step) in steps.iter().enumerate() {
-        println!("[{}/{}] {}", i + 1, steps.len(), step.label());
+        tracing::info!("[{}/{}] {}", i + 1, steps.len(), step.label());
         match step {
             CopyStep::Quiesce { .. } => exec_quiesce(ctx).await?,
             CopyStep::Snapshot { src } => exec_snapshot(ctx, src, recorder).await?,
@@ -271,7 +272,7 @@ async fn execute_steps(
 }
 
 struct ExecCtx<'a> {
-    args: &'a CopyProjectEnvArgs,
+    request: &'a CopyProjectEnvRequest,
     src_admin: &'a str,
     dst_admin: &'a str,
     src_db: &'a str,
@@ -327,7 +328,7 @@ async fn exec_quiesce(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     }
     drop(probe);
     let _ = task.await;
-    println!(
+    tracing::info!(
         "  src {:?} quiesced (read-only; {terminated} backend(s) terminated; probe write \
          refused 25006)",
         ctx.src_db
@@ -343,7 +344,7 @@ async fn exec_snapshot(
     recorder: &Option<SagaRecorder>,
 ) -> anyhow::Result<()> {
     let timestamp = crate::dump_project_env::unix_seconds().to_string();
-    let out = ctx.args.dump_root.join(&timestamp);
+    let out = ctx.request.dump_root.join(&timestamp);
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
@@ -373,7 +374,7 @@ async fn exec_snapshot(
             .await
             .context("record the snapshot in provisioning.dumps")?;
     }
-    println!("  snapshot {} (object key {object_key})", out.display());
+    tracing::info!("  snapshot {} (object key {object_key})", out.display());
     ctx.dump_dir = Some(out);
     Ok(())
 }
@@ -390,7 +391,7 @@ async fn exec_restore_data(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     let dst_url = swap_db(ctx.dst_admin, ctx.dst_db);
     let argv = pg_restore_data_only_argv(&dst_url, &dump_dir, ctx.data_schema.as_str());
     run_argv(&argv)?;
-    println!("  restored data into {:?}", ctx.dst_db);
+    tracing::info!("  restored data into {:?}", ctx.dst_db);
     Ok(())
 }
 
@@ -420,7 +421,7 @@ async fn exec_verify(ctx: &mut ExecCtx<'_>, _src: &Triple, _dst: &Triple) -> any
             "verify FAILED: {schema}.{table} row counts differ (src {s}, dst {d})"
         );
     }
-    println!(
+    tracing::info!(
         "  verified: {} table(s) in {schema:?}, all row counts match",
         src_tables.len()
     );
@@ -435,7 +436,7 @@ async fn exec_verify(ctx: &mut ExecCtx<'_>, _src: &Triple, _dst: &Triple) -> any
 /// The repoint: gated upstream (the saga check), here the operator-facing
 /// runbook — the credential seam is a K8s Secret only `kubectl` can apply.
 fn exec_cutover(ctx: &mut ExecCtx<'_>, src: &Triple, dst: &Triple) -> anyhow::Result<()> {
-    println!(
+    tracing::info!(
         "  cutover recorded: repoint the serving identity {src} -> {dst}:\n    \
          1. apply the dst credential Secret (provision-project-env --emit-secret) / update \
          the workload's project config;\n    \
@@ -451,8 +452,8 @@ fn exec_cutover(ctx: &mut ExecCtx<'_>, src: &Triple, dst: &Triple) -> anyhow::Re
 /// only when --deprovision-old was passed).
 async fn exec_deprovision_old(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     anyhow::ensure!(
-        ctx.args.confirm,
-        "--deprovision-old drops the retained src database {:?} — re-run with --confirm",
+        ctx.request.confirm,
+        "dropping the retained src database {:?} needs the confirmation — re-run with it",
         ctx.src_db
     );
     let (client, task) = connect(ctx.src_admin).await?;
@@ -462,7 +463,7 @@ async fn exec_deprovision_old(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
         .context("drop the retained src database")?;
     drop(client);
     let _ = task.await;
-    println!(
+    tracing::info!(
         "  dropped src database {:?} (delete its Database CR too: kubectl -n wamn-system \
          delete database {:?})",
         ctx.src_db, ctx.src_db

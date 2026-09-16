@@ -3,7 +3,7 @@
 use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
-use wamn_ctl::{copy_project_env, dump_project_env, ops_verbs, restore_project_env};
+use wamn_ctl::ops_verbs;
 
 #[derive(Parser)]
 #[command(name = "wamn-ctl-ops", version, about)]
@@ -19,11 +19,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Render or run per-project-env logical dumps.
-    DumpProjectEnv(dump_project_env::DumpProjectEnvArgs),
+    DumpProjectEnv(ops_verbs::DumpProjectEnvArgs),
     /// Restore a per-project-env logical dump.
-    RestoreProjectEnv(restore_project_env::RestoreProjectEnvArgs),
+    RestoreProjectEnv(ops_verbs::RestoreProjectEnvArgs),
     /// Copy a project-env to another environment.
-    CopyProjectEnv(copy_project_env::CopyProjectEnvArgs),
+    CopyProjectEnv(ops_verbs::CopyProjectEnvArgs),
     /// Prune terminal run history older than the retention period.
     PruneRunHistory(ops_verbs::PruneRunHistoryArgs),
     /// Remove expired record history entries as the audit retention task.
@@ -45,9 +45,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
-        Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
-        Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
+        Command::DumpProjectEnv(args) => ops_verbs::dump_project_env(args).await,
+        Command::RestoreProjectEnv(args) => ops_verbs::restore_project_env(args).await,
+        Command::CopyProjectEnv(args) => ops_verbs::copy_project_env(args).await,
         Command::PruneRunHistory(args) => ops_verbs::prune_run_history(args).await,
         Command::PruneRecordHistory(args) => ops_verbs::prune_record_history(args).await,
         Command::EventAdvisories(args) => ops_verbs::event_advisories(args).await,
