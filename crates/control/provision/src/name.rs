@@ -7,6 +7,8 @@
 //! path, so one slug serves both the K8s (hyphen) and Postgres (quoted) domains
 //! without translation.
 
+use std::fmt::Write as _;
+
 use crate::error::ProvisionError;
 use crate::workload_role::WorkloadRoleFamily;
 
@@ -480,7 +482,7 @@ fn pct(s: &str) -> String {
             out.push(b as char);
         } else {
             out.push('%');
-            out.push_str(&format!("{b:02X}"));
+            write!(out, "{b:02X}").expect("writing to a String cannot fail");
         }
     }
     out

@@ -11,6 +11,8 @@
 //! and its `wamn:<component>` name as `app.operation`, so the record-history
 //! triggers record that component.
 
+use std::fmt::Write as _;
+
 use std::fmt;
 
 use wamn_pg_core::quote_literal;
@@ -89,14 +91,16 @@ pub fn platform_principals_sql(
     );
     let mut sql = bind_platform_principal_sql(PlatformComponent::Provisioning);
     for component in components {
-        sql.push_str(&format!(
-            "INSERT INTO {} (tenant_id, id, type, email, display_name) VALUES ({tenant}, {}, {}, {}, {});\n",
+        writeln!(
+            sql,
+            "INSERT INTO {} (tenant_id, id, type, email, display_name) VALUES ({tenant}, {}, {}, {}, {});",
             USERS.qualified(),
             quote_literal(&component.principal_id().to_string()),
             quote_literal(UserType::Platform.as_str()),
             quote_literal(&format!("{}@{platform_domain}", component.as_str())),
             quote_literal(component.principal_name()),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     Ok(sql)
 }

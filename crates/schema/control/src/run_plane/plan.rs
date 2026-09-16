@@ -1,5 +1,7 @@
 //! Order schema changes and privilege repairs from observed database facts.
 
+use std::fmt::Write as _;
+
 use std::collections::{
     BTreeMap, BTreeSet,
 };
@@ -246,7 +248,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             kind: RunPlaneActionKind::RetireNodeRuns,
             target: format!("{}.node_runs", schema.as_str()),
             sql: format!(
-                r#"LOCK TABLE {target}.node_runs IN ACCESS EXCLUSIVE MODE;
+                r"LOCK TABLE {target}.node_runs IN ACCESS EXCLUSIVE MODE;
 -- Populated rows are deliberately discarded without archive: node_runs held
 -- only dead mutable projection coordinates, while runs retains run history.
 DROP TABLE IF EXISTS {target}.node_runs RESTRICT;
@@ -264,7 +266,7 @@ BEGIN
         );
     END IF;
 END
-$retire_run_projection_authority$;"#,
+$retire_run_projection_authority$;",
                 schema = schema.as_str(),
             ),
         });
@@ -476,13 +478,7 @@ $retire_run_projection_authority$;"#,
     // Catalog storage converges before run-plane constraint reconciliation:
     // attested rows derive their portable connection name from the pinned flow
     // graph, and the next runtime child reads the nullable provenance columns.
-    if !obs.catalog_schema_present {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EnsureCatalogSchema,
-            target: "catalog".to_string(),
-            sql: CATALOG_SCHEMA_SQL.to_string(),
-        });
-    } else {
+    if obs.catalog_schema_present {
         for table in record_tables(CATALOG_SCHEMA_SQL, "catalog") {
             if !obs.catalog_tables.contains(&table) {
                 plan.actions.push(RunPlaneAction {
@@ -492,6 +488,12 @@ $retire_run_projection_authority$;"#,
                 });
             }
         }
+    } else {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::EnsureCatalogSchema,
+            target: "catalog".to_string(),
+            sql: CATALOG_SCHEMA_SQL.to_string(),
+        });
     }
 
     // `runs` now has immediate catalog FKs, so catalog creation must precede
@@ -760,10 +762,12 @@ $retire_run_projection_authority$;"#,
                 [("wamn_app", spec.app), (SCENARIO_AUTHOR_ROLE, spec.author)]
             {
                 if !privileges.is_empty() {
-                    sql.push_str(&format!(
+                    write!(
+                        sql,
                         "; GRANT {} ON TABLE {qualified} TO {grantee}",
                         privileges.join(", ")
-                    ));
+                    )
+                    .expect("writing to a String cannot fail");
                 }
             }
         }
@@ -810,14 +814,16 @@ $retire_run_projection_authority$;"#,
         if !sql.is_empty() {
             sql.push_str("; ");
         }
-        sql.push_str(&format!(
+        write!(
+            sql,
             "DO $effective_acl$ BEGIN IF {} THEN RAISE EXCEPTION USING \
              ERRCODE = '42501', MESSAGE = \
              'authoring-effective-privilege-out-of-bounds:{schema_name}.{}'; \
              END IF; END $effective_acl$",
             forbidden_checks.join(" OR "),
             spec.table,
-        ));
+        )
+        .expect("writing to a String cannot fail");
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::RepairAuthoringPrivilege,
             target: format!("{schema_name}.{}", spec.table),

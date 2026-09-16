@@ -232,7 +232,7 @@ pub fn resolve_exposure(
             return Err(error("ambiguous-http-route", &attachment.id));
         }
         let mut normalized_attachment = attachment.clone();
-        normalized_attachment.route = route.clone();
+        normalized_attachment.route.clone_from(&route);
         for mapping in &mut normalized_attachment.mappings {
             if mapping.from == MappingSource::Header {
                 mapping.name.make_ascii_lowercase();
@@ -470,7 +470,7 @@ mod tests {
                 mappings: vec![InputMapping {
                     from: MappingSource::Body,
                     name: "body".into(),
-                    to: "".into(),
+                    to: String::new(),
                     optional: false,
                     cardinality: Cardinality::One,
                 }],

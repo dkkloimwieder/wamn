@@ -13,6 +13,8 @@ mod database;
 mod database_grants;
 
 #[doc(inline)]
+use std::fmt::Write as _;
+
 pub use database::{
     PLATFORM_EXTENSIONS, create_database_named_sql, drop_database_named_sql,
     ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
@@ -326,10 +328,12 @@ pub fn grant_dispatch_reader_read_surface_sql(schema: &str) -> String {
          GRANT USAGE ON SCHEMA {schema_ident} TO {role};"
     );
     for relation in DISPATCH_READER_RELATIONS {
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ON {schema_ident}.{relation} TO {role};",
             relation = quote_ident(relation),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     sql
 }
@@ -485,15 +489,19 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
         role_literal = quote_literal(MANAGEMENT_ADMITTER_ROLE),
     );
     for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
             relation = quote_ident(relation),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     let wiring_insert = quoted_column_list(&MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS);
-    sql.push_str(&format!(
+    write!(
+        sql,
         " GRANT INSERT ({wiring_insert}) ON TABLE catalog.\"wirings\" TO {role};"
-    ));
+    )
+    .expect("writing to a String cannot fail");
     // The wiring tenant index evaluates this function during INSERT.
     sql.push(' ');
     sql.push_str(&grant_tenant_key_execute_sql(MANAGEMENT_ADMITTER_ROLE));
@@ -546,16 +554,20 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter),
     );
     for relation in HTTP_ADMITTER_CATALOG_RELATIONS {
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
             relation = quote_ident(relation),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
-    sql.push_str(&format!(
+    write!(
+        sql,
         " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role}; \
          GRANT SELECT ON TABLE app_system.\"users\" TO {role}; \
          GRANT SELECT ON TABLE app_system.\"user_roles\" TO {role};"
-    ));
+    )
+    .expect("writing to a String cannot fail");
     sql
 }
 
@@ -646,20 +658,24 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ExecutorPlatform),
     );
     for relation in EXECUTOR_PLATFORM_CATALOG_RELATIONS {
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
             relation = quote_ident(relation),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     let run_update = quoted_column_list(&EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS);
     let queue_update = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS);
-    sql.push_str(&format!(
+    write!(
+        sql,
         " GRANT SELECT ON TABLE {schema}.\"runs\" TO {role}; \
          GRANT UPDATE ({run_update}) ON TABLE {schema}.\"runs\" TO {role}; \
          GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role};"
-    ));
+    )
+    .expect("writing to a String cannot fail");
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
     // without this on every write that changes an indexed column.
     sql.push(' ');
@@ -687,10 +703,12 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::EventMaterializer),
     );
     for relation in EVENT_MATERIALIZER_CATALOG_RELATIONS {
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
             relation = quote_ident(relation),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     sql
 }
@@ -779,10 +797,12 @@ fn grant_system_reader_surface_sql(
         ensure = ensure_workload_acl_role_sql(family),
     );
     for relation in relations {
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
             relation = quote_ident(relation),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     sql
 }

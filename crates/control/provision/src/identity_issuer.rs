@@ -4,6 +4,8 @@
 //! It is not a project environment or a runtime authority class. This module
 //! emits role SQL only. It does not create or read session signing keys.
 
+use std::fmt::Write as _;
+
 use std::fmt;
 
 use sha2::{Digest as _, Sha256};
@@ -279,20 +281,24 @@ pub fn grant_identity_issuer_surface_sql() -> String {
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
             .join(", ");
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ({columns}) ON TABLE {schema}.{table} TO {role};",
             schema = quote_ident(schema),
             table = quote_ident(table),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     let columns = IDENTITY_ISSUER_PAT_INSERT_COLUMNS
         .iter()
         .map(|column| quote_ident(column))
         .collect::<Vec<_>>()
         .join(", ");
-    sql.push_str(&format!(
+    write!(
+        sql,
         " GRANT INSERT ({columns}) ON TABLE identity.pats TO {role};"
-    ));
+    )
+    .expect("writing to a String cannot fail");
     sql
 }
 

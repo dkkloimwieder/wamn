@@ -420,7 +420,7 @@ const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_DEF: &str = "CREATE OR REPLACE
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
 const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_DEF: &str = "CREATE TRIGGER runs_terminal_delete_only BEFORE DELETE ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete()";
 
-const GUARD_EVENT_LINEAGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()
+const GUARD_EVENT_LINEAGE_SQL: &str = r"CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -432,9 +432,9 @@ BEGIN
     END IF;
     RETURN NEW;
 END
-$$;"#;
+$$;";
 
-const GUARD_RUN_ADMISSION_PINS_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()
+const GUARD_RUN_ADMISSION_PINS_SQL: &str = r"CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -473,9 +473,9 @@ BEGIN
     END IF;
     RETURN NEW;
 END
-$$;"#;
+$$;";
 
-const GUARD_TERMINAL_RUN_DELETE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_terminal_run_delete()
+const GUARD_TERMINAL_RUN_DELETE_SQL: &str = r"CREATE OR REPLACE FUNCTION wamn_run.guard_terminal_run_delete()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -488,9 +488,9 @@ BEGIN
     RETURN OLD;
 END
 $$;
-REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;"#;
+REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;";
 
-const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()
+const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL: &str = r"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -500,9 +500,9 @@ BEGIN
         MESSAGE = 'effect-fact-immutable';
 END
 $$;
-REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;"#;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;";
 
-pub(super) const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_operator_run_action_change()
+pub(super) const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL: &str = r"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_operator_run_action_change()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -513,7 +513,7 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_operator_run_action_change()
-    FROM PUBLIC;"#;
+    FROM PUBLIC;";
 
 const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_immutable \
     BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth \

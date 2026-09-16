@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-#[cfg(test)]
-use wamn_catalog::ConnectionTypeDescriptor;
 
 /// Controlled lifecycle states for an environment-owned connection instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,9 +202,11 @@ pub fn insert_component_connection_binding_sql() -> &'static str {
 /// the exposure definition hash both use this one copy.
 pub(crate) fn prefixed_sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    let hex = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("sha256:{hex}")
+    let mut out = String::with_capacity("sha256:".len() + digest.len() * 2);
+    out.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut out, "{byte:02x}").expect("writing to a string is infallible");
+    }
+    out
 }

@@ -322,8 +322,13 @@ pub(super) fn record_columns(src: &str, qualifier: &str, table: &str) -> Vec<(St
         if let Some((_, lines)) = &mut item {
             lines.push(t.to_string());
         }
-        depth += t.chars().filter(|c| *c == '(').count() as i32;
-        depth -= t.chars().filter(|c| *c == ')').count() as i32;
+        for c in t.chars() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+        }
         if depth <= 0 && t.ends_with(',') {
             depth = 0;
             flush(&mut item, &mut cols);

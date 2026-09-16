@@ -1786,7 +1786,7 @@ fn all_stamps_catalog() -> CatalogIr {
     ])
 }
 
-fn with_audit_log(columns: Value, retention: &str) -> Value {
+fn with_audit_log(columns: &Value, retention: &str) -> Value {
     let mut manifest = manifest();
     manifest["models"]["purchase_order"]["audit_log"] =
         json!({"columns": columns, "retention": retention});
@@ -1795,7 +1795,7 @@ fn with_audit_log(columns: Value, retention: &str) -> Value {
 
 fn all_stamps_manifest() -> Value {
     with_audit_log(
-        json!(["created_at", "created_by", "updated_at", "updated_by"]),
+        &json!(["created_at", "created_by", "updated_at", "updated_by"]),
         "none",
     )
 }
@@ -1890,7 +1890,7 @@ fn audit_log_shape_refuses_without_a_catalog() {
         (
             "a repeated name",
             with_audit_log(
-                json!([
+                &json!([
                     "created_at",
                     "created_at",
                     "created_by",
@@ -1902,11 +1902,11 @@ fn audit_log_shape_refuses_without_a_catalog() {
         ),
         (
             "created_by without created_at",
-            with_audit_log(json!(["created_by", "updated_at", "updated_by"]), "none"),
+            with_audit_log(&json!(["created_by", "updated_at", "updated_by"]), "none"),
         ),
         (
             "updated_by without updated_at",
-            with_audit_log(json!(["created_at", "created_by", "updated_by"]), "none"),
+            with_audit_log(&json!(["created_at", "created_by", "updated_by"]), "none"),
         ),
     ];
     for (label, manifest) in cases {
@@ -1926,7 +1926,7 @@ fn audit_log_shape_refuses_without_a_catalog() {
         );
     }
 
-    let outside = with_audit_log(json!(["created_at", "deleted_at"]), "none");
+    let outside = with_audit_log(&json!(["created_at", "deleted_at"]), "none");
     assert_eq!(
         run(&all_stamps_catalog(), &outside, &QUERY_SOURCES)
             .expect_err("a name outside the four refuses")
@@ -1938,7 +1938,7 @@ fn audit_log_shape_refuses_without_a_catalog() {
 /// A catalog defect names the column that the trigger cannot stamp.
 #[test]
 fn audit_log_columns_refuse_against_the_catalog() {
-    let timestamps_only = with_audit_log(json!(["created_at", "updated_at"]), "none");
+    let timestamps_only = with_audit_log(&json!(["created_at", "updated_at"]), "none");
     let mut overlay_added = overlay_manifest();
     overlay_added["models"]["purchase_order"]["field_owners"] =
         json!({"updated_by": "acme_receiving"});
@@ -1958,7 +1958,7 @@ fn audit_log_columns_refuse_against_the_catalog() {
         (
             "a wrongly typed actor",
             catalog_with_columns(&[("created_by", ColumnType::Text, false)]),
-            with_audit_log(json!(["created_at", "created_by"]), "none"),
+            with_audit_log(&json!(["created_at", "created_by"]), "none"),
             "created_by",
         ),
         (
@@ -1976,7 +1976,7 @@ fn audit_log_columns_refuse_against_the_catalog() {
         (
             "an off declaration over a reserved-name column",
             catalog(false),
-            with_audit_log(json!([]), "none"),
+            with_audit_log(&json!([]), "none"),
             "created_at",
         ),
         (
@@ -2018,14 +2018,13 @@ fn audit_log_retention_is_none_unlimited_or_whole_days() {
     for retention in ["none", "unlimited", "P1D", "P30D", "P365D"] {
         for columns in [json!([]), json!(ALL_STAMP_COLUMNS)] {
             validate_operation_vocabulary(&parsed_manifest(&with_audit_log(
-                columns.clone(),
-                retention,
+                &columns, retention,
             )))
             .unwrap_or_else(|error| panic!("{retention} with {columns} refused: {error:?}"));
         }
         run(
             &all_stamps_catalog(),
-            &with_audit_log(json!(ALL_STAMP_COLUMNS), retention),
+            &with_audit_log(&json!(ALL_STAMP_COLUMNS), retention),
             &QUERY_SOURCES,
         )
         .unwrap_or_else(|error| panic!("{retention} did not generate: {error:?}"));
@@ -2046,7 +2045,7 @@ fn audit_log_retention_is_none_unlimited_or_whole_days() {
         "p30d",
         "UNLIMITED",
     ] {
-        let manifest = with_audit_log(json!(ALL_STAMP_COLUMNS), retention);
+        let manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), retention);
         assert_eq!(
             validate_operation_vocabulary(&parsed_manifest(&manifest))
                 .expect_err(retention)
@@ -2075,7 +2074,7 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
     .unwrap();
     let logged = run(
         &all_stamps_catalog(),
-        &with_audit_log(json!(ALL_STAMP_COLUMNS), "P90D"),
+        &with_audit_log(&json!(ALL_STAMP_COLUMNS), "P90D"),
         &QUERY_SOURCES,
     )
     .unwrap();
@@ -2130,7 +2129,7 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
 /// A custom operation reads a history table, and the read adds only its select grant.
 #[test]
 fn a_custom_operation_reads_a_history_table() {
-    let mut manifest = with_audit_log(json!(ALL_STAMP_COLUMNS), "unlimited");
+    let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
     let mut operation = projection_operation();
     operation["relations"][0]["table"] = json!("purchase_order_history");
     operation["relations"][0]["select_fields"] = json!(["changed_by", "kind"]);
@@ -2157,7 +2156,7 @@ fn a_custom_operation_reads_a_history_table() {
     assert_eq!(history["update_fields"], json!([]));
     assert_eq!(history["lock"], json!(false));
 
-    let unlogged = with_audit_log(json!(ALL_STAMP_COLUMNS), "none");
+    let unlogged = with_audit_log(&json!(ALL_STAMP_COLUMNS), "none");
     let mut reads_unlogged = unlogged.clone();
     reads_unlogged["custom_operations"] = manifest["custom_operations"].clone();
     assert_eq!(
@@ -2204,7 +2203,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         ("a declared update", json!([]), json!(["kind"]), false),
         ("a declared row lock", json!([]), json!([]), true),
     ] {
-        let mut writes = with_audit_log(json!(ALL_STAMP_COLUMNS), "unlimited");
+        let mut writes = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
         // An event handler can write, so the refusal is the history reservation.
         writes["custom_operations"]["purchase_order.record_history"] = json!({
             "kind": "event_handler",
@@ -2249,7 +2248,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         ));
     }
     let long_relation = "r".repeat(32);
-    let mut overlong = with_audit_log(json!([]), "P30D");
+    let mut overlong = with_audit_log(&json!([]), "P30D");
     overlong["models"]["purchase_order"]["table"] = json!(long_relation);
     let long_object = format!("receiving.{long_relation}");
     cases.push((
@@ -2271,11 +2270,11 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         );
     }
 
-    let mut fits = with_audit_log(json!([]), "P30D");
+    let mut fits = with_audit_log(&json!([]), "P30D");
     fits["models"]["purchase_order"]["table"] = json!("r".repeat(31));
     validate_operation_vocabulary(&parsed_manifest(&fits))
         .expect("a logged relation of 31 bytes fits its history names");
-    let mut unlogged_long = with_audit_log(json!([]), "none");
+    let mut unlogged_long = with_audit_log(&json!([]), "none");
     unlogged_long["models"]["purchase_order"]["table"] = json!("r".repeat(32));
     validate_operation_vocabulary(&parsed_manifest(&unlogged_long))
         .expect("a relation that keeps no log derives no history name");
@@ -2284,7 +2283,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
 /// A logged relation needs a primary key.
 #[test]
 fn a_logged_relation_needs_a_primary_key() {
-    let logged = with_audit_log(json!(ALL_STAMP_COLUMNS), "P30D");
+    let logged = with_audit_log(&json!(ALL_STAMP_COLUMNS), "P30D");
     let stamped = all_stamps_catalog();
     let purchase_order = table(&stamped, "purchase_order");
     let keyless = replacing_table(

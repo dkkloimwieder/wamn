@@ -138,11 +138,14 @@ impl PackageMigrationErrorKind {
 #[derive(Debug)]
 pub struct PackageMigrationError {
     kind: PackageMigrationErrorKind,
-    context: String,
-    coordinate: Option<String>,
-    path: Option<String>,
-    recorded_hash: Option<String>,
-    actual_hash: Option<String>,
+    // Boxed strings (M-BOX-DST): the context is written once and only read
+    // back, and the narrower fields keep the whole error inside the size every
+    // `Result` in this module carries (`clippy::result_large_err`).
+    context: Box<str>,
+    coordinate: Option<Box<str>>,
+    path: Option<Box<str>>,
+    recorded_hash: Option<Box<str>>,
+    actual_hash: Option<Box<str>>,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
 
@@ -174,7 +177,7 @@ impl PackageMigrationError {
     fn new(kind: PackageMigrationErrorKind, context: impl Into<String>) -> Self {
         Self {
             kind,
-            context: context.into(),
+            context: context.into().into_boxed_str(),
             coordinate: None,
             path: None,
             recorded_hash: None,
@@ -195,7 +198,7 @@ impl PackageMigrationError {
     }
 
     fn at_path(mut self, path: impl Into<String>) -> Self {
-        self.path = Some(path.into());
+        self.path = Some(path.into().into_boxed_str());
         self
     }
 
@@ -209,11 +212,11 @@ impl PackageMigrationError {
     ) -> Self {
         Self {
             kind,
-            context: context.into(),
-            coordinate: Some(coordinate_text(coordinate)),
-            path: Some(path.into()),
-            recorded_hash: Some(recorded_hash.into()),
-            actual_hash: Some(actual_hash.into()),
+            context: context.into().into_boxed_str(),
+            coordinate: Some(coordinate_text(coordinate).into_boxed_str()),
+            path: Some(path.into().into_boxed_str()),
+            recorded_hash: Some(recorded_hash.into().into_boxed_str()),
+            actual_hash: Some(actual_hash.into().into_boxed_str()),
             source: None,
         }
     }
@@ -281,16 +284,16 @@ pub fn plan_package_registration(
         }
         return Ok(false);
     }
-    if let Some(current) = current_version {
-        if predecessor_version != Some(current) {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorKind::PredecessorNotCurrent,
-                format!(
-                    "predecessor-not-current: declared={} current={current}",
-                    predecessor_version.unwrap_or("<none>")
-                ),
-            ));
-        }
+    if let Some(current) = current_version
+        && predecessor_version != Some(current)
+    {
+        return Err(PackageMigrationError::new(
+            PackageMigrationErrorKind::PredecessorNotCurrent,
+            format!(
+                "predecessor-not-current: declared={} current={current}",
+                predecessor_version.unwrap_or("<none>")
+            ),
+        ));
     }
     Ok(true)
 }
@@ -446,9 +449,9 @@ fn plan_package_migrations_from_predecessor(
                 "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: applied coordinate {} is not the declared predecessor of {}",
                 coordinate_text(&predecessor.coordinate),
                 coordinate_text(&fresh.coordinate)
-            ),
-            coordinate: Some(coordinate_text(&fresh.coordinate)),
-            path: Some(first_path),
+            ).into_boxed_str(),
+            coordinate: Some(coordinate_text(&fresh.coordinate).into_boxed_str()),
+            path: Some(first_path.into_boxed_str()),
             recorded_hash: None,
             actual_hash: None,
             source: None,
@@ -459,17 +462,17 @@ fn plan_package_migrations_from_predecessor(
             kind: PackageMigrationErrorKind::PredecessorPrefixMismatch,
             context: format!(
                 "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: declared predecessor has no applied migration prefix"
-            ),
-            coordinate: Some(coordinate_text(&fresh.coordinate)),
-            path: Some(first_path),
+            ).into_boxed_str(),
+            coordinate: Some(coordinate_text(&fresh.coordinate).into_boxed_str()),
+            path: Some(first_path.into_boxed_str()),
             recorded_hash: Some("missing".into()),
-            actual_hash: Some(migrations[0].sha256.clone()),
+            actual_hash: Some(migrations[0].sha256.clone().into_boxed_str()),
             source: None,
         });
     }
     validate_recorded_prefix(&predecessor.coordinate, &predecessor.migrations, &migrations)
         .map_err(|source| {
-            let path = source.path.clone().or_else(|| Some(first_path.clone()));
+            let path = source.path.clone().or_else(|| Some(first_path.clone().into_boxed_str()));
             let recorded_hash = source.recorded_hash.clone();
             let actual_hash = source.actual_hash.clone();
             PackageMigrationError {
@@ -478,8 +481,8 @@ fn plan_package_migrations_from_predecessor(
                     "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: {} does not equal the cumulative prefix of {}",
                     coordinate_text(&predecessor.coordinate),
                     coordinate_text(&fresh.coordinate)
-                ),
-                coordinate: Some(coordinate_text(&fresh.coordinate)),
+                ).into_boxed_str(),
+                coordinate: Some(coordinate_text(&fresh.coordinate).into_boxed_str()),
                 path,
                 recorded_hash,
                 actual_hash,

@@ -220,7 +220,11 @@ fn declared_operator_keeps_generated_library_bytes_without_a_launcher() {
     let cargo: toml::Value =
         toml::from_str(source(&composed, "generated/receiving-tui/Cargo.toml")).unwrap();
     assert!(cargo.get("bin").is_none());
-    for file in composed.iter().filter(|file| file.path().ends_with(".rs")) {
+    for file in composed.iter().filter(|file| {
+        std::path::Path::new(file.path())
+            .extension()
+            .is_some_and(|extension| extension == "rs")
+    }) {
         assert_eq!(file.bytes(), source(&standalone, file.path()).as_bytes());
     }
 }

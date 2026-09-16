@@ -11,8 +11,10 @@ pub enum ProvisionError {
     /// One tenant already identifies a different environment.
     TenantEnvironmentIdentityConflict {
         tenant: String,
-        recorded: Triple,
-        presented: Triple,
+        /// Boxed so one conflict variant does not widen every `ProvisionError`
+        /// returned by this crate (`clippy::result_large_err`).
+        recorded: Box<Triple>,
+        presented: Box<Triple>,
     },
     /// The project id is not a valid lowercase slug.
     InvalidProjectId {
@@ -140,8 +142,8 @@ pub fn check_tenant_environment_identity(
     } else {
         Err(ProvisionError::TenantEnvironmentIdentityConflict {
             tenant: tenant.to_owned(),
-            recorded: recorded.clone(),
-            presented: presented.clone(),
+            recorded: Box::new(recorded.clone()),
+            presented: Box::new(presented.clone()),
         })
     }
 }

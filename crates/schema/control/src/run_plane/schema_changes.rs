@@ -1,5 +1,7 @@
 //! Conditions and SQL for changing retired run-schema structures.
 
+use std::fmt::Write as _;
+
 use super::schema::{
     normalize_observed_schema, quote_ident,
 };
@@ -172,21 +174,26 @@ pub(super) fn frame_identity_cutover_sql(
     let mut sql = String::new();
     let mut populated = Vec::new();
     if targets.effect {
-        sql.push_str(&format!(
-            "LOCK TABLE {schema}.effect_attempts IN ACCESS EXCLUSIVE MODE;\n"
-        ));
+        writeln!(
+            sql,
+            "LOCK TABLE {schema}.effect_attempts IN ACCESS EXCLUSIVE MODE;"
+        )
+        .expect("writing to a String cannot fail");
         populated.push(format!("EXISTS (SELECT 1 FROM {schema}.effect_attempts)"));
     }
     if targets.dispatch {
-        sql.push_str(&format!(
-            "LOCK TABLE {schema}.effect_attempt_dispatches IN ACCESS EXCLUSIVE MODE;\n"
-        ));
+        writeln!(
+            sql,
+            "LOCK TABLE {schema}.effect_attempt_dispatches IN ACCESS EXCLUSIVE MODE;"
+        )
+        .expect("writing to a String cannot fail");
         populated.push(format!(
             "EXISTS (SELECT 1 FROM {schema}.effect_attempt_dispatches)"
         ));
     }
-    sql.push_str(&format!(
-        r#"DO $frame_identity_cutover$
+    writeln!(
+        sql,
+        r"DO $frame_identity_cutover$
 BEGIN
     IF {} THEN
         RAISE EXCEPTION USING
@@ -194,19 +201,22 @@ BEGIN
             MESSAGE = 'frame-identity-cutover-requires-empty-effect-facts';
     END IF;
 END
-$frame_identity_cutover$;
-"#,
+$frame_identity_cutover$;",
         populated.join(" OR ")
-    ));
+    )
+    .expect("writing to a String cannot fail");
     if targets.effect {
         if targets.dispatch {
-            sql.push_str(&format!(
+            writeln!(
+                sql,
                 "ALTER TABLE {schema}.effect_attempt_dispatches \
-                 DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk;\n"
-            ));
+                 DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk;"
+            )
+            .expect("writing to a String cannot fail");
         }
-        sql.push_str(&format!(
-            r#"ALTER TABLE {schema}.effect_attempts
+        writeln!(
+            sql,
+            r"ALTER TABLE {schema}.effect_attempts
     DROP CONSTRAINT IF EXISTS effect_attempts_occurrence_key,
     DROP CONSTRAINT IF EXISTS effect_attempts_dispatch_identity_key,
     DROP CONSTRAINT IF EXISTS effect_attempts_root_plan_hash_check,
@@ -258,9 +268,9 @@ ALTER TABLE {schema}.effect_attempts
         UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
     ADD CONSTRAINT effect_attempts_dispatch_identity_key
         UNIQUE (tenant_id, attempt_id, attempt_started_at,
-                run_id, frame_id, local_node_id, occurrence);
-"#
-        ));
+                run_id, frame_id, local_node_id, occurrence);"
+        )
+        .expect("writing to a String cannot fail");
         if targets.restore_dispatch_fk {
             sql.push_str(&rewrite_schema(EFFECT_DISPATCH_ATTEMPT_FK_SQL, target));
             sql.push_str(";\n");
@@ -305,8 +315,9 @@ pub(super) fn effect_table_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneOb
     } else {
         populated
     };
-    sql.push_str(&format!(
-        r#"
+    writeln!(
+        sql,
+        r"
 DO $retire$
 BEGIN
     IF {populated} THEN
@@ -315,35 +326,42 @@ BEGIN
             MESSAGE = 'effect-table-cutover-requires-empty-ledger';
     END IF;
 END
-$retire$;
-"#,
-    ));
+$retire$;",
+    )
+    .expect("writing to a String cannot fail");
 
     if !table_cutover_needed {
         return sql;
     }
 
     for table in &present_tables {
-        sql.push_str(&format!(
-            "DROP TRIGGER IF EXISTS {} ON {schema}.{};\n",
+        writeln!(
+            sql,
+            "DROP TRIGGER IF EXISTS {} ON {schema}.{};",
             quote_ident(&format!("{table}_insert_guard")),
             quote_ident(table),
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
-    sql.push_str(&format!(
-        "DROP FUNCTION IF EXISTS {schema}.guard_effect_fact_append();\n"
-    ));
+    writeln!(
+        sql,
+        "DROP FUNCTION IF EXISTS {schema}.guard_effect_fact_append();"
+    )
+    .expect("writing to a String cannot fail");
 
     if obs.tables.contains_key("effect_attempt_dispatches") {
-        sql.push_str(&format!(
+        writeln!(
+            sql,
             "ALTER TABLE {schema}.effect_attempt_dispatches \
-             DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk;\n"
-        ));
+             DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk;"
+        )
+        .expect("writing to a String cannot fail");
     }
 
     if let Some(attempt_columns) = obs.tables.get("effect_attempts") {
-        sql.push_str(&format!(
-            r#"ALTER TABLE {schema}.effect_attempts
+        writeln!(
+            sql,
+            r"ALTER TABLE {schema}.effect_attempts
     DROP CONSTRAINT IF EXISTS effect_attempts_predecessor_fk,
     DROP CONSTRAINT IF EXISTS effect_attempts_attempt_index_check,
     DROP CONSTRAINT IF EXISTS effect_attempts_lineage_check,
@@ -356,28 +374,33 @@ $retire$;
 DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence;
 DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key;
 DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
-DROP INDEX IF EXISTS {schema}.effect_attempts_dispatch_identity_key;
-"#,
-        ));
+DROP INDEX IF EXISTS {schema}.effect_attempts_dispatch_identity_key;",
+        )
+        .expect("writing to a String cannot fail");
         for column in RETIRED_EFFECT_ATTEMPT_COLUMNS {
             if attempt_columns.contains(*column) {
-                sql.push_str(&format!(
-                    "ALTER TABLE {schema}.effect_attempts DROP COLUMN {};\n",
+                writeln!(
+                    sql,
+                    "ALTER TABLE {schema}.effect_attempts DROP COLUMN {};",
                     quote_ident(column),
-                ));
+                )
+                .expect("writing to a String cannot fail");
             }
         }
-        sql.push_str(&format!(
+        writeln!(
+            sql,
             "ALTER TABLE {schema}.effect_attempts \
              ALTER COLUMN attempt_started_at SET DEFAULT now(), \
              ADD CONSTRAINT effect_attempts_dispatch_identity_key \
-             UNIQUE (tenant_id,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence);\n"
-        ));
+             UNIQUE (tenant_id,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence);"
+        )
+        .expect("writing to a String cannot fail");
     }
 
     if obs.tables.contains_key("effect_attempt_dispatches") {
-        sql.push_str(&format!(
-            r#"ALTER TABLE {schema}.effect_attempt_dispatches
+        writeln!(
+            sql,
+            r"ALTER TABLE {schema}.effect_attempt_dispatches
     DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk,
     DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_occurrence_key,
     DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_frame_check,
@@ -397,9 +420,9 @@ ALTER TABLE {schema}.effect_attempt_dispatches
     ADD CONSTRAINT effect_attempt_dispatches_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
     ADD CONSTRAINT effect_attempt_dispatches_occurrence_check CHECK (occurrence >= 0),
     ADD CONSTRAINT effect_attempt_dispatches_occurrence_key
-        UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence);
-"#,
-        ));
+        UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence);",
+        )
+        .expect("writing to a String cannot fail");
         if obs.tables.contains_key("effect_attempts") {
             sql.push_str(&rewrite_schema(EFFECT_DISPATCH_ATTEMPT_FK_SQL, target));
             sql.push_str(";\n");
@@ -945,7 +968,7 @@ pub(super) fn rerun_lineage_cutover_sql(schema: &BareSchemaName) -> String {
     let target = schema.quoted();
     let expected_index = rewrite_schema(RUNS_ROOT_INDEX_DEF, schema);
     format!(
-        r#"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
+        r"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
 DO $rerun_lineage_cutover$
 DECLARE
     observed_definition text;
@@ -969,7 +992,7 @@ $rerun_lineage_cutover$;
 DROP INDEX IF EXISTS {target}.runs_root;
 ALTER TABLE {target}.runs
     DROP COLUMN IF EXISTS replay_of,
-    DROP COLUMN IF EXISTS root_run_id;"#
+    DROP COLUMN IF EXISTS root_run_id;"
     )
 }
 
@@ -984,14 +1007,14 @@ pub(super) fn failure_detail_cutover_needed(obs: &RunPlaneObservation) -> bool {
 pub(super) fn failure_detail_cutover_sql(schema: &BareSchemaName) -> String {
     let target = schema.quoted();
     format!(
-        r#"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
+        r"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
 -- wamn-0h0g.12.173/.12.175: populated retired failure-detail values are
 -- deliberately discarded, not archived. fail_node names a deleted plan
 -- coordinate, and fail_reason is superseded by fail_kind plus the typed caller
 -- outcome; retaining either would preserve a dangling or duplicate record.
 ALTER TABLE {target}.runs
     DROP COLUMN IF EXISTS fail_node RESTRICT,
-    DROP COLUMN IF EXISTS fail_reason RESTRICT;"#
+    DROP COLUMN IF EXISTS fail_reason RESTRICT;"
     )
 }
 
