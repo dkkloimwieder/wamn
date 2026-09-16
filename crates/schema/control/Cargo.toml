@@ -9,7 +9,6 @@ license.workspace = true
 wamn-catalog = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-record-history = { workspace = true }
-wamn-control-registry = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }
 # EVT-REPLICA-IDENT (wamn-l5i9.31): the registration model + the SINGLE root-`old`

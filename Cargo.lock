@@ -6352,7 +6352,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "wamn-catalog",
- "wamn-control-registry",
  "wamn-event-reg",
  "wamn-execution-contract",
  "wamn-pg-core",
