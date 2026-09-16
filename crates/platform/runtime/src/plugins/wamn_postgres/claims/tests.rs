@@ -219,23 +219,6 @@ fn a_serving_host_refuses_an_invalid_declared_project() {
 }
 
 #[test]
-fn an_explicit_project_credential_refuses_a_second_source() {
-    let cfg = WamnPostgresConfig::from_env();
-    let credentials = ClassCredentials::every_class(guest_url("acme", "host-receiving"));
-    let projects = HashMap::from([(
-        "receiving".to_owned(),
-        ProjectConfig::from_global(credentials.clone(), &cfg),
-    )]);
-    let error = bind_composed_project(projects, "receiving", Some(credentials), &cfg)
-        .expect_err("two credential sources for one project must refuse");
-    assert!(
-        error
-            .to_string()
-            .contains("both an explicit composition credential and a WAMN_PG_PROJECTS_FILE entry")
-    );
-}
-
-#[test]
 fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         // wamn-0h0g.22.8.2: a provisioned credential NAMES ITS GENERATION ROLE,

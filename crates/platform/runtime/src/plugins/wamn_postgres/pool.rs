@@ -262,9 +262,8 @@ pub trait CredentialProvider: Send + Sync {
     ) -> anyhow::Result<Option<ResolvedCredential>>;
 }
 
-/// v0 provider: an in-memory project→config map populated from
-/// `WAMN_PG_PROJECTS_FILE` (a JSON object mounted like a Secret/ConfigMap) or
-/// constructed directly.
+/// v0 provider: an in-memory project→config map, built directly by the
+/// composition root or parsed from a JSON object of projects.
 ///
 /// `wamn-0h0g.22.8.2`: THERE IS NO CATCH-ALL DEFAULT. A config supplied as the
 /// "default" is registered under [`DEFAULT_PROJECT`] like any other project, so
@@ -295,10 +294,9 @@ impl StaticCredentialProvider {
 
     /// Parse `{ "<project>": { "url"?: .., "credentials"?: { "<class>": .. },
     /// "row_limit"?: .., .. }, .. }`; unset per-project fields fall back to
-    /// `base`. Mirrors a mounted projects Secret/ConfigMap. Public so the 2.3
-    /// `provisionbench` gate can feed the projects-file JSON that
-    /// `provision-project` emits through the exact parse path production uses
-    /// (`from_env`), proving a provisioned project resolves.
+    /// `base`. Public so the route-authentication harnesses can build a
+    /// multi-project [`StaticCredentialProvider`] from one JSON literal instead
+    /// of assembling every [`ProjectConfig`] field by hand.
     ///
     /// `"url"` names one login for EVERY class — written out, not defaulted —
     /// and `"credentials"` names one class's own login, overriding it. A class
@@ -311,10 +309,8 @@ impl StaticCredentialProvider {
         base: &WamnPostgresConfig,
     ) -> anyhow::Result<HashMap<String, ProjectConfig>> {
         let v: serde_json::Value =
-            serde_json::from_str(text).context("parse WAMN_PG_PROJECTS_FILE json")?;
-        let obj = v
-            .as_object()
-            .context("WAMN_PG_PROJECTS_FILE must be a JSON object")?;
+            serde_json::from_str(text).context("parse projects json")?;
+        let obj = v.as_object().context("projects json must be a JSON object")?;
         let mut out = HashMap::new();
         for (name, entry) in obj {
             anyhow::ensure!(

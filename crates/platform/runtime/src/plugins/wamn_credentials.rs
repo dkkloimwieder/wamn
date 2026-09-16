@@ -6,9 +6,8 @@
 //! - Resolution is project-scoped by the host-owned project identity passed to
 //!   the native effect adapter.
 //! - The v1 SOURCE is a mounted static file (`WAMN_CREDENTIALS_FILE`, a JSON
-//!   object `{project: {name: secret}}` mounted from a K8s Secret — the
-//!   `WAMN_PG_PROJECTS_FILE` pattern). A live per-Secret K8s read is the
-//!   follow-up sharing wamn-5x0.1's client.
+//!   object `{project: {name: secret}}` mounted from a K8s Secret). A live
+//!   per-Secret K8s read is the follow-up sharing wamn-5x0.1's client.
 //! - No configured source is `unavailable`; a configured source missing the
 //!   selected handle is `not-found`.
 
@@ -64,8 +63,8 @@ impl WamnCredentials {
     }
 
     /// Parse the mounted credentials file: a JSON object
-    /// `{ "<project>": { "<name>": "<secret>", ... }, ... }` (the
-    /// `WAMN_PG_PROJECTS_FILE` shape, mounted from a K8s Secret).
+    /// `{ "<project>": { "<name>": "<secret>", ... }, ... }`, mounted from a
+    /// K8s Secret.
     pub fn projects_from_json(
         text: &str,
     ) -> anyhow::Result<HashMap<String, HashMap<String, String>>> {
@@ -199,7 +198,7 @@ mod tests {
         ));
     }
 
-    /// The mounted-file shape is the WAMN_PG_PROJECTS_FILE pattern:
+    /// The mounted-file shape is a project-keyed JSON object:
     /// `{project: {name: secret}}`, strings only, malformed = loud.
     #[test]
     fn credentials_file_parses_the_nested_project_shape() {

@@ -676,25 +676,6 @@ fn starts_with_keyword(head: &str, kw: &str) -> bool {
     }
 }
 
-fn bind_composed_project(
-    mut projects: HashMap<String, ProjectConfig>,
-    project: &str,
-    credentials: Option<ClassCredentials>,
-    cfg: &WamnPostgresConfig,
-) -> anyhow::Result<HashMap<String, ProjectConfig>> {
-    if let Some(credentials) = credentials {
-        anyhow::ensure!(
-            !projects.contains_key(project),
-            "project {project:?} has both an explicit composition credential and a WAMN_PG_PROJECTS_FILE entry"
-        );
-        projects.insert(
-            project.to_owned(),
-            ProjectConfig::from_global(credentials, cfg),
-        );
-    }
-    Ok(projects)
-}
-
 impl WamnPostgres {
     /// Select an explicitly local definition closure without changing database authority.
     pub fn with_local_application(
@@ -739,8 +720,7 @@ impl WamnPostgres {
     }
 
     /// Build from the deployment's configuration: the default project from the
-    /// credential the COMPOSITION ROOT names, plus explicit projects listed in
-    /// `WAMN_PG_PROJECTS_FILE` JSON.
+    /// credential the COMPOSITION ROOT names.
     ///
     /// # Why the caller passes the credential (`wamn-0h0g.22.8.3`)
     ///
@@ -765,9 +745,8 @@ impl WamnPostgres {
     pub fn from_env(credentials: Option<ClassCredentials>) -> anyhow::Result<Self> {
         let cfg = WamnPostgresConfig::from_env();
         let default = credentials.map(|credentials| ProjectConfig::from_global(credentials, &cfg));
-        let projects = Self::configured_projects(&cfg)?;
         Ok(Self::with_provider(Arc::new(
-            StaticCredentialProvider::new(projects, default),
+            StaticCredentialProvider::default_only(default),
         )))
     }
 
@@ -776,9 +755,8 @@ impl WamnPostgres {
     ///
     /// A per-project serving host already carries the trusted project identity.
     /// Registering that host's Secret under `default` makes every named-project
-    /// lookup refuse despite having the exact credential. A mounted projects
-    /// file may still supply other projects, but it cannot name this project a
-    /// second time.
+    /// lookup refuse despite having the exact credential. No other project is
+    /// registered, so an unlisted project still refuses at resolution.
     pub fn from_env_for_project(
         project: &str,
         credentials: Option<ClassCredentials>,
@@ -788,22 +766,16 @@ impl WamnPostgres {
             "invalid composed project {project:?}: 1-64 chars of [A-Za-z0-9_-] required"
         );
         let cfg = WamnPostgresConfig::from_env();
-        let projects =
-            bind_composed_project(Self::configured_projects(&cfg)?, project, credentials, &cfg)?;
+        let mut projects = HashMap::new();
+        if let Some(credentials) = credentials {
+            projects.insert(
+                project.to_owned(),
+                ProjectConfig::from_global(credentials, &cfg),
+            );
+        }
         Ok(Self::with_provider(Arc::new(
             StaticCredentialProvider::new(projects, None),
         )))
-    }
-
-    fn configured_projects(
-        cfg: &WamnPostgresConfig,
-    ) -> anyhow::Result<HashMap<String, ProjectConfig>> {
-        let Ok(path) = std::env::var("WAMN_PG_PROJECTS_FILE") else {
-            return Ok(HashMap::new());
-        };
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("read WAMN_PG_PROJECTS_FILE {path}"))?;
-        StaticCredentialProvider::projects_from_json(&text, cfg)
     }
 
     /// Register the tenant claim for a component id. The bench harness calls
