@@ -1,8 +1,8 @@
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_schema_control::connections::{
-    ComponentConnectionRequirement, ConnectionGenerationDefinition,
-    activate_connection_generation_sql, exact_component_connection_requirement_sql,
-    insert_component_connection_binding_sql, insert_component_connection_requirement_sql,
+    ComponentConnectionRequirement, activate_connection_generation_sql,
+    exact_component_connection_requirement_sql, insert_component_connection_binding_sql,
+    insert_component_connection_requirement_sql,
 };
 
 fn requirement() -> ComponentConnectionRequirement {
@@ -28,48 +28,6 @@ fn component_requirement_identity_is_environment_independent() {
                 .any(|window| window == forbidden.as_bytes())
         );
     }
-}
-
-#[test]
-fn generation_hash_covers_every_non_secret_field() {
-    let baseline = ConnectionGenerationDefinition {
-        primary_authority: "https://erp.example".into(),
-        failover_authorities: vec!["https://backup.example".into()],
-        tls_policy: "verify-authority".into(),
-        redirect_policy: "same-authority".into(),
-        proxy_reference: Some("proxy-a".into()),
-    };
-    let mut changed = baseline.clone();
-    changed.proxy_reference = None;
-    assert!(baseline.definition_hash().starts_with("sha256:"));
-    assert_ne!(baseline.definition_hash(), changed.definition_hash());
-}
-
-/// The golden value is the sha256 of the literal JSON below, computed outside
-/// this code, so a change to the shared hasher or to the field order fails here.
-#[test]
-fn generation_definition_hash_bytes_are_pinned() {
-    let definition = ConnectionGenerationDefinition {
-        primary_authority: "https://erp.example".into(),
-        failover_authorities: vec!["https://backup.example".into()],
-        tls_policy: "verify-authority".into(),
-        redirect_policy: "same-authority".into(),
-        proxy_reference: Some("proxy-a".into()),
-    };
-
-    assert_eq!(
-        serde_json::to_string(&definition).expect("definition serializes"),
-        concat!(
-            r#"{"primary-authority":"https://erp.example","#,
-            r#""failover-authorities":["https://backup.example"],"#,
-            r#""tls-policy":"verify-authority","redirect-policy":"same-authority","#,
-            r#""proxy-reference":"proxy-a"}"#,
-        )
-    );
-    assert_eq!(
-        definition.definition_hash(),
-        "sha256:3ca45493d8f47e200353eb6a88ea4aa16928c30d48753a3e0e79fd029576740b"
-    );
 }
 
 #[test]

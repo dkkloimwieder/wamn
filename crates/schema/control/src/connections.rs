@@ -24,25 +24,6 @@ impl ConnectionInstanceStatus {
 #[doc(inline)]
 pub use wamn_catalog::ComponentConnectionRequirement;
 
-/// The non-secret definition of one immutable environment generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ConnectionGenerationDefinition {
-    pub primary_authority: String,
-    pub failover_authorities: Vec<String>,
-    pub tls_policy: String,
-    pub redirect_policy: String,
-    pub proxy_reference: Option<String>,
-}
-
-impl ConnectionGenerationDefinition {
-    /// Stable hash stored beside the immutable definition.
-    pub fn definition_hash(&self) -> String {
-        let bytes = serde_json::to_vec(self).expect("connection generation definition serializes");
-        prefixed_sha256(&bytes)
-    }
-}
-
 /// An environment-owned stable connection identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInstance {
@@ -54,17 +35,6 @@ pub struct ConnectionInstance {
     pub status: ConnectionInstanceStatus,
     pub active_generation: Option<i64>,
     pub revision: i64,
-}
-
-/// One immutable, non-secret connection definition generation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionGeneration {
-    pub tenant_id: String,
-    pub environment: String,
-    pub instance_id: String,
-    pub generation: i64,
-    pub definition: ConnectionGenerationDefinition,
-    pub credential_set_handle: String,
 }
 
 /// An immutable component-release association to one stable instance.
@@ -198,8 +168,8 @@ pub fn insert_component_connection_binding_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 }
 
-/// The `sha256:<hex>` identity of `bytes`. The generation definition hash and
-/// the exposure definition hash both use this one copy.
+/// The `sha256:<hex>` identity of `bytes`. This crate hashes through this one
+/// copy.
 pub(crate) fn prefixed_sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut out = String::with_capacity("sha256:".len() + digest.len() * 2);

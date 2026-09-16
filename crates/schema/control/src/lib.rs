@@ -20,9 +20,7 @@ pub use environment::{
     check_environment_instance_claim, claim_environment_instance_sql,
 };
 pub use exposure::{
-    Attachment, AttachmentKind, Cardinality, ExposureError, ExposureRelease, FlowExposure,
-    HttpRoute, InputMapping, MappingSource, ResolvedAttachment, Source, SourceKind,
-    canonical_http_route_template, normalize_http_route, resolve_exposure,
+    ExposureError, HttpRoute, canonical_http_route_template, normalize_http_route,
 };
 pub use model::{SqlStatement, Value};
 pub use package_migrations::{
