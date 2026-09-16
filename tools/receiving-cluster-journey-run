@@ -5,6 +5,7 @@ action=${1:?lifecycle action}
 cluster=${2:?cluster or container name}
 case "$cluster" in wamn) printf 'The kind-wamn cluster is frozen.\n' >&2; exit 64 ;; esac
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
+cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
 case "$action" in
   docker-version) docker info --format '{{json .ServerVersion}}' ;;
   clusters) kind get clusters ;;
@@ -14,10 +15,10 @@ case "$action" in
   build-images)
     work=${3:?work directory}; repository=${4:?repository}; source=${5:?source}; tag=${6:?tag}; kind=${7:?build kind}
     if [[ $kind == standard ]]; then
+      # An image of this source is reused when one exists, and relabeled to the
+      # run's own tag. Only the identity image survives the run (wamn-szr0).
       for target in host gates; do
-        docker build --platform=linux/amd64 --provenance=false --file "$repository/Dockerfile" \
-          --target "$target" --tag "wamn-$target:$tag" --label "wamn.dev/source-head=$source" \
-          --label wamn.dev/build-profile=release "$repository"
+        "$cache" ensure "$repository" "$target" "$target" "$source" "$tag" "$cluster"
       done
     else
       docker build --platform=linux/amd64 --provenance=false --file "$work/host-image/Dockerfile" \
@@ -26,9 +27,7 @@ case "$action" in
     ;;
   build-identity)
     repository=${3:?repository}; source=${4:?source}; tag=${5:?tag}
-    docker build --platform=linux/amd64 --provenance=false --file "$repository/Dockerfile" \
-      --target identity --tag "wamn-identity:$tag" --label "wamn.dev/source-head=$source" \
-      --label wamn.dev/build-profile=release "$repository"
+    "$cache" ensure "$repository" identity identity "$source" "$tag" "$cluster"
     ;;
   create)
     work=${3:?work directory}; repository=${4:?repository}; shift 4
@@ -104,6 +103,12 @@ case "$action" in
       if docker image inspect "$image" >/dev/null 2>&1; then
         docker image rm --force "$image" || status=$?
       fi
+    done
+    # The run's own tags are gone above. The identity images stay for the next
+    # run of this source, bounded by the retention rule (wamn-szr0).
+    "$cache" release "$cluster" || status=$?
+    for name in host gates identity; do
+      "$cache" retain "$name" || status=$?
     done
     exit "$status"
     ;;

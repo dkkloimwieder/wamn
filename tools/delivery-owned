@@ -24,12 +24,11 @@ fi
 cluster=${2:?owned cluster name}
 [[ $cluster =~ ^wamn-(receiving|wms)-[a-f0-9]{32}$ ]] || { printf 'An exact owned application cluster name is required.\n' >&2; exit 64; }
 work=${3:?owned private work directory}
+cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
 case "$action" in
   build-host)
     source=${4:?source commit}
-    docker build --platform=linux/amd64 --provenance=false --file "$repository/Dockerfile" \
-      --target host --tag "wamn-host:$cluster" --label "wamn.dev/source-head=$source" \
-      --label wamn.dev/build-profile=release "$repository"
+    "$cache" ensure "$repository" host host "$source" "$cluster" "$cluster"
     ;;
   native-registry)
     source=${4:?source commit}
@@ -44,9 +43,7 @@ case "$action" in
     : > "$work/native-registry-owned"
     roles=(host)
     if [[ $cluster == wamn-receiving-* ]]; then
-      docker build --platform=linux/amd64 --provenance=false --file "$repository/Dockerfile" \
-        --target executor --tag "wamn-executor:$cluster" --label "wamn.dev/source-head=$source" \
-        --label wamn.dev/build-profile=release "$repository"
+      "$cache" ensure "$repository" executor executor "$source" "$cluster" "$cluster"
       roles+=(gates executor)
     fi
     docker run --detach --name "$cluster-native-registry" --network kind \
@@ -98,6 +95,9 @@ case "$action" in
     if docker image inspect "wamn-executor:$cluster" >/dev/null 2>&1; then
       docker image rm "wamn-executor:$cluster" || status=$?
     fi
+    # The identity image behind these tags is kept for the next run of this
+    # source, under the retention bound (wamn-szr0).
+    "$cache" retain executor || status=$?
     exit "$status"
     ;;
   render-host)

@@ -393,6 +393,14 @@ The test requires SQLx CLI 0.9.0 and the PostgreSQL 18 binaries.
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.
 Inspect their recorded cleanup result and remaining resource names before reporting completion.
 For manual fixtures, remove only the exact container, cluster, image, volume, and private directory that your run created.
+
+The cluster journeys keep their built images between runs.
+Each image is named for the source it contains, and a later run of the same source reuses it.
+A run still removes its own per-run image tags at teardown.
+It then keeps the three most recently used identities of each image repository and removes the rest.
+An identity that another run holds is never removed.
+The run records and leases live under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-journey-images`.
+
 Use explicit cluster names, kubeconfig paths, and contexts for Kubernetes and Helm commands.
 Never use `docker prune`, broad image removal, or name-substring cleanup.
 
