@@ -71,6 +71,8 @@ case "$action" in
   image-layers) docker image inspect --format '{{json .RootFS.Layers}}' "$cluster" ;;
   nodes) kind get nodes --name "$cluster" ;;
   node-image) docker exec "$cluster" crictl inspecti -o json "${3:?host image}" ;;
+  node-cri-images) docker exec "$cluster" crictl images -o json ;;
+  node-containerd-images) docker exec "$cluster" ctr --namespace k8s.io images ls ;;
   helm-releases) helm list --kubeconfig "${3:?work directory}/kubeconfig" --kube-context "kind-$cluster" --all-namespaces -o json ;;
   inspect)
     docker container inspect --format '{{json .NetworkSettings}}' "$cluster"

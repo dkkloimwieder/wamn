@@ -87,6 +87,11 @@ case "$action" in
   image-layers) docker image inspect --format '{{json .RootFS.Layers}}' "$cluster" ;;
   nodes) kind get nodes --name "$cluster" ;;
   node-image) docker exec "$cluster" crictl inspecti -o json "${3:?image}" ;;
+  # A kind load can report success while the node's CRI does not hold the
+  # image. These two views of one node say which of them is missing it,
+  # and they run when the image check fails (wamn-y2ml).
+  node-cri-images) docker exec "$cluster" crictl images -o json ;;
+  node-containerd-images) docker exec "$cluster" ctr --namespace k8s.io images ls ;;
   remove)
     work=${3:?work directory}; shift 3
     status=0
