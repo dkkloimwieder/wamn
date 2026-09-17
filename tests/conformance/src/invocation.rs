@@ -39,25 +39,28 @@ mod tests {
     /// Collect every `.wit` file that declares the node package by its header.
     /// Return paths relative to the repository root.
     fn collect_node_abi_copies(dir: &Path, root: &Path, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
+        let entries =
+            fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()));
+        for entry in entries {
+            let entry = entry.expect("WIT directory entry must be readable");
             let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .unwrap_or_else(|error| panic!("inspect {}: {error}", path.display()));
             if file_type.is_dir() {
                 if path.file_name().and_then(|name| name.to_str()) == Some("target") {
                     continue;
                 }
                 collect_node_abi_copies(&path, root, out);
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("wit")
-                && fs::read_to_string(&path).is_ok_and(|text| {
-                    text.lines()
-                        .any(|line| line.trim().starts_with("package wamn:node@"))
-                })
-            {
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("wit") {
+                let text = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+                if !text
+                    .lines()
+                    .any(|line| line.trim().starts_with("package wamn:node@"))
+                {
+                    continue;
+                }
                 let relative = path
                     .strip_prefix(root)
                     .expect("copy is under repo root")
@@ -204,16 +207,10 @@ mod tests {
     fn all_vendored_node_abi_copies_match_the_source() {
         let root = repo_root();
         let mut discovered = Vec::new();
-        for top in [
-            "apps",
-            "components",
-            "crates",
-            "services",
-            "test-support",
-            "tests",
-        ] {
+        for top in ["apps", "crates", "services", "test-support", "tests"] {
             collect_node_abi_copies(&root.join(top), &root, &mut discovered);
         }
+        assert!(!discovered.is_empty(), "no vendored node ABI copies found");
         discovered.sort();
 
         for rel in &discovered {

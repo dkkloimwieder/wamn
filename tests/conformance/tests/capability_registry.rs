@@ -23,25 +23,27 @@ fn repository_root() -> PathBuf {
 fn vendored_wasi_versions(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
     let mut found: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut stack = vec![
-        root.join("components"),
+        root.join("apps"),
         root.join("crates"),
         root.join("services"),
     ];
     while let Some(directory) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
+        for entry in entries {
+            let entry = entry.expect("WIT directory entry must be readable");
             let path = entry.path();
-            if path.is_dir() {
+            let file_type = entry
+                .file_type()
+                .unwrap_or_else(|error| panic!("inspect {}: {error}", path.display()));
+            if file_type.is_dir() {
                 if path.file_name().is_some_and(|name| name == "target") {
                     continue;
                 }
                 stack.push(path);
             } else if path.extension().is_some_and(|extension| extension == "wit") {
-                let Ok(source) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
+                let source = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
                 for line in source.lines() {
                     let line = line.trim();
                     let Some(rest) = line.strip_prefix("package wasi:") else {
@@ -151,8 +153,9 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
     // Deliberately unregistered: reachable in the tree's WIT, refused by
     // admission. `wasi:sockets` is the denied egress package; `wasi:http` is
     // imported only by `http-route`, a `wash push` workload on the
-    // non-tenant path the registry does not govern.
-    const DELIBERATELY_ABSENT: [&str; 2] = ["wasi:sockets", "wasi:http"];
+    // non-tenant path the registry does not govern. The platform materializer
+    // exports wasi:cli/run as a service workload, not a tenant import.
+    const DELIBERATELY_ABSENT: [&str; 3] = ["wasi:sockets", "wasi:http", "wasi:cli"];
 
     let vendored = vendored_wasi_versions(&repository_root());
     assert!(

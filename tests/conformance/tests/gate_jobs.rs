@@ -75,7 +75,9 @@ fn validate_job(path: &Path) -> Result<(), String> {
 #[test]
 fn every_gate_manifest_declares_a_runnable_job() {
     let root = repository_root();
-    for manifest in discover_manifests(&root) {
+    let manifests = discover_manifests(&root);
+    assert!(!manifests.is_empty(), "no gate Job manifests found");
+    for manifest in manifests {
         validate_job(&root.join(manifest)).unwrap_or_else(|error| panic!("{error}"));
     }
 }
