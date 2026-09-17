@@ -86,7 +86,17 @@ An idempotency key alone creates no remote same-result guarantee.
 Contract failures remain `unbound`, `incompatible`, `authority-denied`, `attestation-invalid`, `credential-unavailable`, `timeout`, or `transport`.
 A lost response cannot become a successful result or an editable application refusal.
 The [transport owner](../../crates/platform/runtime/src/plugins/connection_http/transport.rs) defines aggregate capacity and intake bounds.
-Raw-socket admission does not define this capability's separate external address policy.
+
+ConnectionHttp confines requests through administrator-bound connections.
+RFC1918 and cluster service addresses are allowed because the administrator bound the target.
+The host denies IPv4 and IPv6 link-local addresses and the IPv6 cloud metadata address `fd00:ec2::254`.
+The IPv4 link-local range includes cloud metadata at `169.254.169.254`.
+The same rules apply to IPv4 addresses mapped into IPv6.
+
+After DNS resolution, the host selects an allowed address and pins that exact peer before transport use.
+A later request resolves again and refuses if no allowed address remains.
+Redirect responses return to the guest without a second request, including redirects into denied ranges.
+Raw-socket admission owns a separate, stricter address policy.
 
 ## Object storage
 

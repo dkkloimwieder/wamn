@@ -32,7 +32,11 @@ use tokio::{
 use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
-use crate::connection_authority::{AuthorityDecision, HttpScheme, TlsIdentity, TransportDecision};
+use crate::connection_authority::{
+    AuthorityDecision, HttpScheme, NetworkPolicy, TlsIdentity, TransportDecision,
+};
+
+use super::network_policy::ConnectionNetworkPolicy;
 
 // Owner-approved limits apply across bindings and credential generations.
 pub(crate) const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
@@ -407,6 +411,9 @@ fn target(decision: &AuthorityDecision, uri: &Uri) -> Result<Target, TransportEr
     let TransportDecision::Direct { origin } = &decision.transport else {
         return Err(input("HTTP proxy transport is not admitted"));
     };
+    if !ConnectionNetworkPolicy.allows(origin.address) {
+        return Err(input("HTTP destination address denied"));
+    }
     let logical_uri: Uri = decision
         .logical_url
         .parse()

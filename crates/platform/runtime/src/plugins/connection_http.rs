@@ -7,7 +7,6 @@
 //! component tuple. No run, plan, frame or effect record participates.
 
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tracing::Instrument as _;
@@ -24,7 +23,7 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
-    AuthorityError, NetworkPolicy, TlsPolicy, TokioDnsResolver, parse_http_connection_authority,
+    AuthorityError, TlsPolicy, TokioDnsResolver, parse_http_connection_authority,
     resolve_http_request,
 };
 use crate::plugins::effect_span::{
@@ -38,7 +37,10 @@ use super::wamn_postgres::{
     CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
 };
 
+mod network_policy;
 pub mod transport;
+
+use network_policy::ConnectionNetworkPolicy;
 
 use transport::{ClientScope, ConnectionScope, HttpTransport};
 
@@ -117,17 +119,6 @@ pub enum ConnectionExecutionClosure {
         interface_version: String,
         binding_world: Arc<CandidateBindingWorld>,
     },
-}
-
-/// The authorized floor interpretation: Kubernetes/the network enforces the
-/// cluster ceiling on the actual pinned connect.
-#[derive(Debug, Clone, Copy)]
-struct ExternallyEnforcedNetworkPolicy;
-
-impl NetworkPolicy for ExternallyEnforcedNetworkPolicy {
-    fn allows(&self, _address: SocketAddr) -> bool {
-        true
-    }
 }
 
 /// Names the tenant and project only: the rest carries credential and
@@ -400,7 +391,7 @@ impl ConnectionHttp {
             &authority,
             &target,
             &self.allowed_hosts,
-            &ExternallyEnforcedNetworkPolicy,
+            &ConnectionNetworkPolicy,
             &TokioDnsResolver,
         )
         .await

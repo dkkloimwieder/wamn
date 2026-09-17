@@ -219,7 +219,7 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
             Reply::Ok => b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".as_slice(),
             Reply::HeldBody => b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n".as_slice(),
             Reply::Disconnect => return,
-            Reply::Redirect => b"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://different.invalid/\r\nContent-Length: 0\r\n\r\n".as_slice(),
+            Reply::Redirect => b"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://169.254.169.254/\r\nContent-Length: 0\r\n\r\n".as_slice(),
             Reply::Unavailable => b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".as_slice(),
             Reply::LargeBody => b"HTTP/1.1 200 OK\r\nContent-Length: 8388609\r\n\r\n".as_slice(),
             Reply::LargeHeaders => b"HTTP/1.1 200 OK\r\nX-Long: ".as_slice(),
@@ -317,7 +317,7 @@ async fn serve_h2<I: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
                 response.headers_mut().insert(
                     header::LOCATION,
-                    header::HeaderValue::from_static("http://different.invalid/"),
+                    header::HeaderValue::from_static("http://169.254.169.254/"),
                 );
             }
             if matches!(reply, Reply::Unavailable) {
@@ -932,4 +932,24 @@ fn error_display_and_debug_do_not_expose_sources() {
     let body_timeout = TransportError::new(ErrorKind::Timeout, Phase::ResponseBody, "deadline");
     assert!(body_timeout.is_response_lost());
     assert!(!body_timeout.is_timeout());
+}
+
+#[tokio::test]
+async fn denied_peer_refuses_before_transport_admission() {
+    let transport = HttpTransport::new().expect("platform TLS");
+    for peer in [
+        "169.254.169.254:80",
+        "[::ffff:169.254.169.254]:80",
+        "[fe80::1]:80",
+        "[fd00:ec2::254]:80",
+    ] {
+        let decision = decision(peer.parse().unwrap(), false);
+        let error = transport
+            .execute(scope(1), &decision, request(&decision))
+            .await
+            .unwrap_err();
+        assert!(error.is_before_dispatch());
+        assert_eq!(error.to_string(), "HTTP destination address denied");
+    }
+    assert!(transport.inner.state.lock().unwrap().clients.is_empty());
 }
