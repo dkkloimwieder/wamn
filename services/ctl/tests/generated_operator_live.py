@@ -46,8 +46,6 @@ DRAFT_REFERENCE = "restart-reference-" + uuid.uuid4().hex
 ORDER_ID = str(uuid.uuid4())
 LOCATION_ID = str(uuid.uuid4())
 ORDER_NUMBER = "RESTART-" + uuid.uuid4().hex[:12]
-# The record history triggers attribute each owned row write to this test principal.
-FIXTURE_PRINCIPAL = "00000000-0000-4000-8000-0000000000f1"
 BINDING_KEYS = {b"WAMN_BASE_URL", b"WAMN_HOST", b"WAMN_TARGET_INSTANCE"}
 CHILD_SETUP = (
     "import fcntl, os, sys, termios; "
@@ -307,7 +305,10 @@ class SourceEdit:
 def owned_rows(config, remove=False):
     if remove:
         sql = f"""BEGIN;
-SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
+DO $$ BEGIN
+PERFORM set_config('app.user_id',
+    (SELECT id::text FROM app_system.users WHERE display_name = 'wamn:provisioning'), true);
+END $$;
 SET LOCAL app.operation = 'admin:remove-generated-operator-fixture';
 DELETE FROM receiving.purchase_order WHERE id = '{ORDER_ID}';
 DELETE FROM receiving.location WHERE id = '{LOCATION_ID}';
@@ -316,18 +317,20 @@ SELECT (SELECT count(*) FROM receiving.purchase_order WHERE id = '{ORDER_ID}')
      + (SELECT count(*) FROM receiving.location WHERE id = '{LOCATION_ID}');"""
     else:
         sql = f"""BEGIN;
-SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
+DO $$ BEGIN
+PERFORM set_config('app.user_id',
+    (SELECT id::text FROM app_system.users WHERE display_name = 'wamn:provisioning'), true);
+END $$;
 SET LOCAL app.operation = 'admin:seed-generated-operator-fixture';
-INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, created_at)
-SELECT '{ORDER_ID}', '{ORDER_NUMBER}', '{ORDER_ID}',
-       COALESCE(MIN(created_at), CURRENT_TIMESTAMP) - interval '1 second'
-FROM receiving.purchase_order WHERE true
+INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id)
+VALUES ('{ORDER_ID}', '{ORDER_NUMBER}', '{ORDER_ID}')
 ON CONFLICT ON CONSTRAINT purchase_order_id_pkey DO NOTHING;
 INSERT INTO receiving.location (id, location_code)
 VALUES ('{LOCATION_ID}', '{ORDER_NUMBER}-LOC')
 ON CONFLICT ON CONSTRAINT location_id_pkey DO NOTHING;
 COMMIT;
-SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1;"""
+SELECT (count(*) = 1 AND count(*) FILTER (WHERE id = '{ORDER_ID}') = 1)::int
+FROM receiving.purchase_order;"""
     result = subprocess.run(
         ["psql", "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1",
          "--dbname", config["target_database_url"]],
@@ -335,8 +338,8 @@ SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1;"""
         env=dict(os.environ, PGCONNECT_TIMEOUT="10"),
     )
     require(result.returncode == 0, "owned Receiving rows could not be prepared or removed")
-    require(result.stdout.strip() == ("0" if remove else ORDER_ID),
-            "owned Receiving rows remain or the owned purchase order is not first")
+    require(result.stdout.strip() == ("0" if remove else "1"),
+            "owned Receiving rows remain or the owned purchase order is not the only purchase order")
 
 
 def open_reference(session, config):
@@ -362,12 +365,16 @@ def reference_empty(screen):
 def host_diagnostics(session, config, activation):
     instance = activation["binding"]["WAMN_TARGET_INSTANCE"]
     directory = Path(str(config["wasmtime_cache_dir"]) + ".operator-logs")
-    announced = directory / f"operator-host-{session.process.pid}-{instance}.log"
-    path = announced if announced.is_absolute() else REPOSITORY / announced
+    prefix = directory / f"operator-host-{session.process.pid}-{instance}-"
     entered = session.output.rfind(b"\x1b[?1049h")
-    announcement = f"Host diagnostics: {announced}".encode()
-    require(entered >= 0 and session.output.rfind(announcement, 0, entered) >= 0,
+    announcements = re.findall(
+        rb"Host diagnostics: (" + re.escape(os.fsencode(prefix)) + rb"[0-9]+\.log)",
+        session.output[:max(entered, 0)],
+    )
+    require(entered >= 0 and announcements,
             "host diagnostics path was not announced before operator entry")
+    announced = Path(os.fsdecode(announcements[-1]))
+    path = announced if announced.is_absolute() else REPOSITORY / announced
     info = path.lstat()
     require(stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600
             and info.st_uid == os.getuid(), "host diagnostics must be an owned regular mode 0600 file")
@@ -456,7 +463,8 @@ def assert_operator(session, config, edit, evidence):
     evidence["first"] = first
     session.stable(first, 2.0)
     session.text("Succeeded.")
-    session.text("0 rows")
+    session.until(lambda: re.search(r"\| 0 rows(?:,| \|)", session.display.text()) is not None,
+                  "exactly zero purchase-order rows")
     evidence["empty_purchase_order_list"] = session.display.text()
     require_clean_frame(evidence["empty_purchase_order_list"])
     open_reference(session, config)
@@ -484,8 +492,8 @@ def assert_operator(session, config, edit, evidence):
         return "purchase_order / query" in session.display.text()
 
     session.until(restarted, "native rebuild and fresh activation", timeout=STARTUP_TIMEOUT)
-    require(second["binding"]["WAMN_TARGET_INSTANCE"] != first["binding"]["WAMN_TARGET_INSTANCE"],
-            "restart reused the old target instance")
+    require(second["binding"]["WAMN_TARGET_INSTANCE"] == first["binding"]["WAMN_TARGET_INSTANCE"],
+            "native rebuild replaced the retained database instance")
     require(second["binding"]["WAMN_HOST"] == config["route_host"], "replacement host differs from the configuration")
     require(socket_open(second["binding"]), "replacement activation socket is not listening")
     transitions = bytes(session.output[restart_offset:])
@@ -623,7 +631,7 @@ def main():
     if failure:
         print(f"generated operator live test failed: {failure}", file=sys.stderr)
         return 1
-    print("generated operator live test passed: live route, native restart, target reset, and terminal cleanup")
+    print("generated operator live test passed: live route, native restart, retained database, fresh draft, and terminal cleanup")
     return 0
 
 
