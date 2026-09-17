@@ -223,6 +223,7 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
 /// * `transitions::release_caller_sql` — the caller-outcome family, `updated_at`
 /// * `transitions::terminalize_sql` — `status`, `terminal_reason`,
 ///   `result_json`, `fail_kind`, `updated_at`
+/// * `transitions::record_deadline_adjustments_sql` writes `deadline_adjustments_json`.
 ///
 /// The SELECT side is deliberately NOT column-scoped: `transitions::FENCED_PREFIX`
 /// locks the run with `SELECT r.* FROM runs AS r`, which needs SELECT on EVERY
@@ -231,11 +232,12 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
 /// concession. Confining the WRITE is what a column list can still buy, and it
 /// buys a lot: this family matches the permissive `TO wamn_platform` floor arm,
 /// so a blanket `UPDATE` would let one claim rewrite any tenant's admission pins.
-pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
+pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 14] = [
     "status",
     "terminal_reason",
     "fail_kind",
     "result_json",
+    "deadline_adjustments_json",
     "state_json",
     "manifest_digest",
     "caller_outcome_kind",
@@ -1205,7 +1207,7 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_kind\", \"result_json\", \
-             \"state_json\", \"manifest_digest\", \"caller_outcome_kind\", \
+             \"deadline_adjustments_json\", \"state_json\", \"manifest_digest\", \"caller_outcome_kind\", \
              \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
              \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \

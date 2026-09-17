@@ -67,6 +67,8 @@ fn component_bytes() -> Vec<u8> {
       (core module $main
         (import "memory" "memory" (memory 16))
         (func (export "run") (param $input i32) (result i32)
+          local.get $input i32.load offset=100 i32.const 4 i32.eq
+          if unreachable end
           i32.const 264 local.get $input i32.load offset=96 i32.store
           i32.const 268 local.get $input i32.load offset=100 i32.store
           i32.const 256))
@@ -124,7 +126,7 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
         "component":"echo","interface-version":"0.1.0",
         "operations":{(OPERATION):{"registered-operation":OPERATION,
             "input-ports":[{"name":"input","schema":{}}],
-            "output-ports":[{"name":"main","schema":{}}], "parameters":[]}}, "connections":[]
+            "output-ports":[{"name":"main","schema":{}}], "parameters":[{"name":"deadline-ms","schema":{"type":"integer"},"required":false}]}}, "connections":[]
     }))?;
     let admitted = validate_component_admission(
         &engine,
@@ -138,7 +140,7 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
     .component;
     let document = WiringDocument::parse(&json!({
         "format-version":"0.1", "wiring-id":"echo", "version":1,"entry":"echo",
-        "nodes":{"echo":{"component":"echo","interface-version":"0.1.0","operation":OPERATION,"params":{}}},
+        "nodes":{"echo":{"component":"echo","interface-version":"0.1.0","operation":OPERATION,"params":{"deadline-ms":60000}}},
         "edges":[],"cases":[]
     }))?;
     let graph_hash = document.wiring_hash();
@@ -283,14 +285,63 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
     assert!(enqueue(&mut admin, &schema, &request).await.is_err());
     request.input = json!({"queued":true});
     assert!(drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
-    let row = admin.query_one("SELECT status,result_json::text,service_principal_id::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
+    let row = admin.query_one("SELECT status,result_json::text,service_principal_id::text,deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
     assert_eq!(row.get::<_, String>(0), "completed");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(1))?,
         request.input
     );
     assert_eq!(row.get::<_, String>(2), SERVICE);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(3))?,
+        json!([{"node":"echo","requested-ms":60000,"effective-ms":30000}])
+    );
     assert!(!drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
+    request.idempotency_key = "trap".to_owned();
+    request.input = serde_json::Value::Null;
+    let trapped_run = enqueue(&mut admin, &schema, &request).await?;
+    let error = drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness)
+        .await
+        .unwrap_err();
+    let adjustments = &error
+        .downcast_ref::<wamn_execution_host::DeadlineAdjustments>()
+        .expect("a guest trap retains the effective deadline")
+        .0;
+    assert_eq!(
+        serde_json::to_value(adjustments)?,
+        json!([{"node":"echo","requested-ms":60000,"effective-ms":30000}])
+    );
+    let row = admin
+        .query_one(
+            "SELECT deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",
+            &[&trapped_run],
+        )
+        .await?;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(0))?,
+        json!([{"node":"echo","requested-ms":60000,"effective-ms":30000}])
+    );
+    assert!(
+        !postgres
+            .record_production_deadline_adjustments(
+                QUEUE_CLAIM_SCOPE,
+                &trapped_run,
+                999,
+                &json!([])
+            )
+            .await?
+    );
+    let row = admin
+        .query_one(
+            "SELECT deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",
+            &[&trapped_run],
+        )
+        .await?;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(0))?,
+        json!([{"node":"echo","requested-ms":60000,"effective-ms":30000}])
+    );
+    request.input = json!({"queued":true});
     request.idempotency_key = "revoked".to_owned();
     let denied = enqueue(&mut admin, &schema, &request).await?;
     admin

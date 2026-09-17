@@ -453,12 +453,34 @@ pub struct CandidateCaseRequest {
     pub tracestate: Option<String>,
 }
 
+/// A node deadline changed by the host execution limit.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct DeadlineAdjustment {
+    pub node: String,
+    pub requested_ms: u64,
+    pub effective_ms: u64,
+}
+
+/// Deadline changes retained when execution returns an error.
+#[derive(Debug)]
+pub struct DeadlineAdjustments(pub Vec<DeadlineAdjustment>);
+
+impl std::fmt::Display for DeadlineAdjustments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("execution deadline adjusted")
+    }
+}
+
+impl std::error::Error for DeadlineAdjustments {}
+
 /// One completely walked delivery, including the exact graph identity used.
 #[derive(Debug, Clone)]
 pub struct RouterDelivery {
     pub wiring_version: u32,
     pub graph_hash: Arc<str>,
     pub outcome: Outcome,
+    pub deadline_adjustments: Vec<DeadlineAdjustment>,
     pub(crate) partial: Option<PartialEvidence>,
 }
 
@@ -791,115 +813,140 @@ impl RouterDriver {
         causation: Option<Causation>,
         platform: Option<PlatformComponent>,
     ) -> anyhow::Result<RouterDelivery> {
-        // Parse the ingress context once per delivery, not once per node on the
-        // router hot path. Queue delivery deliberately carries no remote
-        // context and inherits the executor's host-created queue root instead.
-        let remote_parent = remote_trace_context(&request);
-        let wiring = Arc::clone(&active.wiring);
-        let mut walk = wiring.start(Delivery {
-            id: request.delivery_id.clone(),
-            payload: request.payload.clone(),
-            caller_attached: request.caller_attached,
-        });
-        let mut response =
-            ResponseState::new(active.facts.response.as_deref(), request.caller_attached);
-        loop {
-            let now_ms = self.now_ms();
-            match wiring.next(&mut walk, now_ms) {
-                Step::Done(status) => {
-                    let partial = if matches!(
-                        status,
-                        wamn_router::WalkStatus::Failed | wamn_router::WalkStatus::Cancelled
-                    ) {
-                        response.evidence(status, walk.failure(), walk.verdict())
-                    } else {
-                        None
-                    };
-                    return Ok(RouterDelivery {
-                        wiring_version: active.version,
-                        graph_hash: Arc::clone(&active.graph_hash),
-                        partial,
-                        outcome: Outcome {
+        let mut deadline_adjustments = Vec::new();
+        let result = async {
+            // Parse the ingress context once per delivery, not once per node on the
+            // router hot path. Queue delivery deliberately carries no remote
+            // context and inherits the executor's host-created queue root instead.
+            let remote_parent = remote_trace_context(&request);
+            let wiring = Arc::clone(&active.wiring);
+            let mut walk = wiring.start(Delivery {
+                id: request.delivery_id.clone(),
+                payload: request.payload.clone(),
+                caller_attached: request.caller_attached,
+            });
+            let mut response =
+                ResponseState::new(active.facts.response.as_deref(), request.caller_attached);
+            loop {
+                let now_ms = self.now_ms();
+                match wiring.next(&mut walk, now_ms) {
+                    Step::Done(status) => {
+                        let partial = if matches!(
                             status,
-                            result: walk.result().clone(),
-                            failure: walk.failure().cloned(),
-                            hops: walk.hops(),
-                            verdict: walk.verdict().cloned(),
-                        },
-                    });
-                }
-                Step::Wait { until_ms, .. } => {
-                    let remaining = until_ms.saturating_sub(self.now_ms());
-                    tokio::time::sleep(Duration::from_millis(remaining)).await;
-                }
-                Step::Invoke(call) => {
-                    let effects = response.effect_evidence();
-                    let result = async {
-                        let component = active
-                            .facts
-                            .component(&call.node)
-                            .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
-                        let operation = component
-                            .operation(&call.operation)
-                            .ok_or_else(|| anyhow::anyhow!("router-node-operation-fact-missing"))?;
-                        authorize_registered_operation(
-                            request.caller.as_ref(),
-                            operation.registered_operation.as_deref(),
-                            operation.fresh_only,
-                        )?;
-                        let span = component_invocation_span(
-                            &request,
-                            &self.config.project,
-                            active.version,
-                            &component.component_digest,
-                            &call,
-                            remote_parent.as_ref(),
-                        );
-                        let outcome = self
-                            .invoke_node(
-                                &request,
-                                &active,
-                                &call,
-                                closure,
-                                causation.as_ref(),
-                                platform,
-                                effects.clone(),
-                            )
-                            .instrument(span)
-                            .await
-                            .with_context(|| format!("invoke wiring node {:?}", call.node))?;
-                        response.observe(&call.node, &outcome, effects.as_ref())?;
-                        anyhow::Ok(outcome)
+                            wamn_router::WalkStatus::Failed | wamn_router::WalkStatus::Cancelled
+                        ) {
+                            response.evidence(status, walk.failure(), walk.verdict())
+                        } else {
+                            None
+                        };
+                        return Ok(RouterDelivery {
+                            wiring_version: active.version,
+                            graph_hash: Arc::clone(&active.graph_hash),
+                            partial,
+                            deadline_adjustments: Vec::new(),
+                            outcome: Outcome {
+                                status,
+                                result: walk.result().clone(),
+                                failure: walk.failure().cloned(),
+                                hops: walk.hops(),
+                                verdict: walk.verdict().cloned(),
+                            },
+                        });
                     }
-                    .await;
-                    let outcome = match result {
-                        Ok(outcome) => outcome,
-                        Err(error) => {
-                            if walk.verdict().is_some() {
-                                tracing::warn!(error = %format_args!("{error:#}"), "router invocation failed after its terminal verdict; first verdict stands");
-                                return Ok(RouterDelivery {
-                                    wiring_version: active.version,
-                                    graph_hash: Arc::clone(&active.graph_hash),
-                                    partial: None,
-                                    outcome: Outcome {
-                                        status: wamn_router::WalkStatus::Failed,
-                                        result: walk.result().clone(),
-                                        failure: None,
-                                        hops: walk.hops(),
-                                        verdict: walk.verdict().cloned(),
-                                    },
-                                });
+                    Step::Wait { until_ms, .. } => {
+                        let remaining = until_ms.saturating_sub(self.now_ms());
+                        tokio::time::sleep(Duration::from_millis(remaining)).await;
+                    }
+                    Step::Invoke(call) => {
+                        let effects = response.effect_evidence();
+                        let result = async {
+                            let component = active
+                                .facts
+                                .component(&call.node)
+                                .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
+                            let operation = component
+                                .operation(&call.operation)
+                                .ok_or_else(|| anyhow::anyhow!("router-node-operation-fact-missing"))?;
+                            authorize_registered_operation(
+                                request.caller.as_ref(),
+                                operation.registered_operation.as_deref(),
+                                operation.fresh_only,
+                            )?;
+                            if let Some(requested_ms) = call.deadline_ms {
+                                let effective_ms = bounded_node_deadline_ms(Some(requested_ms));
+                                if requested_ms != effective_ms {
+                                    deadline_adjustments.push(DeadlineAdjustment {
+                                        node: call.node.clone(),
+                                        requested_ms,
+                                        effective_ms,
+                                    });
+                                }
                             }
-                            return Err(response.interrupted(error, effects.as_ref()));
+                            let span = component_invocation_span(
+                                &request,
+                                &self.config.project,
+                                active.version,
+                                &component.component_digest,
+                                &call,
+                                remote_parent.as_ref(),
+                            );
+                            let outcome = self
+                                .invoke_node(
+                                    &request,
+                                    &active,
+                                    &call,
+                                    closure,
+                                    causation.as_ref(),
+                                    platform,
+                                    effects.clone(),
+                                )
+                                .instrument(span)
+                                .await
+                                .with_context(|| format!("invoke wiring node {:?}", call.node))?;
+                            response.observe(&call.node, &outcome, effects.as_ref())?;
+                            anyhow::Ok(outcome)
                         }
-                    };
-                    if let Err(refusal) = wiring.apply(&mut walk, &call, outcome, self.now_ms()) {
-                        wiring
-                            .fail_on_node_data(&mut walk, &call.node, refusal)
-                            .context("router driver applied an impossible transition")?;
+                        .await;
+                        let outcome = match result {
+                            Ok(outcome) => outcome,
+                            Err(error) => {
+                                if walk.verdict().is_some() {
+                                    tracing::warn!(error = %format_args!("{error:#}"), "router invocation failed after its terminal verdict; first verdict stands");
+                                    return Ok(RouterDelivery {
+                                        wiring_version: active.version,
+                                        graph_hash: Arc::clone(&active.graph_hash),
+                                        partial: None,
+                                        deadline_adjustments: Vec::new(),
+                                        outcome: Outcome {
+                                            status: wamn_router::WalkStatus::Failed,
+                                            result: walk.result().clone(),
+                                            failure: None,
+                                            hops: walk.hops(),
+                                            verdict: walk.verdict().cloned(),
+                                        },
+                                    });
+                                }
+                                return Err(response.interrupted(error, effects.as_ref()));
+                            }
+                        };
+                        if let Err(refusal) = wiring.apply(&mut walk, &call, outcome, self.now_ms()) {
+                            wiring
+                                .fail_on_node_data(&mut walk, &call.node, refusal)
+                                .context("router driver applied an impossible transition")?;
+                        }
                     }
                 }
             }
+        }.await;
+        match result {
+            Ok(mut delivery) => {
+                delivery.deadline_adjustments = deadline_adjustments;
+                Ok(delivery)
+            }
+            Err(error) if !deadline_adjustments.is_empty() => {
+                Err(error.context(DeadlineAdjustments(deadline_adjustments)))
+            }
+            Err(error) => Err(error),
         }
     }
 

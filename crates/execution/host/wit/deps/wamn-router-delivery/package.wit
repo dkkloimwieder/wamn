@@ -112,5 +112,16 @@ interface delivery {
     effect-outcome: option<effect-outcome>,
   }
 
-  deliver: func(request: delivery-request) -> result<delivery-outcome, delivery-error>;
+  record deadline-adjustment {
+    node: string,
+    requested-ms: u64,
+    effective-ms: u64,
+  }
+
+  record delivery-report {
+    outcome: result<delivery-outcome, delivery-error>,
+    deadline-adjustments: list<deadline-adjustment>,
+  }
+
+  deliver: func(request: delivery-request) -> delivery-report;
 }

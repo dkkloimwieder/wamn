@@ -45,6 +45,16 @@ Native dispatch reuses compiled component bytes and creates a fresh invocation s
 The store is Wasmtime's request state, including guest memory and bound authority.
 One absolute deadline covers initialization, execution, and nested calls.
 A child cannot extend that deadline.
+
+The host bounds each requested node deadline to 1–30,000 milliseconds and continues execution.
+When the host changes a deadline, the delivery report carries the node, `requested-ms`, and `effective-ms`.
+HTTP responses carry this JSON array in the `wamn-deadline-adjustments` header, including execution failures.
+Application response bodies remain unchanged.
+Queued runs store the array in `runs.deadline_adjustments_json` before settlement or retry, under the current lease.
+The column retains the latest attempt that reports a change.
+An absent header or null column means that no change was reported.
+Nested calls still inherit the enclosing deadline. Their remaining time is not a separate node deadline adjustment.
+
 Completed, cancelled, trapped, or timed-out invocations do not return that store to a reusable guest instance.
 
 The runtime uses `InstancePolicy::Ephemeral` and refuses a positive `poolSize`.

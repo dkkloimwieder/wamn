@@ -20,10 +20,11 @@ use wit_bindgen::rt::async_support::{
 };
 
 use super::{
-    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
-    DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission,
-    FailedOutcome, Header, HttpResponse, Mapping, MappingSource, PartialCompletion, ProviderError,
-    RequestHead, RouteDefinition, SchemaInvalid, handle_request,
+    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality,
+    DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome,
+    DeliveryReport, DeliveryRequest, Emission, FailedOutcome, Header, HttpResponse, Mapping,
+    MappingSource, PartialCompletion, ProviderError, RequestHead, RouteDefinition, SchemaInvalid,
+    handle_request,
 };
 
 struct Component;
@@ -105,10 +106,7 @@ impl Backend for GuestBackend {
         ))
     }
 
-    fn deliver(
-        &mut self,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> Result<DeliveryOutcome, DeliveryError> {
+    fn deliver(&mut self, request: DeliveryRequest<Self::AuthenticatedCaller>) -> DeliveryReport {
         use bindings::wamn::router_delivery::delivery;
 
         let request = delivery::DeliveryRequest {
@@ -122,9 +120,22 @@ impl Backend for GuestBackend {
             }),
             parent_causation: None,
         };
-        delivery::deliver(request)
-            .map(convert_delivery_outcome)
-            .map_err(convert_delivery_error)
+        let report = delivery::deliver(request);
+        DeliveryReport {
+            outcome: report
+                .outcome
+                .map(convert_delivery_outcome)
+                .map_err(convert_delivery_error),
+            deadline_adjustments: report
+                .deadline_adjustments
+                .into_iter()
+                .map(|adjustment| DeadlineAdjustment {
+                    node: adjustment.node,
+                    requested_ms: adjustment.requested_ms,
+                    effective_ms: adjustment.effective_ms,
+                })
+                .collect(),
+        }
     }
 }
 
@@ -352,6 +363,11 @@ fn request_head(request: &Request) -> RequestHead {
 
 fn send_response(response: HttpResponse) -> Response {
     let headers = Fields::new();
+    if !response.deadline_adjustments.is_empty() {
+        let value = serde_json::to_vec(&response.deadline_adjustments)
+            .expect("deadline adjustments contain serializable values");
+        let _ = headers.set("wamn-deadline-adjustments", &[value]);
+    }
     if !response.body.is_empty() {
         let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
     }

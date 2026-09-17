@@ -217,6 +217,20 @@ impl TerminalizeResult {
     }
 }
 
+/// Store deadline changes under the same run and queue locks as terminalization.
+/// Parameters are target run, authority run, owner, generation, and JSON text.
+/// A live test must exercise the fence and the write under executor credentials.
+pub fn record_deadline_adjustments_sql() -> String {
+    format!(
+        "{FENCED_PREFIX}, recorded AS ( \
+             UPDATE runs AS r SET deadline_adjustments_json = $5::text::jsonb \
+               FROM authority AS a WHERE a.result_code = 'ready' \
+                AND r.tenant_id = a.tenant_id AND r.run_id = a.run_id \
+             RETURNING r.run_id \
+         ) SELECT EXISTS (SELECT 1 FROM recorded)"
+    )
+}
+
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,

@@ -564,6 +564,7 @@ fn deliver(
             depth: parent.depth,
         }),
     })
+    .outcome
 }
 
 fn event_delivery_id(registration_id: &str, stream_seq: u64, source_event_id: &str) -> String {

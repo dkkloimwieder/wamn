@@ -806,6 +806,25 @@ async fn drive_claim(
         }
     };
 
+    let adjustments = match &delivery {
+        Ok(delivery) => delivery.deadline_adjustments.as_slice(),
+        Err(error) => error
+            .downcast_ref::<wamn_execution_host::DeadlineAdjustments>()
+            .map_or(&[][..], |adjustments| adjustments.0.as_slice()),
+    };
+    if !adjustments.is_empty()
+        && !postgres
+            .record_production_deadline_adjustments(
+                QUEUE_CLAIM_SCOPE,
+                run_id,
+                lease_generation,
+                &serde_json::to_value(adjustments)?,
+            )
+            .await?
+    {
+        return Ok(());
+    }
+
     let delivery = match delivery {
         Ok(delivery) => delivery,
         Err(error) => {

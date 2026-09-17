@@ -40,7 +40,7 @@ mod bindings {
 }
 
 use bindings::wamn::router_delivery::delivery::{
-    self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest,
+    self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryReport, DeliveryRequest,
     EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureKind as WireFailureKind,
     ParentCausation, PartialCompletion, PermissionDenial, Source,
 };
@@ -118,10 +118,33 @@ impl RouterDeliveryBridge {
         }
     }
 
-    async fn deliver(
+    async fn deliver_report(
         &self,
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
+    ) -> DeliveryReport {
+        let mut deadline_adjustments = Vec::new();
+        let outcome = self
+            .deliver_inner(request, caller, &mut deadline_adjustments)
+            .await;
+        DeliveryReport {
+            outcome,
+            deadline_adjustments: deadline_adjustments
+                .into_iter()
+                .map(|adjustment| delivery::DeadlineAdjustment {
+                    node: adjustment.node,
+                    requested_ms: adjustment.requested_ms,
+                    effective_ms: adjustment.effective_ms,
+                })
+                .collect(),
+        }
+    }
+
+    async fn deliver_inner(
+        &self,
+        request: DeliveryRequest,
+        caller: Option<AuthenticatedCaller>,
+        deadline_adjustments: &mut Vec<crate::DeadlineAdjustment>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
         let DeliveryRequest {
             source,
@@ -188,11 +211,18 @@ impl RouterDeliveryBridge {
             Some(_) => delivery_attributes(source, &request.wiring_id, request.wiring_version),
             None => Vec::new(),
         };
-        match self
+        let result = self
             .driver
             .execute_with_causation(request, causation.clone(), source.platform())
-            .await
-        {
+            .await;
+        *deadline_adjustments = match &result {
+            Ok(delivery) => delivery.deadline_adjustments.clone(),
+            Err(error) => error
+                .downcast_ref::<crate::DeadlineAdjustments>()
+                .map(|adjustments| adjustments.0.clone())
+                .unwrap_or_default(),
+        };
+        match result {
             Ok(delivery) => {
                 self.record(&attributes, DeliveryClass::Delivered);
                 let (outcome, result) = settled_preview(&delivery.outcome);
@@ -427,14 +457,14 @@ impl delivery::Host for ActiveCtx<'_> {
     async fn deliver(
         &mut self,
         mut request: DeliveryRequest,
-    ) -> wash_runtime::wasmtime::Result<Result<DeliveryOutcome, DeliveryError>> {
+    ) -> wash_runtime::wasmtime::Result<DeliveryReport> {
         let plugin = plugin_of(self)?;
         let caller = request
             .caller
             .take()
             .map(|caller| self.table.delete(caller))
             .transpose()?;
-        Ok(plugin.deliver(request, caller).await)
+        Ok(plugin.deliver_report(request, caller).await)
     }
 }
 

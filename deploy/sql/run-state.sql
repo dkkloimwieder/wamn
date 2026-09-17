@@ -367,6 +367,7 @@ CREATE TABLE wamn_run.runs (
     manifest_digest text,
     input_json      jsonb,
     result_json     jsonb,
+    deadline_adjustments_json jsonb,
     state_json      jsonb,
     invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb,
     admission_context_version text NOT NULL DEFAULT '0.1'

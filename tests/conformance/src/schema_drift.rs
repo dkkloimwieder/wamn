@@ -90,8 +90,8 @@ fn runs_stand_in() -> String {
           CHECK (durability_class IN ('standard', 'durable')), \
         wiring_id text, wiring_version int, wiring_hash text, \
         binding_world_json jsonb, \
-        manifest_digest text, \
-        input_json jsonb, result_json jsonb, state_json jsonb, \
+        manifest_digest text, service_principal_id uuid, \
+        input_json jsonb, result_json jsonb, deadline_adjustments_json jsonb, state_json jsonb, \
         invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb, \
         admission_context_version text NOT NULL DEFAULT '0.1', \
         platform_revision text NOT NULL DEFAULT 'legacy', \

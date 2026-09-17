@@ -8,10 +8,10 @@ use futures::{FutureExt as _, StreamExt as _};
 use serde_json::{Value, json};
 
 use http_route::{
-    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
-    DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission, Header,
-    Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition, SchemaInvalid,
-    handle_request,
+    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality,
+    DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome,
+    DeliveryReport, DeliveryRequest, Emission, Header, Mapping, MappingSource, ProviderError,
+    RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
 
 const AUTHENTICATED_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -36,6 +36,7 @@ struct FakeBackend {
     routes: Vec<RouteDefinition>,
     auth: Result<Option<String>, AuthRejection>,
     delivery: Result<DeliveryOutcome, DeliveryError>,
+    deadline_adjustments: Vec<DeadlineAdjustment>,
     schema: Result<(), SchemaInvalid>,
     fault: Fault,
     authenticated_attachments: Vec<String>,
@@ -51,6 +52,7 @@ impl FakeBackend {
     fn new(route: RouteDefinition) -> Self {
         Self {
             routes: vec![route],
+            deadline_adjustments: Vec::new(),
             auth: Ok(Some(AUTHENTICATED_USER_ID.to_string())),
             delivery: Ok(DeliveryOutcome::Respond(r#"{"ok":true}"#.to_string())),
             schema: Ok(()),
@@ -120,15 +122,16 @@ impl Backend for FakeBackend {
         format!("{id:032x}")
     }
 
-    fn deliver(
-        &mut self,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> Result<DeliveryOutcome, DeliveryError> {
+    fn deliver(&mut self, request: DeliveryRequest<Self::AuthenticatedCaller>) -> DeliveryReport {
         self.deliveries.push(request);
-        if self.fault == Fault::Deliver {
-            return Err(DeliveryError::ExecutionFailed);
+        DeliveryReport {
+            outcome: if self.fault == Fault::Deliver {
+                Err(DeliveryError::ExecutionFailed)
+            } else {
+                self.delivery.clone()
+            },
+            deadline_adjustments: self.deadline_adjustments.clone(),
         }
-        self.delivery.clone()
     }
 }
 
@@ -859,5 +862,30 @@ fn partial_completion_keeps_nested_authorization_and_cancellation_truth() {
             })
         );
         assert_eq!(backend.deliveries.len(), 1);
+    }
+}
+
+#[test]
+fn deadline_adjustments_reach_success_and_error_responses() {
+    for outcome in [
+        Ok(DeliveryOutcome::Respond("[1,2]".to_owned())),
+        Err(DeliveryError::ExecutionFailed),
+    ] {
+        let mut backend = FakeBackend::new(route());
+        backend.delivery = outcome.clone();
+        backend.deadline_adjustments = vec![DeadlineAdjustment {
+            node: "slow-node".to_owned(),
+            requested_ms: 60_000,
+            effective_ms: 30_000,
+        }];
+        let response = request(&mut backend, &head(), br#"{"amount":1}"#);
+        assert_eq!(response.deadline_adjustments, backend.deadline_adjustments);
+        if outcome.is_ok() {
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body, b"[1,2]");
+        } else {
+            assert_eq!(response.status, 503);
+            assert_eq!(error_code(&response.body), "execution-failed");
+        }
     }
 }

@@ -843,6 +843,93 @@ impl WamnPostgres {
                 .await;
         finish_queue_transaction(self, connection, result, "commit production completion").await
     }
+
+    /// Store deadline changes before settlement, including attempts that need replay.
+    /// Returns false when the run no longer belongs to this lease.
+    pub async fn record_production_deadline_adjustments(
+        &self,
+        component_id: &str,
+        run_id: &str,
+        lease_generation: i64,
+        adjustments: &serde_json::Value,
+    ) -> Result<bool, ProductionClaimError> {
+        if lease_generation <= 0 {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "validate production deadline report",
+                "lease generation must be positive",
+            ));
+        }
+        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Identity,
+                "resolve deadline report tenant",
+                "component has no host-injected tenant",
+            )
+        })?;
+        let runner = self.runner_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Identity,
+                "resolve deadline report runner",
+                "component has no host-injected runner",
+            )
+        })?;
+        let project = self.project_for(component_id);
+        let schema = self.schema_for(component_id);
+        let user_id = self.user_id_for(component_id);
+        let operation = self.operation_for(component_id);
+        let (connection, policy) = self
+            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorKind::Storage,
+                    "checkout deadline report connection",
+                    format!("{error:?}"),
+                )
+            })?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                AuthorityClass::ExecutorPlatform,
+                &tenant,
+                schema.as_deref(),
+                Some(&runner),
+                None,
+                user_id.as_deref(),
+                operation.as_deref(),
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Storage,
+                "begin deadline report transaction",
+                format!("{error:?}"),
+            ));
+        }
+        let result = async {
+            require_executor_authority(&connection).await?;
+            let sql = wamn_run_state::transitions::record_deadline_adjustments_sql();
+            let statement = connection
+                .prepare_cached(&sql)
+                .await
+                .map_err(|error| storage("prepare deadline report", &error))?;
+            let json = adjustments.to_string();
+            let row = connection
+                .query_one(
+                    &statement,
+                    &[&run_id, &run_id, &runner, &lease_generation, &json],
+                )
+                .await
+                .map_err(|error| storage("store deadline report", &error))?;
+            Ok(row.get::<_, bool>(0))
+        }
+        .await;
+        finish_queue_transaction(self, connection, result, "commit deadline report").await
+    }
 }
 
 async fn finish_queue_transaction<T>(

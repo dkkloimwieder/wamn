@@ -100,7 +100,7 @@ pub fn run_state_stand_in_ddl() -> String {
            wiring_id text, wiring_version int, \
            wiring_hash text, binding_world_json jsonb, \
            manifest_digest text, service_principal_id uuid, \
-           input_json jsonb NOT NULL DEFAULT '{{}}', result_json jsonb, state_json jsonb, \
+           input_json jsonb NOT NULL DEFAULT '{{}}', result_json jsonb, deadline_adjustments_json jsonb, state_json jsonb, \
            invocation_context jsonb NOT NULL DEFAULT '{{}}', \
            admission_context_version text, platform_revision text, idempotency_key text, \
            caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \

@@ -153,12 +153,29 @@ pub enum DeliveryError {
     FreshCredentialRequired { operation: String },
 }
 
+/// A host-adjusted node deadline reported to the HTTP caller.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct DeadlineAdjustment {
+    pub node: String,
+    pub requested_ms: u64,
+    pub effective_ms: u64,
+}
+
+/// Router result and host deadline changes, including failed deliveries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryReport {
+    pub outcome: Result<DeliveryOutcome, DeliveryError>,
+    pub deadline_adjustments: Vec<DeadlineAdjustment>,
+}
+
 /// A bounded HTTP response produced by the adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+    pub deadline_adjustments: Vec<DeadlineAdjustment>,
 }
 
 #[derive(Serialize)]
@@ -262,10 +279,7 @@ pub trait Backend {
         attachment_id: &str,
     ) -> Result<Option<Self::RoutePermit>, ProviderError>;
     fn new_delivery_id(&mut self) -> String;
-    fn deliver(
-        &mut self,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> Result<DeliveryOutcome, DeliveryError>;
+    fn deliver(&mut self, request: DeliveryRequest<Self::AuthenticatedCaller>) -> DeliveryReport;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -346,16 +360,19 @@ async fn try_handle(
     };
     let trace = trace_context(&head.headers);
     let delivery_id = backend.new_delivery_id();
-    let outcome = backend
-        .deliver(DeliveryRequest {
-            attachment_id,
-            delivery_id,
-            payload,
-            caller,
-            trace,
-        })
-        .map_err(delivery_error_response)?;
-    Ok(delivery_response(outcome))
+    let report = backend.deliver(DeliveryRequest {
+        attachment_id,
+        delivery_id,
+        payload,
+        caller,
+        trace,
+    });
+    let mut response = match report.outcome {
+        Ok(outcome) => delivery_response(outcome),
+        Err(error) => delivery_error_response(error),
+    };
+    response.deadline_adjustments = report.deadline_adjustments;
+    Ok(response)
 }
 
 fn normalize_method(method: &str) -> Option<String> {
@@ -678,6 +695,7 @@ fn rejection_response(rejection: &AuthRejection) -> HttpResponse {
 fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
     match outcome {
         DeliveryOutcome::Respond(payload) => HttpResponse {
+            deadline_adjustments: Vec::new(),
             status: 200,
             content_type: "application/json",
             body: payload.into_bytes(),
@@ -730,6 +748,7 @@ fn partial_response(partial: PartialCompletion) -> HttpResponse {
             );
     }
     HttpResponse {
+        deadline_adjustments: Vec::new(),
         status: failure.status,
         content_type: "application/json",
         body: serde_json::to_vec(
@@ -757,6 +776,7 @@ fn delivery_error_response(error: DeliveryError) -> HttpResponse {
 
 fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
     HttpResponse {
+        deadline_adjustments: Vec::new(),
         status: 403,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({
@@ -793,6 +813,7 @@ fn detailed_error_response(
         error.insert("data".to_string(), data);
     }
     HttpResponse {
+        deadline_adjustments: Vec::new(),
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&ErrorEnvelope {
@@ -804,6 +825,7 @@ fn detailed_error_response(
 
 fn error_response(status: u16, code: &str) -> HttpResponse {
     HttpResponse {
+        deadline_adjustments: Vec::new(),
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({"error":{"code":code}})).unwrap_or_default(),
@@ -812,6 +834,7 @@ fn error_response(status: u16, code: &str) -> HttpResponse {
 
 fn body_too_large_response(limit: usize) -> HttpResponse {
     HttpResponse {
+        deadline_adjustments: Vec::new(),
         status: 413,
         content_type: "text/plain; charset=utf-8",
         body: format!("request body exceeds {limit}-byte limit\n").into_bytes(),

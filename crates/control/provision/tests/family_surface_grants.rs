@@ -375,6 +375,7 @@ fn expected_executor_grants() -> Vec<String> {
         "caller_outcome_kind",
         "caller_release_node_id",
         "caller_released_at",
+        "deadline_adjustments_json",
         "fail_kind",
         "manifest_digest",
         "result_json",
