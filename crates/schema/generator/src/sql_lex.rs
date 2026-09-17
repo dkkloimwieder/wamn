@@ -15,6 +15,7 @@ pub(crate) struct RelationAccess {
     pub(crate) insert_fields: BTreeSet<String>,
     pub(crate) update_fields: BTreeSet<String>,
     pub(crate) lock: bool,
+    pub(crate) delete: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,11 +43,11 @@ pub(crate) fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> b
 /// Derive relation/column privileges from one authored command SQL artifact.
 ///
 /// The parser intentionally admits only the finite statement forms emitted or
-/// authored by the Receiving POC: SELECT, INSERT, UPDATE, CTEs, qualified
+/// authored by the Receiving POC: SELECT, INSERT, UPDATE, DELETE, CTEs, qualified
 /// relation references, and explicit row-lock clauses. Bind and result shapes
 /// remain owned by the two-sibling verifier; this pass joins the verified SQL
-/// to the manifest's relation authority declaration. A DELETE FROM derives no
-/// privilege here; [`delete_targets`] reports it for the manifest to decide.
+/// to the manifest's relation authority declaration. [`delete_targets`] also
+/// reports deletions for the manifest to check the model's delete mode.
 pub(crate) fn relation_access(
     sql: &[u8],
     relations: &BTreeMap<String, BTreeSet<String>>,
@@ -62,6 +63,9 @@ pub(crate) fn relation_access(
     let mut excluded_select_tokens = BTreeSet::new();
 
     for index in 0..tokens.len() {
+        if identifier(&tokens[index]) == Some("delete") {
+            parse_delete(&tokens, &depths, index, relations, &aliases, &mut access)?;
+        }
         if identifier(&tokens[index]) == Some("insert") {
             parse_insert(
                 &tokens,
@@ -364,6 +368,43 @@ fn parse_update(
     );
     parse_returning(tokens, depths, update, relation, fields, access)?;
     Ok(())
+}
+
+fn parse_delete(
+    tokens: &[Token],
+    depths: &[usize],
+    delete: usize,
+    relations: &BTreeMap<String, BTreeSet<String>>,
+    aliases: &BTreeMap<String, String>,
+    access: &mut BTreeMap<String, RelationAccess>,
+) -> Result<(), &'static str> {
+    if tokens.get(delete + 1).and_then(identifier) != Some("from") {
+        return Err("DELETE must name its target with FROM");
+    }
+    let relation = tokens
+        .get(delete + 2)
+        .and_then(identifier)
+        .ok_or("DELETE FROM must name its target relation")?;
+    let fields = relations
+        .get(relation)
+        .ok_or("DELETE references an undeclared relation")?;
+    access
+        .get_mut(relation)
+        .expect("known relation has an access row")
+        .delete = true;
+    let end = statement_end(depths, delete, depths[delete]);
+    collect_unqualified_fields(
+        tokens,
+        depths,
+        delete,
+        end,
+        &[relation],
+        relations,
+        aliases,
+        &BTreeSet::new(),
+        access,
+    );
+    parse_returning(tokens, depths, delete, relation, fields, access)
 }
 
 fn parse_returning(
@@ -996,10 +1037,32 @@ mod tests {
     }
 
     #[test]
-    fn a_delete_reports_its_target_and_derives_no_privilege() {
+    fn a_delete_derives_its_write_and_reads() {
         let cte = b"WITH removed AS (DELETE FROM item RETURNING id) SELECT removed.id FROM removed";
         let item = ["item".to_owned()].into_iter().collect::<BTreeSet<_>>();
-        assert_eq!(relation_access(cte, &relations()).unwrap(), BTreeMap::new());
+        for sql in [
+            cte.as_slice(),
+            b"DELETE FROM item WHERE id = $1 RETURNING id",
+            b"DELETE FROM item AS target WHERE target.id = $1 RETURNING target.id",
+        ] {
+            assert_eq!(
+                relation_access(sql, &relations()).unwrap()["item"],
+                RelationAccess {
+                    delete: true,
+                    select_fields: ["id".to_owned()].into_iter().collect(),
+                    ..RelationAccess::default()
+                }
+            );
+        }
+        assert_eq!(
+            relation_access(b"DELETE FROM item", &relations()).unwrap()["item"],
+            RelationAccess {
+                delete: true,
+                ..RelationAccess::default()
+            }
+        );
+        assert!(relation_access(b"DELETE FROM item RETURNING *", &relations()).is_err());
+        assert!(relation_access(b"DELETE FROM missing", &relations()).is_err());
         assert_eq!(delete_targets(cte).unwrap(), item);
         assert_eq!(
             delete_targets(b"DELETE FROM item WHERE item.id = $1").unwrap(),

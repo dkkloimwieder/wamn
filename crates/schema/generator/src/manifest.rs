@@ -387,6 +387,9 @@ pub struct StaticSqlRelationDeclaration {
     pub select_fields: Vec<String>,
     pub insert_fields: Vec<String>,
     pub update_fields: Vec<String>,
+    /// Whether verified SQL deletes rows from this relation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub delete: bool,
     /// Whether verified SQL takes a row lock; generation owns any PostgreSQL
     /// UPDATE carrier needed for the lock and does not treat it as DML intent.
     pub lock: bool,
@@ -882,6 +885,7 @@ fn validate_custom_operation_kind(
             if operation.relations.iter().any(|relation| {
                 !relation.insert_fields.is_empty()
                     || !relation.update_fields.is_empty()
+                    || relation.delete
                     || relation.lock
             }) {
                 return Err(GenerateError::new(
@@ -1573,6 +1577,7 @@ fn validate_static_sql_declarations(
         if is_history_table_name(&relation.table)
             && (!relation.insert_fields.is_empty()
                 || !relation.update_fields.is_empty()
+                || relation.delete
                 || relation.lock)
         {
             return Err(GenerateError::for_object(
@@ -1604,6 +1609,7 @@ fn validate_static_sql_declarations(
         if relation.select_fields.is_empty()
             && relation.insert_fields.is_empty()
             && relation.update_fields.is_empty()
+            && !relation.delete
             && !relation.lock
         {
             return Err(GenerateError::new(

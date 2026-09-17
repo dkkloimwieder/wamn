@@ -1173,6 +1173,7 @@ fn validate_static_sql_relation_access(
             aggregate.insert_fields.extend(observed.insert_fields);
             aggregate.update_fields.extend(observed.update_fields);
             aggregate.lock |= observed.lock;
+            aggregate.delete |= observed.delete;
         }
     }
     for relation in &declaration.relations {
@@ -1182,6 +1183,7 @@ fn validate_static_sql_relation_access(
             insert_fields: relation.insert_fields.iter().cloned().collect(),
             update_fields: relation.update_fields.iter().cloned().collect(),
             lock: relation.lock,
+            delete: relation.delete,
         };
         if observed != declared {
             return Err(GenerateError::for_object(
@@ -1190,7 +1192,7 @@ fn validate_static_sql_relation_access(
                     "{operation} {}.{} privilege declaration does not match verified SQL reads, writes, and row locks.\n\
                      Verified SQL: {}\n\
                      Declared: {}\n\
-                     RETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true.",
+                     DELETE requires delete=true. RETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true.",
                     relation.schema,
                     relation.table,
                     serde_json::json!({
@@ -1198,12 +1200,14 @@ fn validate_static_sql_relation_access(
                         "insert_fields": observed.insert_fields,
                         "update_fields": observed.update_fields,
                         "lock": observed.lock,
+                        "delete": observed.delete,
                     }),
                     serde_json::json!({
                         "select_fields": declared.select_fields,
                         "insert_fields": declared.insert_fields,
                         "update_fields": declared.update_fields,
                         "lock": declared.lock,
+                        "delete": declared.delete,
                     }),
                 ),
                 format!("{}.{}", relation.schema, relation.table),

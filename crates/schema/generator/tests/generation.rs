@@ -1908,55 +1908,91 @@ fn a_hard_delete_removes_the_row_and_a_tombstone_marks_it() {
     }
 }
 
-/// Owner ruling 4: authored SQL deletes only from a hard-delete model.
-///
-/// The admitted case is refused further down the pipeline, by the access
-/// declaration rather than by the delete rule. An authored DELETE derives no
-/// privilege on the relation it deletes from, so that relation can be declared
-/// with neither empty access nor any access. wamn-cy2q.5 owns the gap. The
-/// three messages differ, which is what separates "the delete rule admitted
-/// this" from "the delete rule refused this".
+/// Authored commands declare their delete and every column that the SQL reads.
 #[test]
 fn authored_sql_deletes_only_from_a_hard_delete_model() {
     let authored = AuthoredSql::new(
         "query/quality_purchase_order_detail.sql",
-        b"WITH removed AS (\n    DELETE FROM purchase_order WHERE id = $1 RETURNING id\n)\nSELECT removed.id FROM removed;\n",
+        b"WITH removed AS (DELETE FROM purchase_order WHERE id = $1 AND row_version = $2 RETURNING id) SELECT removed.id FROM removed;",
     );
     let mut operation = projection_operation();
-    operation["statements"]["load_purchase_order_detail"]["row"] =
-        json!([{"name": "id", "type": "uuid", "nullable": false}]);
-    operation["result"]["fields"] = json!([{"path": "id", "type": "uuid", "nullable": false}]);
-    operation["relations"][0]["select_fields"] = json!(["id"]);
+    operation["kind"] = json!("command");
+    operation["transaction"] = json!("explicit_per_input");
+    operation["automatic_retry"] = json!(false);
+    operation["idempotent_by"] =
+        json!({"state": {"guards": {"purchase_order": "expected_row_version"}}});
+    let revision = json!({"path": "expected_row_version", "type": "int64", "nullable": false});
+    operation["input"]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(revision);
+    operation["statements"]["load_purchase_order_detail"]["parameters"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "expected_row_version", "type": "int64", "nullable": false}));
+    operation["relations"][0]["select_fields"] = json!(["id", "row_version"]);
+    operation["relations"][0]["delete"] = json!(true);
     let mut sources = QUERY_SOURCES.to_vec();
     sources.push(authored);
 
-    let refusal = |manifest: &Value, catalog: &CatalogIr| {
+    let generate = |manifest: &Value, catalog: &CatalogIr, operation: &Value| {
         let mut with_operation = manifest.clone();
         with_operation["custom_operations"]["quality.load_purchase_order_detail"] =
             operation.clone();
         run(catalog, &with_operation, &sources)
-            .expect_err("no authored delete generates today")
-            .to_string()
     };
+    generate(&deleting_manifest("hard"), &catalog(false), &operation)
+        .expect("an authored hard delete generates with its declared access");
 
-    let admitted = refusal(&deleting_manifest("hard"), &catalog(false));
-    assert!(
-        admitted.contains("privilege declaration does not match verified SQL"),
-        "a hard delete passes the delete rule and stops at the access gap: {admitted}"
-    );
-    assert!(!admitted.contains("delete_mode"), "{admitted}");
+    for (field, value) in [
+        ("delete", json!(false)),
+        ("select_fields", json!(["id"])),
+        ("select_fields", json!(["row_version"])),
+    ] {
+        let mut missing_access = operation.clone();
+        missing_access["relations"][0][field] = value;
+        let refusal = generate(&deleting_manifest("hard"), &catalog(false), &missing_access)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refusal.contains("privilege declaration does not match verified SQL"),
+            "{refusal}"
+        );
+    }
 
-    let marked = refusal(&deleting_manifest("tombstone"), &tombstone_catalog());
-    assert!(
-        marked.contains("delete_mode: tombstone"),
-        "a tombstone removes no row: {marked}"
-    );
-
-    let undeclared = refusal(&manifest(), &catalog(false));
+    let marked = generate(
+        &deleting_manifest("tombstone"),
+        &tombstone_catalog(),
+        &operation,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(marked.contains("delete_mode: tombstone"), "{marked}");
+    let undeclared = generate(&manifest(), &catalog(false), &operation)
+        .unwrap_err()
+        .to_string();
     assert!(
         undeclared.contains("declares no delete_mode"),
-        "a model with no mode deletes nothing: {undeclared}"
+        "{undeclared}"
     );
+
+    let mut projection = projection_operation();
+    projection["relations"][0]["delete"] = json!(true);
+    let refusal = generate(&deleting_manifest("hard"), &catalog(false), &projection)
+        .unwrap_err()
+        .to_string();
+    assert!(refusal.contains("must be read-only"), "{refusal}");
+
+    // A delete with no column reads still declares relation access.
+    operation["relations"][0]["select_fields"] = json!([]);
+    let mut delete_only = deleting_manifest("hard");
+    delete_only["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    sources.pop();
+    sources.push(AuthoredSql::new(
+        "query/quality_purchase_order_detail.sql",
+        b"WITH removed AS (DELETE FROM purchase_order) SELECT $1::uuid AS id;",
+    ));
+    run(&catalog(false), &delete_only, &sources).expect("delete alone is nonempty relation access");
 }
 
 #[test]
@@ -2380,10 +2416,23 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
             "receiving.command",
         ),
     ];
-    for (label, insert, update, lock) in [
-        ("a declared insert", json!(["kind"]), json!([]), false),
-        ("a declared update", json!([]), json!(["kind"]), false),
-        ("a declared row lock", json!([]), json!([]), true),
+    for (label, insert, update, lock, delete) in [
+        (
+            "a declared insert",
+            json!(["kind"]),
+            json!([]),
+            false,
+            false,
+        ),
+        (
+            "a declared update",
+            json!([]),
+            json!(["kind"]),
+            false,
+            false,
+        ),
+        ("a declared row lock", json!([]), json!([]), true, false),
+        ("a declared delete", json!([]), json!([]), false, true),
     ] {
         let mut writes = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
         // An event handler can write, so the refusal is the history reservation.
@@ -2406,6 +2455,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
                 "insert_fields": insert,
                 "update_fields": update,
                 "lock": lock,
+                "delete": delete,
                 "constraints": []
             }],
             "statements": {

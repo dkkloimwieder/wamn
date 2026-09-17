@@ -71,6 +71,11 @@ Neither column is writable, because the delete statement sets both.
 A hard delete of a row that another row still references refuses with `foreign_key_violation`, which names the inbound constraint.
 No application foreign key declares `ON DELETE CASCADE`.
 
+Authored command SQL can use `DELETE FROM` only on a model that declares `delete_mode: hard`.
+The operation declares `delete: true` on that relation and names the columns that `WHERE` and `RETURNING` read in `select_fields`.
+Generation compares these declarations with the SQL.
+Projections and history tables refuse delete access.
+
 Generation plans every authored and generated statement as `wamn_app` under exactly the grants that the package declaration derives.
 PostgreSQL checks column privileges at plan time, so a statement that reads a column outside those grants fails at generate time.
 If the grants do not cover every column, the check refuses a whole-row reference such as `to_jsonb(item)`, `RETURNING item`, or `(item).sku`.
