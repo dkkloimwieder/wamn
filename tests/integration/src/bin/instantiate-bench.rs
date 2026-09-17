@@ -58,13 +58,9 @@ async fn main() -> anyhow::Result<()> {
             .define_unknown_imports_as_traps(&component)
             .map_err(|error| anyhow::anyhow!("stub the non-WASI imports of {path}: {error}"))?;
         let started = Instant::now();
-        let pre = match linker.instantiate_pre(&component) {
-            Ok(pre) => pre,
-            Err(error) => {
-                println!("{:<34} {mib:>9.2}   (skipped: {error})", short(path));
-                continue;
-            }
-        };
+        let pre = linker
+            .instantiate_pre(&component)
+            .map_err(|error| anyhow::anyhow!("prepare {path} for instantiation: {error}"))?;
         let pre_ms = started.elapsed().as_secs_f64() * 1000.0;
 
         let mut samples = Vec::with_capacity(SAMPLES);

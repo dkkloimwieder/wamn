@@ -1224,13 +1224,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: WAMN_EXCLUSION_DIAGNOSTICS"]
     fn generated_update_exclusion_from_postgres() {
-        let Some(path) = std::env::var_os("WAMN_EXCLUSION_DIAGNOSTICS") else {
-            eprintln!(
-                "SKIP: WAMN_EXCLUSION_DIAGNOSTICS requires the disposable PostgreSQL fixture"
-            );
-            return;
-        };
+        let path = std::env::var_os("WAMN_EXCLUSION_DIAGNOSTICS")
+            .expect("WAMN_EXCLUSION_DIAGNOSTICS must name the disposable PostgreSQL diagnostics");
         let diagnostics: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let diagnostic = &diagnostics["receiving"];
         assert_eq!(diagnostic["sqlstate"], "23P01");

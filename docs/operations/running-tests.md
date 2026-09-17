@@ -31,7 +31,8 @@ It records no result.
 `tools/test-changes` is the broad check before integration, and a single edit runs its covering exact case through [`wamn dev clean-check`](delivery.md#change-checks).
 
 `tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.
-It uses only the root workspace, because the other workspaces hold no ignored tests.
+It uses only the root workspace.
+The generated exclusion tests in `apps/Cargo.toml` require a separate command and PostgreSQL diagnostics.
 It adds `-- --ignored --test-threads=1` to the root workspace command, so the tests run one at a time.
 `--name FILTER` is valid only with `--cluster`.
 The tool passes the filter to Cargo as the test name filter, which selects the tests whose full names contain it.
@@ -127,6 +128,12 @@ An ignored test does not return early or skip.
 To run the ignored tests of the selected packages, use `tools/test-changes --cluster`.
 They run one at a time.
 To select tests by name, add `--name FILTER`, as [select the relevant tests](#select-the-relevant-tests) describes.
+
+For each receiving data package, select `operation::tests::generated_update_exclusion_from_postgres` with `-- --exact --ignored`.
+Use `--manifest-path apps/Cargo.toml` and set `WAMN_EXCLUSION_DIAGNOSTICS` to the PostgreSQL diagnostics JSON file.
+The package names are `wamn-receiving-data-access` and `wamn-client-acme-receiving-data-access`.
+These tests read that file and refuse missing input.
+They do not start PostgreSQL.
 
 ## Capture a run
 
