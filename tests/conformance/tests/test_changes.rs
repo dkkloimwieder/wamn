@@ -38,6 +38,7 @@ printf '%s\n' "$count" >"$count_file"
 if [[ "${WAMN_FAKE_CARGO_FAIL_AT:-0}" == "$count" ]]; then
   exit 23
 fi
+printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "${WAMN_FAKE_PASSED:-1}"
 "#;
 
 /// A Git fixture with root, apps, and no-std workspaces, committed on `main`.
@@ -62,6 +63,11 @@ impl Fixture {
 
         let tool = fs::read_to_string(repository_root().join(TOOL)).expect("read the tool");
         executable(&fixture.root.join(TOOL), &tool);
+        let required = "tools/require-test-result";
+        executable(
+            &fixture.root.join(required),
+            &fs::read_to_string(repository_root().join(required)).unwrap(),
+        );
         executable(&fixture.directory.join("fake cargo"), FAKE_CARGO);
         fs::create_dir(fixture.directory.join("metadata")).unwrap();
         for file in [
@@ -541,4 +547,17 @@ fn a_name_filter_fails_when_the_change_set_selects_no_package() {
         );
     }
     assert!(!fixture.directory.join("cargo calls").exists());
+}
+
+#[test]
+fn selected_workspace_refuses_zero_executed_cases() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("crates/core/src/lib.rs"), "// changed\n").unwrap();
+    let output = fixture
+        .tool_command(&["run"])
+        .env("WAMN_FAKE_PASSED", "0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"));
 }

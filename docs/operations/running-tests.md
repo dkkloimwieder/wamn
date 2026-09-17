@@ -27,7 +27,12 @@ Cargo metadata does not show a file that a package reads from another package's 
 Run the reading package's tests for such a change.
 `tools/test-changes dry-run` prints the selected commands.
 `tools/test-changes run` runs each command, reports each workspace, and returns a nonzero status if any command fails.
-It records no result.
+Each required command must report at least one executed passing case and exit successfully.
+The same rule applies to contract-diff, owned delivery, and the upstream release tests.
+`tools/require-test-result` captures command output in a private temporary file, prints it after completion, and removes the file.
+It preserves command failures and refuses absent or entirely ignored test results.
+An explicit dry run or a change set with no selected tests remains a planning result.
+It records no permanent result.
 `tools/test-changes` is the broad check before integration, and a single edit runs its covering exact case through [`wamn dev clean-check`](delivery.md#change-checks).
 
 `tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.

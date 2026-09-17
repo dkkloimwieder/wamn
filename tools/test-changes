@@ -118,7 +118,7 @@ readonly WAMN_METADATA
 # that forced a full run as JSON, and the selected packages and features.
 # A package selects its dependents in every workspace that resolves it: normal
 # and build edges transitively, then one dev edge. With --cluster only the root
-# workspace has work, because the other workspaces hold no ignored tests.
+# workspace has work. Guest ignored tests need their separate workspace command.
 readonly WAMN_SELECTION='
 def rel($root): ltrimstr($root + "/");
 def closure($graph):
@@ -228,7 +228,7 @@ while IFS=$'\t' read -r index full trigger packages features; do
   fi
   printf 'test-changes: %s\n' "$label" >&2
   exit_code=0
-  "$WAMN_CARGO" "${argv[@]}" </dev/null || exit_code=$?
+  "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" "${argv[@]}" </dev/null || exit_code=$?
   if ((exit_code == 0)); then
     printf 'test-changes: PASS: %s\n' "$label" >&2
   else

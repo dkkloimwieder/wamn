@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Run a required libtest command and refuse success without an executed case.
+set -euo pipefail
+(($# > 0)) || { printf 'usage: tools/require-test-result COMMAND [ARG...]\n' >&2; exit 64; }
+umask 077
+result=$(mktemp "${TMPDIR:-/tmp}/wamn-required-test.XXXXXXXX")
+trap 'rm -f -- "$result"' EXIT
+status=0
+"$@" >"$result" 2>&1 || status=$?
+cat "$result"
+((status == 0)) || exit "$status"
+if ! awk '
+  /^test result: ok\. [0-9]+ passed; 0 failed;/ { passed += $4 }
+  END { exit !(passed > 0) }
+' "$result"; then
+  printf 'required test command reported no executed passing cases\n' >&2
+  exit 1
+fi

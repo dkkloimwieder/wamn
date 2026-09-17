@@ -1,7 +1,7 @@
 //! Exact orchestration test for repo-local contract drift check 15.
 //!
 //! WHAT GREEN HERE MEANS (wamn-0h0g.15.138). This file drives `tools/contract-
-//! diff` against a FAKE CARGO that only records its argv, so a pass shows the
+//! diff` against a FAKE CARGO that records argv and emits fixture results, so a pass shows the
 //! PLAN SHAPE — that the tool invokes exactly these legs, in this order, with
 //! `--locked --offline`, from any working directory, and stops at the first
 //! failure. It shows NOTHING about whether the guards those legs name are
@@ -16,6 +16,7 @@
 //!
 //! Read a green here as "the orchestration is intact", never as "the contracts
 //! have not drifted".
+//! A separate case uses a small libtest executable to exercise result refusal.
 //!
 //! The first two legs are root-workspace default members, so `cargo test
 //! --workspace` also runs them. The third is NOT a root workspace member at
@@ -60,6 +61,7 @@ printf '%s\n' "$count" >"$count_file"
 if [[ "${WAMN_FAKE_CARGO_FAIL_AT:-0}" == "$count" ]]; then
   exit 23
 fi
+printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "${WAMN_FAKE_PASSED:-1}"
 "#;
 
 struct TestDirectory(PathBuf);
@@ -257,5 +259,99 @@ fn contract_diff_stops_at_each_first_failed_leg() {
             failed_leg,
             "contract-diff continued after failed leg {failed_leg}"
         );
+    }
+}
+
+#[test]
+fn contract_diff_refuses_zero_executed_cases() {
+    let root = repository_root();
+    let directory = TestDirectory::new();
+    executable(&directory.path("fake cargo"), FAKE_CARGO);
+    let output = tool_command(&root, &directory)
+        .env("WAMN_FAKE_PASSED", "0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"));
+    assert_eq!(
+        captured_invocations(&directory.path("cargo calls")).len(),
+        1
+    );
+}
+
+#[test]
+fn required_test_result_checks_real_libtest_results() {
+    let root = repository_root();
+    let directory = TestDirectory::new();
+    let source = directory.path("cases.rs");
+    let binary = directory.path("cases");
+    fs::write(
+        &source,
+        r#"
+        #[test] fn passes() {}
+        #[test] #[ignore] fn ignored() {}
+        #[test] fn fails() { panic!("deliberate failure"); }
+    "#,
+    )
+    .unwrap();
+    let build = Command::new("rustc")
+        .args(["--test", "--crate-name", "required_cases"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    for (case, expected) in [
+        ("passes", 0),
+        ("missing", 1),
+        ("ignored", 1),
+        ("fails", 101),
+    ] {
+        let output = Command::new(root.join("tools/require-test-result"))
+            .arg(&binary)
+            .args([case, "--exact"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    let output = Command::new(root.join("tools/require-test-result"))
+        .arg(directory.path("missing-binary"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(127));
+}
+
+#[test]
+fn owned_delivery_refuses_missing_named_cases() {
+    let root = repository_root();
+    let directory = TestDirectory::new();
+    executable(
+        &directory.path("cargo"),
+        "#!/bin/sh\nprintf 'test result: ok. 0 passed; 0 failed; 0 ignored;\\n'\n",
+    );
+    let path = std::env::join_paths(
+        std::iter::once(directory.0.clone())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for action in ["receiving", "wms"] {
+        let output = Command::new(root.join("tools/delivery-owned"))
+            .arg(action)
+            .env("PATH", &path)
+            .env_remove("WAMN_DELIVERY_CANDIDATE")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{action}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"));
     }
 }

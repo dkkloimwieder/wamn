@@ -73,6 +73,9 @@ if [[ "$*" == *'--package xtask -- build-fixtures' ]]; then
   [[ "${WAMN_TEST_MUTATE_FIXTURE_LOCK:-}" != yes ]] || touch "$WAMN_TEST_ROOT/modified-fixture-lock"
   exit "${WAMN_TEST_FIXTURE_EXIT:-${WAMN_TEST_CARGO_EXIT:-0}}"
 fi
+if [[ $1 == test ]]; then
+  printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "${WAMN_FAKE_PASSED:-1}"
+fi
 exit "${WAMN_TEST_CARGO_EXIT:-0}"
 "#,
     );
@@ -248,4 +251,15 @@ fn a_gate_leg_cannot_change_upstream_source_and_continue() {
     assert_eq!(output.status.code(), Some(65));
     let log = fs::read_to_string(fixture.root.join("cargo.log")).expect("read Cargo calls");
     assert_eq!(log.lines().count(), 1, "{log}");
+}
+
+#[test]
+fn upstream_tests_refuse_zero_executed_cases() {
+    let fixture = fixture();
+    let output = command(&fixture)
+        .env("WAMN_FAKE_PASSED", "0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"));
 }

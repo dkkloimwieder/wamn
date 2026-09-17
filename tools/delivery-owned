@@ -9,7 +9,7 @@ if [[ $action == receiving ]]; then
   if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export WAMN_RECEIVING_EVIDENCE_DIR=$parent; fi
   [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
   cd "$repository"
-  exec cargo test --locked --offline -p wamn-receiving-tests --lib \
+  exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-receiving-tests --lib \
     route_authentication_live::cluster::delivery_case::owned_release_delivery \
     -- --exact --ignored --nocapture
 fi
@@ -18,7 +18,7 @@ if [[ $action == wms ]]; then
   if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export WAMN_WMS_EVIDENCE_DIR=$parent; fi
   [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
   cd "$repository"
-  exec cargo test --locked --offline -p wamn-wms-tests --lib cluster::owned_release_delivery \
+  exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-wms-tests --lib cluster::owned_release_delivery \
     -- --exact --ignored --nocapture
 fi
 cluster=${2:?owned cluster name}

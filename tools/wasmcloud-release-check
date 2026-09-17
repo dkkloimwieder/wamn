@@ -136,7 +136,11 @@ wamn_run() {
   shift
   wamn_print_command "$label" "$@"
   local exit_code=0
-  "$WAMN_CARGO" "$@" || exit_code=$?
+  if [[ $1 == test ]]; then
+    "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" "$@" || exit_code=$?
+  else
+    "$WAMN_CARGO" "$@" || exit_code=$?
+  fi
   printf 'wasmcloud-release-check: %s exit-code=%s\n' "$label" "$exit_code" >&2
   return "$exit_code"
 }

@@ -72,7 +72,7 @@ wamn_run() {
   local -r label="$1"
   shift
   printf 'contract-diff: %s\n' "$label" >&2
-  "$WAMN_CARGO" "$@"
+  "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" "$@"
 }
 
 (($# <= 1)) || wamn_usage_error 'expected at most one command'
