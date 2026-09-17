@@ -216,7 +216,7 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored and selected by `tools/test-changes --cluster`, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 | `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: runs by default on the test server and holds the process lock |
 | `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: ignored and selected by `tools/test-changes --cluster`, and needs built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
-| `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs`: exposes a Rust entrypoint but no `wamn-gates` subcommand, starts its own server with `wal_level=logical`, and needs a JetStream NATS at `--nats-url` |
+| `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs`: runs through `wamn-gates cdcbench`, starts its own server with `wal_level=logical`, and needs a JetStream NATS at `--nats-url` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.
@@ -426,3 +426,27 @@ Never use `docker prune`, broad image removal, or name-substring cleanup.
 Report unresolved cleanup failures and keep only output needed for current work or specifically requested by the user.
 Before removing a worktree, preserve its source changes and branch.
 Remove only that worktree and its owned target after no process uses them.
+
+## Retained benchmark commands
+
+Performance runs remain paused until the owner approves a measured need or an upstream trigger.
+The `wamn-gates` binary exposes these retained commands:
+
+- `cdcbench` measures database change capture drain rate, lag, and logging cost.
+- `walbench` measures PostgreSQL write-ahead log volume for individual operations and mixed workloads.
+- `streambench` tests event storage, duplicate suppression, delivery order, and recovery.
+
+Inspect their inputs without starting a run:
+
+```bash
+cargo run --locked --offline -p wamn-gates --bin wamn-gates -- cdcbench --help
+cargo run --locked --offline -p wamn-gates --bin wamn-gates -- walbench --help
+cargo run --locked --offline -p wamn-gates --bin wamn-gates -- streambench --help
+```
+
+The database benchmarks start disposable PostgreSQL through the existing test owner.
+CDC also needs a built `wamn-cdc-reader` and an explicitly selected disposable NATS service.
+`WAMN_CDC_READER_BIN` can select the reader executable.
+Stream tests also need an explicitly selected disposable NATS service.
+`streambench --mode all` refuses fewer than three replicas before it connects.
+Do not use the frozen cluster as a fixture.

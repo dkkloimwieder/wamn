@@ -32,7 +32,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, bail};
+use anyhow::{Context as _, bail, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
@@ -86,7 +86,7 @@ pub struct StreamBenchArgs {
     pub messages: usize,
 
     /// Stream replication factor. 3 = R3 (in-cluster / a 3-node local cluster);
-    /// 1 = single-node local iteration (the R3 stepdown test is skipped).
+    /// The all mode requires at least three replicas for its recovery test.
     #[arg(long, default_value_t = 3)]
     pub replicas: usize,
 
@@ -208,6 +208,10 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 }
 
 pub async fn run(args: StreamBenchArgs) -> anyhow::Result<()> {
+    ensure!(
+        args.mode != Mode::All || args.replicas >= 3,
+        "streambench all requires at least three replicas for the recovery test"
+    );
     println!(
         "streambench — data-plane JetStream at {} (stream {}, R{}, subjects {})",
         args.nats_url,
@@ -590,12 +594,6 @@ async fn stepdown_phase(
 ) -> anyhow::Result<bool> {
     println!("\n## R3 durability — leader step-down + re-election");
     let mut pass = true;
-    if args.replicas < 3 {
-        println!(
-            "  (single/low-replica cluster: skipping RAFT stepdown — R3 heal is the in-cluster gate)"
-        );
-        return Ok(pass);
-    }
     let name = args.stream_name();
     let (before, leader_before, _p, _r) = stream_state(js, &name).await?;
 
