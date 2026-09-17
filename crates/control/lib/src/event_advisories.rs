@@ -664,6 +664,7 @@ mod tests {
                     .sequence,
             );
         }
+        let max_pull_bytes = usize::try_from(MATERIALIZER_MAX_PULL_BYTES)?;
         let mut pending = Vec::new();
         let mut largest_pull = 0;
         let mut pull_bytes = Vec::new();
@@ -673,7 +674,7 @@ mod tests {
             let mut messages = attached
                 .fetch()
                 .max_messages(64 - pending.len())
-                .max_bytes(MATERIALIZER_MAX_PULL_BYTES as usize)
+                .max_bytes(max_pull_bytes)
                 .expires(Duration::from_millis(200))
                 .messages()
                 .await?;
@@ -689,8 +690,8 @@ mod tests {
                     {
                         ensure!(
                             bytes > 0
-                                && bytes <= MATERIALIZER_MAX_PULL_BYTES as usize
-                                && MATERIALIZER_MAX_PULL_BYTES as usize - bytes < PAYLOAD_BYTES,
+                                && bytes <= max_pull_bytes
+                                && max_pull_bytes - bytes < PAYLOAD_BYTES,
                             "the broker stopped before filling the declared byte limit"
                         );
                         byte_limited_pulls += 1;
@@ -716,7 +717,7 @@ mod tests {
                 pending.push(message);
             }
             ensure!(
-                pending.len() > before && bytes <= MATERIALIZER_MAX_PULL_BYTES as usize,
+                pending.len() > before && bytes <= max_pull_bytes,
                 "the native pull exceeded its byte bound or made no progress"
             );
             largest_pull = largest_pull.max(bytes);
@@ -887,13 +888,13 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
     async fn scoped_credentials_confine_management_delivery_and_monitoring() -> anyhow::Result<()> {
-        wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
         use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
         use std::process::Stdio;
         use wamn_control_provision::events::advisory_stream_config;
         use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
         use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
+        wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
         let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
             .map(PathBuf::from)
             .context("set WAMN_NATIVE_C_NATS_BIN to the owned nats-server executable")?;
@@ -1001,7 +1002,7 @@ mod tests {
             .kill_on_drop(true)
             .spawn()?;
         let mut stage = "broker readiness";
-        let result = tokio::time::timeout(Duration::from_secs(90), async {
+        let result = tokio::time::timeout(Duration::from_secs(90), Box::pin(async {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
             loop {
                 ensure!(child.try_wait()?.is_none(), "owned NATS process exited before readiness");
@@ -1098,8 +1099,8 @@ mod tests {
             restricted_materializer.set_timeout(Duration::from_millis(500));
             stage = "refuse access to other environments";
             for (foreign_source, foreign_advisory, foreign_consumer, _) in &declarations[1..] {
-                let published = restricted_runtime.publish(foreign_consumer.filter_subject.clone(), "foreign payload".into()).await;
-                let refused = match published {
+                let publication = restricted_runtime.publish(foreign_consumer.filter_subject.clone(), "foreign payload".into()).await;
+                let refused = match publication {
                     Ok(acknowledgement) => acknowledgement.await.is_err(),
                     Err(_) => true,
                 };
@@ -1143,7 +1144,7 @@ mod tests {
             source_time_expiry_preserves_advisory(manager, &publisher, &materializer, &observer, source, advisory, &consumers[3]).await?;
             println!("NATIVE_C_SCOPED_PASS environments=3 provisioning=3 runtime_management_refusals=18 foreign_metadata_and_data_refusals=8 foreign_runtime_refusals=6 foreign_materializer_attachment_refusals=2");
             Ok::<(), anyhow::Error>(())
-        }).await;
+        })).await;
         let kill = child.start_kill();
         let reaped = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
         result.with_context(|| {
