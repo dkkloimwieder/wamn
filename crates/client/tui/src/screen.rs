@@ -206,6 +206,7 @@ pub struct Screen {
     input_schema: Option<Value>,
     definition_error: Option<String>,
     rows: Vec<Value>,
+    actor_labels: std::collections::BTreeMap<String, String>,
     cursor: Option<String>,
     append_page: bool,
     dirty: bool,
@@ -223,6 +224,7 @@ impl Screen {
             input_schema: None,
             definition_error: None,
             rows: Vec::new(),
+            actor_labels: std::collections::BTreeMap::new(),
             cursor: None,
             append_page: false,
             dirty: false,
@@ -386,6 +388,7 @@ impl Screen {
         self.draft = draft;
         if !self.append_page {
             self.rows.clear();
+            self.actor_labels.clear();
         }
         self.cursor = None;
         Ok(attempt)
@@ -401,13 +404,33 @@ impl Screen {
         attempt: Attempt,
         response: Result<HttpResponse, ClientError>,
     ) -> bool {
+        let labels = response
+            .as_ref()
+            .ok()
+            .map(|response| response.actor_labels.clone())
+            .unwrap_or_default();
         let resolved = self
             .submission
             .resolve(attempt, &self.spec.response, response);
         if resolved {
             self.show_result();
+            if matches!(
+                self.submission.state(),
+                State::Succeeded { opaque: false, .. }
+            ) {
+                self.actor_labels.extend(labels);
+            }
         }
         resolved
+    }
+
+    /// A label is presentation metadata from this screen's accepted response.
+    #[must_use]
+    pub fn actor_label(&self, actor: &str) -> Option<&str> {
+        self.actor_labels
+            .get(actor)
+            .map(String::as_str)
+            .filter(|label| !label.trim().is_empty())
     }
 
     /// Apply evidence supplied by a declared response interpreter in a composition.
@@ -626,6 +649,7 @@ impl Screen {
     fn clear_page(&mut self) -> Result<(), ScreenError> {
         self.append_page = false;
         self.rows.clear();
+        self.actor_labels.clear();
         self.cursor = None;
         if self.has_cursor() {
             self.draft.clear_binding("/cursor")?;
@@ -668,6 +692,7 @@ impl Screen {
             }
         }
         self.rows.clear();
+        self.actor_labels.clear();
         self.cursor = None;
         self.append_page = false;
         self.dirty = false;
@@ -678,6 +703,7 @@ impl Screen {
     fn show_result(&mut self) {
         if !self.append_page {
             self.rows.clear();
+            self.actor_labels.clear();
         }
         self.cursor = None;
         if let State::Succeeded { value, .. } = self.submission.state() {

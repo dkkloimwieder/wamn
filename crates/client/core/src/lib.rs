@@ -89,6 +89,8 @@ impl core::fmt::Debug for HttpRequest {
 /// One response, before the contract is applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse {
+    /// Actor labels supplied by the platform for this authorized response only.
+    pub actor_labels: BTreeMap<String, String>,
     /// HTTP status.
     pub status: u16,
     /// Response body.

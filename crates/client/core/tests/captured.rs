@@ -92,10 +92,12 @@ const COMMAND: &[FieldSchema] = &[
 async fn captured_retries_preserve_actual_command_bytes_and_raw_response_evidence() {
     let credentials = Arc::new(RotatingCredential::default());
     let first = HttpResponse {
+        actor_labels: std::collections::BTreeMap::new(),
         status: 403,
         body: r#"{"error":{"code":"permission-denied","operation":"wamn-test:inventory/adjust@1.0.0"},"evidence":{"unparsed":true}}"#.into(),
     };
     let second = HttpResponse {
+        actor_labels: std::collections::BTreeMap::new(),
         status: 503,
         body: "  opaque upstream failure\nnot JSON\n".into(),
     };
@@ -156,10 +158,12 @@ async fn generated_supplier_contract_preserves_absence_and_value_on_the_wire_and
         requests: Mutex::new(Vec::new()),
         replies: Mutex::new(VecDeque::from([
             HttpResponse {
+                actor_labels: std::collections::BTreeMap::new(),
                 status: 200,
                 body: "[]".into(),
             },
             HttpResponse {
+                actor_labels: std::collections::BTreeMap::new(),
                 status: 200,
                 body: "[]".into(),
             },

@@ -631,6 +631,7 @@ fn f5_refreshes_command_a_even_when_the_shared_read_now_holds_b() {
         read.resolve(
             attempt,
             Ok(HttpResponse {
+                actor_labels: std::collections::BTreeMap::new(),
                 status: 200,
                 body: json!([{"request_id": "request-a", "value": {"id": "A", "version": "7"}}])
                     .to_string()
@@ -738,6 +739,7 @@ fn shared_round_trip(application: &mut impl Application) {
         prepared.screen,
         prepared.attempt,
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 200,
             body: json!([{"request_id": prepared.body.item()["request_id"], "value": {"id": "A"}}])
                 .to_string(),
@@ -910,6 +912,7 @@ async fn the_driver_selects_credentials_before_sending_the_declared_screen() {
         (&FRESH, "fresh", "Bearer operator-pat-1"),
     ] {
         let mut app = ready_screen(spec);
+        app.active = Some(0);
         let request = prepare_application(&mut app, send(false)).unwrap();
         let expected_body = request.body.body().to_vec();
         let credentials = Arc::new(SelectingCredentials::default());
@@ -939,6 +942,7 @@ async fn captured_retry_keeps_the_fresh_selection_route_and_exact_body() {
     let first = prepare_application(&mut app, send(false)).unwrap();
     let expected_body = first.body.body().to_vec();
     let success = HttpResponse {
+        actor_labels: std::collections::BTreeMap::new(),
         status: 200,
         body: json!([{"request_id": first.body.item()["request_id"], "value": {"id": "A"}}])
             .to_string(),
@@ -995,6 +999,7 @@ async fn a_nested_fresh_only_refusal_never_replays_the_outer_request() {
     let (client, transport) = recorded_client(
         credentials.clone(),
         [Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 403,
             body: json!({"error": {
                 "code": "fresh-credential-required",
@@ -1103,6 +1108,7 @@ async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
     let (client, transport) = recorded_client(
         credentials.clone(),
         [Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 200,
             body: json!([{"request_id": first_id, "value": {"id": "A"}}]).to_string(),
         })],
@@ -1125,6 +1131,7 @@ async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
         .lock()
         .unwrap()
         .push_back(Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 200,
             body: json!([{"request_id": second_id, "value": {"id": "dock-1"}}]).to_string(),
         }));
@@ -1177,4 +1184,71 @@ fn composition_opens_the_shared_decimal_editor_and_preserves_its_input_rules() {
     }
     reserved.key(key(KeyCode::Enter));
     assert_eq!(reserved.screen(0).draft().item()["note"], "a-2..x");
+}
+
+#[test]
+fn record_actor_labels_render_names_and_full_id_fallback() {
+    const ACTORS: &[FieldSchema] = &[field("created_by", "uuid"), field("updated_by", "uuid")];
+    const RECORD: ScreenSpec = ScreenSpec {
+        name: "get",
+        kind: "get",
+        record: Some(RecordLink {
+            relation: "stock",
+            key_field: "created_by",
+            key_input: None,
+        }),
+        response: ResponseContract {
+            fields: ACTORS,
+            ..SPEC.response
+        },
+        ..SPEC
+    };
+    let alice = "01234567-89ab-cdef-0123-456789abcdef";
+    let missing = "11234567-89ab-cdef-0123-456789abcdef";
+    for page in [false, true] {
+        let spec = Box::leak(Box::new(ScreenSpec {
+            response: ResponseContract {
+                result_class: Some(if page { "page" } else { "one" }),
+                ..RECORD.response
+            },
+            ..RECORD
+        }));
+        let mut app = ready_screen(spec);
+        app.active = Some(0);
+        let request = prepare_application(&mut app, send(false)).unwrap();
+        let row = json!({"created_by": alice, "updated_by": missing});
+        let value = if page {
+            json!({"item": [row], "next_cursor": null})
+        } else {
+            row
+        };
+        app.resolve(
+            0,
+            request.attempt,
+            Ok(HttpResponse {
+                status: 200,
+                body: json!([{"request_id": request.body.item()["request_id"], "value": value}])
+                    .to_string(),
+                actor_labels: [(alice.to_owned(), "Alice Operator".to_owned())].into(),
+            }),
+        );
+        assert!(matches!(
+            app.screens[0].submission().state(),
+            State::Succeeded { .. }
+        ));
+        let buffer = wamn_client_tui::render_to_buffer(ApplicationWidget(&app), 160, 35);
+        let rendered = (0..35)
+            .map(|row| wamn_client_tui::row_text(&buffer, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Alice Operator"), "{rendered}");
+        assert!(rendered.contains(missing), "{rendered}");
+        assert_eq!(
+            record_display_value(&app.screens[0], "changed_by", &json!(alice)),
+            alice
+        );
+        assert_eq!(app.screens[0].rows()[0]["created_by"], alice);
+        app.screens[0].invalidate();
+        assert!(app.screens[0].actor_label(alice).is_none());
+    }
 }

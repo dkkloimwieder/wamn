@@ -123,12 +123,26 @@ impl RouterDeliveryBridge {
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
     ) -> DeliveryReport {
+        let label_eligible = caller.is_some() && matches!(request.source, Source::Attachment(_));
         let mut deadline_adjustments = Vec::new();
         let outcome = self
             .deliver_inner(request, caller, &mut deadline_adjustments)
             .await;
+        let mut actor_labels = Vec::new();
+        if label_eligible && let Ok(DeliveryOutcome::Respond(payload)) = &outcome {
+            let actors = result_actors(payload);
+            match self
+                .driver
+                .record_actor_labels(&self.release.manifest().release.tenant_id, &actors)
+                .await
+            {
+                Ok(labels) => actor_labels = labels,
+                Err(error) => tracing::warn!(%error, "record actor labels unavailable"),
+            }
+        }
         DeliveryReport {
             outcome,
+            actor_labels,
             deadline_adjustments: deadline_adjustments
                 .into_iter()
                 .map(|adjustment| delivery::DeadlineAdjustment {
@@ -389,6 +403,44 @@ impl RouterDeliveryBridge {
                 DeliveryError::ExecutionFailed
             })
     }
+}
+
+/// Only successful result values supply actor IDs. Refusals and input do not.
+fn result_actors(payload: &str) -> Vec<String> {
+    fn collect(value: &serde_json::Value, actors: &mut std::collections::BTreeSet<String>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (name, value) in fields {
+                    if matches!(name.as_str(), "created_by" | "updated_by") {
+                        if let Some(actor) = value.as_str().filter(|actor| {
+                            actor.parse::<wamn_platform_identity::PrincipalId>().is_ok()
+                        }) {
+                            actors.insert(actor.to_owned());
+                        }
+                    } else {
+                        collect(value, actors);
+                    }
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    collect(value, actors);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut actors = std::collections::BTreeSet::new();
+    if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(payload) {
+        for item in items {
+            if item.get("error").is_none()
+                && let Some(value) = item.get("value")
+            {
+                collect(value, &mut actors);
+            }
+        }
+    }
+    actors.into_iter().collect()
 }
 
 fn derived_causation(
@@ -852,6 +904,22 @@ fn lower_failure_kind(kind: FailureKind) -> WireFailureKind {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn labels_only_use_actors_from_successful_result_values() {
+        let actor = "01234567-89ab-cdef-0123-456789abcdef";
+        let refused = "11234567-89ab-cdef-0123-456789abcdef";
+        let payload = serde_json::json!([
+            {"request_id": refused, "created_by": refused, "value": {"item": [
+                {"created_by": actor, "updated_by": actor, "changed_by": refused},
+                {"created_by": "not-an-id"}
+            ]}},
+            {"error": {"created_by": refused}, "value": {"created_by": refused}}
+        ])
+        .to_string();
+        assert_eq!(super::result_actors(&payload), [actor]);
+        assert!(super::result_actors("invalid").is_empty());
+    }
+
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};

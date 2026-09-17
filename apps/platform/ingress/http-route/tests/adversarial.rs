@@ -36,6 +36,7 @@ struct FakeBackend {
     routes: Vec<RouteDefinition>,
     auth: Result<Option<String>, AuthRejection>,
     delivery: Result<DeliveryOutcome, DeliveryError>,
+    actor_labels: Vec<(String, String)>,
     deadline_adjustments: Vec<DeadlineAdjustment>,
     schema: Result<(), SchemaInvalid>,
     fault: Fault,
@@ -51,6 +52,7 @@ struct FakeBackend {
 impl FakeBackend {
     fn new(route: RouteDefinition) -> Self {
         Self {
+            actor_labels: Vec::new(),
             routes: vec![route],
             deadline_adjustments: Vec::new(),
             auth: Ok(Some(AUTHENTICATED_USER_ID.to_string())),
@@ -125,6 +127,7 @@ impl Backend for FakeBackend {
     fn deliver(&mut self, request: DeliveryRequest<Self::AuthenticatedCaller>) -> DeliveryReport {
         self.deliveries.push(request);
         DeliveryReport {
+            actor_labels: self.actor_labels.clone(),
             outcome: if self.fault == Fault::Deliver {
                 Err(DeliveryError::ExecutionFailed)
             } else {
@@ -888,4 +891,19 @@ fn deadline_adjustments_reach_success_and_error_responses() {
             assert_eq!(error_code(&response.body), "execution-failed");
         }
     }
+}
+
+#[test]
+fn actor_labels_are_metadata_and_leave_the_result_contract_unchanged() {
+    let mut backend = FakeBackend::new(route());
+    let payload =
+        format!(r#"[{{"request_id":"one","value":{{"created_by":"{AUTHENTICATED_USER_ID}"}}}}]"#);
+    backend.delivery = Ok(DeliveryOutcome::Respond(payload.clone()));
+    backend.actor_labels = vec![(
+        AUTHENTICATED_USER_ID.to_owned(),
+        "Alice Operator".to_owned(),
+    )];
+    let response = request(&mut backend, &head(), br#"{"amount":1}"#);
+    assert_eq!(response.actor_labels, backend.actor_labels);
+    assert_eq!(response.body, payload.as_bytes());
 }

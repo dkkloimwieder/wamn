@@ -1761,6 +1761,37 @@ impl WamnPostgres {
             .collect()
     }
 
+    /// Resolve actors already returned by an authorized record read.
+    /// The delivery bridge supplies these IDs from the server result, never client input.
+    pub async fn record_actor_labels(
+        &self,
+        project: &str,
+        tenant: &str,
+        actors: &[String],
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        anyhow::ensure!(valid_project(project), "invalid actor-label project");
+        anyhow::ensure!(valid_tenant(tenant), "invalid actor-label tenant");
+        if actors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (connection, _policy) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let rows = connection
+            .query(
+                "SELECT id::text, display_name FROM app_system.users \
+             WHERE tenant_id = $1 AND id::text = ANY($2) \
+             AND display_name IS NOT NULL AND btrim(display_name) <> '' ORDER BY id",
+                &[&tenant, &actors],
+            )
+            .await
+            .context("read authorized record actor labels")?;
+        rows.into_iter()
+            .map(|row| Ok((row.try_get(0)?, row.try_get(1)?)))
+            .collect()
+    }
+
     /// Read the current permissions of an org-issued user in this tenant.
     ///
     /// Route authentication first requires membership in the release environment.

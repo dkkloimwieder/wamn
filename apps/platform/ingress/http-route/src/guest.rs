@@ -122,6 +122,7 @@ impl Backend for GuestBackend {
         };
         let report = delivery::deliver(request);
         DeliveryReport {
+            actor_labels: report.actor_labels,
             outcome: report
                 .outcome
                 .map(convert_delivery_outcome)
@@ -363,6 +364,16 @@ fn request_head(request: &Request) -> RequestHead {
 
 fn send_response(response: HttpResponse) -> Response {
     let headers = Fields::new();
+    if !response.actor_labels.is_empty() {
+        let labels: std::collections::BTreeMap<_, _> = response.actor_labels.into_iter().collect();
+        // Keep optional presentation metadata below common HTTP header limits.
+        // A large label set falls back to the unchanged actor IDs.
+        if let Ok(value) = serde_json::to_vec(&labels)
+            && value.len() <= 4096
+        {
+            let _ = headers.set("wamn-actor-labels", &[value]);
+        }
+    }
     if !response.deadline_adjustments.is_empty() {
         let value = serde_json::to_vec(&response.deadline_adjustments)
             .expect("deadline adjustments contain serializable values");

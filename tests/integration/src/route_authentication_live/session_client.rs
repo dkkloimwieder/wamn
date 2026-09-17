@@ -68,6 +68,7 @@ impl Transport for ExchangeTransport {
             body.extend_from_slice(&chunk);
         }
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status,
             body: String::from_utf8(body).map_err(|_| transport_failure())?,
         })
@@ -194,6 +195,7 @@ impl Transport for RouteTransport {
         .await
         .map_err(|_| transport_failure())?;
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: response.status().as_u16(),
             body: String::from_utf8(response.into_body().to_vec())
                 .map_err(|_| transport_failure())?,

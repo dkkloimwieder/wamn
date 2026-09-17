@@ -58,6 +58,7 @@ impl Transport for SuccessfulExchange {
             .expect("positive fixture clock")
             .as_secs();
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 200,
             body: json!({
                 "token_type": "Bearer",
@@ -81,6 +82,7 @@ impl Transport for RefusedExchange {
         assert_eq!(request.method, "POST");
         assert_eq!(request.url, format!("{ISSUER}/session"));
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 401,
             body: "{\"error\":\"unauthenticated\"}".to_owned(),
         })

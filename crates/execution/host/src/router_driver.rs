@@ -560,6 +560,15 @@ impl fmt::Debug for RouterDriver {
 }
 
 impl RouterDriver {
+    pub(crate) async fn record_actor_labels(
+        &self,
+        tenant: &str,
+        actors: &[String],
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        self.postgres
+            .record_actor_labels(&self.config.project, tenant, actors)
+            .await
+    }
     /// Bind one release to the process-owned capabilities.
     /// Every driver in the same process must receive the same HTTP transport.
     #[expect(

@@ -165,6 +165,7 @@ pub struct DeadlineAdjustment {
 /// Router result and host deadline changes, including failed deliveries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryReport {
+    pub actor_labels: Vec<(String, String)>,
     pub outcome: Result<DeliveryOutcome, DeliveryError>,
     pub deadline_adjustments: Vec<DeadlineAdjustment>,
 }
@@ -172,6 +173,7 @@ pub struct DeliveryReport {
 /// A bounded HTTP response produced by the adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse {
+    pub actor_labels: Vec<(String, String)>,
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
@@ -372,6 +374,7 @@ async fn try_handle(
         Err(error) => delivery_error_response(error),
     };
     response.deadline_adjustments = report.deadline_adjustments;
+    response.actor_labels = report.actor_labels;
     Ok(response)
 }
 
@@ -696,6 +699,7 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
     match outcome {
         DeliveryOutcome::Respond(payload) => HttpResponse {
             deadline_adjustments: Vec::new(),
+            actor_labels: Vec::new(),
             status: 200,
             content_type: "application/json",
             body: payload.into_bytes(),
@@ -749,6 +753,7 @@ fn partial_response(partial: PartialCompletion) -> HttpResponse {
     }
     HttpResponse {
         deadline_adjustments: Vec::new(),
+        actor_labels: Vec::new(),
         status: failure.status,
         content_type: "application/json",
         body: serde_json::to_vec(
@@ -777,6 +782,7 @@ fn delivery_error_response(error: DeliveryError) -> HttpResponse {
 fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
+        actor_labels: Vec::new(),
         status: 403,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({
@@ -814,6 +820,7 @@ fn detailed_error_response(
     }
     HttpResponse {
         deadline_adjustments: Vec::new(),
+        actor_labels: Vec::new(),
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&ErrorEnvelope {
@@ -826,6 +833,7 @@ fn detailed_error_response(
 fn error_response(status: u16, code: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
+        actor_labels: Vec::new(),
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({"error":{"code":code}})).unwrap_or_default(),
@@ -835,6 +843,7 @@ fn error_response(status: u16, code: &str) -> HttpResponse {
 fn body_too_large_response(limit: usize) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
+        actor_labels: Vec::new(),
         status: 413,
         content_type: "text/plain; charset=utf-8",
         body: format!("request body exceeds {limit}-byte limit\n").into_bytes(),

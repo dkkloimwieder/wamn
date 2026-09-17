@@ -96,6 +96,7 @@ fn requests(transport: &RecordingTransport) -> Vec<HttpRequest> {
 
 fn reply(status: u16, body: impl Into<String>) -> HttpResponse {
     HttpResponse {
+        actor_labels: std::collections::BTreeMap::new(),
         status,
         body: body.into(),
     }

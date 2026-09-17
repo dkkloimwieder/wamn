@@ -298,6 +298,30 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     );
     drop(scoped);
 
+    let labels = permission_reader(url.as_str())?;
+    admin.execute("UPDATE app_system.users SET display_name = 'Alice Operator' WHERE tenant_id = $1 AND id = $2::text::uuid",
+        &[&TENANT, &SECOND_PRINCIPAL]).await?;
+    admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES ('tenant-b', $1::text::uuid, 'person', 'other@example.test', 'Other tenant')",
+        &[&SECOND_PRINCIPAL]).await?;
+    let first_id = claims()["sub"].as_str().unwrap().to_owned();
+    let missing = "01234567-89ab-cdef-0123-456789abcdef".to_owned();
+    assert_eq!(
+        labels
+            .record_actor_labels(
+                PROJECT,
+                TENANT,
+                &[SECOND_PRINCIPAL.to_owned(), first_id, missing]
+            )
+            .await?,
+        [(SECOND_PRINCIPAL.to_owned(), "Alice Operator".to_owned())]
+    );
+    assert!(
+        labels
+            .record_actor_labels(PROJECT, TENANT, &[])
+            .await?
+            .is_empty()
+    );
+
     let mut server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
     let authentication = Arc::new(SessionRouteAuthentication::new(

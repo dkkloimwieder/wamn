@@ -161,6 +161,7 @@ mod tests {
 
     fn response(status: u16, body: &Value) -> Result<HttpResponse, ClientError> {
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status,
             body: body.to_string(),
         })

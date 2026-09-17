@@ -40,22 +40,30 @@ impl<'a> Table<'a> {
         self
     }
 
-    /// Column width: the widest of the header and its cells, capped so one
-    /// long value cannot push every other column off the screen.
+    /// Cap ordinary cells, but keep actor labels and their full ID fallback.
     fn widths(&self) -> Vec<usize> {
         const MAX: usize = 24;
         self.fields
             .iter()
             .enumerate()
             .map(|(index, field)| {
+                let actor = matches!(field.leaf(), "created_by" | "updated_by");
                 let widest = self
                     .rows
                     .iter()
                     .filter_map(|row| row.get(index))
-                    .map(String::len)
+                    .map(|cell| {
+                        if actor {
+                            cell.chars().count()
+                        } else {
+                            cell.len()
+                        }
+                    })
                     .max()
                     .unwrap_or(0);
-                field.leaf().len().max(widest).min(MAX)
+                let selected_marker = usize::from(actor && index == 0 && self.selected.is_some());
+                let width = field.leaf().len().max(widest + selected_marker);
+                if actor { width } else { width.min(MAX) }
             })
             .collect()
     }
@@ -226,5 +234,24 @@ mod tests {
         let rows = rows();
         let buffer = render_to_buffer(Table::new(&[], &rows), 40, 3);
         assert_eq!(row_text(&buffer, 0), "");
+    }
+
+    #[test]
+    fn actor_columns_preserve_full_ids_and_labels() {
+        let fields = [
+            FieldDescriptor {
+                path: "value.created_by",
+                ..FIELDS[0]
+            },
+            FieldDescriptor {
+                path: "value.updated_by",
+                ..FIELDS[0]
+            },
+        ];
+        let actor = "01234567-89ab-cdef-0123-456789abcdef";
+        let label = "Warehouse receiving service account";
+        let rows = vec![vec![actor.to_owned(), label.to_owned()]];
+        let buffer = render_to_buffer(Table::new(&fields, &rows).select(Some(0)), 100, 3);
+        assert_eq!(row_text(&buffer, 1), format!(">{actor} {label}"));
     }
 }

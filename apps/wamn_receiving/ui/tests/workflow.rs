@@ -63,6 +63,7 @@ impl Transport for Deployment {
         }
         self.sent.lock().expect("sent").push(request);
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status,
             body: payload.to_string(),
         })

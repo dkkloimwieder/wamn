@@ -13,6 +13,7 @@ wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
+wamn-platform-identity = { workspace = true }
 wamn-project-state = { workspace = true }
 wamn-router = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
@@ -29,7 +30,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 tokio-postgres = { workspace = true }

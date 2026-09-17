@@ -50,8 +50,17 @@ impl Transport for HttpTransport {
         }
         let response = builder.body(request.body).send().await.map_err(failed)?;
         let status = response.status().as_u16();
+        let actor_labels = response
+            .headers()
+            .get("wamn-actor-labels")
+            .and_then(|value| serde_json::from_slice(value.as_bytes()).ok())
+            .unwrap_or_default();
         let body = response.text().await.map_err(failed)?;
-        Ok(HttpResponse { status, body })
+        Ok(HttpResponse {
+            actor_labels,
+            status,
+            body,
+        })
     }
 }
 

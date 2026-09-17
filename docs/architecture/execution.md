@@ -226,13 +226,23 @@ A revision-bearing operation needs a declared compatible record read and revisio
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
 A user cannot type a revision or obtain a guessed read route.
 Query columns come from that query's result descriptors, not a union of model fields.
-Generated screens show the [record history](data-access.md#record-history) stamp columns `created_at`, `created_by`, `updated_at`, and `updated_by` as raw result values, and the actor columns show the `app_system.users` row id.
+Generated screens show the [record history](data-access.md#record-history) stamp columns `created_at`, `created_by`, `updated_at`, and `updated_by`.
 
 Fields separately declare whether a property is required and whether its value can be null.
 Editors retain `Absent`, `Null`, and `Value` according to those two facts.
 Nested and repeated fields retain their declared bounds.
 Unsupported input types block submission.
 Unknown output types remain display-only and appear as opaque values.
+
+Record screens recognize the reserved `created_by` and `updated_by` fields.
+The platform resolves their returned IDs through `app_system.users.display_name` in the same tenant.
+Label access inherits the authorized record read and requires no additional permission.
+The delivery report carries labels separately, and HTTP sends them in the `wamn-actor-labels` header.
+Generated SQL, application result contracts, and actor IDs remain unchanged.
+The screen shows the full ID when a name is missing, empty, or unavailable.
+HTTP omits label metadata above 4,096 bytes, so those results also show full IDs.
+Labels remain within the accepted screen response and reset with its records or session.
+The history view keeps its existing behavior.
 
 The served route supplies its terminal response contract and whole-operation replay guarantee.
 A composed route does not inherit replay safety from an inner command.

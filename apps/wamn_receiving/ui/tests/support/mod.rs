@@ -94,6 +94,7 @@ pub fn reply(app: &mut ReceivingApplication, request: PreparedRequest, value: Va
         request.screen,
         request.attempt,
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 200,
             body: json!([{"request_id": request_id, "value": value}]).to_string(),
         }),
@@ -110,6 +111,7 @@ pub fn refuse(app: &mut ReceivingApplication, request: PreparedRequest, error: V
         request.screen,
         request.attempt,
         Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
             status: 200,
             body: json!([{"request_id": request_id, "error": error}]).to_string(),
         }),

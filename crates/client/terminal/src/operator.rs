@@ -68,8 +68,17 @@ impl Transport for HttpTransport {
         }
         let response = builder.body(request.body).send().await.map_err(failed)?;
         let status = response.status().as_u16();
+        let actor_labels = response
+            .headers()
+            .get("wamn-actor-labels")
+            .and_then(|value| serde_json::from_slice(value.as_bytes()).ok())
+            .unwrap_or_default();
         let body = response.text().await.map_err(failed)?;
-        Ok(HttpResponse { status, body })
+        Ok(HttpResponse {
+            actor_labels,
+            status,
+            body,
+        })
     }
 }
 
@@ -1385,6 +1394,17 @@ fn append_field(
     }
 }
 
+fn record_display_value(screen: &Screen, path: &str, value: &Value) -> String {
+    if screen.spec().record.is_some()
+        && matches!(path.rsplit('.').next(), Some("created_by" | "updated_by"))
+        && let Some(actor) = value.as_str()
+        && let Some(label) = screen.actor_label(actor)
+    {
+        return label.to_owned();
+    }
+    display_value(value)
+}
+
 fn display_value(value: &Value) -> String {
     value
         .as_str()
@@ -1750,9 +1770,10 @@ fn render_screen(app: &GeneratedApplication, index: usize, area: Rect, buffer: &
                             format!(
                                 "{}: {}",
                                 field.path,
-                                result_value(row, field.path)
-                                    .as_ref()
-                                    .map_or_else(|| "Absent".into(), display_value)
+                                result_value(row, field.path).as_ref().map_or_else(
+                                    || "Absent".into(),
+                                    |value| record_display_value(screen, field.path, value)
+                                )
                             )
                         })
                         .collect::<Vec<_>>()
@@ -1774,9 +1795,10 @@ fn render_screen(app: &GeneratedApplication, index: usize, area: Rect, buffer: &
                     fields
                         .iter()
                         .map(|field| {
-                            result_value(row, field.path)
-                                .as_ref()
-                                .map_or_else(|| "Absent".into(), display_value)
+                            result_value(row, field.path).as_ref().map_or_else(
+                                || "Absent".into(),
+                                |value| record_display_value(screen, field.path, value),
+                            )
                         })
                         .collect::<Vec<_>>()
                 })
