@@ -1751,18 +1751,14 @@ where
     })
 }
 
-/// Build a storage failure that still carries what PostgreSQL actually said.
-///
-/// `tokio_postgres::Error`'s `Display` renders a database failure as the literal
-/// string `"db error"` and appends NOTHING (0.7.18, `error/mod.rs:394`) — the
-/// `DbError` is reachable only through `source()`. A detail built from
-/// `to_string()` alone therefore discards the message, the SQLSTATE, and the
-/// constraint or trigger name, so every refused claim reads identically in logs
-/// and in a caller's assertion. The database's own text is the whole diagnostic
-/// value of this error, so it is spliced back in here.
+/// Preserve the database message and constraint, without row-bearing DETAIL or HINT.
+/// Run rows contain application inputs, results, and invocation context.
 fn storage(operation: &'static str, error: &tokio_postgres::Error) -> ProductionClaimError {
     let detail = match error.as_db_error() {
-        Some(db_error) => format!("{error}: {db_error}"),
+        Some(database) => match database.constraint() {
+            Some(constraint) => format!("{} ({constraint})", database.message()),
+            None => database.message().to_owned(),
+        },
         None => error.to_string(),
     };
     ProductionClaimError::new(ProductionClaimErrorKind::Storage, operation, detail)
@@ -1771,6 +1767,44 @@ fn storage(operation: &'static str, error: &tokio_postgres::Error) -> Production
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn database_diagnostics_omit_row_detail_and_hint() -> anyhow::Result<()> {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let (client, connection) =
+            tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+        let task = tokio::spawn(connection);
+        client.batch_execute("CREATE TEMP TABLE private_diagnostic (payload text, valid bool CONSTRAINT diagnostic_valid CHECK (valid))").await?;
+        let marker = "private-person@example.invalid";
+        let error = client
+            .execute(
+                "INSERT INTO private_diagnostic VALUES ($1, false)",
+                &[&marker],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .as_db_error()
+                .unwrap()
+                .detail()
+                .unwrap()
+                .contains(marker)
+        );
+        let rendered = storage("test storage", &error).to_string();
+        assert!(rendered.contains("diagnostic_valid"));
+        assert!(rendered.contains("violates check constraint"));
+        assert!(!rendered.contains(marker));
+        let error = client.batch_execute("DO $$ BEGIN RAISE EXCEPTION 'diagnostic message' USING DETAIL = 'private-detail-marker', HINT = 'private-hint-marker'; END $$").await.unwrap_err();
+        let rendered = storage("test storage", &error).to_string();
+        assert!(rendered.contains("diagnostic message"));
+        assert!(!rendered.contains("private-detail-marker"));
+        assert!(!rendered.contains("private-hint-marker"));
+        drop(client);
+        task.await??;
+        Ok(())
+    }
 
     #[tokio::test]
     async fn executor_authority_uses_current_user_for_each_operation() -> anyhow::Result<()> {

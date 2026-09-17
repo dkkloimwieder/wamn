@@ -108,6 +108,12 @@ Atomic extension of a base command requires a separate future contract.
 The host owns begin, commit, rollback, and connection cleanup.
 An error, trap, cancellation, or deadline destroys unfinished transaction state before another request can acquire the connection.
 Serialization and deadlock errors reach the caller without an automatic transaction retry.
+
+Production-claim and release-attestation errors retain PostgreSQL's primary message and constraint name.
+They omit `DETAIL` and `HINT`, which can include failing row values.
+Run rows contain application JSON, and attestation rows accept unrestricted source provenance.
+This rule matches platform identity errors. Primary messages remain verbatim.
+
 Commands keep network effects outside transactions that hold database locks.
 Post-commit work uses the [event path](capabilities.md#events).
 

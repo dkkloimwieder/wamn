@@ -948,9 +948,14 @@ where
     }
 }
 
+// A CHECK refusal can include unrestricted source provenance in the failing row.
+// Keep the message and constraint, but omit PostgreSQL DETAIL and HINT.
 fn render_driver_failure(error: &tokio_postgres::Error) -> String {
     match error.as_db_error() {
-        Some(db_error) => format!("{error}: {db_error}"),
+        Some(database) => match database.constraint() {
+            Some(constraint) => format!("{} ({constraint})", database.message()),
+            None => database.message().to_owned(),
+        },
         None => error.to_string(),
     }
 }
@@ -1875,6 +1880,44 @@ mod effective_release_live;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn database_diagnostics_omit_row_detail_and_hint() -> anyhow::Result<()> {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let (client, connection) =
+            tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+        let task = tokio::spawn(connection);
+        client.batch_execute("CREATE TEMP TABLE private_diagnostic (payload text, valid bool CONSTRAINT diagnostic_valid CHECK (valid))").await?;
+        let marker = "private-person@example.invalid";
+        let error = client
+            .execute(
+                "INSERT INTO private_diagnostic VALUES ($1, false)",
+                &[&marker],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .as_db_error()
+                .unwrap()
+                .detail()
+                .unwrap()
+                .contains(marker)
+        );
+        let rendered = render_driver_failure(&error);
+        assert!(rendered.contains("diagnostic_valid"));
+        assert!(rendered.contains("violates check constraint"));
+        assert!(!rendered.contains(marker));
+        let error = client.batch_execute("DO $$ BEGIN RAISE EXCEPTION 'diagnostic message' USING DETAIL = 'private-detail-marker', HINT = 'private-hint-marker'; END $$").await.unwrap_err();
+        let rendered = render_driver_failure(&error);
+        assert!(rendered.contains("diagnostic message"));
+        assert!(!rendered.contains("private-detail-marker"));
+        assert!(!rendered.contains("private-hint-marker"));
+        drop(client);
+        task.await??;
+        Ok(())
+    }
 
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
