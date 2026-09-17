@@ -16,14 +16,14 @@
 //! two sides must share exactly one rule. The `valid_schema` no-hyphen rule also
 //! still matters where a schema name is quoted into DDL elsewhere.
 //!
-//! The PROJECT id is the one rule here that also binds outside the runtime
-//! (wamn-0h0g.9.16). `wamn-control-provision` derives database, namespace and
-//! Secret names from it, so this module owns the whole project-id rule: the
-//! charset, the length cap, the shape and the reserved `wamn` prefix.
-//! Provisioning reads it instead of restating it. The rule encodes two external
-//! limits, and [`MAX_PROJECT_ID_LEN`] records where they come from. Before
-//! wamn-0h0g.9.16 the two sides disagreed, so the registry accepted ids that
-//! provisioning then refused.
+//! Organization, project, and environment identifiers share this module's
+//! character, length, and hyphen rules (wamn-0h0g.9.20).
+//! Organization and project identifiers also reject the reserved `wamn` prefix.
+//! Environment identifiers permit that prefix. Derived resource names permit
+//! consecutive hyphens and use their own length limit.
+//! The public project-named functions and constant retain their existing names
+//! for provisioning and runtime callers. [`MAX_PROJECT_ID_LEN`] explains the
+//! shared identifier budget.
 
 use std::fmt;
 use std::str::FromStr;
@@ -127,7 +127,7 @@ pub fn valid_tenant(tenant: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Max bytes in a project id (wamn-0h0g.9.16).
+/// Max bytes in an organization, project, or environment identifier.
 ///
 /// The number comes from the name provisioning composes, not from this crate.
 /// A per-project-env database is named
@@ -148,16 +148,16 @@ pub const MAX_PROJECT_ID_LEN: usize = 40;
 /// space collides with a platform-owned name.
 const RESERVED_PROJECT_PREFIX: &str = "wamn";
 
-fn is_project_alnum(byte: u8) -> bool {
+pub(crate) fn is_alnum(byte: u8) -> bool {
     byte.is_ascii_lowercase() || byte.is_ascii_digit()
 }
 
-/// Why `id` is not a well-formed project id, or `None` when it is well-formed.
+/// Why an organization, project, or environment identifier has an invalid shape.
 ///
-/// This is the ONE owner of the project-id shape (wamn-0h0g.9.16). It lives here
+/// This owns the shared identifier shape (wamn-0h0g.9.20). It lives here
 /// rather than in `wamn-control-provision` because the runtime reads it through
 /// [`valid_project`] and provisioning reads it through
-/// `wamn-control-provision::validate_project_id`. One rule, two readers, so an
+/// `wamn-control-provision::validate_project_id`. A shared rule means that an
 /// id the registry accepts is always an id provisioning can provision.
 ///
 /// The rule: a non-empty lowercase slug over `[a-z0-9-]`, at most
@@ -187,18 +187,35 @@ pub fn project_id_reason(id: &str) -> Option<&'static str> {
     if id.len() > MAX_PROJECT_ID_LEN {
         return Some("too long (max 40 bytes)");
     }
-    if !id
-        .bytes()
-        .all(|byte| is_project_alnum(byte) || byte == b'-')
-    {
-        return Some("only lowercase letters, digits, and hyphens are allowed");
-    }
-    let bytes = id.as_bytes();
-    if !is_project_alnum(bytes[0]) || !is_project_alnum(bytes[bytes.len() - 1]) {
-        return Some("must start and end with a lowercase letter or digit");
+    component_slug_reason(id)
+}
+
+/// Identifier shape without the length cap, for registry reference diagnostics.
+pub(crate) fn component_slug_reason(id: &str) -> Option<&'static str> {
+    if let Some(reason) = slug_reason(id) {
+        return Some(reason);
     }
     if id.contains("--") {
         return Some("must not contain consecutive hyphens");
+    }
+    None
+}
+
+/// A derived resource name permits consecutive hyphens and has its own length cap.
+pub(crate) fn is_slug(id: &str) -> bool {
+    slug_reason(id).is_none()
+}
+
+fn slug_reason(id: &str) -> Option<&'static str> {
+    if id.is_empty() {
+        return Some("empty");
+    }
+    if !id.bytes().all(|byte| is_alnum(byte) || byte == b'-') {
+        return Some("only lowercase letters, digits, and hyphens are allowed");
+    }
+    let bytes = id.as_bytes();
+    if !is_alnum(bytes[0]) || !is_alnum(bytes[bytes.len() - 1]) {
+        return Some("must start and end with a lowercase letter or digit");
     }
     None
 }

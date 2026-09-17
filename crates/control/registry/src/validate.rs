@@ -11,6 +11,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+// Organization, project, and environment shapes share the identifiers owner.
+// Only organization and project identifiers apply its reserved-prefix rule.
+use crate::identifiers::{
+    MAX_PROJECT_ID_LEN, component_slug_reason, is_alnum, is_slug, project_id_is_reserved,
+    project_id_reason,
+};
 use crate::types::{RecoveryDomain, Registry, SCHEMA_VERSION};
 
 /// Severity of a validation [`Issue`]. Only [`Severity::Error`] makes a registry
@@ -53,61 +59,19 @@ impl std::fmt::Display for Issue {
     }
 }
 
-/// The platform-reserved id prefix (wamn-66x): the bare word `wamn` and any
-/// `wamn-…` id are rejected for orgs/projects, since those ids mint
-/// platform-owned cluster / Secret / schema names.
-const RESERVED_PREFIX: &str = "wamn";
-
-/// Max id length. Keeps a derived `wamn-db-<id>` Secret/database name within
-/// Postgres's 63-byte identifier limit with margin (mirrors `wamn-control-provision`).
-const MAX_ID_LEN: usize = 40;
-
 /// Max K8s resource-name length (a DNS-1123 label).
 const MAX_NAME_LEN: usize = 63;
 
 /// Length (bytes) of a project-env's provision-minted instance suffix: 8
 /// characters over `[a-z0-9]`. Mirrors the storage
 /// `project_envs_instance_suffix_check` and `wamn-control-provision`'s
-/// `validate_instance_suffix` — inlined for the same reason [`is_slug`] is, to
-/// keep this crate's dep closure `{serde, serde_json}`.
+/// `validate_instance_suffix`. The shared character predicate lives in
+/// `identifiers`.
 const INSTANCE_SUFFIX_LEN: usize = 8;
-
-fn is_alnum(b: u8) -> bool {
-    b.is_ascii_lowercase() || b.is_ascii_digit()
-}
-
-/// A lowercase slug: `[a-z0-9-]`, starting and ending alphanumeric, non-empty.
-/// The shared platform id discipline (`wamn-control-provision::validate_project_id`,
-/// wi4 flow ids, 66x) — inlined to keep this foundational crate's dep closure
-/// `{serde, serde_json}` and avoid a registry → provisioning coupling.
-fn is_slug(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    !bytes.is_empty()
-        && bytes.iter().all(|&b| is_alnum(b) || b == b'-')
-        && is_alnum(bytes[0])
-        && is_alnum(bytes[bytes.len() - 1])
-}
-
-/// An **identity-component** slug: a [`is_slug`] that additionally forbids a run
-/// of consecutive hyphens. The org/project id and the env slug separate on `--`
-/// (`wamn-control-provision::project_env_database_name`) and, mapped to `__`, in the CDC
-/// object name, so a `--` run inside a component would let two distinct
-/// `(org, project, env)` triples derive one database / CDC role name (wamn-R27).
-/// A DERIVED name ([`check_name`]) may legitimately carry the `--` separator, so
-/// only ids/env slugs — never names — are held to this.
-fn is_component_slug(id: &str) -> bool {
-    is_slug(id) && !id.contains("--")
-}
-
-/// Whether `id` is under the reserved `wamn` prefix. The boundary is a hyphen,
-/// so `wamning` is a normal id (mirrors the catalog 66x rule).
-fn is_reserved(id: &str) -> bool {
-    id == RESERVED_PREFIX || id.starts_with("wamn-")
-}
 
 /// The first violating [`Issue`] for an org/project id under the given codes, or
 /// `None` if `id` is a non-empty, non-reserved lowercase slug within length. The
-/// single source of the id discipline, shared by [`check_id`] (in-registry) and
+/// diagnostic mapping for the shared identifier rule, used by [`check_id`] and
 /// [`validate_org_id`] (standalone).
 fn id_issue(
     path: String,
@@ -118,17 +82,17 @@ fn id_issue(
 ) -> Option<Issue> {
     if id.is_empty() {
         Some(Issue::error(empty, path, "id is required"))
-    } else if id.len() > MAX_ID_LEN || !is_component_slug(id) {
+    } else if project_id_reason(id).is_some() {
         Some(Issue::error(
             invalid,
             path,
             format!(
                 "id {id:?} must be a lowercase slug [a-z0-9-] (start/end alphanumeric, \
-                 no consecutive hyphens, <= {MAX_ID_LEN} bytes) — it embeds into \
+                 no consecutive hyphens, <= {MAX_PROJECT_ID_LEN} bytes) — it embeds into \
                  cluster/Secret/subdomain names"
             ),
         ))
-    } else if is_reserved(id) {
+    } else if project_id_is_reserved(id) {
         Some(Issue::error(
             reserved,
             path,
@@ -187,13 +151,13 @@ fn check_env(
 ) {
     if env.is_empty() {
         issues.push(Issue::error(empty, path, "env slug is required"));
-    } else if env.len() > MAX_ID_LEN || !is_component_slug(env) {
+    } else if project_id_reason(env).is_some() {
         issues.push(Issue::error(
             invalid,
             path,
             format!(
                 "env {env:?} must be a lowercase slug [a-z0-9-] \
-                 (no consecutive hyphens, <= {MAX_ID_LEN} bytes)"
+                 (no consecutive hyphens, <= {MAX_PROJECT_ID_LEN} bytes)"
             ),
         ));
     }
@@ -445,7 +409,9 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
             "empty-env",
             "invalid-env",
         );
-        if is_component_slug(&t.env) && !policy_keys.contains(&(t.org.as_str(), t.env.as_str())) {
+        if component_slug_reason(&t.env).is_none()
+            && !policy_keys.contains(&(t.org.as_str(), t.env.as_str()))
+        {
             issues.push(Issue::error(
                 "unknown-env",
                 format!("project-envs[{i}].triple.env"),
@@ -682,7 +648,7 @@ mod tests {
 
     #[test]
     fn validate_org_id_accepts_good_and_rejects_bad() {
-        use super::{MAX_ID_LEN, validate_org_id};
+        use super::{MAX_PROJECT_ID_LEN, validate_org_id};
 
         // Non-empty lowercase slugs within length are accepted.
         for good in ["acme", "a", "my-org", "a1", "org-123", "x9"] {
@@ -709,9 +675,9 @@ mod tests {
         }
 
         // Over-length is invalid; the boundary (exactly 40) is fine.
-        assert!(validate_org_id(&"a".repeat(MAX_ID_LEN)).is_ok());
+        assert!(validate_org_id(&"a".repeat(MAX_PROJECT_ID_LEN)).is_ok());
         assert_eq!(
-            validate_org_id(&"a".repeat(MAX_ID_LEN + 1))
+            validate_org_id(&"a".repeat(MAX_PROJECT_ID_LEN + 1))
                 .unwrap_err()
                 .code,
             "invalid-org-id"
