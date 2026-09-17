@@ -60,7 +60,7 @@ fn the_bare_development_command_still_requires_its_configuration() {
 /// at once: the refusal says so and NAMES the port readiness was watching.
 #[test]
 fn a_gate_that_dies_before_listening_is_reported_against_its_port() {
-    let credentials = wamn_ctl::dev::environment::JourneyCredentials {
+    let credentials = wamn_control::dev::environment::JourneyCredentials {
         guest_sql: String::new(),
         executor_platform: String::new(),
         event_materializer: String::new(),
@@ -74,12 +74,14 @@ fn a_gate_that_dies_before_listening_is_reported_against_its_port() {
         .build()
         .expect("build a runtime for the spawned Gate");
     let error = runtime
-        .block_on(wamn_ctl::dev::environment::spawn_journey_management_gate(
-            std::path::Path::new("/bin/false"),
-            &credentials,
-            "postgresql://unused.invalid/unused",
-            "127.0.0.1:18099",
-        ))
+        .block_on(
+            wamn_control::dev::environment::spawn_journey_management_gate(
+                std::path::Path::new("/bin/false"),
+                &credentials,
+                "postgresql://unused.invalid/unused",
+                "127.0.0.1:18099",
+            ),
+        )
         .expect_err("/bin/false is not a management Gate");
     let rendered = error.to_string();
     assert!(

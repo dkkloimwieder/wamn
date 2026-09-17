@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use wamn_control::dev::environment::{connect, provision_journey_control, provision_route};
 use wamn_control_provision::PlatformComponent;
-use wamn_ctl::dev::environment::{connect, provision_journey_control, provision_route};
 use wamn_platform_identity::{PrincipalKind, authenticate_pat};
 
 struct Files(PathBuf);
@@ -21,7 +21,7 @@ impl Drop for Files {
 #[ignore = "requires:"]
 async fn cli_bootstrap_mints_first_service_pats_over_https() {
     wamn_test_postgres::require_prerequisites(&[]);
-    wamn_ctl::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
+    wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     database

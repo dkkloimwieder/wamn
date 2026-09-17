@@ -7,6 +7,7 @@ license.workspace = true
 
 [features]
 default = []
+test-util = []
 # The operational verbs that ship in the separate `wamn-ctl-ops` binary.
 ops = ["dep:wamn-event-wire", "wamn-control-provision/ops"]
 
@@ -17,6 +18,12 @@ path = "tests/create_human_live.rs"
 required-features = ["ops"]
 
 [dependencies]
+futures-util = { workspace = true }
+rcgen = { workspace = true }
+schemars = { workspace = true }
+wamn-authoring-model = { workspace = true }
+wamn-client-terminal = { workspace = true }
+wash-runtime = { workspace = true, features = ["washlet"] }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 chrono = { workspace = true, features = ["clock"] }
@@ -50,8 +57,6 @@ wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 
 [dev-dependencies]
-futures-util = { workspace = true }
-rcgen = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tokio-rustls = { workspace = true }

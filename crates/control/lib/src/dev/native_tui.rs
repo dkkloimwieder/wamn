@@ -574,7 +574,7 @@ mod tests {
             .into_iter()
             .map(|name| {
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../apps")
+                    .join("../../../apps")
                     .join(name)
                     .canonicalize()
                     .expect("resolve source package root")

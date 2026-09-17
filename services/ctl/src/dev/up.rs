@@ -12,17 +12,14 @@
 //! Point it only at disposable PostgreSQL 18 services. Standup resets the
 //! control store, so every run is a fresh start.
 
-use std::fs::Permissions;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
-use anyhow::Context as _;
 use clap::Args;
 
-use super::environment::{DevEnvironmentInputs, connect, provision, write_dev_config};
+use wamn_control::dev::up::{DevUpRequest, provision_environment};
 
 /// The operator credential's file, written into `--root` by
-/// [`super::environment::provision_route`]. Named here so the summary can
+/// [`wamn_control::dev::environment::provision_route`]. Named here so the summary can
 /// point at it: only the path is ever printed, never the token inside it.
 const ROUTE_CALLER_PAT_FILE: &str = "route-caller-pat.json";
 
@@ -101,94 +98,28 @@ pub struct DevUpArgs {
 
 /// Stand the environment up and write its configuration.
 pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
-    // Settled before a single credential is minted: an environment is
-    // expensive to stand up.
-    wamn_control_provision::validate_platform_domain(&args.platform_domain)?;
-
-    std::fs::create_dir_all(&args.root)
-        .with_context(|| format!("create the environment directory {}", args.root.display()))?;
-    // Minted PATs and credential URLs land here, so the directory is the wall.
-    std::fs::set_permissions(&args.root, Permissions::from_mode(0o700))
-        .with_context(|| format!("restrict {} to its owner", args.root.display()))?;
-
-    let mut package_sources = Vec::with_capacity(args.packages.len());
-    for package in &args.packages {
-        package_sources.push(
-            package
-                .canonicalize()
-                .with_context(|| format!("resolve package source {}", package.display()))?,
-        );
-    }
-    let local_artifacts = super::config::LocalArtifacts {
-        directory: args.root.canonicalize()?.join("local-artifacts"),
-        bindings: args
-            .local_bindings
-            .as_ref()
-            .map(|path| path.canonicalize())
-            .transpose()?,
-        flow_http_component: args.flow_http_component.canonicalize().with_context(|| {
-            format!(
-                "resolve local flow-http component {}",
-                args.flow_http_component.display()
-            )
-        })?,
-    };
-    let inputs = DevEnvironmentInputs {
-        local_artifacts,
-        host_binary: args.host_binary,
+    let root = args.root.clone();
+    let config = provision_environment(DevUpRequest {
+        system_database_url: args.system_database_url,
+        root: args.root,
         nats_url: args.nats_url,
         event_nats_url: args.event_nats_url,
         event_nats_username: args.event_nats_username,
         event_nats_password_file: args.event_nats_password_file,
+        event_provisioning_username: args.event_provisioning_username,
+        event_provisioning_password_file: args.event_provisioning_password_file,
         stream_replicas: args.stream_replicas,
         dup_window_secs: args.dup_window_secs,
         tempo_query_url: args.tempo_query_url,
         otel_exporter_otlp_endpoint: args.otel_exporter_otlp_endpoint,
         route_host: args.route_host,
         platform_domain: args.platform_domain,
-        package_sources,
-    };
-
-    let broker_options = wamn_control::event_streams::connection_options(
-        &args.event_provisioning_username,
-        &args.event_provisioning_password_file,
-    )?;
-    let broker = async_nats::jetstream::new(
-        broker_options
-            .connect(&inputs.event_nats_url)
-            .await
-            .context("connect event provisioning credential")?,
-    );
-    let (admin, admin_task) = connect(&args.system_database_url).await?;
-    let environment = provision(
-        &args.system_database_url,
-        admin.as_ref(),
-        &args.root,
-        &inputs.platform_domain,
-    )
+        flow_http_component: args.flow_http_component,
+        local_bindings: args.local_bindings,
+        host_binary: args.host_binary,
+        packages: args.packages,
+    })
     .await?;
-    let event_scope = wamn_control_registry::Triple::new(
-        &environment.identity.org,
-        &environment.identity.project,
-        environment.identity.environment.clone(),
-    );
-    wamn_control::event_streams::provision(
-        &broker,
-        &event_scope,
-        inputs.stream_replicas,
-        std::time::Duration::from_secs(inputs.dup_window_secs),
-        &[],
-    )
-    .await?;
-    let config = write_dev_config(
-        &args.root,
-        &args.system_database_url,
-        &environment.template,
-        &environment.route,
-        &environment.credentials,
-        &inputs,
-        &environment.identity,
-    )?;
 
     let overlay = args
         .overlay_root
@@ -201,11 +132,10 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     // The local Gate uses its separate management-author token.
     println!(
         "  pat:    {} (operator route-caller PAT, at .stringData.token)",
-        args.root.join(ROUTE_CALLER_PAT_FILE).display()
+        root.join(ROUTE_CALLER_PAT_FILE).display()
     );
     println!();
     println!("run the loop from the repository root, in another terminal:");
     println!("  wamn dev --config {}{overlay} --tui", config.display());
-    admin_task.abort();
     Ok(())
 }

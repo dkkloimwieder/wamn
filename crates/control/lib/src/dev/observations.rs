@@ -91,7 +91,7 @@ impl DevObservationReaders {
                 "tenant, project, and environment must each be one NATS subject token",
             )
         })?;
-        let tap_options = wamn_control::event_streams::connection_options(
+        let tap_options = crate::event_streams::connection_options(
             config.event_nats_username(),
             config.event_nats_password_file(),
         )

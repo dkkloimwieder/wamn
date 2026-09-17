@@ -7,8 +7,8 @@
 //! termination, and hangup arms of the deploy verb. Each verb parses its
 //! arguments, makes one library call, and prints the result. Environment
 //! lifecycle and reporting verbs require the `ops` feature and ship in the
-//! separate `wamn-ctl-ops` binary. The development loop in `dev/` is the one
-//! part of this crate that is not a verb surface.
+//! separate `wamn-ctl-ops` binary. The clients in `dev/` retain argument parsing,
+//! terminal rendering, and process signals for `wamn-control::dev` sessions.
 
 pub mod component_verbs;
 pub mod delivery_verbs;

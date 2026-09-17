@@ -10,13 +10,13 @@ use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
+use wamn_control::dev::environment::{
+    ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
+};
 use wamn_control::provision_project_env::secret_value;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
-use wamn_ctl::dev::environment::{
-    ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
-};
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;

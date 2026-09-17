@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 use wamn_client_terminal::operator::SUPERVISOR_STOP_EXIT_CODE;
 
-use super::command::DevSessionControl;
+use super::session::DevSessionControl;
 
 /// The terminal gets five seconds to restore itself before forced cleanup.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);

@@ -13,6 +13,7 @@ use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
+use wamn_control::dev::environment::{JourneyCredentials, connect};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::print_release_env::{self, ReleaseCarrier};
@@ -27,7 +28,6 @@ use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_ctl::dev::environment::{JourneyCredentials, connect};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_test_infrastructure::declarations::{
     GateInput, gate_document, render_component_declaration,
@@ -143,7 +143,7 @@ pub async fn prepare_project(
     task.abort();
     result?;
     let (project, task) = connect(&route.database_url).await?;
-    let installed = wamn_ctl::dev::environment::install_journey_platform_floor(
+    let installed = wamn_control::dev::environment::install_journey_platform_floor(
         project.as_ref(),
         TENANT,
         PLATFORM_DOMAIN,
@@ -262,8 +262,12 @@ fn generation_args(
     secret: &Path,
     namespace: &str,
 ) -> WorkloadActionRequest {
-    let mut args =
-        wamn_ctl::dev::environment::generation_args(family, &inputs.system_pg_url, target, secret);
+    let mut args = wamn_control::dev::environment::generation_args(
+        family,
+        &inputs.system_pg_url,
+        target,
+        secret,
+    );
     args.org = ORG.into();
     args.project = PROJECT.into();
     args.env = ENVIRONMENT.into();

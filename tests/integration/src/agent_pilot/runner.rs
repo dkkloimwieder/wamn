@@ -19,7 +19,7 @@ use clap::Args;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
-use wamn_ctl::dev::DEV_STAGE_ORDER;
+use wamn_control::dev::DEV_STAGE_ORDER;
 
 use super::{GradeArgs, GradeFailure, failure, home, read_json, text, write, write_json};
 

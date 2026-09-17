@@ -37,8 +37,8 @@ The development command selects the operator from its Cargo declaration.
 | `wamn-control-provision` | Provisioning SQL, credential roles, and native broker declarations |
 | `wamn-schema-control` | Package migration decisions and run storage declarations |
 | `wamn-catalog` | Component, wiring, and release facts |
-| `wamn-control` | Control, delivery, and operational work that the CLI, the dev loop, and test support call |
-| `wamn-ctl` | The command line over `wamn-control`, and the development loop |
+| `wamn-control` | Control operations, delivery, development orchestration, and process supervision |
+| `wamn-ctl` | Command-line and terminal clients of `wamn-control` |
 | `wamn-scenario-worker` | The authoring admission API |
 
 The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control` calls the lower libraries.
@@ -57,7 +57,11 @@ It holds the clap argument definitions, the printed output, and the exit codes.
 It also holds the interrupt, termination, and hangup arms of the deploy verb.
 That signal answers the operator, and it does not clean up after the library.
 Each verb parses its arguments, makes one library call, and prints the result.
-The `<area>_verbs.rs` modules hold that surface, and the development loop in `services/ctl/src/dev/` is the one part that is not a verb surface.
+The `<area>_verbs.rs` modules hold that surface.
+The development clients in `services/ctl/src/dev/` own argument parsing, terminal rendering, output, and process-wide signals.
+`wamn-control::dev` owns the watcher, session orchestration, environment setup, target reset, and child-process supervision.
+Clients request cooperative shutdown through the session control handle.
+The engine finishes active work and cleans up its owned processes.
 
 `apply-package` is the sole application migration applier.
 Rust decides package registration and wiring activation from stored facts within the caller's transaction.

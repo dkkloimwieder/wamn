@@ -1534,7 +1534,7 @@ pub(crate) mod tests {
     const ENDPOINT_COUNT: usize = 11;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     const OVERLAY_MANIFEST: &[u8] =
-        include_bytes!("../../../../apps/client_acme_receiving/wamn.json");
+        include_bytes!("../../../../../apps/client_acme_receiving/wamn.json");
 
     struct TempPackage {
         root: PathBuf,
@@ -1568,7 +1568,7 @@ pub(crate) mod tests {
 
     fn repository_package(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps")
+            .join("../../../apps")
             .join(name)
     }
 
@@ -1723,7 +1723,7 @@ pub(crate) mod tests {
     }
 
     /// Regenerate the checked-in schema with
-    /// `cargo run --locked --offline -p wamn-ctl --example print-dev-config-schema > services/ctl/schema/wamn-dev.schema.json`.
+    /// `cargo run --locked --offline -p wamn-ctl --example print-dev-config-schema > crates/control/lib/schema/wamn-dev.schema.json`.
     #[test]
     fn checked_in_dev_config_schema_matches_generated_bytes() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEV_CONFIG_SCHEMA_PATH);

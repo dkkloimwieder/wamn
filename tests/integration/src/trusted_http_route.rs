@@ -1282,7 +1282,7 @@ mod tests {
             version.parse::<u32>()? / 10_000 == 18,
             "nested identity test requires PostgreSQL 18"
         );
-        wamn_ctl::dev::environment::reset_control_store(&system).await?;
+        wamn_control::dev::environment::reset_control_store(&system).await?;
         // The test identity is platform setup, so it writes as wamn:provisioning.
         system
             .execute(

@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use super::super::{
-    DevSourceState, GitSource, PLATFORM_DOMAIN, ScratchRoot, TENANT, connect,
+    GitSource, GitSourceState, PLATFORM_DOMAIN, ScratchRoot, TENANT, connect,
     environment::seed_receiving_business_rows, repository_root, required_journey,
     required_journey_path, write_dev_config,
 };
@@ -66,7 +66,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     let git = GitSource::discover(&repository).await?;
     let initial = git.snapshot().await?;
     ensure!(
-        initial.state() == DevSourceState::Clean,
+        initial.state() == GitSourceState::Clean,
         "the owned edit worktree must start clean"
     );
     // The environment resets the control store of the whole server, so the test starts its own.
@@ -87,9 +87,13 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
 
     let (admin, admin_task) = connect(&system_url).await?;
-    let environment =
-        wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
-            .await?;
+    let environment = wamn_control::dev::environment::provision(
+        &system_url,
+        admin.as_ref(),
+        root,
+        PLATFORM_DOMAIN,
+    )
+    .await?;
     let system_acl = current_database_acl(admin.as_ref()).await?;
     let credentials = wamn_test_infrastructure::event_broker::Credentials {
         username: required_journey("WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")?,
@@ -208,7 +212,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     restored?;
     let final_source = git.snapshot().await?;
     ensure!(
-        final_source.state() == DevSourceState::Clean
+        final_source.state() == GitSourceState::Clean
             && final_source.source_commit() == initial.source_commit(),
         "the exact source was not restored"
     );

@@ -42,7 +42,6 @@ tracing-subscriber = { workspace = true }
 wamn-control = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-control-registry = { workspace = true }
-wamn-ctl = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-gate-harness = { workspace = true }

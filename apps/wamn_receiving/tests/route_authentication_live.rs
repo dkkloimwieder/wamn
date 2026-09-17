@@ -47,13 +47,13 @@ use tracing_subscriber::layer::SubscriberExt;
 use wamn_catalog::{AttachmentKind, ComponentOperationDependency, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
+use wamn_control::dev::watch::GitSource;
+use wamn_control::git_source::GitSourceState;
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
-use wamn_ctl::dev::DevSourceState;
-use wamn_ctl::dev::watch::GitSource;
 use wamn_execution_host::{
     ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
 };
@@ -113,13 +113,13 @@ use runtime::{
     span_descends_from, successful_value, trace_component_invocations,
 };
 use sessions::{assert_operation_refusal, nested_receipt_state};
-use wamn_control::provision_project_env::{read_json, secret_value};
-use wamn_ctl::dev::environment::{
+use wamn_control::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT,
     connect, install_journey_platform_floor, prepare_journey_credentials,
     provision_journey_control, provision_route, reconcile_journey_run_plane,
     spawn_journey_management_gate, write_dev_config,
 };
+use wamn_control::provision_project_env::{read_json, secret_value};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const ROUTE_CALLER_ROLE: &str = "route-caller";

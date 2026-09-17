@@ -37,7 +37,7 @@ impl DevJourneyInputs {
         let inputs = Self {
             wamn_binary: required_journey_path("WAMN_RECEIVING_DEV_BIN")?,
             environment: DevEnvironmentInputs {
-                local_artifacts: wamn_ctl::dev::config::LocalArtifacts {
+                local_artifacts: wamn_control::dev::config::LocalArtifacts {
                     directory: PathBuf::new(),
                     flow_http_component: required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?
                         .canonicalize()
@@ -108,7 +108,7 @@ pub(super) fn verify_dev_command_output(output: &std::process::Output) -> anyhow
         "wamn dev failed with {}: stdout={stdout:?} stderr={stderr:?}",
         output.status
     );
-    let stages = wamn_ctl::dev::DEV_STAGE_ORDER
+    let stages = wamn_control::dev::DEV_STAGE_ORDER
         .iter()
         .map(|stage| stage.as_str())
         .collect::<Vec<_>>()
@@ -435,9 +435,13 @@ pub(super) async fn assert_dev_command(
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
     let (admin, admin_task) = connect(system_url).await?;
-    let environment =
-        wamn_ctl::dev::environment::provision(system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
-            .await?;
+    let environment = wamn_control::dev::environment::provision(
+        system_url,
+        admin.as_ref(),
+        root,
+        PLATFORM_DOMAIN,
+    )
+    .await?;
     let (project, project_task) = connect(&environment.route.database_url).await?;
     let system_acl_before = current_database_acl(admin.as_ref()).await?;
     let durable_acl_before = current_database_acl(project.as_ref()).await?;

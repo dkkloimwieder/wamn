@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_jetstream::{
 };
 
 use super::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
-use wamn_control::print_release_env::ReleaseCarrier;
+use crate::print_release_env::ReleaseCarrier;
 
 /// Number of stages in one development-loop run.
 pub const DEV_STAGE_COUNT: usize = DEV_STAGE_ORDER.len();
@@ -406,141 +406,155 @@ impl DevReadSubscription {
     }
 }
 
-/// Write side retained by the development engine and observation adapters.
-#[derive(Clone, Debug)]
-pub(crate) struct DevReadPublisher {
-    sender: watch::Sender<Arc<DevSnapshot>>,
-}
+pub(crate) use publisher::{DevReadPublisher, dev_read_channel};
 
-/// Create the private publisher and public handle for one session.
-pub(crate) fn dev_read_channel() -> (DevReadPublisher, DevReadHandle) {
-    let (sender, receiver) = watch::channel(Arc::new(DevSnapshot::empty()));
-    (DevReadPublisher { sender }, DevReadHandle { receiver })
-}
-
-impl DevReadPublisher {
-    fn update(&self, update: impl FnOnce(&mut DevSnapshot)) {
-        self.sender.send_modify(|current| {
-            let snapshot = Arc::make_mut(current);
-            update(snapshot);
-            snapshot.revision = snapshot
-                .revision
-                .checked_add(1)
-                .expect("a development session cannot publish u64::MAX snapshots");
-        });
+mod publisher {
+    use super::{
+        DEV_OBSERVATION_LIMIT, DevGateOutcome, DevReadHandle, DevReleaseSnapshot,
+        DevRuntimeEndpoint, DevSnapshot, DevStageState, DevTapObservation, DevTraceObservation,
+        push_bounded,
+    };
+    use crate::dev::{DevStage, DevStageFailure};
+    use crate::print_release_env::ReleaseCarrier;
+    use std::sync::Arc;
+    use tokio::sync::watch;
+    use wamn_catalog::ServingManifest;
+    /// Write side retained by the development engine and observation adapters.
+    #[derive(Clone, Debug)]
+    pub struct DevReadPublisher {
+        sender: watch::Sender<Arc<DevSnapshot>>,
     }
 
-    /// Invalidate the rerun suffix and the facts that suffix owns.
-    pub(crate) fn reset(&self, from: DevStage) {
-        self.update(|snapshot| {
-            for stage in &mut snapshot.stages[from.position()..] {
-                stage.state = DevStageState::Awaiting;
-            }
-            if from.position() <= DevStage::Gate.position() {
-                snapshot.gate_outcomes.clear();
-            }
-            if from.position() <= DevStage::Release.position() {
-                snapshot.release = None;
-            }
-            snapshot.traces.clear();
-            snapshot.taps.clear();
-        });
+    /// Create the private publisher and public handle for one session.
+    pub fn dev_read_channel() -> (DevReadPublisher, DevReadHandle) {
+        let (sender, receiver) = watch::channel(Arc::new(DevSnapshot::empty()));
+        (DevReadPublisher { sender }, DevReadHandle { receiver })
     }
 
-    /// Mark one stage running.
-    pub(crate) fn stage_started(&self, stage: DevStage) {
-        self.update(|snapshot| {
-            snapshot.stages[stage.position()].state = DevStageState::Running;
-        });
-    }
-
-    /// Mark one stage successfully completed.
-    pub(crate) fn stage_completed(&self, stage: DevStage) {
-        self.update(|snapshot| {
-            snapshot.stages[stage.position()].state = DevStageState::Passed;
-        });
-    }
-
-    /// Mark one stage skipped because its input is unchanged.
-    pub(crate) fn stage_skipped(&self, stage: DevStage) {
-        self.update(|snapshot| {
-            snapshot.stages[stage.position()].state = DevStageState::Skipped;
-        });
-    }
-
-    /// Mark one stage failed with its owning typed refusal.
-    pub(crate) fn stage_failed(&self, stage: DevStage, failure: DevStageFailure) {
-        self.update(|snapshot| {
-            snapshot.stages[stage.position()].state = DevStageState::Failed(failure);
-        });
-    }
-
-    /// Replace Gate outcomes with the latest suffix's exact results.
-    pub(crate) fn set_gate_outcomes(&self, outcomes: Vec<DevGateOutcome>) {
-        self.update(|snapshot| snapshot.gate_outcomes = outcomes);
-    }
-
-    /// Publish the exact manifest and its serving carrier atomically.
-    pub(crate) fn set_release(&self, manifest: ServingManifest, carrier: ReleaseCarrier) {
-        assert_eq!(
-            manifest.digest(),
-            carrier.manifest_digest,
-            "the release carrier must be derived from the held manifest"
-        );
-        self.update(|snapshot| {
-            snapshot.release = Some(Arc::new(DevReleaseSnapshot { manifest, carrier }));
-        });
-    }
-
-    /// Publish the route endpoint selected by the exact activated host.
-    pub(crate) fn set_runtime_endpoint(&self, endpoint: DevRuntimeEndpoint) {
-        self.update(|snapshot| snapshot.runtime_endpoint = Some(endpoint));
-    }
-
-    /// Remove live availability at the actual target shutdown boundary.
-    pub(crate) fn clear_runtime_endpoint(&self) {
-        self.update(|snapshot| snapshot.runtime_endpoint = None);
-    }
-
-    /// Merge one Tempo page while retaining the bounded newest distinct traces.
-    pub(crate) fn merge_traces(&self, observations: Vec<DevTraceObservation>) {
-        self.sender.send_if_modified(|current| {
-            let mut merged = current.traces.clone();
-            for observation in observations {
-                if let Some(existing) = merged
-                    .iter_mut()
-                    .find(|existing| existing.trace_id == observation.trace_id)
-                {
-                    *existing = observation;
-                } else {
-                    merged.push(observation);
-                }
-            }
-            merged.sort_by(|left, right| {
-                left.start_time_unix_nanos
-                    .cmp(&right.start_time_unix_nanos)
-                    .then_with(|| left.trace_id.cmp(&right.trace_id))
+    impl DevReadPublisher {
+        fn update(&self, update: impl FnOnce(&mut DevSnapshot)) {
+            self.sender.send_modify(|current| {
+                let snapshot = Arc::make_mut(current);
+                update(snapshot);
+                snapshot.revision = snapshot
+                    .revision
+                    .checked_add(1)
+                    .expect("a development session cannot publish u64::MAX snapshots");
             });
-            if merged.len() > DEV_OBSERVATION_LIMIT {
-                let excess = merged.len() - DEV_OBSERVATION_LIMIT;
-                merged.drain(..excess);
-            }
-            if merged == current.traces {
-                return false;
-            }
-            let snapshot = Arc::make_mut(current);
-            snapshot.traces = merged;
-            snapshot.revision = snapshot
-                .revision
-                .checked_add(1)
-                .expect("a development session cannot publish u64::MAX snapshots");
-            true
-        });
-    }
+        }
 
-    /// Append one router tap while retaining the bounded newest suffix.
-    pub(crate) fn push_tap(&self, observation: DevTapObservation) {
-        self.update(|snapshot| push_bounded(&mut snapshot.taps, observation));
+        /// Invalidate the rerun suffix and the facts that suffix owns.
+        pub fn reset(&self, from: DevStage) {
+            self.update(|snapshot| {
+                for stage in &mut snapshot.stages[from.position()..] {
+                    stage.state = DevStageState::Awaiting;
+                }
+                if from.position() <= DevStage::Gate.position() {
+                    snapshot.gate_outcomes.clear();
+                }
+                if from.position() <= DevStage::Release.position() {
+                    snapshot.release = None;
+                }
+                snapshot.traces.clear();
+                snapshot.taps.clear();
+            });
+        }
+
+        /// Mark one stage running.
+        pub fn stage_started(&self, stage: DevStage) {
+            self.update(|snapshot| {
+                snapshot.stages[stage.position()].state = DevStageState::Running;
+            });
+        }
+
+        /// Mark one stage successfully completed.
+        pub fn stage_completed(&self, stage: DevStage) {
+            self.update(|snapshot| {
+                snapshot.stages[stage.position()].state = DevStageState::Passed;
+            });
+        }
+
+        /// Mark one stage skipped because its input is unchanged.
+        pub fn stage_skipped(&self, stage: DevStage) {
+            self.update(|snapshot| {
+                snapshot.stages[stage.position()].state = DevStageState::Skipped;
+            });
+        }
+
+        /// Mark one stage failed with its owning typed refusal.
+        pub fn stage_failed(&self, stage: DevStage, failure: DevStageFailure) {
+            self.update(|snapshot| {
+                snapshot.stages[stage.position()].state = DevStageState::Failed(failure);
+            });
+        }
+
+        /// Replace Gate outcomes with the latest suffix's exact results.
+        pub fn set_gate_outcomes(&self, outcomes: Vec<DevGateOutcome>) {
+            self.update(|snapshot| snapshot.gate_outcomes = outcomes);
+        }
+
+        /// Publish the exact manifest and its serving carrier atomically.
+        pub fn set_release(&self, manifest: ServingManifest, carrier: ReleaseCarrier) {
+            assert_eq!(
+                manifest.digest(),
+                carrier.manifest_digest,
+                "the release carrier must be derived from the held manifest"
+            );
+            self.update(|snapshot| {
+                snapshot.release = Some(Arc::new(DevReleaseSnapshot { manifest, carrier }));
+            });
+        }
+
+        /// Publish the route endpoint selected by the exact activated host.
+        pub fn set_runtime_endpoint(&self, endpoint: DevRuntimeEndpoint) {
+            self.update(|snapshot| snapshot.runtime_endpoint = Some(endpoint));
+        }
+
+        /// Remove live availability at the actual target shutdown boundary.
+        pub fn clear_runtime_endpoint(&self) {
+            self.update(|snapshot| snapshot.runtime_endpoint = None);
+        }
+
+        /// Merge one Tempo page while retaining the bounded newest distinct traces.
+        pub fn merge_traces(&self, observations: Vec<DevTraceObservation>) {
+            self.sender.send_if_modified(|current| {
+                let mut merged = current.traces.clone();
+                for observation in observations {
+                    if let Some(existing) = merged
+                        .iter_mut()
+                        .find(|existing| existing.trace_id == observation.trace_id)
+                    {
+                        *existing = observation;
+                    } else {
+                        merged.push(observation);
+                    }
+                }
+                merged.sort_by(|left, right| {
+                    left.start_time_unix_nanos
+                        .cmp(&right.start_time_unix_nanos)
+                        .then_with(|| left.trace_id.cmp(&right.trace_id))
+                });
+                if merged.len() > DEV_OBSERVATION_LIMIT {
+                    let excess = merged.len() - DEV_OBSERVATION_LIMIT;
+                    merged.drain(..excess);
+                }
+                if merged == current.traces {
+                    return false;
+                }
+                let snapshot = Arc::make_mut(current);
+                snapshot.traces = merged;
+                snapshot.revision = snapshot
+                    .revision
+                    .checked_add(1)
+                    .expect("a development session cannot publish u64::MAX snapshots");
+                true
+            });
+        }
+
+        /// Append one router tap while retaining the bounded newest suffix.
+        pub fn push_tap(&self, observation: DevTapObservation) {
+            self.update(|snapshot| push_bounded(&mut snapshot.taps, observation));
+        }
     }
 }
 
@@ -835,5 +849,60 @@ mod tests {
             ]),
             registrations: BTreeMap::new(),
         }
+    }
+}
+
+/// Snapshot construction for clients' rendering tests.
+#[cfg(feature = "test-util")]
+pub mod test_support {
+    pub use super::publisher::{DevReadPublisher, dev_read_channel};
+    use super::{
+        DevGateOutcome, DevGateVerdict, DevRuntimeEndpoint, DevTapObservation, DevTraceObservation,
+    };
+    use std::time::Duration;
+    use wamn_runtime::plugins::wamn_jetstream::RouterTapRecord;
+
+    pub fn gate_outcome(
+        package_id: String,
+        package_version: String,
+        wiring_id: String,
+        wiring_version: u32,
+        verdict: DevGateVerdict,
+    ) -> DevGateOutcome {
+        DevGateOutcome {
+            package_id,
+            package_version,
+            wiring_id,
+            wiring_version,
+            verdict,
+        }
+    }
+
+    pub fn trace_observation(
+        trace_id: String,
+        root_service_name: String,
+        root_trace_name: String,
+        start_time_unix_nanos: u64,
+        duration: Duration,
+    ) -> DevTraceObservation {
+        DevTraceObservation {
+            trace_id,
+            root_service_name,
+            root_trace_name,
+            start_time_unix_nanos,
+            duration,
+        }
+    }
+
+    pub fn tap_observation(subject: String, record: RouterTapRecord) -> DevTapObservation {
+        DevTapObservation { subject, record }
+    }
+
+    pub fn runtime_endpoint(
+        base_url: String,
+        route_host: &str,
+        target_instance: &str,
+    ) -> DevRuntimeEndpoint {
+        DevRuntimeEndpoint::new(base_url, route_host, target_instance)
     }
 }

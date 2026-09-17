@@ -23,7 +23,7 @@ use tokio::time::{Instant, timeout, timeout_at};
 use wash_runtime::washlet::{OPERATOR_API_PREFIX, rpc_subject, types::v2};
 
 use super::config::DevConfig;
-use wamn_control::print_release_env::ReleaseCarrier;
+use crate::print_release_env::ReleaseCarrier;
 
 /// Bound for connecting to the already-running development scheduler.
 pub const SCHEDULER_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1590,7 +1590,7 @@ mod tests {
     fn the_workload_template_declares_exactly_the_claims_activation_sets() {
         let template = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../deploy/platform/http-route-workload.example.yaml"),
+                .join("../../../deploy/platform/http-route-workload.example.yaml"),
         )
         .expect("the workload template is checked in beside the platform manifests");
 

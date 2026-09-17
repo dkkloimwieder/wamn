@@ -40,7 +40,7 @@ pub(super) async fn prepare_application(
     wamn_control::print_release_env::ReleaseCarrier,
 )> {
     crate::environment::install_control(admin_url, &inputs.system_pg_url).await?;
-    let issuer = wamn_ctl::dev::pat_issuer::start_for_issuer(
+    let issuer = wamn_control::dev::pat_issuer::start_for_issuer(
         &inputs.system_pg_url,
         work,
         "https://127.0.0.1",
@@ -73,7 +73,7 @@ pub(super) async fn prepare_application(
         evidence,
     )
     .await?;
-    let (project, task) = wamn_ctl::dev::environment::connect(&route.database_url).await?;
+    let (project, task) = wamn_control::dev::environment::connect(&route.database_url).await?;
     let seeded = seed_fixture(project.as_ref()).await;
     drop(project);
     task.abort();

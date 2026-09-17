@@ -22,7 +22,6 @@ wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
 
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
-wamn-ctl = { workspace = true }
 wamn-control = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-test-infrastructure = { workspace = true }

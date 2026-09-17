@@ -12,6 +12,14 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::apply_package::{self, ApplyPackageRequest};
+use crate::component_declaration::{
+    ComponentDeclarationError, ComponentDeclarationErrorKind, PACKAGE_MANIFEST,
+    authored_base_digests, render_declaration_document,
+};
+use crate::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
+use crate::push_component::{AdmitComponentRequest, ComponentAdmission, admit_component};
+use crate::reconcile_package_data_access;
 use anyhow::{Context as _, anyhow};
 use serde::Deserialize;
 use serde_json::Value;
@@ -19,14 +27,6 @@ use tokio::process::Command;
 use tokio_postgres::NoTls;
 use wamn_authoring_model::GateResult;
 use wamn_catalog::{PackageCoordinate, WiringDocument};
-use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::component_declaration::{
-    ComponentDeclarationError, ComponentDeclarationErrorKind, PACKAGE_MANIFEST,
-    authored_base_digests, render_declaration_document,
-};
-use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_component::{AdmitComponentRequest, ComponentAdmission, admit_component};
-use wamn_control::reconcile_package_data_access;
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_generator::{MaterializeMode, PackageManifest};
 use wamn_schema_introspection::ir::{CatalogIr, Table};
@@ -41,7 +41,7 @@ use super::read::{
 use super::target_database;
 use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
-use wamn_control::print_release_env::ReleaseCarrier;
+use crate::print_release_env::ReleaseCarrier;
 
 const BUILD_TOOL: &str = "tools/build-components";
 const PACKAGE_WELD: &str = "generated/package-weld.json";
@@ -567,7 +567,7 @@ impl ProductionDevStageRunner {
 
         let run_schema = BareSchemaName::new(RUN_SCHEMA)
             .expect("the repository-owned run schema is a valid bare identifier");
-        wamn_control::verification_policy::project_environment_policy(
+        crate::verification_policy::project_environment_policy(
             self.config.system_database_url(),
             self.config.target_database_url(),
             &run_schema,
@@ -591,7 +591,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("apply package to verification", source)
             })?;
-            crate::package_verbs::print_applied(&outcome);
+            tracing::info!(package = %outcome.package_id, version = %outcome.package_version, migrations = outcome.migrations_applied, changed = outcome.changed, "applied development package");
         }
         self.schema_input_digest
             .clone_from(&self.schema_input_candidate);
@@ -678,7 +678,7 @@ impl ProductionDevStageRunner {
         }
         let selected = self.package_inputs()?;
         if selected.iter().any(|package| {
-            wamn_control::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
+            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
         }) {
             let output = super::execute_preparation(
                 Command::new("cargo").args(["sqlx", "--version"]),
@@ -687,13 +687,13 @@ impl ProductionDevStageRunner {
             .await
             .map_err(|source| ProductionDevStageError::owner("read SQLx CLI version", source))?;
             require_command_success("read SQLx CLI version", &output)?;
-            wamn_control::delivery::sqlx::require_cli_version(&output.stdout).map_err(
-                |source| ProductionDevStageError::owner("require pinned SQLx CLI", source),
-            )?;
+            crate::delivery::sqlx::require_cli_version(&output.stdout).map_err(|source| {
+                ProductionDevStageError::owner("require pinned SQLx CLI", source)
+            })?;
         }
         for package in selected {
             let package_id = &package.manifest.package.id;
-            if let Some(verifier) = wamn_control::delivery::sqlx::verifier_for(package_id) {
+            if let Some(verifier) = crate::delivery::sqlx::verifier_for(package_id) {
                 let current =
                     sqlx_metadata_inputs_on_disk(self.git.repository_root(), &package.root)
                         .map_err(|source| {
@@ -713,14 +713,14 @@ impl ProductionDevStageRunner {
                 }
                 // Until a preparation succeeds, the metadata on disk is unknown.
                 self.sqlx_metadata_inputs.insert(package_id.clone(), None);
-                let database_url = wamn_control::delivery::sqlx::package_database_url(
+                let database_url = crate::delivery::sqlx::package_database_url(
                     self.config.target_database_url(),
                     &package.manifest,
                 )
                 .map_err(|source| {
                     ProductionDevStageError::owner("scope SQLx to the package schemas", source)
                 })?;
-                let mut command = wamn_control::delivery::sqlx::prepare_command(
+                let mut command = crate::delivery::sqlx::prepare_command(
                     &package.root.join("tests"),
                     &database_url,
                     verifier,
@@ -1234,7 +1234,7 @@ impl ProductionDevStageRunner {
             .as_ref()
             .map(|_| operator_host_output_log(self.config.wasmtime_cache_dir(), target_instance));
         if let Some(path) = &host_output_log {
-            eprintln!("Host diagnostics: {}", path.display());
+            tracing::info!(path = %path.display(), "host diagnostics");
         }
         let activation = activation::activate(DevActivationRequest {
             config: &self.config,
@@ -1353,7 +1353,7 @@ impl ProductionDevStageRunner {
             inputs.push((path.display().to_string(), file_digest(path)?));
         }
         if self.package_inputs()?.iter().any(|package| {
-            wamn_control::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
+            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
         }) {
             let path = std::env::var_os("PATH")
                 .and_then(|path| {
@@ -1636,7 +1636,7 @@ fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, Product
     let mut files = Vec::new();
     for package in packages {
         let mut roots = vec![("generated", package.root.join("generated"))];
-        if wamn_control::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some() {
+        if crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some() {
             roots.push(("sqlx", package.root.join("tests/.sqlx")));
         }
         for (kind, root) in roots {
@@ -1942,7 +1942,7 @@ impl DevStageRunner for ProductionDevStageRunner {
                         ProductionDevStageError::owner("check the kept local target", source)
                     })?;
                     if let Some(reason) = &reason {
-                        eprintln!("wamn dev recreates the target: {reason}");
+                        tracing::info!(%reason, "recreate development target");
                     }
                     reason.is_none().then_some(kept)
                 }
@@ -2003,14 +2003,14 @@ struct LocalBindingSelection {
     store_alias: String,
     instance_id: String,
     #[serde(default)]
-    instance: Option<wamn_control::bind_connection::LocalInstanceInput>,
+    instance: Option<crate::bind_connection::LocalInstanceInput>,
 }
 
 #[derive(Debug)]
 struct PreparedLocalBinding {
     requirement: wamn_catalog::ComponentConnectionRequirement,
     instance_id: String,
-    instance: Option<wamn_control::bind_connection::PreparedLocalInstance>,
+    instance: Option<crate::bind_connection::PreparedLocalInstance>,
 }
 
 fn prepare_local_bindings(
@@ -2070,7 +2070,7 @@ fn prepare_local_bindings(
                     &input.requirement_type.descriptor() == requirement.requirement(),
                     "local instance type differs from the declared requirement"
                 );
-                wamn_control::bind_connection::read_local_instance(input)
+                crate::bind_connection::read_local_instance(input)
             })
             .transpose()?;
         prepared.push(PreparedLocalBinding {
@@ -2109,7 +2109,7 @@ async fn resolve_local_bindings(
         let mut bindings = Vec::new();
         for binding in prepared {
             if let Some(input) = &binding.instance {
-                wamn_control::bind_connection::prepare_local_instance(
+                crate::bind_connection::prepare_local_instance(
                     &client,
                     &config.activation_identity().tenant,
                     &config.activation_identity().environment,
@@ -2303,8 +2303,7 @@ pub(crate) async fn claim_environment_instance(
         })?;
     let connection_task = tokio::spawn(connection);
     let claimed =
-        wamn_control::provision_project_env::claim_environment_instance(&client, tenant, instance)
-            .await;
+        crate::provision_project_env::claim_environment_instance(&client, tenant, instance).await;
     drop(client);
     connection_task.abort();
     claimed
@@ -2528,7 +2527,7 @@ mod tests {
 
     #[test]
     fn local_schema_inputs_separate_contract_and_sql_changes_from_migrations() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
         let directory = apply_package::read_package_directory(&root).unwrap();
         let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
         let original = package_schema_inputs(&manifest, &directory);
@@ -2560,7 +2559,7 @@ mod tests {
             AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration,
         };
 
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
         let directory = apply_package::read_package_directory(&root).unwrap();
         let manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
         let plan = wamn_schema_control::plan_package_migrations(&directory, None).unwrap();
@@ -2734,7 +2733,7 @@ mod tests {
         let package = PackageInput {
             root: root.clone(),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../apps/wamn_receiving/wamn.json"
+                "../../../../../apps/wamn_receiving/wamn.json"
             ))
             .unwrap(),
         };
@@ -2763,7 +2762,7 @@ mod tests {
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         let package = root.join("apps/demo");
-        let weld = include_bytes!("../../../../apps/wamn_receiving/generated/package-weld.json");
+        let weld = include_bytes!("../../../../../apps/wamn_receiving/generated/package-weld.json");
         for (path, bytes) in [
             (package.join(PACKAGE_WELD), weld.as_slice()),
             (package.join("component/src/lib.rs"), b"pub fn value() {}"),
@@ -2845,14 +2844,14 @@ mod tests {
         let base = PackageInput {
             root: PathBuf::from("/apps/wamn_receiving"),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../apps/wamn_receiving/wamn.json"
+                "../../../../../apps/wamn_receiving/wamn.json"
             ))
             .expect("parse shipped base manifest"),
         };
         let mut overlay = PackageInput {
             root: PathBuf::from("/apps/client_acme_receiving"),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../apps/client_acme_receiving/wamn.json"
+                "../../../../../apps/client_acme_receiving/wamn.json"
             ))
             .expect("parse shipped overlay manifest"),
         };

@@ -17,7 +17,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_ctl::dev::DEV_STAGE_ORDER;
+use wamn_control::dev::DEV_STAGE_ORDER;
 
 use grading::Grading;
 

@@ -5,8 +5,6 @@
 //! [`DevStageRunner`].
 
 pub mod activation;
-#[cfg(target_os = "linux")]
-pub mod command;
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod coordinator;
@@ -19,9 +17,9 @@ pub mod observations;
 mod operator;
 pub mod pat_issuer;
 pub mod read;
-pub mod target_database;
 #[cfg(target_os = "linux")]
-pub mod tui;
+pub mod session;
+pub mod target_database;
 pub mod up;
 #[cfg(target_os = "linux")]
 pub mod watch;
@@ -41,7 +39,7 @@ async fn execute_preparation(
     command: &mut tokio::process::Command,
     timeout: Duration,
 ) -> anyhow::Result<std::process::Output> {
-    wamn_control::owned_command::execute(command, timeout, Duration::from_secs(5)).await
+    crate::owned_command::execute(command, timeout, Duration::from_secs(5)).await
 }
 
 /// Exact stage order of one local development run.
@@ -103,9 +101,6 @@ impl fmt::Display for DevStage {
         formatter.write_str(self.as_str())
     }
 }
-
-/// Whole-worktree source state observed through Git.
-pub use wamn_control::git_source::GitSourceState as DevSourceState;
 
 /// One client-owned invalidation delivered to the watch engine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -402,7 +397,7 @@ pub trait DevWatchObserver {
     /// The default is a no-op because only the plain renderer prints: the
     /// interactive client reads the same endpoint live off the read handle,
     /// and a silent session has nowhere to print it. The endpoint is optional
-    /// for the same reason [`crate::dev::command`] treats it as optional when
+    /// for the same reason [`crate::dev::session`] treats it as optional when
     /// the run tore down, and the result travels with it so the caller can
     /// emit the completion line first without reaching back into the session.
     fn served(&mut self, _result: &DevRunResult, _endpoint: Option<&DevRuntimeEndpoint>) {}

@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use wamn_cdc_reader::EventReaderArgs;
+use wamn_control::dev::environment::{connect, generation_args};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
 use wamn_control::provision_project_env::{self, ProvisionedRoute, read_json, secret_value};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
-use wamn_ctl::dev::environment::{connect, generation_args};
 use wamn_gate_harness::journey::JourneyDocument;
 
 use super::super::{ENVIRONMENT, ORG, PROJECT};

@@ -8,11 +8,8 @@
 //! `[WAMN-DEV-LIVE]`, `[RECEIVING-ROUTE-JOURNEY]` and the `wamn dev up`
 //! operator command stand up one environment by one path (wamn-10yt.10.32).
 //!
-//! It lives in the product crate rather than in the test crate because it
-//! imports nothing test-only, and because a product command that starts its own
-//! environment cannot reach into a test crate to build its configuration. Three
-//! of its five `wamn` imports were already this crate's, so the move removed
-//! dependency edges rather than adding any (wamn-10yt.10.32).
+//! The control library owns this production path. CLI and test callers share
+//! its provisioning operations without importing command-line wrappers.
 //!
 //! The verbs underneath are the shared truth. Nothing here reimplements
 //! provisioning; it only names the arguments and the order.
@@ -25,15 +22,15 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context as _;
-use reqwest::Url;
-use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
-use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_project_env::{
+use crate::pat_client::PatIssuerConfig;
+use crate::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, WorkloadActionVerb,
     WorkloadGenerationAction, read_json, secret_annotation, secret_value,
 };
-use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
+use crate::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
+use anyhow::Context as _;
+use reqwest::Url;
+use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
     platform_principals_sql, sql as provision_sql,
@@ -41,7 +38,8 @@ use wamn_control_provision::{
 use wamn_pg_core::Identifier;
 
 use crate::dev::activation::DevActivationIdentity;
-use crate::provisioning_verbs::{self, ProvisionOrgArgs, TemplateArg};
+use crate::provision_org::{ProvisionOrgRequest, provision_org};
+use wamn_control_registry::Template;
 
 /// The deployment-owned inputs a standing development environment needs.
 ///
@@ -88,6 +86,7 @@ pub async fn provision(
     root: &Path,
     platform_domain: &str,
 ) -> anyhow::Result<DevEnvironment> {
+    wamn_control_provision::validate_platform_domain(platform_domain)?;
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
         .await
@@ -101,6 +100,13 @@ pub async fn provision(
     );
 
     provision_journey_control(system_url, admin).await?;
+    admin
+        .execute(
+            "UPDATE registry.meta SET platform_domain = $1",
+            &[&platform_domain],
+        )
+        .await
+        .context("record the disposable deployment platform domain")?;
     let route = provision_route(
         system_url,
         admin,
@@ -301,9 +307,7 @@ pub async fn provision_route(
     let issuer = super::pat_issuer::start(system_url, root).await?;
     let mut args = provisioning_args(system_url, root, &route_secret, management_secret);
     args.pat_issuer = issuer.args.clone();
-    let provisioned = provision_project_env::provision_project_env(&args)
-        .await
-        .and_then(|outcome| provisioning_verbs::print_provisioned(&args, &outcome));
+    let provisioned = provision_project_env::provision_project_env(&args).await;
     let stopped = issuer.stop().await;
     if let Err(error) = provisioned {
         let context = if stopped.is_err() {
@@ -374,22 +378,15 @@ pub struct JourneyCredentials {
 pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyhow::Result<()> {
     super::pat_issuer::preflight(system_url)?;
     reset_control_store(admin).await?;
-    provisioning_verbs::provision_org(ProvisionOrgArgs {
+    provision_org(ProvisionOrgRequest {
         org: ORG.to_owned(),
-        template: TemplateArg::Trials,
+        template: Template::trials(),
         pool: "route-auth-pg18".to_owned(),
         system_database_url: Some(system_url.to_owned()),
-        emit_clusters: None,
-        // The journey org is POOLED, so `provision-org` never reaches the
-        // dedicated-org arm that reads these. They carry the same `cfg` as the
-        // fields themselves, which are `ops`-only (wamn-0h0g.10.20).
-        #[cfg(feature = "ops")]
-        emit_object_store: None,
-        #[cfg(feature = "ops")]
-        emit_scheduled_backup: None,
     })
     .await
     .context("stamp the journey org and environment policies through provision-org")
+    .map(|_| ())
 }
 
 /// Snapshot the pristine project database and capture its database-level ACL.
@@ -519,7 +516,7 @@ pub async fn install_journey_platform_floor(
         .await
         .context("install the catalog schema")?;
     project
-        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
+        .batch_execute(include_str!("../../../../../deploy/sql/app-schema.sql"))
         .await
         .context("install the application authorization schema")?;
     project
@@ -532,7 +529,7 @@ pub async fn reconcile_journey_run_plane(
     system_url: &str,
     project_url: &str,
 ) -> anyhow::Result<()> {
-    let outcome = reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+    reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: system_url.to_owned(),
         admin_database_url: project_url.to_owned(),
         org: ORG.to_owned(),
@@ -544,7 +541,6 @@ pub async fn reconcile_journey_run_plane(
     })
     .await
     .context("reconcile the journey run plane")?;
-    crate::release_verbs::print_reconciled(&outcome, false, TENANT, ENVIRONMENT);
     Ok(())
 }
 
@@ -566,10 +562,9 @@ pub async fn prepare_journey_credentials(
         let secret = root.join(format!("{name}.json"));
         let mut args = generation_args(family, system_url, target_url, &secret);
         args.namespace = namespace.to_owned();
-        let outcome = provision_project_env::run_workload_action(&args)
+        provision_project_env::run_workload_action(&args)
             .await
             .with_context(|| format!("prepare the production {name} generation"))?;
-        provisioning_verbs::print_workload_action(&args, &outcome);
         secret_value(&secret, "url")
     }
 

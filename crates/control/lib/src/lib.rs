@@ -1,7 +1,7 @@
 //! The control library that `services/ctl`, the dev loop, and test support call.
 //!
 //! It holds the admission, release, provisioning, reconcile, package, and
-//! delivery operations. It does database, filesystem, and network work, and it
+//! delivery operations and the development engine. It does database, filesystem, and network work, and it
 //! runs the processes that work needs, including `git`, `docker`, `kubectl`,
 //! and `cargo`. The `ops` feature adds the environment lifecycle and reporting
 //! operations. It does no CLI presentation and does not own the CLI lifecycle:
@@ -16,6 +16,7 @@ pub mod copy_project_env;
 #[cfg(feature = "ops")]
 pub mod create_human;
 pub mod delivery;
+pub mod dev;
 pub mod enable_cdc_project_env;
 pub mod enqueue_run;
 pub mod env_policies;

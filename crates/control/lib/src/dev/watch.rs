@@ -16,14 +16,14 @@ use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 
+use crate::git_source;
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use tokio::io::AsyncWriteExt as _;
 use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
-use wamn_control::git_source;
 use wamn_schema_generator::PackageManifest;
 
-pub use wamn_control::git_source::{GitSourceError, GitSourceErrorKind, GitSourceSnapshot};
+pub use crate::git_source::{GitSourceError, GitSourceErrorKind, GitSourceSnapshot};
 
 use super::{DevInvalidation, DevInvalidationSource, DevStage};
 
@@ -1123,8 +1123,8 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
-    use super::super::DevSourceState;
     use super::*;
+    use crate::git_source::GitSourceState;
 
     static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1172,7 +1172,7 @@ mod tests {
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
             fs::write(
                 self.package().join("wamn.json"),
-                include_bytes!("../../../../apps/wamn_receiving/wamn.json"),
+                include_bytes!("../../../../../apps/wamn_receiving/wamn.json"),
             )
             .expect("write package manifest");
             fs::write(
@@ -1631,13 +1631,13 @@ mod tests {
 
         let clean = source.snapshot().await.expect("read clean source state");
         assert_eq!(clean.repository_root(), repository.root);
-        assert_eq!(clean.state(), DevSourceState::Clean);
+        assert_eq!(clean.state(), GitSourceState::Clean);
         assert!(!clean.source_commit().is_empty());
 
         fs::write(repository.root.join("ignored"), "ignored bytes").expect("write ignored file");
         assert_eq!(
             source.snapshot().await.expect("read ignored state").state(),
-            DevSourceState::Clean
+            GitSourceState::Clean
         );
 
         let untracked = repository.root.join("outside-package");
@@ -1648,7 +1648,7 @@ mod tests {
                 .await
                 .expect("read untracked state")
                 .state(),
-            DevSourceState::Dirty
+            GitSourceState::Dirty
         );
         fs::remove_file(untracked).expect("remove untracked file");
     }

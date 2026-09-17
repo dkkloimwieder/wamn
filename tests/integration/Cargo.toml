@@ -32,7 +32,6 @@ tracing-subscriber = { workspace = true }
 wamn-control = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-control-registry = { workspace = true }
-wamn-ctl = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-event-reg = { workspace = true }

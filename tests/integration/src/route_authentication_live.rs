@@ -26,7 +26,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 use wamn_runtime::release_manifest::LoadedRelease;
 
-use wamn_ctl::dev::environment::{
+use wamn_control::dev::environment::{
     ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route,
     reset_control_store,
 };
@@ -673,7 +673,7 @@ async fn assert_human_environment_membership(
 #[ignore = "requires:"]
 async fn production_route_caller_authentication_and_operation_authorization() {
     wamn_test_postgres::require_prerequisites(&[]);
-    wamn_ctl::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
+    wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     // Provisioning changes roles and database grants of the whole server, so
     // the test starts its own.
     let mut server =

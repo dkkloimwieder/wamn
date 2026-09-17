@@ -1,7 +1,8 @@
 # Plan — extract the control library out of `services/ctl`
 
 The [architecture overview](../architecture/overview.md#control-and-publication) describes the finished split and its dependency direction.
-This page records how the split was done and what is left. Beads records its status.
+Archived after `wamn-wk1j` completed the development-loop separation.
+The sections below preserve the extraction plan. The architecture overview owns current behavior.
 
 ## 1. Problem
 

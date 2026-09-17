@@ -5,7 +5,7 @@ use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use wamn_ctl::dev::DEV_STAGE_ORDER;
+use wamn_control::dev::DEV_STAGE_ORDER;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use super::{

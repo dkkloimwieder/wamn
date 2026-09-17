@@ -13,7 +13,7 @@ use wamn_schema_generator::client_rust::emit_rust_client;
 use wamn_schema_generator::client_tui::{component_contract, emit_tui, read_tui_workspace};
 use wamn_schema_generator::{GeneratedFile, PackageManifest};
 
-use crate::dev::watch::GitSource;
+use wamn_control::dev::watch::GitSource;
 
 /// Operator interface commands.
 #[derive(Debug, Args)]

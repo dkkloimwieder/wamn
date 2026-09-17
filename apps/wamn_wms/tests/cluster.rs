@@ -545,7 +545,8 @@ async fn run_created(
         )
         .await;
     }
-    let (project, project_task) = wamn_ctl::dev::environment::connect(&route.database_url).await?;
+    let (project, project_task) =
+        wamn_control::dev::environment::connect(&route.database_url).await?;
     let reader_args = if measure_startup {
         None
     } else {

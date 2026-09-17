@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
 
+use crate::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
+use crate::pat_client::PatIssuerConfig;
+use crate::provision_project_env::secret_value;
 use anyhow::Context as _;
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
@@ -17,9 +20,6 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 use tokio::process::{Child, Command};
 use url::Url;
-use wamn_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
-use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_project_env::secret_value;
 use wamn_control_provision::CredentialGeneration;
 
 // These bounds match the identity service's existing I/O timeout. The local

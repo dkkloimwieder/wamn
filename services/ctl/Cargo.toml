@@ -44,37 +44,26 @@ anyhow = { workspace = true }
 # `String`s rather than typed-out literals.
 clap = { workspace = true, features = ["derive", "env", "string"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "process", "signal", "sync", "time"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-schemars = { workspace = true }
 chrono = { workspace = true, features = ["clock", "std"] }
-hex = { workspace = true }
-ring = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
 # The verbs are println!-style tools; this fmt layer exists so --log-level
 # keeps its meaning (dep diagnostics to stderr), matching the pre-split
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-async-nats = { workspace = true, features = ["jetstream"] }
 futures-util = { workspace = true }
 crossterm = { workspace = true }
 ratatui = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
-rcgen = { workspace = true }
-rustix = { workspace = true }
-wamn-authoring-model = { workspace = true }
 # The shared terminal driver behind `wamn dev --tui` (wamn-10yt.5.9).
 wamn-client-terminal = { workspace = true }
-# Release authoring parses and validates immutable execution graphs.
-wamn-execution-contract = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-generator = { workspace = true }
-wamn-schema-introspection = { workspace = true }
 # The control operations that the verbs call.
 wamn-control = { workspace = true }
 # The pure provisioning SQL builders + identifier naming + credential Secret
@@ -85,14 +74,19 @@ wamn-control-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }
-wamn-pg-core = { workspace = true }
 wamn-runtime = { workspace = true }
-wash-runtime = { workspace = true, features = ["washlet"] }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb uses.
 wamn-run-state = { workspace = true }
 
 [dev-dependencies]
+async-nats = { workspace = true, features = ["jetstream"] }
+rustix = { workspace = true }
+wamn-authoring-model = { workspace = true }
+wamn-execution-contract = { workspace = true }
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
+wamn-pg-core = { workspace = true }
+wamn-control = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-project-state = { workspace = true, features = ["test-util"] }

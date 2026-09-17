@@ -27,8 +27,9 @@ use ratatui::widgets::Widget;
 // terminal rather than as a client crate.
 use wamn_client_terminal as terminal;
 
-use super::command::{DevCommandArgs, DevSession, DevSessionControl, print_result};
-use super::read::{DevGateVerdict, DevSnapshot, DevStageState};
+use super::command::{DevCommandArgs, prepare, print_result};
+use wamn_control::dev::read::{DevGateVerdict, DevSnapshot, DevStageState};
+use wamn_control::dev::session::DevSessionControl;
 
 /// Lines a page-up or page-down key moves the viewport.
 const PAGE_SCROLL_LINES: usize = 10;
@@ -434,7 +435,7 @@ pub fn apply_key(state: &mut DevTuiState, key: KeyEvent) -> DevTuiAction {
 /// stage failure ends the run, and the typed failure is reported after the
 /// terminal is restored, as it is without this client.
 pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
-    let session = DevSession::prepare(args).await?;
+    let (session, _signals) = prepare(args).await?;
     let control = session.control();
     let mut subscription = session.read_handle().subscribe();
     let mut state = DevTuiState::default();
@@ -546,11 +547,11 @@ mod tests {
     };
 
     use super::*;
-    use crate::dev::read::{
-        DevGateOutcome, DevRuntimeEndpoint, DevTapObservation, DevTraceObservation,
-        dev_read_channel,
+    use wamn_control::dev::read::{
+        DevGateOutcome, DevTapObservation,
+        test_support::{self, dev_read_channel},
     };
-    use crate::dev::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
+    use wamn_control::dev::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
     use wamn_control::print_release_env::ReleaseCarrier;
 
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -690,13 +691,13 @@ mod tests {
     #[test]
     fn observations_render_exact_trace_and_tap_facts() {
         let (publisher, handle) = dev_read_channel();
-        publisher.merge_traces(vec![DevTraceObservation {
-            trace_id: "0123456789abcdef".to_owned(),
-            root_service_name: "wamn-host".to_owned(),
-            root_trace_name: "component.invoke".to_owned(),
-            start_time_unix_nanos: 1_725_000_000_000_000_000,
-            duration: Duration::from_nanos(12_345),
-        }]);
+        publisher.merge_traces(vec![test_support::trace_observation(
+            "0123456789abcdef".to_owned(),
+            "wamn-host".to_owned(),
+            "component.invoke".to_owned(),
+            1_725_000_000_000_000_000,
+            Duration::from_nanos(12_345),
+        )]);
         publisher.push_tap(tap(
             "tap.tenant-a.project-a.dev.wiring.accepted",
             RouterTapRecordPhase::Accepted,
@@ -787,7 +788,7 @@ mod tests {
         assert!(awaiting.contains("no activated environment"), "{awaiting}");
         assert!(awaiting.contains("q tears down and exits"), "{awaiting}");
 
-        publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
+        publisher.set_runtime_endpoint(test_support::runtime_endpoint(
             "http://127.0.0.1:38080".to_owned(),
             "receiving.dev.localhost",
             "target-one",
@@ -813,7 +814,7 @@ mod tests {
     #[test]
     fn the_status_line_survives_a_viewport_too_short_to_hold_content() {
         let (publisher, handle) = dev_read_channel();
-        publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
+        publisher.set_runtime_endpoint(test_support::runtime_endpoint(
             "http://127.0.0.1:38080".to_owned(),
             "receiving.dev.localhost",
             "target-one",
@@ -906,13 +907,13 @@ mod tests {
     }
 
     fn gate_outcome(wiring_id: &str, verdict: DevGateVerdict) -> DevGateOutcome {
-        DevGateOutcome {
-            package_id: "receiving".to_owned(),
-            package_version: "1.0.0".to_owned(),
-            wiring_id: wiring_id.to_owned(),
-            wiring_version: 1,
+        test_support::gate_outcome(
+            "receiving".to_owned(),
+            "1.0.0".to_owned(),
+            wiring_id.to_owned(),
+            1,
             verdict,
-        }
+        )
     }
 
     fn manifest() -> ServingManifest {
@@ -1008,9 +1009,9 @@ mod tests {
         over_ceiling_bytes: Option<u64>,
         payload: serde_json::Value,
     ) -> DevTapObservation {
-        DevTapObservation {
-            subject: subject.to_owned(),
-            record: RouterTapRecord {
+        test_support::tap_observation(
+            subject.to_owned(),
+            RouterTapRecord {
                 delivery_id: "delivery-7".into(),
                 format_version: RouterTapFormatVersion::V1,
                 outcome: outcome.map(Into::into),
@@ -1023,7 +1024,7 @@ mod tests {
                 wiring_id: "purchase-order".into(),
                 wiring_version: 1,
             },
-        }
+        )
     }
 
     fn rendered_text(
