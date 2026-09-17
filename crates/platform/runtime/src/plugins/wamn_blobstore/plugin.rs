@@ -653,6 +653,7 @@ mod tests {
             contract: Some(binding.contract.clone()),
             instance_enabled: true,
             active_generation: Some(binding.generation),
+            pinned_generation: Some(binding.generation),
             instance_revision: Some(binding.instance_revision),
             generation: Some(binding.generation),
             definition: None,

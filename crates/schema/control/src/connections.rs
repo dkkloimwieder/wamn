@@ -98,6 +98,30 @@ pub fn activate_connection_generation_sql() -> &'static str {
         AND active_generation IS NOT DISTINCT FROM $5 AND revision = $6"
 }
 
+/// Read the active definition and the exact instance state used by activation.
+pub fn select_connection_instance_sql() -> &'static str {
+    "SELECT instance.requirement_type, instance.contract, instance.lifecycle_status, \
+            instance.active_generation, instance.revision, generation.definition_json::text, \
+            generation.definition_hash, generation.credential_set_handle, \
+            (SELECT max(generation) FROM catalog.connection_generations \
+              WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3) \
+       FROM catalog.connection_instances AS instance \
+       LEFT JOIN catalog.connection_generations AS generation \
+         ON generation.tenant_id = instance.tenant_id \
+        AND generation.environment = instance.environment \
+        AND generation.instance_id = instance.instance_id \
+        AND generation.generation = instance.active_generation \
+      WHERE instance.tenant_id = $1 AND instance.environment = $2 AND instance.instance_id = $3"
+}
+
+/// Hold an unchanged selection until an identical binding transaction commits.
+pub fn lock_connection_selection_sql() -> &'static str {
+    "SELECT 1 FROM catalog.connection_instances \
+      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+        AND active_generation IS NOT DISTINCT FROM $4 AND revision = $5 \
+      FOR UPDATE"
+}
+
 /// Insert one immutable component release binding to an environment instance.
 pub fn insert_component_connection_binding_sql() -> &'static str {
     "INSERT INTO catalog.connection_bindings \

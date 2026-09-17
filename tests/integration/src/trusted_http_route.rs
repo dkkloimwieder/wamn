@@ -486,6 +486,12 @@ async fn seed_with_client(
         ))
         .await
         .context("install the catalog and run-plane DDL")?;
+    client
+        .batch_execute(&wamn_control_provision::platform_principals_sql(
+            TENANT,
+            "http-fixture.invalid",
+        )?)
+        .await?;
 
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
@@ -751,6 +757,21 @@ async fn seed_with_client(
         environment: ENVIRONMENT,
         database,
     };
+    let guest_role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database,
+        },
+        CredentialGeneration::A,
+    )?;
+    let guest_sql = wamn_control_provision::sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        database,
+        &guest_role,
+        GENERATION_PASSWORD,
+        GENERATION_VALID_UNTIL,
+    );
     let executor_role = workload_generation_role(
         WorkloadRoleFamily::ExecutorPlatform,
         scope,
@@ -778,11 +799,15 @@ async fn seed_with_client(
         GENERATION_VALID_UNTIL,
     );
     client
-        .batch_execute(&format!("{executor_sql} {http_sql}"))
+        .batch_execute(&format!("{guest_sql} {executor_sql} {http_sql}"))
         .await
         .context("mint the production platform credential generations")?;
 
     Ok(ClassCredentials::default()
+        .with_class(
+            AuthorityClass::GuestSql,
+            generation_url(&options.database_url, &guest_role)?,
+        )
         .with_class(
             AuthorityClass::ExecutorPlatform,
             generation_url(&options.database_url, &executor_role)?,
@@ -900,9 +925,8 @@ mod tests {
         CredentialGeneration, SystemReader, WorkloadRoleFamily, system_reader_generation_role,
     };
     use wamn_execution_host::{
-        CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
-        CandidateWiringTarget, RouterDelivery, RouterDriver, RouterDriverConfig,
-        RouterDriverRequest, WiringCacheCapacity,
+        CandidateCaseRequest, CandidateWiringTarget, RouterDelivery, RouterDriver,
+        RouterDriverConfig, RouterDriverRequest, WiringCacheCapacity,
     };
     use wamn_platform_identity::{
         assign_project_role, create_service, issue_pat, route_caller_subject,
@@ -1510,6 +1534,7 @@ mod tests {
                     &wiring_version,
                     &EFFECTIVE_RELEASE_ID,
                     &route.wiring_hash,
+                    &None::<String>,
                 ],
             )
             .await?;
@@ -1726,21 +1751,19 @@ mod tests {
         );
 
         rotate(&admin, 2, CREDENTIAL_HANDLE).await?;
-        let Err(drift) = route
-            .driver
-            .execute_candidate(candidate(&route, &frozen, 6))
-            .await
-        else {
-            anyhow::bail!("candidate reused stale frozen binding authority");
-        };
-        let refusal = drift
-            .downcast_ref::<CandidateExecutionRefusal>()
-            .context("candidate failed without the typed authority refusal")?;
-        assert_eq!(refusal.kind(), CandidateExecutionRefusalKind::Binding);
-        assert_eq!(refusal.refusal(), "candidate-binding-world-drift");
-        assert!(
-            origin.requests.try_recv().is_err(),
-            "drifted candidate reached the wire"
+        let pinned_after_switch = assert_observed_request(
+            &mut origin,
+            route
+                .driver
+                .execute_candidate(candidate(&route, &frozen, 6))
+                .await?,
+            6,
+            "Bearer fixture-token",
+        )
+        .await?;
+        assert_eq!(
+            pinned_after_switch, candidate_first,
+            "an admitted candidate must retain its generation after activation"
         );
 
         let generation_two = assert_observed_request(
@@ -1811,6 +1834,34 @@ mod tests {
             generation_three, generation_three_again,
             "rotated generation did not become reusable"
         );
+        // A missing pinned credential cannot fall forward to a usable generation.
+        rotate(&admin, 4, "missing-fixture-credential").await?;
+        let missing = binding_world(&admin, &route).await?;
+        rotate(&admin, 5, ROTATED_HANDLE).await?;
+        let refused = route
+            .driver
+            .execute_candidate(candidate(&route, &missing, 12))
+            .await?;
+        let failure = refused
+            .outcome
+            .failure
+            .context("missing pinned credential was substituted")?;
+        assert_eq!(
+            failure.detail.code.as_deref(),
+            Some("connection-unavailable")
+        );
+        assert!(
+            origin.requests.try_recv().is_err(),
+            "missing credential reached the wire"
+        );
+        assert_observed_request(
+            &mut origin,
+            route.driver.execute(request(13)).await?,
+            13,
+            ROTATED_AUTHORIZATION,
+        )
+        .await?;
+
         assert!(
             origin.requests.try_recv().is_err(),
             "unexpected extra upstream effect"

@@ -157,12 +157,13 @@ impl LocalApplication {
         }) else {
             return Ok(None);
         };
-        let (current, definition) = read_binding(
+        let (current, definition, active_generation) = read_binding(
             client,
             tenant,
             lookup.environment,
             &binding.requirement,
             &binding.selection.instance_id,
+            Some(&binding.selection),
         )
         .await?;
         let node_permitted = wiring
@@ -205,7 +206,8 @@ impl LocalApplication {
                 requirement_type: Some(current.requirement_type),
                 contract: Some(current.contract),
                 instance_enabled: true,
-                active_generation: Some(current.generation),
+                active_generation,
+                pinned_generation: Some(current.generation),
                 instance_revision: Some(current.instance_revision),
                 generation: Some(current.generation),
                 definition: Some(definition),
@@ -224,9 +226,9 @@ pub async fn read_local_binding(
     requirement: &ComponentConnectionRequirement,
     instance_id: &str,
 ) -> anyhow::Result<CandidateConnectionBinding> {
-    read_binding(client, tenant, environment, requirement, instance_id)
+    read_binding(client, tenant, environment, requirement, instance_id, None)
         .await
-        .map(|(binding, _)| binding)
+        .map(|(binding, _, _)| binding)
 }
 
 async fn read_binding(
@@ -235,8 +237,16 @@ async fn read_binding(
     environment: &str,
     requirement: &ComponentConnectionRequirement,
     instance_id: &str,
-) -> anyhow::Result<(CandidateConnectionBinding, serde_json::Value)> {
-    let row = client.query_opt("SELECT instance.revision, instance.requirement_type, instance.contract, generation.generation, generation.definition_json::text, generation.definition_hash, generation.credential_set_handle FROM catalog.connection_instances AS instance JOIN catalog.connection_generations AS generation ON generation.tenant_id = instance.tenant_id AND generation.environment = instance.environment AND generation.instance_id = instance.instance_id AND generation.generation = instance.active_generation WHERE instance.tenant_id = $1 AND instance.environment = $2 AND instance.instance_id = $3 AND instance.lifecycle_status = 'enabled'", &[&tenant, &environment, &instance_id]).await?.context("local connection selection has no enabled instance and active generation")?;
+    pin: Option<&CandidateConnectionBinding>,
+) -> anyhow::Result<(CandidateConnectionBinding, serde_json::Value, Option<i64>)> {
+    let generation = pin.map(|binding| binding.generation);
+    let row = client.query_opt("SELECT instance.revision, instance.requirement_type, instance.contract, generation.generation, generation.definition_json::text, generation.definition_hash, generation.credential_set_handle, instance.active_generation FROM catalog.connection_instances AS instance JOIN catalog.connection_generations AS generation ON generation.tenant_id = instance.tenant_id AND generation.environment = instance.environment AND generation.instance_id = instance.instance_id AND generation.generation = COALESCE($4::bigint, instance.active_generation) WHERE instance.tenant_id = $1 AND instance.environment = $2 AND instance.instance_id = $3 AND instance.lifecycle_status = 'enabled'", &[&tenant, &environment, &instance_id, &generation]).await?.context("local connection selection has no enabled instance and active generation")?;
+    if let Some(pin) = pin {
+        anyhow::ensure!(
+            row.try_get::<_, i64>(0)? >= pin.instance_revision,
+            "local connection revision predates its admission pin"
+        );
+    }
     let requirement_type: String = row.try_get(1)?;
     let contract: String = row.try_get(2)?;
     anyhow::ensure!(
@@ -269,7 +279,7 @@ async fn read_binding(
             store_alias: requirement.store_alias().to_owned(),
             requirement_hash,
             instance_id: instance_id.to_owned(),
-            instance_revision: row.try_get(0)?,
+            instance_revision: pin.map_or(row.try_get(0)?, |binding| binding.instance_revision),
             requirement_type,
             contract,
             validation_hash,
@@ -278,6 +288,7 @@ async fn read_binding(
             credential_set_handle,
         },
         definition,
+        row.try_get(7)?,
     ))
 }
 

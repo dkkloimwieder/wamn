@@ -2,9 +2,11 @@
 //!
 //! Writes, in one transaction on the project-environment database, the three
 //! rows a bound connection is made of -- an environment-owned INSTANCE, its
-//! first immutable GENERATION, and the release-scoped BINDING of one admitted
+//! immutable GENERATION, and the release-scoped BINDING of one admitted
 //! component's declared store alias to that instance. The host holds the
-//! credential; this verb stores only a handle to it.
+//! credential; this verb stores only a handle to it. Identical binding is a no-op.
+//! Changed inputs append a generation and switch the pointer in the same transaction.
+//! Configuration validation does not test connectivity or credentials.
 //!
 //! THIN BY RULE (wamn-362o.33). Arguments in; the control library's builders
 //! in `wamn_schema_control::connections` are the sole SQL truth; the
@@ -23,10 +25,9 @@
 //!
 //! `validation_hash` names WHAT WAS VALIDATED: the requirement's hash, the
 //! definition's hash, and the descriptor's type and contract, hashed with the
-//! same function as the definition. Nothing else in the tree writes this
-//! column today; the plugin's authorization carries it through and checks the
-//! surrounding facts, so its role is to make a later re-validation detectable
-//! rather than to gate resolution.
+//! same function as the definition. The immutable binding retains its original
+//! validation hash. Each call returns the hash of the configuration it validated;
+//! a rotation records the new definition and credential reference in its generation.
 
 use std::path::PathBuf;
 
@@ -38,12 +39,26 @@ use wamn_runtime::connection_generation::definition_hash;
 use wamn_schema_control::connections::{
     activate_connection_generation_sql, insert_component_connection_binding_sql,
     insert_connection_generation_sql, insert_connection_instance_sql,
+    lock_connection_selection_sql, select_connection_instance_sql,
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const SELECT_REQUIREMENT_SQL: &str = "\
-SELECT requirement_json::text, requirement_hash FROM catalog.connection_requirements \
- WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3";
+SELECT requirement.requirement_json::text, requirement.requirement_hash \
+  FROM catalog.connection_requirements AS requirement \
+ WHERE requirement.tenant_id = $1 AND requirement.component_digest = $2 \
+   AND requirement.store_alias = $3 \
+   AND EXISTS ( \
+       SELECT 1 FROM catalog.component_library AS component \
+       JOIN catalog.effective_release_packages AS member \
+         ON member.tenant_id = component.tenant_id \
+        AND member.package_id = component.package_id \
+        AND member.package_version = component.package_version \
+       JOIN catalog.effective_releases AS release \
+         ON release.tenant_id = member.tenant_id \
+        AND release.effective_release_id = member.effective_release_id \
+      WHERE component.tenant_id = $1 AND component.component_digest = $2 \
+        AND member.effective_release_id = $4 AND release.environment = $5)";
 const FIRST_GENERATION: i64 = 1;
 
 /// The one connection type this verb can bind today. The enum is the closed
@@ -108,8 +123,10 @@ pub struct BindConnectionRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundConnection {
     pub instance_id: String,
+    pub previous_generation: Option<i64>,
     pub generation: i64,
     pub definition_hash: String,
+    /// Hash of the configuration validated by this call.
     pub validation_hash: String,
 }
 
@@ -151,7 +168,7 @@ pub fn validate_definition(
 #[doc(inline)]
 pub use wamn_runtime::connection_generation::binding_validation_subject as validation_subject;
 
-/// Write the instance, its first generation, and the release-scoped binding.
+/// Validate configuration and atomically bind or rotate its connection generation.
 pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnection> {
     let definition_bytes = std::fs::read(&args.definition).with_context(|| {
         format!(
@@ -196,6 +213,8 @@ async fn bind_in(
         .await
         .context("claim the tenant for the bind-connection transaction")?;
 
+    let release_id = i32::try_from(args.effective_release_id)
+        .context("the effective release id does not fit the catalog's int column")?;
     // The requirement being bound must exist and must be of this type: a
     // binding is a claim about a component's declared alias, and the plugin
     // checks the requirement's own descriptor against the instance's at
@@ -204,13 +223,19 @@ async fn bind_in(
     let requirement = transaction
         .query_opt(
             SELECT_REQUIREMENT_SQL,
-            &[&args.tenant, &args.component_digest, &args.store_alias],
+            &[
+                &args.tenant,
+                &args.component_digest,
+                &args.store_alias,
+                &release_id,
+                &args.environment,
+            ],
         )
         .await
         .context("read the component's connection requirement")?;
     let Some(requirement) = requirement else {
         bail!(
-            "component {} declares no connection requirement named {}; push-component records \
+            "component {} declares no connection requirement named {} in the selected release and environment; push-component records \
              one per declared alias and this binds only what was declared",
             args.component_digest,
             args.store_alias
@@ -243,35 +268,55 @@ async fn bind_in(
         &requirement_hash,
         &definition_digest,
     ));
-    insert_instance_generation(
-        &transaction,
-        &args.tenant,
-        &args.environment,
-        &args.instance_id,
-        descriptor,
-        definition,
-        &args.credential_handle,
-    )
-    .await?;
-    let release_id = i32::try_from(args.effective_release_id)
-        .context("the effective release id does not fit the catalog's int column")?;
-    transaction
-        .execute(
-            insert_component_connection_binding_sql(),
+    let existing_binding = transaction
+        .query_opt(
+            "SELECT environment, instance_id, binding_status, validation_status \
+           FROM catalog.connection_bindings WHERE tenant_id = $1 \
+            AND effective_release_id = $2 AND component_digest = $3 AND store_alias = $4",
             &[
                 &args.tenant,
                 &release_id,
                 &args.component_digest,
                 &args.store_alias,
-                &args.environment,
-                &args.instance_id,
-                &"active",
-                &"valid",
-                &validation_digest,
             ],
         )
-        .await
-        .context("insert the component connection binding")?;
+        .await?;
+    if let Some(binding) = &existing_binding {
+        ensure!(
+            binding.get::<_, String>(0) == args.environment
+                && binding.get::<_, String>(1) == args.instance_id
+                && binding.get::<_, String>(2) == "active"
+                && binding.get::<_, String>(3) == "valid",
+            "the existing binding has a different scope, instance, or validation state"
+        );
+    }
+    let (previous_generation, generation) = bind_generation(
+        &transaction,
+        args,
+        descriptor,
+        definition,
+        &definition_digest,
+    )
+    .await?;
+    if existing_binding.is_none() {
+        transaction
+            .execute(
+                insert_component_connection_binding_sql(),
+                &[
+                    &args.tenant,
+                    &release_id,
+                    &args.component_digest,
+                    &args.store_alias,
+                    &args.environment,
+                    &args.instance_id,
+                    &"active",
+                    &"valid",
+                    &validation_digest,
+                ],
+            )
+            .await
+            .context("insert the component connection binding")?;
+    }
     transaction
         .commit()
         .await
@@ -279,10 +324,112 @@ async fn bind_in(
 
     Ok(BoundConnection {
         instance_id: args.instance_id.clone(),
-        generation: FIRST_GENERATION,
+        previous_generation,
+        generation,
         definition_hash: definition_digest,
         validation_hash: validation_digest,
     })
+}
+
+/// The caller rolls back generation insertion and activation together on any error.
+async fn bind_generation(
+    transaction: &tokio_postgres::Transaction<'_>,
+    args: &BindConnectionRequest,
+    descriptor: &ConnectionTypeDescriptor,
+    definition: &Value,
+    definition_digest: &str,
+) -> anyhow::Result<(Option<i64>, i64)> {
+    let coordinate: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
+        [&args.tenant, &args.environment, &args.instance_id];
+    let current = transaction
+        .query_opt(select_connection_instance_sql(), &coordinate)
+        .await?;
+    let Some(current) = current else {
+        insert_instance_generation(
+            transaction,
+            &args.tenant,
+            &args.environment,
+            &args.instance_id,
+            descriptor,
+            definition,
+            &args.credential_handle,
+        )
+        .await?;
+        return Ok((None, FIRST_GENERATION));
+    };
+    ensure!(
+        current.get::<_, String>(0) == descriptor.requirement_type
+            && current.get::<_, String>(1) == descriptor.contract
+            && current.get::<_, String>(2) == "enabled",
+        "the connection instance has a different type or is disabled"
+    );
+    let previous: Option<i64> = current.get(3);
+    let revision: i64 = current.get(4);
+    let existing: Option<String> = current.get(5);
+    let existing: Option<Value> = existing.as_deref().map(serde_json::from_str).transpose()?;
+    if let Some(active) = previous
+        && existing.as_ref() == Some(definition)
+        && current.get::<_, Option<String>>(6).as_deref() == Some(definition_digest)
+        && current.get::<_, Option<String>>(7).as_deref() == Some(args.credential_handle.as_str())
+    {
+        ensure!(
+            transaction
+                .query_opt(
+                    lock_connection_selection_sql(),
+                    &[
+                        &args.tenant,
+                        &args.environment,
+                        &args.instance_id,
+                        &previous,
+                        &revision
+                    ]
+                )
+                .await?
+                .is_some(),
+            "connection inputs changed during binding; activation refused"
+        );
+        return Ok((previous, active));
+    }
+    let generation = current
+        .get::<_, Option<i64>>(8)
+        .unwrap_or(0)
+        .checked_add(1)
+        .context("connection generation exceeds the catalog limit")?;
+    // The activation foreign key is deferred. This comparison locks the instance
+    // before the immutable generation is inserted, so a stale writer creates nothing.
+    let changed = transaction
+        .execute(
+            activate_connection_generation_sql(),
+            &[
+                &args.tenant,
+                &args.environment,
+                &args.instance_id,
+                &generation,
+                &previous,
+                &revision,
+            ],
+        )
+        .await?;
+    ensure!(
+        changed == 1,
+        "connection inputs changed during binding; activation refused"
+    );
+    let definition_text = serde_json::to_string(definition)?;
+    transaction
+        .execute(
+            insert_connection_generation_sql(),
+            &[
+                &args.tenant,
+                &args.environment,
+                &args.instance_id,
+                &generation,
+                &definition_text,
+                &definition_digest,
+                &args.credential_handle,
+            ],
+        )
+        .await?;
+    Ok((previous, generation))
 }
 
 #[cfg(test)]

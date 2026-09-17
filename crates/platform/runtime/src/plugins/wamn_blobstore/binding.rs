@@ -161,6 +161,7 @@ mod tests {
             contract: Some(descriptor.contract.clone()),
             instance_enabled: true,
             active_generation: Some(7),
+            pinned_generation: None,
             instance_revision: Some(1),
             generation: Some(7),
             definition: Some(serde_json::json!({

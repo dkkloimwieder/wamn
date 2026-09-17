@@ -172,10 +172,13 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
     };
     let bound = bind_connection::bind(&request).await?;
     println!(
-        "bound {}:{} to {} generation {} in release {} (definition {}, validation {})",
+        "bound {}:{} to {} generation {} -> {} in release {} (definition {}, validation {}); configuration valid; connectivity and credentials not tested",
         request.component_digest,
         request.store_alias,
         bound.instance_id,
+        bound
+            .previous_generation
+            .map_or_else(|| "none".to_owned(), |generation| generation.to_string()),
         bound.generation,
         request.effective_release_id,
         bound.definition_hash,

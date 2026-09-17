@@ -320,11 +320,13 @@ impl CandidateConnectionBinding {
     pub(crate) fn matches_snapshot(&self, snapshot: &ConnectionEffectSnapshot) -> bool {
         snapshot.requirement_hash.as_deref() == Some(self.requirement_hash.as_str())
             && snapshot.instance_id.as_deref() == Some(self.instance_id.as_str())
-            && snapshot.instance_revision == Some(self.instance_revision)
+            && snapshot
+                .instance_revision
+                .is_some_and(|revision| revision >= self.instance_revision)
             && snapshot.requirement_type.as_deref() == Some(self.requirement_type.as_str())
             && snapshot.contract.as_deref() == Some(self.contract.as_str())
             && snapshot.validation_hash.as_deref() == Some(self.validation_hash.as_str())
-            && snapshot.active_generation == Some(self.generation)
+            && snapshot.pinned_generation == Some(self.generation)
             && snapshot.generation == Some(self.generation)
             && snapshot.definition_hash.as_deref() == Some(self.definition_hash.as_str())
             && snapshot.credential_handle.as_deref() == Some(self.credential_set_handle.as_str())
@@ -336,6 +338,10 @@ impl CandidateConnectionBinding {
 pub struct CandidateBindingWorld(Arc<[CandidateConnectionBinding]>);
 
 impl CandidateBindingWorld {
+    pub(crate) fn to_json(&self) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(&*self.0)?)
+    }
+
     /// Decode the exact persisted JSON boundary and reject partial, duplicate,
     /// or non-canonical rows before any component executes.
     pub fn from_json(value: serde_json::Value) -> anyhow::Result<Self> {
@@ -393,6 +399,8 @@ pub struct ConnectionEffectSnapshot {
     pub contract: Option<String>,
     pub instance_enabled: bool,
     pub active_generation: Option<i64>,
+    /// The generation frozen by admission, if this invocation carries a pin.
+    pub pinned_generation: Option<i64>,
     pub instance_revision: Option<i64>,
     pub generation: Option<i64>,
     pub definition: Option<serde_json::Value>,
@@ -489,8 +497,7 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
     ON generation.tenant_id = instance.tenant_id \
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
-   AND generation.generation = COALESCE($11::bigint, instance.active_generation) \
-   AND ($11::bigint IS NULL OR instance.active_generation = $11)";
+   AND generation.generation = COALESCE($11::bigint, instance.active_generation)";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
@@ -1619,6 +1626,7 @@ impl WamnPostgres {
                 contract: row.try_get(13)?,
                 instance_enabled: row.try_get::<_, Option<bool>>(14)?.unwrap_or(false),
                 active_generation: row.try_get(15)?,
+                pinned_generation: candidate_generation,
                 instance_revision: row.try_get(16)?,
                 generation: row.try_get(17)?,
                 definition: json(18)?,

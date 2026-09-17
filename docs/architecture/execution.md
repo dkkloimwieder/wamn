@@ -46,6 +46,12 @@ The store is Wasmtime's request state, including guest memory and bound authorit
 One absolute deadline covers initialization, execution, and nested calls.
 A child cannot extend that deadline.
 
+Connection activation changes the generation selected for new work.
+Admitted runs that carry a generation pin continue to use that exact immutable generation.
+A disabled instance or an unavailable pinned credential refuses execution without selecting a newer generation.
+Superseded generation records remain immutable. Retaining a record does not extend the lifetime of its credential.
+
+
 The host bounds each requested node deadline to 1–30,000 milliseconds and continues execution.
 When the host changes a deadline, the delivery report carries the node, `requested-ms`, and `effective-ms`.
 HTTP responses carry this JSON array in the `wamn-deadline-adjustments` header, including execution failures.

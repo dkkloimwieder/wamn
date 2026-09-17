@@ -136,7 +136,8 @@ SELECT selected.version, selected.effective_release_id, \
 ///
 /// A candidate is neither the active environment pointer nor a member of the
 /// serving release carried by this executor. The run supplies every immutable
-/// coordinate that admission read from the same row.
+/// coordinate that admission read from the same row. Parameter eight is the
+/// frozen binding JSON for execution, or NULL to capture current admission inputs.
 pub const CANDIDATE_WIRING_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
     SELECT member.package_version \
@@ -188,10 +189,13 @@ WITH release_scope AS MATERIALIZED ( \
 ), resolved_requirements AS MATERIALIZED ( \
     SELECT requirement.component_digest, requirement.store_alias, \
            requirement.requirement_hash, binding.instance_id, \
-           instance.revision AS instance_revision, instance.requirement_type, \
+           COALESCE((pin.value ->> 'instance-revision')::bigint, instance.revision) AS instance_revision, instance.requirement_type, \
            instance.contract, binding.validation_hash, generation.generation, \
            generation.definition_hash, generation.credential_set_handle \
       FROM requirements AS requirement \
+      LEFT JOIN jsonb_array_elements(COALESCE($8::text::jsonb, '[]'::jsonb)) AS pin(value) \
+        ON pin.value ->> 'component-digest' = requirement.component_digest \
+       AND pin.value ->> 'store-alias' = requirement.store_alias \
       JOIN catalog.connection_bindings AS binding \
         ON binding.tenant_id = $1 \
        AND binding.effective_release_id = $6 \
@@ -205,12 +209,14 @@ WITH release_scope AS MATERIALIZED ( \
        AND instance.environment = binding.environment \
        AND instance.instance_id = binding.instance_id \
        AND instance.lifecycle_status = 'enabled' \
+       AND ($8::text IS NULL OR instance.instance_id = pin.value ->> 'instance-id') \
+       AND ($8::text IS NULL OR instance.revision >= (pin.value ->> 'instance-revision')::bigint) \
        AND instance.active_generation IS NOT NULL \
       JOIN catalog.connection_generations AS generation \
         ON generation.tenant_id = instance.tenant_id \
        AND generation.environment = instance.environment \
        AND generation.instance_id = instance.instance_id \
-       AND generation.generation = instance.active_generation \
+       AND generation.generation = CASE WHEN $8::text IS NULL THEN instance.active_generation ELSE (pin.value ->> 'generation')::bigint END \
 ), binding_world AS MATERIALIZED ( \
     SELECT count(requirement.component_digest) AS requirement_count, \
            count(resolved.component_digest) AS resolved_count, \
@@ -518,7 +524,8 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
 
-        let params: [&(dyn ToSql + Sync); 7] = [
+        let pinned_bindings = expected_binding_world.to_json()?;
+        let params: [&(dyn ToSql + Sync); 8] = [
             &tenant_id,
             &package_id,
             &environment,
@@ -526,6 +533,7 @@ impl WamnPostgres {
             &wiring_version,
             &effective_release_id,
             &wiring_hash,
+            &pinned_bindings,
         ];
         let selected = connection
             .query_opt(CANDIDATE_WIRING_SQL, &params)
@@ -1118,7 +1126,7 @@ mod tests {
             "binding.binding_status = 'active'",
             "binding.validation_status = 'valid'",
             "instance.lifecycle_status = 'enabled'",
-            "generation.generation = instance.active_generation",
+            "ELSE (pin.value ->> 'generation')::bigint END",
             "ORDER BY resolved.component_digest, resolved.store_alias",
             "binding_world.requirement_count",
             "binding_world.resolved_count",

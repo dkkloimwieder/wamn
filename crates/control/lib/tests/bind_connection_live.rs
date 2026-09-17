@@ -30,7 +30,8 @@ use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType
 use wamn_control::push_component::admitted_projection_hash;
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
-    ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT, WamnPostgres, WamnPostgresConfig,
+    CandidateConnectionBinding, ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT,
+    WamnPostgres, WamnPostgresConfig,
 };
 use wamn_schema_control::connections::{
     ComponentConnectionRequirement, activate_connection_generation_sql,
@@ -191,7 +192,8 @@ async fn provision_project(project: &Client, project_url: &str) {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("ctl crate lives under services/ctl");
+        .and_then(Path::parent)
+        .expect("control library lives under crates/control/lib");
     apply_package::apply_package(ApplyPackageRequest {
         package: repository.join("apps/wamn_wms"),
         database_url: project_url.to_string(),
@@ -409,7 +411,7 @@ async fn assert_nested_effect_snapshot(
     assert_eq!(snapshot.component.as_deref(), Some("blob-put"));
     assert_eq!(snapshot.operation.as_deref(), Some(direct.operation));
     let resolved = binding::resolve(&snapshot).expect("resolve the executor's bound alias");
-    assert_eq!(resolved.credential_handle, "labels-store");
+    assert_eq!(resolved.credential_handle, "labels-rotated");
 
     for (changed, refused) in [
         (
@@ -573,7 +575,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         "lacking.json",
         r#"{"endpoint":"http://10.0.0.7:9000","container":"labels"}"#,
     );
-    let error = bind_connection::bind(&args(&project_url, lacking, "labels", BLOB_PUT))
+    let error = bind_connection::bind(&args(&project_url, lacking.clone(), "labels", BLOB_PUT))
         .await
         .expect_err("a definition without prefix cannot be bound");
     assert!(format!("{error:#}").contains("lacks prefix"), "{error:#}");
@@ -600,7 +602,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(rows(&project).await, (0, 0, 0), "a refusal writes nothing");
 
     // THE VERB.
-    let bound = bind_connection::bind(&args(&project_url, good, "labels", BLOB_PUT))
+    let bound = bind_connection::bind(&args(&project_url, good.clone(), "labels", BLOB_PUT))
         .await
         .expect("bind the labels store");
     assert_eq!(bound.instance_id, "labels-store");
@@ -627,16 +629,17 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         Some(bound.validation_hash.as_str())
     );
 
-    // Binding the same alias twice is a primary-key refusal, not a silent
-    // second generation: an amendment is a different verb.
+    // Identical rebinding preserves every stored row.
     let again = definition_file(
         scratch,
         "again.json",
         r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"wms/"}"#,
     );
-    bind_connection::bind(&args(&project_url, again, "labels", BLOB_PUT))
+    let rebound = bind_connection::bind(&args(&project_url, again, "labels", BLOB_PUT))
         .await
-        .expect_err("a second bind of the same instance and alias is refused");
+        .expect("identical rebinding is a no-op");
+    assert_eq!(rebound.previous_generation, Some(1));
+    assert_eq!(rebound.generation, 1);
     assert_eq!(rows(&project).await, (1, 1, 1));
 
     // A STALE ACTIVATION CHANGES NOTHING. The bind left generation 1 active at
@@ -685,6 +688,102 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         );
         assert_eq!(instance().await, current);
     }
+
+    // Invalid configuration cannot disturb the already selected generation.
+    bind_connection::bind(&args(&project_url, lacking, "labels", BLOB_PUT))
+        .await
+        .expect_err("invalid rotation refuses");
+    assert_eq!(instance().await, current);
+    assert_eq!(rows(&project).await, (1, 1, 1));
+
+    project.execute("INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment,verified_publisher_principal) VALUES ($1,2,$2,'bind-scope-test')", &[&TENANT,&ENVIRONMENT]).await.unwrap();
+    let mut wrong_scope = args(&project_url, good.clone(), "labels", BLOB_PUT);
+    wrong_scope.effective_release_id = 2;
+    bind_connection::bind(&wrong_scope)
+        .await
+        .expect_err("a release without this component refuses");
+    assert_eq!(instance().await, current);
+    assert_eq!(rows(&project).await, (1, 1, 1));
+
+    let pinned = CandidateConnectionBinding {
+        component_digest: BLOB_PUT.to_owned(),
+        store_alias: "labels".to_owned(),
+        requirement_hash: after.requirement_hash.clone().unwrap(),
+        instance_id: after.instance_id.clone().unwrap(),
+        instance_revision: after.instance_revision.unwrap(),
+        requirement_type: after.requirement_type.clone().unwrap(),
+        contract: after.contract.clone().unwrap(),
+        validation_hash: after.validation_hash.clone().unwrap(),
+        generation: 1,
+        definition_hash: after.definition_hash.clone().unwrap(),
+        credential_set_handle: after.credential_handle.clone().unwrap(),
+    };
+    let changed = definition_file(
+        scratch,
+        "changed.json",
+        r#"{"endpoint":"http://10.0.0.8:9000","container":"labels","prefix":"new/"}"#,
+    );
+    let mut changed_args = args(&project_url, changed.clone(), "labels", BLOB_PUT);
+    changed_args.credential_handle = "labels-rotated".to_owned();
+    let rotated = bind_connection::bind(&changed_args)
+        .await
+        .expect("rotate the instance");
+    assert_eq!(rotated.previous_generation, Some(1));
+    assert_eq!(rotated.generation, 2);
+    assert_eq!(rows(&project).await, (1, 2, 1));
+    let new_snapshot = snapshot_of().await;
+    let new_binding = binding::resolve(&new_snapshot).expect("new selection resolves");
+    assert_eq!(new_binding.endpoint, "http://10.0.0.8:9000");
+    assert_eq!(new_binding.credential_handle, "labels-rotated");
+    let old_snapshot = postgres
+        .connection_effect_snapshot(
+            COMPONENT_ID,
+            DEFAULT_PROJECT,
+            TENANT,
+            &ConnectionEffectLookup {
+                candidate_binding: Some(&pinned),
+                ..lookup
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_snapshot.active_generation, Some(2));
+    assert_eq!(old_snapshot.generation, Some(1));
+    let old_binding =
+        binding::resolve(&old_snapshot).expect("the pinned generation remains usable");
+    assert_eq!(old_binding.endpoint, "http://10.0.0.7:9000");
+    assert_eq!(old_binding.credential_handle, "labels-store");
+
+    // Hold the row after the competing bind reads it, then advance its revision.
+    let (mut blocker, blocker_task) = connect(&project_url).await;
+    let transaction = blocker.transaction().await.unwrap();
+    transaction.query_one("SELECT instance_id FROM catalog.connection_instances WHERE tenant_id=$1 AND instance_id='labels-store' FOR UPDATE", &[&TENANT]).await.unwrap();
+    let stale_args = args(&project_url, good, "labels", BLOB_PUT);
+    let stale_bind = tokio::spawn(async move { bind_connection::bind(&stale_args).await });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let activation_waits: bool = project.query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE catalog.connection_instances%')", &[])
+                .await.unwrap().get(0);
+            if activation_waits { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("the competing activation reaches its row lock");
+    transaction.execute("UPDATE catalog.connection_instances SET revision=revision+1 WHERE tenant_id=$1 AND instance_id='labels-store'", &[&TENANT]).await.unwrap();
+    transaction.commit().await.unwrap();
+    let error = stale_bind
+        .await
+        .unwrap()
+        .expect_err("stale bind refuses atomically");
+    assert!(
+        error.to_string().contains("connection inputs changed"),
+        "{error:#}"
+    );
+    assert_eq!(rows(&project).await, (1, 2, 1));
+    assert_eq!(instance().await.0, Some(2));
+    drop(blocker);
+    blocker_task.abort();
 
     assert_nested_effect_snapshot(&project, &postgres, lookup).await;
 

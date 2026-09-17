@@ -66,6 +66,13 @@ Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access
 Publish the selected component bytes with `wamn-ctl push-component`.
 If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
 Submit their wiring with `wamn-ctl author-wiring`, and bind declared connection aliases with `wamn-ctl bind-connection`.
+Repeating `bind-connection` with identical inputs changes no records.
+Changed definitions or credential references create an immutable generation and activate it in the same transaction.
+The command prints the previous and new generation.
+Invalid configuration or a concurrent change leaves the current selection untouched.
+The command reports “configuration valid; connectivity and credentials not tested.”
+It does not contact the external service or read its credentials.
+
 Read each command's current required arguments with `--help`.
 
 Before release publication, reconcile the target run schema and its environment policy:

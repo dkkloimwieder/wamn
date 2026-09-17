@@ -665,7 +665,7 @@ pub(crate) fn authorize_snapshot(
     }
     if !snapshot.instance_enabled
         || snapshot.active_generation.is_none()
-        || snapshot.active_generation != snapshot.generation
+        || snapshot.pinned_generation.or(snapshot.active_generation) != snapshot.generation
     {
         return Err(ConnectionError::CredentialUnavailable);
     }
@@ -1170,6 +1170,7 @@ mod tests {
             contract: Some(HTTP_CONTRACT.to_string()),
             instance_enabled: true,
             active_generation: Some(7),
+            pinned_generation: None,
             instance_revision: Some(2),
             generation: Some(7),
             definition: Some(serde_json::json!({})),

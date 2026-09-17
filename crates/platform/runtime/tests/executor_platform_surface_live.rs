@@ -426,6 +426,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                 &WIRING_VERSION,
                 &EFFECTIVE_RELEASE_ID,
                 &wiring_hash,
+                &None::<String>,
             ],
         )
         .await
@@ -472,6 +473,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                 &WIRING_VERSION,
                 &EFFECTIVE_RELEASE_ID,
                 &dead_wiring_hash,
+                &None::<String>,
             ],
         )
         .await?;
