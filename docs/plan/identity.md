@@ -1,7 +1,10 @@
 # External identity providers
 
 Federated login connects an external identity provider to WAMN.
-The deferred work belongs to `wamn-117`.
+Historical work belongs to closed issues `wamn-117` and `wamn-0h0g.9`.
+The [human identity plan](identity-plan.md) proposes the next review scope.
+Implementation needs an active issue after approval.
+Its renewal-state and recent-authentication proposals change the constraints below only if the owner approves them.
 Current PAT issuance, session exchange, request authorization, and revocation limits belong in [execution](../architecture/execution.md).
 
 The existing `wamn-identity` service will own the external login adapter.
