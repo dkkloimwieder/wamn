@@ -170,7 +170,7 @@ class LiveSession(terminal.Session):
             self.original = termios.tcgetattr(self.slave)
             environment = os.environ.copy()
             environment.update(TERM="xterm-256color", LANG="C.UTF-8",
-                               RUSTC_WRAPPER="", PYTHONDONTWRITEBYTECODE="1")
+                               RUSTC_WRAPPER="", PYTHONDONTWRITEBYTECODE="1", RUST_LOG="info")
             self.process = subprocess.Popen(
                 [sys.executable, "-c", CHILD_SETUP, str(wamn), "dev", "--config",
                  str(config_path), "--overlay-root", str(overlay), "--watch", "--tui", "receiving"],
@@ -367,13 +367,13 @@ def host_diagnostics(session, config, activation):
     directory = Path(str(config["wasmtime_cache_dir"]) + ".operator-logs")
     prefix = directory / f"operator-host-{session.process.pid}-{instance}-"
     entered = session.output.rfind(b"\x1b[?1049h")
+    output = terminal.CSI.sub("", bytes(session.output[:max(entered, 0)]).decode("utf-8", "replace"))
     announcements = re.findall(
-        rb"Host diagnostics: (" + re.escape(os.fsencode(prefix)) + rb"[0-9]+\.log)",
-        session.output[:max(entered, 0)],
+        r"host diagnostics path=(" + re.escape(str(prefix)) + r"[0-9]+\.log)", output,
     )
     require(entered >= 0 and announcements,
             "host diagnostics path was not announced before operator entry")
-    announced = Path(os.fsdecode(announcements[-1]))
+    announced = Path(announcements[-1])
     path = announced if announced.is_absolute() else REPOSITORY / announced
     info = path.lstat()
     require(stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600
@@ -502,6 +502,8 @@ def assert_operator(session, config, edit, evidence):
     evidence["second"] = second
     evidence["retired_before_replacement"] = observed
     session.text("Succeeded.")
+    session.text(ORDER_NUMBER)
+    evidence["owned_order_retained"] = True
     open_reference(session, config)
     session.until(lambda: reference_empty(session.display.text()), "fresh receipt-reference draft")
     screen = session.display.text()
@@ -516,6 +518,8 @@ def assert_operator(session, config, edit, evidence):
     session.stable(second, 3.0)
     require_clean_frame(session.display.text())
     evidence["second_host_diagnostics"] = host_diagnostics(session, config, second)
+    require(evidence["first_host_diagnostics"]["path"] != evidence["second_host_diagnostics"]["path"],
+            "native rebuild reused the old host diagnostics file")
     evidence["operator_frames_clean"] = True
     session.send(b"q")
     session.text("Discard draft changes and quit? (y/n)")
