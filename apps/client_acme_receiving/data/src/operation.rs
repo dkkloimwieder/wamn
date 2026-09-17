@@ -945,6 +945,7 @@ mod tests {
         }
     }
 
+    // The exclusion_diagnostics fixture regenerates this package with test-only exclusions.
     #[test]
     #[ignore = "requires: WAMN_EXCLUSION_DIAGNOSTICS"]
     fn generated_update_exclusion_from_postgres() {

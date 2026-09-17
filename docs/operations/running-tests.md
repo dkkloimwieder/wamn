@@ -134,11 +134,18 @@ To run the ignored tests of the selected packages, use `tools/test-changes --clu
 They run one at a time.
 To select tests by name, add `--name FILTER`, as [select the relevant tests](#select-the-relevant-tests) describes.
 
-For each receiving data package, select `operation::tests::generated_update_exclusion_from_postgres` with `-- --exact --ignored`.
-Use `--manifest-path apps/Cargo.toml` and set `WAMN_EXCLUSION_DIAGNOSTICS` to the PostgreSQL diagnostics JSON file.
-The package names are `wamn-receiving-data-access` and `wamn-client-acme-receiving-data-access`.
-These tests read that file and refuse missing input.
-They do not start PostgreSQL.
+Run the two generated exclusion tests through their PostgreSQL fixture:
+
+```bash
+cargo run --locked --offline -p wamn-test-infrastructure --example exclusion_diagnostics
+```
+
+The fixture starts disposable PostgreSQL, applies application migrations, and adds test-only exclusion constraints.
+It captures actual update failures under a non-superuser role.
+It regenerates application code in a temporary copy and runs both existing data-package tests.
+`WAMN_EXCLUSION_DIAGNOSTICS` supplies the server diagnostics to those tests.
+The fixture removes its database, generated copy, diagnostics, and build output when it finishes.
+The application schemas and generated files in the checkout do not change.
 
 ## Capture a run
 
