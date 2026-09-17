@@ -718,7 +718,16 @@ impl Fixture {
 }
 
 async fn run_case(case: Case) {
-    let fixture = Fixture::new(case).await;
+    let database = (!matches!(case, Case::Cancellation)).then(wamn_test_postgres::database);
+    let fixture = if let Some(database) = &database {
+        let postgres = authenticated::platform_postgres(database.url())
+            .await
+            .expect("scoped database with provisioned platform principals");
+        let child = matches!(case, Case::NestedRefusal).then_some((Case::Success, false));
+        Fixture::build_with_reuse(case, child, false, None, false, Some(postgres)).await
+    } else {
+        Fixture::new(case).await
+    };
     let target = fixture.target().await;
     assert!(
         fixture.events.lock().expect("observations lock").is_empty(),

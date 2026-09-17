@@ -50,7 +50,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, FlowHttpRouting)> {
+async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     let admin = connect(admin_url).await?;
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
@@ -180,6 +180,23 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(projects, None),
     )));
+    Ok(postgres)
+}
+
+pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
+    tenant_postgres(admin_url).await?;
+    let admin = connect(admin_url).await?;
+    let principals =
+        wamn_control_provision::platform_principals_sql(TENANT, "platform.example.invalid")?;
+    admin
+        .batch_execute(&format!("BEGIN; {principals} COMMIT;"))
+        .await?;
+    let (postgres, _) = warm_postgres(admin_url, &[]).await?;
+    Ok(postgres)
+}
+
+async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, FlowHttpRouting)> {
+    let postgres = tenant_postgres(admin_url).await?;
     let server = Server::start().await;
     let (keys, _) = server.cache();
     let verifier = SessionVerifier::new(keys, ORG, AUDIENCE)?;
