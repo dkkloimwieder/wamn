@@ -1860,6 +1860,28 @@ fn statement(package: &wamn_schema_generator::GeneratedPackage, path: &str) -> S
         .to_owned()
 }
 
+#[test]
+fn generated_delete_result_declares_only_the_successful_sql_outcome() {
+    for (mode, catalog) in [("hard", catalog(false)), ("tombstone", tombstone_catalog())] {
+        let package = run(&catalog, &deleting_manifest(mode), &QUERY_SOURCES).unwrap();
+        let result = artifact_json(
+            &package,
+            "generated/contracts/purchase_order/delete.result.json",
+        );
+        let outcome = result["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == "outcome")
+            .expect("delete outcome field");
+        assert_eq!(outcome["values"], json!(["deleted"]));
+        let sql = statement(&package, "generated/sql/purchase_order/delete.sql");
+        assert!(sql.contains("ELSE 'deleted'"), "{mode}: {sql}");
+        assert!(sql.contains("THEN 'not_found'"), "{mode}: {sql}");
+        assert!(sql.contains("THEN 'concurrency_conflict'"), "{mode}: {sql}");
+    }
+}
+
 /// Owner rulings 1 and 3: the declared mode decides the statement, and only a
 /// hard delete can meet an inbound key.
 #[test]
@@ -1872,6 +1894,7 @@ fn a_hard_delete_removes_the_row_and_a_tombstone_marks_it() {
         "{removal}"
     );
     assert!(!removal.contains("deleted_at"), "{removal}");
+    assert!(removal.contains("ELSE 'deleted'"), "{removal}");
     assert!(
         !statement(&hard, "generated/sql/purchase_order/get.sql").contains("deleted_at"),
         "a hard delete adds no predicate to a read"

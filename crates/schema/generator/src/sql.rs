@@ -25,6 +25,12 @@ impl Claim<'_> {
     }
 }
 
+// SQL outcomes are shared with the generated result contracts.
+pub(crate) const OUTCOME_NOT_FOUND: &str = "not_found";
+pub(crate) const OUTCOME_CONCURRENCY_CONFLICT: &str = "concurrency_conflict";
+pub(crate) const OUTCOME_UPDATED: &str = "updated";
+pub(crate) const OUTCOME_DELETED: &str = "deleted";
+
 /// The tombstone marker column.
 ///
 /// It is set once by the tombstone delete and never cleared, so one predicate
@@ -176,7 +182,7 @@ pub(crate) fn update(table: &Table, operation: &OperationDeclaration, tombstoned
         .collect::<Vec<_>>()
         .join(",\n    ");
     format!(
-        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE {} AS model\n    SET\n{assignments}\n    FROM target\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING\n    {returning}\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision},\n    {returned}\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE {} AS model\n    SET\n{assignments}\n    FROM target\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING\n    {returning}\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n        ELSE '{OUTCOME_UPDATED}'\n    END AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision},\n    {returned}\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
         table.name(),
         table.name()
     )
@@ -209,7 +215,7 @@ pub(crate) fn delete(table: &Table, operation: &OperationDeclaration, mode: Dele
         ),
     };
     format!(
-        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\ndeleted AS (\n{removal}\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN 'concurrency_conflict'\n    ELSE 'deleted'\nEND AS outcome;\n",
+        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\ndeleted AS (\n{removal}\n    WHERE model.id = target.id\n      AND target.{revision} = $2::int8\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n    ELSE '{OUTCOME_DELETED}'\nEND AS outcome;\n",
         table.name()
     )
 }

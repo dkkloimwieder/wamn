@@ -1063,7 +1063,7 @@ fn emit_operation_contracts(
     insert_json(
         files,
         &format!("{root}.result.json"),
-        &crud_result_contract(model, operation.result, &columns),
+        &crud_result_contract(model, action, operation.result, &columns),
     )?;
     insert_json(
         files,
@@ -1095,11 +1095,11 @@ fn emit_operation_contracts(
 /// nothing else — so a closed value domain the model declares never reaches a
 /// client, and a control renders a free-text box where a choice belongs.
 ///
-/// `enum_fields` is the ONLY declared domain source, so a result member that is
-/// not a model field — a mutation's `outcome`, its `observed_<revision>` —
-/// carries no domain rather than an invented one.
+/// Model fields use their declared domains. A successful delete exposes only
+/// the SQL-owned deleted outcome; other outcomes become typed refusals.
 fn crud_result_contract(
     model: &ModelDeclaration,
+    action: CrudAction,
     class: ResultClass,
     columns: &[StatementValueContract],
 ) -> CustomOperationResultDeclaration {
@@ -1111,11 +1111,15 @@ fn crud_result_contract(
                 path: column.name.clone(),
                 ty: column.ty,
                 nullable: column.nullable,
-                values: model
-                    .enum_fields
-                    .get(&column.name)
-                    .cloned()
-                    .unwrap_or_default(),
+                values: if action == CrudAction::Delete && column.name == "outcome" {
+                    vec![sql::OUTCOME_DELETED.to_owned()]
+                } else {
+                    model
+                        .enum_fields
+                        .get(&column.name)
+                        .cloned()
+                        .unwrap_or_default()
+                },
             })
             .collect(),
     }
