@@ -141,17 +141,15 @@ spec:
                 secretKeyRef:
                   name: wamn-executor-platform-db
                   key: url
-            # The one authority-snapshot read behind a component's TRUSTED HTTP
-            # EFFECT dials with THIS one (wamn-0h0g.22.11).
+            # Trusted HTTP effect authority and queued service permissions
+            # use this credential (wamn-0h0g.22.11, wamn-10yt.74).
             # `pool::credential_exactness_hook` asserts
             # `pg_has_role(current_user, 'wamn_http_admitter', MEMBER)` on every
             # physical connection it opens, so neither url above can serve here.
             #
-            # OPTIONAL, unlike the two above, and the asymmetry is deliberate:
-            # this class carries no path the process needs in order to run, so an
-            # executor without an admitter generation UNNAMES the class and still
-            # serves every route that raises no trusted HTTP effect. Removing
-            # this entry is therefore a supported deployment, and it is NOT the
+            # Automation requires this credential for its service identity.
+            # Queue work without service authentication or trusted HTTP effects
+            # can omit it. Removing this entry is NOT the
             # same as pointing it at the guest url — that would put a login of
             # another authority back in the map.
             - name: WAMN_HTTP_ADMITTER_PG_URL

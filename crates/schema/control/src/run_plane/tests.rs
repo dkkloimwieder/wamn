@@ -189,6 +189,8 @@ fn observation_at_record() -> RunPlaneObservation {
         "effect_attempt_dispatches_occurrence_key".to_string(),
         EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF.to_string(),
     );
+    obs.defaulted_columns
+        .insert(("runs".to_string(), "run_id".to_string()));
     obs.defaulted_columns.insert((
         "effect_attempts".to_string(),
         "attempt_started_at".to_string(),
@@ -235,6 +237,7 @@ fn observation_at_record() -> RunPlaneObservation {
         ("wiring_version", "integer"),
         ("wiring_hash", "text"),
         ("binding_world_json", "jsonb"),
+        ("service_principal_id", "uuid"),
     ] {
         obs.column_types
             .insert(("runs".to_string(), column.to_string()), ty.to_string());

@@ -84,6 +84,8 @@ enum Command {
     ReconcileRunPlane(release_verbs::ReconcileRunPlaneArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
+    /// Queue one released wiring under a service principal.
+    EnqueueRun(release_verbs::EnqueueRunArgs),
 }
 
 #[tokio::main]
@@ -131,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
+        Command::EnqueueRun(args) => release_verbs::enqueue(args).await,
     }
 }
 

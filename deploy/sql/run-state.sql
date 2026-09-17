@@ -207,7 +207,8 @@ BEGIN
        OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
        OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
-       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN
+       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json
+       OR NEW.service_principal_id IS DISTINCT FROM OLD.service_principal_id THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -308,7 +309,7 @@ GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.runs (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
-    run_id          text NOT NULL,
+    run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
     -- Nullable legacy execution grain. New admissions leave both NULL and
     -- carry the complete component-era wiring grain below; no migration
     -- fabricates component provenance for historical flow rows.
@@ -329,6 +330,8 @@ CREATE TABLE wamn_run.runs (
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
                           'infrastructure-failure', 'effect-uncertain')),
     trigger_source  text,
+    -- The service identity of an operator-admitted automation run.
+    service_principal_id uuid,
     capture_mode    text NOT NULL DEFAULT 'off'
         CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
     -- The DURABILITY CLASS the run was admitted under (wamn-0h0g.20.1). The
@@ -449,6 +452,17 @@ CREATE TABLE wamn_run.runs (
        AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
        AND binding_world_json IS NOT NULL
        AND jsonb_typeof(binding_world_json) = 'array')
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND trigger_source IS NOT DISTINCT FROM 'automation'
+       AND service_principal_id IS NOT NULL
+       AND wiring_id IS NOT NULL AND wiring_id <> ''
+       AND wiring_version IS NOT NULL AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND binding_world_json IS NULL)
+    ),
+    CONSTRAINT runs_service_principal_check CHECK (
+      (trigger_source IS NOT DISTINCT FROM 'automation') = (service_principal_id IS NOT NULL)
     ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
@@ -492,7 +506,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment,
                  capture_mode, durability_class, wiring_id, wiring_version,
-                 wiring_hash, binding_world_json, manifest_digest
+                 wiring_hash, binding_world_json, manifest_digest, service_principal_id
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only

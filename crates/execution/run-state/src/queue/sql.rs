@@ -74,7 +74,8 @@ pub fn select_production_claim_sql() -> String {
                 COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
                     AS durable_caller_attached, \
                 r.flow_id, r.flow_version, r.effective_release_id, \
-                r.wiring_hash, r.binding_world_json::text, r.package_id \
+                r.wiring_hash, r.binding_world_json::text, r.package_id, \
+                r.service_principal_id::text \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",

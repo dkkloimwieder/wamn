@@ -847,6 +847,7 @@ $retire_run_projection_authority$;",
                             | "wiring_version"
                             | "wiring_hash"
                             | "binding_world_json"
+                            | "service_principal_id"
                     )
                 {
                     continue;

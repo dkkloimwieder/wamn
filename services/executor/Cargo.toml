@@ -26,6 +26,15 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sig
 tracing = { workspace = true }
 
 [dev-dependencies]
+wamn-catalog = { workspace = true }
+wamn-control = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-schema-control = { workspace = true }
+wamn-test-postgres = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
+tokio-postgres = { workspace = true }
+url = { workspace = true }
+wat = "=1.252.0"
 opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 tracing-opentelemetry = { workspace = true }

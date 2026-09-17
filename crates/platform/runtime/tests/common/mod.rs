@@ -99,7 +99,7 @@ pub fn run_state_stand_in_ddl() -> String {
              CHECK (durability_class IN ('standard', 'durable')), \
            wiring_id text, wiring_version int, \
            wiring_hash text, binding_world_json jsonb, \
-           manifest_digest text, \
+           manifest_digest text, service_principal_id uuid, \
            input_json jsonb NOT NULL DEFAULT '{{}}', result_json jsonb, state_json jsonb, \
            invocation_context jsonb NOT NULL DEFAULT '{{}}', \
            admission_context_version text, platform_revision text, idempotency_key text, \

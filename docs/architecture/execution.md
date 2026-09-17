@@ -67,7 +67,8 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 - An authenticated route caller binds its principal id.
 - A nested call binds the executing principal of its parent.
 - A post-commit registration delivery binds `wamn:materializer`.
-- An executor queue delivery and a management candidate case bind `wamn:executor`.
+- An automation delivery binds its admitted service principal.
+- A legacy queue delivery or management candidate case binds `wamn:executor`.
 
 The same transaction binds the executing operation as `app.operation`.
 A node binds the operation token that it runs, so a nested call binds its own token.
@@ -245,7 +246,10 @@ The HTTP-stop allowance bounds coordination and does not guarantee native comple
 
 Executor shutdown bounds its current queue turn and auxiliary cleanup.
 A turn beyond the budget retains the existing durable lease for recovery.
-Production automation admission remains absent under `wamn-10yt.74`.
+The [enqueue-run command](../operations/queued-automation.md) admits production automation under an active service principal.
+The executor reads that principal and its current application permissions before each delivery.
+The normal operation checks also apply to nested calls.
+Queued automation cannot satisfy an operation that requires a fresh PAT.
 The dependent active-work shutdown case remains under `wamn-10yt.75`.
 Idle shutdown does not establish either behavior.
 

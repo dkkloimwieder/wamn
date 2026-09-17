@@ -119,11 +119,9 @@ pub struct ExecutorArgs {
     /// OPTIONAL, unlike [`Self::executor_platform_database_url`], and the
     /// asymmetry is deliberate. The executor-platform credential carries the
     /// queue claim, so a process without one cannot do its work at all and
-    /// refuses at startup. `AuthorityClass::CallableHttp` carries ONE read —
-    /// `WamnPostgres::connection_effect_snapshot`, the authority snapshot behind
-    /// a component's trusted HTTP effect — so an executor without one still
-    /// serves every route that raises no such effect. It therefore UNNAMES the
-    /// class and starts, exactly as `wamn-host` does for both.
+    /// refuses at startup. `AuthorityClass::CallableHttp` reads trusted HTTP
+    /// effect authority and queued service permissions. Automation requires
+    /// this credential. Other queue work without either read can omit it.
     ///
     /// Absent is NOT the guest url. `pool::credential_exactness_hook` asserts
     /// `pg_has_role(current_user, 'wamn_http_admitter', MEMBER)` on every
@@ -663,12 +661,21 @@ async fn drain_one(
             router_caller_attached,
             durable_caller_attached,
             candidate,
+            service_principal_id,
         } => {
             let wiring_version = u32::try_from(wiring_version)
                 .context("claimed wiring version is not a positive u32")?;
             let queue_span =
                 queue_delivery_span(scope, &package_id, &run_id, &wiring_id, wiring_version);
             let result_only = candidate.is_some();
+            let caller = match service_principal_id {
+                Some(principal) => Some(
+                    postgres
+                        .queued_service_caller(&scope.project, &scope.tenant_id, &principal)
+                        .await?,
+                ),
+                None => None,
+            };
             let request = match candidate {
                 Some(candidate) => QueueDriverRequest::Candidate(CandidateCaseRequest {
                     target: CandidateWiringTarget {
@@ -696,7 +703,7 @@ async fn drain_one(
                     delivery_id: run_id.clone(),
                     payload,
                     caller_attached: router_caller_attached,
-                    caller: None,
+                    caller,
                     traceparent: None,
                     tracestate: None,
                 }),
@@ -1343,3 +1350,6 @@ mod tests {
         assert_eq!(attribute("wamn.wiring_version").as_deref(), Some("7"));
     }
 }
+
+#[cfg(test)]
+mod automation_live;

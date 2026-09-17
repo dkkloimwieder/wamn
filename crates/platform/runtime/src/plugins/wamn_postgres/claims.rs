@@ -1784,6 +1784,27 @@ impl WamnPostgres {
             .collect()
     }
 
+    /// Refresh the identity and permissions of an operator-admitted queued service.
+    pub async fn queued_service_caller(
+        &self,
+        project: &str,
+        tenant: &str,
+        principal_id: &str,
+    ) -> anyhow::Result<crate::plugins::flow_http_routing::AuthenticatedCaller> {
+        anyhow::ensure!(valid_project(project), "invalid queued-service project");
+        anyhow::ensure!(valid_tenant(tenant), "invalid queued-service tenant");
+        let (connection, _policy) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        crate::plugins::flow_http_routing::queued_service_caller(
+            &**connection,
+            tenant,
+            principal_id,
+        )
+        .await
+    }
+
     pub(super) fn require_tenant(&self, component_id: &str) -> Result<String, PgError> {
         self.tenant_for(component_id).ok_or_else(|| {
             tracing::warn!(

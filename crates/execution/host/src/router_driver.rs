@@ -195,7 +195,7 @@ pub(crate) fn authorize_registered_operation(
     let caller = caller
         .filter(|caller| caller.permits(operation))
         .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
-    if fresh_only && caller.credential_kind() == CredentialKind::Session {
+    if fresh_only && caller.credential_kind() != CredentialKind::Pat {
         return Err(OperationRefusal::new(
             OperationRefusalKind::FreshCredentialRequired,
             operation,
@@ -414,6 +414,7 @@ fn component_invocation_span(
             match caller.credential_kind() {
                 CredentialKind::Pat => "pat",
                 CredentialKind::Session => "session",
+                CredentialKind::QueuedService => "queued-service",
             },
         );
     }

@@ -97,6 +97,7 @@ pub enum ProductionClaimResult {
         router_caller_attached: bool,
         durable_caller_attached: bool,
         candidate: Option<ProductionCandidate>,
+        service_principal_id: Option<String>,
     },
     /// Claim-time classification removed the row without execution.
     Terminalized {
@@ -458,6 +459,7 @@ struct SelectedClaim {
     router_caller_attached: bool,
     durable_caller_attached: bool,
     candidate: Option<ProductionCandidate>,
+    service_principal_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1268,6 +1270,7 @@ async fn claim_in_transaction(
         router_caller_attached: selected.router_caller_attached,
         durable_caller_attached: selected.durable_caller_attached,
         candidate: selected.candidate,
+        service_principal_id: selected.service_principal_id,
     }))
 }
 
@@ -1546,7 +1549,11 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         )
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
+    let service_principal_id: Option<String> = row_value(row, 15, "service principal")?;
     let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
+        (None, None, Some(hash), None) if service_principal_id.is_some() && !hash.is_empty() => {
+            None
+        }
         (Some(flow_id), Some(flow_version), None, None)
             if !flow_id.is_empty() && flow_version > 0 =>
         {
@@ -1605,6 +1612,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         router_caller_attached,
         durable_caller_attached,
         candidate,
+        service_principal_id,
     })
 }
 

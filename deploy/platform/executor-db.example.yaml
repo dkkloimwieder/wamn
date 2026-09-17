@@ -23,9 +23,8 @@
 #     the stable `wamn_app` role is a passwordless NOLOGIN grant carrier.
 #   * `wamn-executor-platform-db` is the EXECUTOR-PLATFORM credential. The queue
 #     claim, lease renewal, reap, caller release and plan supply run as it.
-#   * `wamn-http-admitter-db` is the CALLABLE-HTTP credential. Exactly one read
-#     runs as it: the authority snapshot behind a component's trusted HTTP
-#     effect (`WamnPostgres::connection_effect_snapshot`).
+#   * `wamn-http-admitter-db` is the CALLABLE-HTTP credential. It reads trusted
+#     HTTP effect authority and the current identity and permissions of queued services.
 #
 # THEY ARE NOT INTERCHANGEABLE, AND POINTING ONE AT ANOTHER DOES NOT DEGRADE
 # GRACEFULLY. `pool::credential_exactness_hook` asserts
@@ -38,10 +37,10 @@
 # keys below.
 #
 # THE ADMITTER SECRET IS OPTIONAL, THE OTHER TWO ARE NOT. `wamn-executor` refuses
-# at startup without the first two; its callable-HTTP class carries no path the
-# process needs in order to run, so an executor without an admitter generation
-# UNNAMES the class and still serves every route that raises no trusted HTTP
-# effect. Dropping the third Secret and the `WAMN_HTTP_ADMITTER_PG_URL` mount
+# at startup without the first two. Automation requires the third credential
+# to read its service identity and permissions. Queue work without service
+# authentication or trusted HTTP effects can omit it.
+# Dropping the third Secret and the `WAMN_HTTP_ADMITTER_PG_URL` mount
 # TOGETHER is a supported deployment. Pointing that mount at either url above is
 # not: it would put a login of another authority back in the class map.
 #
@@ -158,9 +157,9 @@ stringData:
   # NOSUPERUSER, NOBYPASSRLS, INHERIT, exactly one membership
   # (`wamn_http_admitter`) and exactly one database CONNECT. Its whole reach is
   # `sql::grant_http_admitter_surface_sql`: `USAGE` on `catalog` plus table-grain
-  # SELECT on six `catalog` relations, and NOTHING else — no write of any grain
+  # SELECT on catalog relations and app_system identity and permission tables; no write
   # anywhere, no `wamn_run` privilege at all (that schema is a REVOKE scope for
   # this family and never a grant scope), and no function EXECUTE, because its
-  # one statement calls only built-ins. It cannot admit, claim, lease or
+  # statements call only built-ins. It cannot admit, claim, lease or
   # terminalize a run.
   url: "postgres://wamn_http_admitter_9ede7beb534d36b094f06e32adfc82d550e24ea1_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"

@@ -1040,6 +1040,7 @@ pub(super) fn run_wiring_identity_contract_complete(obs: &RunPlaneObservation) -
         ("wiring_version", "integer"),
         ("wiring_hash", "text"),
         ("binding_world_json", "jsonb"),
+        ("service_principal_id", "uuid"),
     ]
     .into_iter()
     .all(|(column, expected_type)| {
@@ -1056,6 +1057,7 @@ pub(super) fn run_wiring_identity_contract_complete(obs: &RunPlaneObservation) -
     // what removes it: a database that still carries the column has not reached
     // the contract, so the reconcile must still plan the cutover for it.
     && !columns.contains("gate_report_id")
+        && obs.defaulted_columns.contains(&("runs".to_string(), "run_id".to_string()))
         && obs
         .checks
         .get(&("runs".to_string(), "runs_wiring_identity_check".to_string()))
@@ -1081,8 +1083,10 @@ ALTER TABLE {target}.runs
     ADD COLUMN IF NOT EXISTS wiring_id text,
     ADD COLUMN IF NOT EXISTS wiring_version integer,
     ADD COLUMN IF NOT EXISTS wiring_hash text,
-    ADD COLUMN IF NOT EXISTS binding_world_json jsonb;
+    ADD COLUMN IF NOT EXISTS binding_world_json jsonb,
+    ADD COLUMN IF NOT EXISTS service_principal_id uuid;
 ALTER TABLE {target}.runs
+    ALTER COLUMN run_id SET DEFAULT gen_random_uuid()::text,
     ALTER COLUMN flow_id TYPE text USING flow_id::text,
     ALTER COLUMN flow_version TYPE integer USING flow_version::integer,
     ALTER COLUMN wiring_id TYPE text USING wiring_id::text,
@@ -1115,6 +1119,14 @@ ALTER TABLE {target}.runs
        AND wiring_hash ~ '^sha256:[0-9a-f]{{64}}$'
        AND binding_world_json IS NOT NULL
        AND jsonb_typeof(binding_world_json) = 'array')
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND trigger_source IS NOT DISTINCT FROM 'automation'
+       AND service_principal_id IS NOT NULL
+       AND wiring_id IS NOT NULL AND wiring_id <> ''
+       AND wiring_version IS NOT NULL AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{{64}}$'
+       AND binding_world_json IS NULL)
     );
 -- The retired second identifier is DROPPED LAST, in its own statement
 -- (wamn-0h0g.8.5.6). Both CHECKs above named it, so a `DROP COLUMN` beside them

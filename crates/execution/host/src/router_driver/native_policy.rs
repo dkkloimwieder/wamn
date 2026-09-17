@@ -423,6 +423,7 @@ impl NativePolicy {
                 match caller.credential_kind() {
                     CredentialKind::Pat => "pat",
                     CredentialKind::Session => "session",
+                    CredentialKind::QueuedService => "queued-service",
                 },
             );
         }

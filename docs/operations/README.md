@@ -9,3 +9,4 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [deployment.md](deployment.md): provisioning, release carriers, and deployed environments.
 - [backup-and-recovery.md](backup-and-recovery.md): cluster backup, point-in-time recovery, and one-table recovery.
 - [delivery.md](delivery.md): repository change checks, qualification, publication, selection, and deployment.
+- [queued-automation.md](queued-automation.md): admit released work under a service principal.

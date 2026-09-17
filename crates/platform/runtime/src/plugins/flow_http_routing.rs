@@ -392,6 +392,8 @@ pub enum CredentialKind {
     Pat,
     /// Signed identity and roles within the approved session lifetime.
     Session,
+    /// A service identity pinned by trusted queue admission.
+    QueuedService,
 }
 
 impl std::fmt::Debug for AuthenticatedCaller {
@@ -426,6 +428,45 @@ impl AuthenticatedCaller {
     pub fn permits(&self, operation: &str) -> bool {
         self.permissions.contains(operation)
     }
+}
+
+/// Resolve an admitted service against its current tenant status and role grants.
+pub async fn queued_service_caller(
+    client: &(impl tokio_postgres::GenericClient + Sync),
+    tenant: &str,
+    principal_id: &str,
+) -> anyhow::Result<AuthenticatedCaller> {
+    let rows = client
+        .query(
+            "SELECT users.id::text, permissions.permission \
+             FROM app_system.users AS users \
+             LEFT JOIN app_system.user_roles AS user_roles \
+               ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
+             LEFT JOIN app_system.permissions AS permissions \
+               ON permissions.tenant_id = user_roles.tenant_id \
+              AND permissions.role_name = user_roles.role_name \
+             WHERE users.tenant_id = $1 AND users.id = $2::text::uuid \
+               AND users.type = 'service' AND users.status = 'active'",
+            &[&tenant, &principal_id],
+        )
+        .await?;
+    let principal = rows
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("queued service principal is absent or inactive"))?
+        .try_get::<_, String>(0)?;
+    let permissions = rows
+        .iter()
+        .map(|row| row.try_get::<_, Option<String>>(1))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+    Ok(AuthenticatedCaller {
+        attachment_id: "automation".into(),
+        principal_id: principal.into(),
+        credential_kind: CredentialKind::QueuedService,
+        permissions: Arc::new(permissions),
+    })
 }
 
 /// Trusted dependencies and scope for PAT-backed route authentication.
