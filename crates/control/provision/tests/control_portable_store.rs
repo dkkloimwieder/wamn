@@ -538,6 +538,51 @@ $second$;
 }
 
 #[test]
+fn gate_reports_refuse_update_and_delete() {
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
+    reset_and_apply(&url, "");
+    psql_ok(
+        &url,
+        "gate report immutability",
+        r#"
+SET ROLE wamn_system;
+SET app.tenant = 'tenant-a';
+INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary)
+VALUES ('tenant-a', 'sha256:' || repeat('a', 64), true, '{"cases": 1}');
+DO $immutable$
+DECLARE
+  original wamn_run.gate_reports%ROWTYPE;
+BEGIN
+  ASSERT current_user = 'wamn_system';
+  SELECT * INTO STRICT original FROM wamn_run.gate_reports
+   WHERE tenant_id = 'tenant-a' AND wiring_hash = 'sha256:' || repeat('a', 64);
+  BEGIN
+    UPDATE wamn_run.gate_reports SET passed = false, summary = '{"cases": 0}'
+     WHERE tenant_id = original.tenant_id AND wiring_hash = original.wiring_hash;
+    ASSERT false, 'a gate report allowed UPDATE';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    ASSERT SQLERRM = 'wamn_run.gate_reports is immutable';
+  END;
+  BEGIN
+    DELETE FROM wamn_run.gate_reports
+     WHERE tenant_id = original.tenant_id AND wiring_hash = original.wiring_hash;
+    ASSERT false, 'a gate report allowed DELETE';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    ASSERT SQLERRM = 'wamn_run.gate_reports is immutable';
+  END;
+  ASSERT EXISTS (
+    SELECT FROM wamn_run.gate_reports AS report WHERE report = original
+  ), 'the gate report changed after refused writes';
+END
+$immutable$;
+RESET ROLE;
+"#,
+    );
+}
+
+#[test]
 fn deployment_attestation_rust_binding_holds_on_postgres() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
