@@ -22,6 +22,7 @@
 //! folder/dashboard identities are asserted independently through Grafana's
 //! public API. The repository-local test remains available; its in-cluster Job
 //! is archived for MVP.
+//! A successful run with skipped checks reports PARTIAL, not a complete pass.
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -74,6 +75,7 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
     );
 
     let mut pass = true;
+    let mut skipped = 0;
 
     // === (1) /api/health -> database: ok (unauth) =========================
     let (h_status, h_body) = http_json(base, "/api/health", None)
@@ -135,6 +137,7 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
         } else if healthy {
             println!("## (2b) datasource {label} health OK -> PASS");
         } else {
+            skipped += 1;
             println!("## (2b) datasource {label} health -> SKIP (--local; backend not stood up)");
         }
     }
@@ -186,6 +189,7 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
         } else {
             "no --expect-tenant / --system-database-url given"
         };
+        skipped += 1;
         println!("## (4) per-tenant folders -> SKIP ({why})");
     } else {
         let folder_titles: std::collections::HashSet<&str> = folders
@@ -208,9 +212,13 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
         }
     }
 
-    println!("\ndashboard-test complete — overall PASS: {pass}");
     if !pass {
-        bail!("dashboard-test gate failed");
+        bail!("dashboard-test gate failed ({skipped} checks skipped)");
+    }
+    if skipped > 0 {
+        println!("\ndashboard-test PARTIAL: {skipped} checks skipped");
+    } else {
+        println!("\ndashboard-test PASS: all checks executed");
     }
     Ok(())
 }

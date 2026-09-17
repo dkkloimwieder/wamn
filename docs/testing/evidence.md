@@ -34,4 +34,7 @@ Keep credentials and private production data out of fixtures and shared output.
 
 A result applies to the source and artifacts that the test actually exercised.
 A partial result cannot complete the required boundary.
+`wamn-gates dashboard-test` reports `PARTIAL` when it skips tenant assertions or unavailable Tempo/Loki health checks under `--local`.
+That partial result exits successfully only when every executed check passes.
+It does not establish a complete dashboard result.
 Result reporting does not change the pilot's separate grading rubric or the repository's integration policy.
