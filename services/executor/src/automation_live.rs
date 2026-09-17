@@ -22,6 +22,9 @@ use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
 use wamn_schema_control::BareSchemaName;
 
+#[path = "automation_live/shutdown.rs"]
+mod shutdown;
+
 const TENANT: &str = "automation-live";
 const SERVICE: &str = "00000000-0000-4000-8000-000000000074";
 const OPERATION: &str = "automation:echo/run@1.0.0";
@@ -88,6 +91,10 @@ fn component_bytes() -> Vec<u8> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn automation_admission_delivers_with_current_service_permissions() -> anyhow::Result<()> {
+    run_automation(None).await
+}
+
+async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let (mut admin, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
@@ -120,7 +127,11 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
       INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment,verified_publisher_principal) VALUES ('{TENANT}',1,'test','automation-fixture');
       INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ('{TENANT}',1,'automation','1.0.0');")).await?;
     let engine = Arc::new(build_engine(&[])?);
-    let bytes = component_bytes();
+    let bytes = if shutdown_signal.is_some() {
+        shutdown::component_bytes()
+    } else {
+        component_bytes()
+    };
     let declaration: ComponentDeclaration = serde_json::from_value(json!({
         "scope": {"tenant-id":TENANT,"package-id":"automation","package-version":"1.0.0"},
         "component":"echo","interface-version":"0.1.0",
@@ -244,12 +255,16 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
         local_component_path(scratch.path(), &admitted.component_digest)?,
         bytes,
     )?;
+    let (logging, capture) = WamnLogging::new_with_capture(
+        &wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default(),
+    )?;
+    let logging = Arc::new(logging);
     let driver = RouterDriver::new(
-        engine,
+        Arc::clone(&engine),
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new()?),
         Arc::new(WamnCredentials::empty()),
-        Arc::new(WamnLogging::from_env()?),
+        Arc::clone(&logging),
         Arc::from([]),
         release,
         ComponentArtifactSource::local(scratch.path().to_owned()),
@@ -280,6 +295,24 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
         idempotency_key: "first".to_owned(),
         input: json!({"queued":true}),
     };
+    if let Some(signal) = shutdown_signal {
+        return shutdown::run(
+            signal,
+            &mut admin,
+            &schema,
+            &request,
+            shutdown::Execution {
+                driver: &driver,
+                postgres: &postgres,
+                engine: &engine,
+                logging: &logging,
+                capture: &capture,
+                scope: &scope,
+                jetstream: &jetstream,
+            },
+        )
+        .await;
+    }
     let run = enqueue(&mut admin, &schema, &request).await?;
     assert_eq!(enqueue(&mut admin, &schema, &request).await?, run);
     request.input = json!({"different":true});

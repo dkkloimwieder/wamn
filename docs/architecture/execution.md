@@ -292,8 +292,10 @@ The [enqueue-run command](../operations/queued-automation.md) admits production 
 The executor reads that principal and its current application permissions before each delivery.
 The normal operation checks also apply to nested calls.
 Queued automation cannot satisfy an operation that requires a fresh PAT.
-The dependent active-work shutdown case remains under `wamn-10yt.75`.
-Idle shutdown does not establish either behavior.
+SIGTERM and SIGINT use the same five-second native drain budget during active guest work.
+An aborted call loses its invocation authority, and native teardown releases its store.
+After the lease expires, recovery takes a new lease generation. The old generation cannot complete the run.
+The [executor shutdown tests](../operations/running-tests.md#executor-shutdown) exercise this path with production-admitted work.
 
 OpenTelemetry records invocation and effect spans, request timing, and delivery outcomes.
 Operational logs use INFO, and detailed request traces go to Tempo.

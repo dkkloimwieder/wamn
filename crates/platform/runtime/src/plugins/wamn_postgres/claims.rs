@@ -1166,6 +1166,17 @@ impl WamnPostgres {
             .and_then(|invocations| invocations.get(component_id).cloned())
     }
 
+    /// Inspect active invocation scopes for cross-crate lifecycle tests.
+    #[cfg(feature = "test-util")]
+    pub fn invocation_scopes_for_test(&self) -> Vec<String> {
+        self.invocations
+            .read()
+            .expect("invocation registry lock")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     /// Bind EVERY per-component-id claim registry this plugin keeps to one
     /// identity, for the length of one execution checkout (wamn-0h0g.17.7).
     ///

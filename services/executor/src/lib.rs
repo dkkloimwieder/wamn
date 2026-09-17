@@ -547,7 +547,6 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         readiness_probe,
         probe_state.clone(),
     ));
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let result = {
         let serving = serve_queue(stopping, &liveness, async || {
@@ -563,29 +562,15 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             ))
             .await
         });
-        tokio::pin!(serving);
-        let (result, queue_finished) = tokio::select! {
-            result = &mut serving => (result.and(Err(anyhow::anyhow!("executor queue loop stopped unexpectedly"))), true),
-            task = probe_tasks.join_next() => (Err(anyhow::anyhow!("executor probes stopped unexpectedly: {task:?}")), false),
-            error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => (Err(error), false),
-            signal = tokio::signal::ctrl_c() => (signal.context("receive SIGINT"), false),
-            _ = sigterm.recv() => (Ok(()), false),
-        };
-        probe_state.drain();
-        let _ = stop_queue.send(true);
-        let cleanup = if queue_finished {
-            Ok(())
-        } else {
-            wamn_runtime::lifecycle::bounded_cleanup(
-                wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
-                &mut serving,
-            )
-            .await
-        };
-        if let Err(error) = &cleanup {
-            tracing::error!(%error, "executor drain did not complete; queue lease remains fenced for recovery");
-        }
-        result.and(cleanup)
+        supervise_queue(
+            serving,
+            stop_queue,
+            &mut probe_tasks,
+            &probe_state,
+            &liveness,
+            silence_budget,
+        )
+        .await
         // Drop the serving future before revoking its queue scope. A delivery
         // that exceeds the drain keeps its existing durable lease/fence semantics.
     };
@@ -604,6 +589,41 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     );
     postgres.revoke_session_claims(QUEUE_CLAIM_SCOPE);
     result.and(probe_result)
+}
+
+// Both production and the process-signal tests use this shutdown boundary.
+async fn supervise_queue(
+    serving: impl std::future::Future<Output = anyhow::Result<()>>,
+    stop_queue: tokio::sync::watch::Sender<bool>,
+    probe_tasks: &mut tokio::task::JoinSet<anyhow::Result<()>>,
+    probe_state: &ProbeState,
+    liveness: &Liveness,
+    silence_budget: Duration,
+) -> anyhow::Result<()> {
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::pin!(serving);
+    let (result, queue_finished) = tokio::select! {
+        result = &mut serving => (result.and(Err(anyhow::anyhow!("executor queue loop stopped unexpectedly"))), true),
+        task = probe_tasks.join_next() => (Err(anyhow::anyhow!("executor probes stopped unexpectedly: {task:?}")), false),
+        error = wamn_runtime::lifecycle::watch_liveness(liveness, probe_state, silence_budget) => (Err(error), false),
+        signal = tokio::signal::ctrl_c() => (signal.context("receive SIGINT"), false),
+        _ = sigterm.recv() => (Ok(()), false),
+    };
+    probe_state.drain();
+    let _ = stop_queue.send(true);
+    let cleanup = if queue_finished {
+        Ok(())
+    } else {
+        wamn_runtime::lifecycle::bounded_cleanup(
+            wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
+            &mut serving,
+        )
+        .await
+    };
+    if let Err(error) = &cleanup {
+        tracing::error!(%error, "executor drain did not complete; queue lease remains fenced for recovery");
+    }
+    result.and(cleanup)
 }
 
 async fn serve_queue(

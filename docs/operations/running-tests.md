@@ -450,3 +450,17 @@ CDC also needs a built `wamn-cdc-reader` and an explicitly selected disposable N
 Stream tests also need an explicitly selected disposable NATS service.
 `streambench --mode all` refuses fewer than three replicas before it connects.
 Do not use the frozen cluster as a fixture.
+
+## Executor shutdown
+
+Run the process-signal tests with a disposable PostgreSQL 18 fixture:
+
+```bash
+cargo test --locked --offline -p wamn-executor --lib automation_live::shutdown:: -- --nocapture
+```
+
+The runner creates and removes its own database fixture through `wamn-test-postgres`.
+Each case submits work through the production admission function and observes a guest log before sending SIGTERM or SIGINT.
+The tests use the production queue, native router, scoped database credentials, and shared signal-and-drain function.
+They assert bounded abort, authority revocation, store release, lease recovery, and refusal of completion through the old lease generation.
+They do not start a deployed executor or test registry startup, Kubernetes termination, or the Receiving heartbeat failure.
