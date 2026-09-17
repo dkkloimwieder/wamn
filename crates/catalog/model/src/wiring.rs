@@ -288,6 +288,11 @@ impl WiringDocument {
     }
 
     fn validate(&self) -> Result<(), CatalogIdentityError> {
+        if contains_secret_value(&self.as_value()) {
+            return invalid(
+                "wiring document contains a secret-shaped value; supply credentials through an environment-owned connection",
+            );
+        }
         if self.format_version != WIRING_DOCUMENT_FORMAT_VERSION {
             return invalid("wiring document format-version must be textual 0.1");
         }
@@ -365,6 +370,20 @@ impl WiringDocument {
             })?;
         }
         Ok(())
+    }
+}
+
+/// Inspect values, not reference names or object keys. These recognizable
+/// prefixes match the existing payload-redaction floor; arbitrary secrets
+/// cannot be identified by their spelling.
+fn contains_secret_value(value: &Value) -> bool {
+    match value {
+        Value::String(value) => ["Bearer ", "-----BEGIN", "AKIA"]
+            .iter()
+            .any(|prefix| value.starts_with(prefix)),
+        Value::Array(values) => values.iter().any(contains_secret_value),
+        Value::Object(values) => values.values().any(contains_secret_value),
+        _ => false,
     }
 }
 
@@ -481,6 +500,49 @@ mod tests {
         ];
         WiringDocument::new("orders-create", 1, "in", nodes, edges, cases)
             .expect("the generated crud shape is a valid wiring")
+    }
+
+    #[test]
+    fn secret_values_refuse_but_reference_names_remain_portable() {
+        let mut wiring = crud_wiring(vec![case("roundtrip")]);
+        wiring.nodes.get_mut("write").unwrap().params.insert(
+            "credential".to_owned(),
+            json!({"secret_ref": "receiving-api-token", "environment": "prod"}),
+        );
+        let portable = serde_json::to_value(&wiring).unwrap();
+        WiringDocument::parse(&portable).expect("names are not secret values");
+        for secret in [
+            "Bearer fixture-token",
+            "-----BEGIN RSA PRIVATE KEY-----",
+            "AKIAIOSFODNN7EXAMPLE",
+        ] {
+            for pointer in ["/nodes/write/params", "/cases/0/input"] {
+                let mut document = portable.clone();
+                *document.pointer_mut(pointer).unwrap() = json!({"nested": [secret]});
+                let error = WiringDocument::parse(&document).unwrap_err();
+                assert!(matches!(
+                    error,
+                    CatalogIdentityError::InvalidDefinition { .. }
+                ));
+                assert!(error.to_string().contains("secret-shaped value"));
+                assert!(!error.to_string().contains(secret));
+            }
+        }
+        wiring
+            .nodes
+            .get_mut("write")
+            .unwrap()
+            .params
+            .insert("header".to_owned(), json!("Bearer fixture-token"));
+        WiringDocument::new(
+            wiring.wiring_id,
+            wiring.version,
+            wiring.entry,
+            wiring.nodes,
+            wiring.edges,
+            wiring.cases,
+        )
+        .expect_err("construction also refuses secret values");
     }
 
     #[test]

@@ -47,6 +47,9 @@ Nested calls retain their original caller and require the destination's authorit
 
 The environment owns concrete endpoints, schemas, container names, prefixes, and credentials.
 Authors declare portable requirement aliases and supported connection types.
+Wiring validation refuses string values with the existing secret prefixes: `Bearer `, `-----BEGIN`, and `AKIA`.
+It inspects nested values, including case inputs, without copying rejected values into errors.
+Reference names remain valid. This pattern check cannot identify every arbitrary secret.
 The platform supplies the complete connection semantics.
 Publication and activation refuse absent or incompatible bindings before executing effects.
 
