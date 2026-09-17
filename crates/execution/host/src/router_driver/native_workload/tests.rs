@@ -69,9 +69,23 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
 }
 
 async fn load(components: Vec<NativeComponent>) -> anyhow::Result<NativeWorkload> {
+    load_with_reuse(
+        components,
+        crate::warm_reuse::WarmReuse::default(),
+        vec![WitInterface::from(OPERATION)],
+    )
+    .await
+}
+
+async fn load_with_reuse(
+    components: Vec<NativeComponent>,
+    warm_reuse: crate::warm_reuse::WarmReuse,
+    host_interfaces: Vec<WitInterface>,
+) -> anyhow::Result<NativeWorkload> {
     load_native_workload(
         Arc::new(wamn_runtime::build_engine(&[]).expect("production engine")),
         NativeWorkloadSpec {
+            warm_reuse,
             id: "native-import-admission-test".into(),
             namespace: "test".into(),
             name: "native-import-admission-test".into(),
@@ -79,7 +93,7 @@ async fn load(components: Vec<NativeComponent>) -> anyhow::Result<NativeWorkload
             local_resources: LocalResources::default(),
             // Host policy implements nested calls. Declaring an interface here
             // must not bypass the admitted provider uniqueness check.
-            host_interfaces: vec![WitInterface::from(OPERATION)],
+            host_interfaces,
         },
         &HashMap::default(),
         &PluginBindings::new(),
@@ -164,4 +178,118 @@ async fn native_loader_checks_repeated_bytes_before_cache_access() {
         .await
         .expect_err("altered repeat refuses");
     assert!(format!("{error:#}").contains("native-component-bytes-digest-mismatch"));
+}
+
+#[tokio::test]
+async fn native_mixed_workload_preserves_fresh_shared_store_units() {
+    use wash_runtime::engine::ctx::SharedCtx;
+    use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
+    use wash_runtime::wasmtime::component::{Accessor, Instance};
+
+    fn counter(name: &str, export: &str, import: Option<&str>) -> NativeComponent {
+        let mut input = component(name, export, import, 0);
+        let imported = import.map_or_else(String::new, |name| {
+            format!(r#"(import "{name}" (instance (export "run" (func (result u32)))))"#)
+        });
+        input.bytes = wat::parse_str(format!(
+            r#"(component
+            {imported}
+            (core module $code
+                (global $calls (mut i32) (i32.const 0))
+                (func (export "run") (result i32)
+                    global.get $calls i32.const 1 i32.add global.set $calls global.get $calls))
+            (core instance $code (instantiate $code))
+            (func $run (result u32) (canon lift (core func $code "run")))
+            (instance $exports (export "run" (func $run)))
+            (export "{export}" (instance $exports)))"#
+        ))
+        .expect("counter fixture");
+        input.fact.component_digest =
+            wamn_runtime::component_admission::component_digest(&input.bytes);
+        input
+    }
+
+    struct Count {
+        export: String,
+        reply: tokio::sync::oneshot::Sender<u32>,
+    }
+    impl GuestCall for Count {
+        fn describe(&self) -> &'static str {
+            "mixed workload counter"
+        }
+        fn deadline(&self) -> std::time::Duration {
+            std::time::Duration::from_secs(2)
+        }
+        fn call(
+            self: Box<Self>,
+            accessor: &Accessor<SharedCtx>,
+            instance: Instance,
+        ) -> GuestCallFuture<'_> {
+            Box::pin(async move {
+                let run = accessor.with(|mut access| {
+                    let interface = instance
+                        .get_export_index(&mut access, None, &self.export)
+                        .expect("counter interface");
+                    let index = instance
+                        .get_export_index(&mut access, Some(&interface), "run")
+                        .expect("counter export");
+                    instance.get_typed_func::<(), (u32,)>(&mut access, index)
+                })?;
+                let (count,) = run.call_concurrent(accessor, ()).await?;
+                self.reply.send(count).expect("counter receiver");
+                Ok(None)
+            })
+        }
+    }
+
+    let warm = counter("warm", HANDLER, None);
+    let fresh = counter("fresh", OPERATION, None);
+    let linked = counter("linked", PARENT, Some(OPERATION));
+    let reuse = crate::warm_reuse::WarmReuse::new(
+        &[
+            warm.fact.component_digest.clone(),
+            linked.fact.component_digest.clone(),
+        ],
+        1,
+        60,
+    )
+    .expect("deployment trust");
+    let workload = load_with_reuse(vec![warm, fresh, linked], reuse, Vec::new())
+        .await
+        .expect("mixed native workload");
+    for (id, fact) in &workload.facts_by_component_id {
+        let export = fact.operations.keys().next().expect("export");
+        let target = workload
+            .resolved
+            .dispatch_target(id, "mixed-workload-test")
+            .await
+            .expect("target");
+        let mut counts = Vec::new();
+        for _ in 0..2 {
+            let (reply, response) = tokio::sync::oneshot::channel();
+            target
+                .dispatch(Count {
+                    export: export.clone(),
+                    reply,
+                })
+                .await
+                .expect("counter dispatch");
+            counts.push(response.await.expect("counter result"));
+        }
+        assert_eq!(
+            counts,
+            if fact.component == "warm" {
+                vec![1, 2]
+            } else {
+                vec![1, 1]
+            },
+            "{} native lifetime",
+            fact.component
+        );
+    }
+    workload
+        .resolved
+        .unbind_all_plugins()
+        .await
+        .expect("close mixed pools");
 }

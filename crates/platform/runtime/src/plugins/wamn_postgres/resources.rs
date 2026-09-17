@@ -1321,6 +1321,31 @@ async fn finish_statement_txn(
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Open the real transaction resource for cross-crate teardown tests.
+/// This test-only entry bypasses guest WIT lowering, not transaction ownership.
+#[cfg(feature = "test-util")]
+pub async fn retained_transaction_for_test(
+    plugin: &WamnPostgres,
+    scope: &str,
+    project: &str,
+    sql: &str,
+) -> anyhow::Result<(PgTransaction, i32)> {
+    let transaction = begin_transaction(plugin, scope, project)
+        .await
+        .map_err(|error| anyhow::anyhow!("open test transaction: {error}"))?;
+    let connection = take_conn(&transaction.state)
+        .map_err(|error| anyhow::anyhow!("take test transaction: {error}"))?;
+    let connection = StatementConnectionGuard::new(connection, Arc::clone(&transaction.destroyed));
+    connection.connection().batch_execute(sql).await?;
+    let pid = connection
+        .connection()
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await?
+        .get(0);
+    connection.restore(&transaction.state);
+    Ok((transaction, pid))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -90,6 +90,8 @@ pub use production_claim::{
     ProductionLeaseRenewal, ProductionReapResult, ProductionRouterAction, production_router_action,
     production_router_result_action,
 };
+#[cfg(feature = "test-util")]
+pub use resources::retained_transaction_for_test;
 pub use resources::{PgCursor, PgStatementTransaction, PgTransaction};
 pub use statements::{
     PreparedStatementSet, StatementField, StatementValueType, VerifiedStatement,

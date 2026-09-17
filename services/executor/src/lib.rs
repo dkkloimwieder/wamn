@@ -210,6 +210,26 @@ pub struct ExecutorArgs {
     #[arg(long, default_value_t = DEFAULT_LEASE_TTL_MS)]
     pub lease_ttl_ms: u64,
 
+    /// Exact reviewed component digests trusted for reuse by the deployment owner.
+    #[arg(
+        long,
+        env = "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS",
+        value_delimiter = ','
+    )]
+    pub trusted_warm_component_digest: Vec<String>,
+
+    /// Native instances retained per eligible component, independent of admission limits.
+    #[arg(long, env = "WAMN_COMPONENT_POOL_SIZE", default_value_t = 1)]
+    pub component_pool_size: i32,
+
+    /// Native idle reclamation window for eligible components.
+    #[arg(
+        long,
+        env = "WAMN_COMPONENT_RECLAIM_WINDOW_SECONDS",
+        default_value_t = 60
+    )]
+    pub component_reclaim_window_seconds: i32,
+
     /// Total guest-memory budget reported by the executor.
     #[arg(long = "max-guest-memory", env = "WASH_HOST_MAX_GUEST_MEMORY")]
     pub max_guest_memory: Option<String>,
@@ -493,6 +513,11 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         Arc::clone(&release),
         source,
         RouterDriverConfig {
+            warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::new(
+                &args.trusted_warm_component_digest,
+                args.component_pool_size,
+                args.component_reclaim_window_seconds,
+            )?,
             owner_prefix: owner.clone(),
             project: args.project.clone(),
             schema: args.schema.clone(),

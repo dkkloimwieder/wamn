@@ -33,6 +33,7 @@ pub(super) struct NativeComponent {
 /// The immutable release or candidate workload selected by the owning driver.
 #[derive(Debug)]
 pub(super) struct NativeWorkloadSpec {
+    pub(super) warm_reuse: crate::warm_reuse::WarmReuse,
     pub(super) id: String,
     pub(super) namespace: String,
     pub(super) name: String,
@@ -52,7 +53,7 @@ pub(super) struct NativeWorkload {
 #[derive(Debug)]
 pub(super) struct NativeApplication {
     // Cleanup runs before the workload fields drop. The policy contains only
-    // synchronous WAMN registries; this application has no service or warm pool.
+    // synchronous WAMN registries; native workload teardown owns warm stores.
     _cleanup: NativePolicyCleanup,
     pub(super) workload: Arc<NativeWorkload>,
     pub(super) policy: Arc<NativePolicy>,
@@ -130,15 +131,15 @@ pub(super) async fn load_native_workload(
             );
             continue;
         }
-        components.push(Component {
+        let mut component = Component {
             name: name.clone(),
             bytes: input.bytes.into(),
             digest: Some(input.fact.component_digest.clone()),
             local_resources: spec.local_resources.clone(),
-            // B retains native default ephemeral instances. Warm reuse belongs
-            // to the separately admitted B2 policy and mechanism landing.
             ..Component::default()
-        });
+        };
+        spec.warm_reuse.apply(&mut component);
+        components.push(component);
         facts_by_name.insert(name, input.fact);
     }
     // Admission has already matched this import list to the exact bytes. Only

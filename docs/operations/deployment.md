@@ -191,3 +191,22 @@ For backup and recovery, use CloudNativePG backup and recovery on the cluster.
 The procedure is in [backup and recovery](backup-and-recovery.md).
 Use its `--help` output for the selected action and required credentials.
 These maintenance verbs do not authorize shared development targets or a new schema lifecycle.
+
+## Trusted component reuse
+
+The deployment owner selects exact reviewed component digests on both `wamn-host` and `wamn-executor`.
+Keep the selection empty when guest-code correctness is not a sufficient isolation boundary.
+Review and test the entire linked unit before granting trust.
+Require alternating callers on an observed reused instance, request-local data, and no unfinished guest tasks after return.
+[Native dispatch](../architecture/execution.md#native-dispatch) defines the host and component responsibilities.
+
+Pass each selected digest with `--trusted-warm-component-digest sha256:<hex>`.
+Alternatively, set `WAMN_TRUSTED_WARM_COMPONENT_DIGESTS` to a comma-separated list of exact digests.
+Do not copy this selection into application manifests.
+A changed artifact requires a new review and a new deployment selection.
+
+Set `--component-pool-size` or `WAMN_COMPONENT_POOL_SIZE` to a positive count. The default is one instance per eligible component.
+Set `--component-reclaim-window-seconds` or `WAMN_COMPONENT_RECLAIM_WINDOW_SECONDS` to a positive number of seconds. The default is 60 seconds.
+The native pool uses `maxConcurrency = 1`, no retained minimum, and a 1,000-call instance limit.
+Pool overflow uses fresh stores and remains subject to the existing admission and memory limits.
+Restart the host or executor to change trust or pool configuration. The replacement process creates new pools.

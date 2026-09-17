@@ -1,7 +1,8 @@
-//! Invoke one admitted node through native fresh-store dispatch and owned WIT values.
+//! Invoke one admitted node through native dispatch and owned WIT values.
 
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -13,8 +14,9 @@ use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc};
 
+use super::native_policy::InvocationScope;
 use super::native_workload::NativeApplication;
-use super::{NodeAcquisition, next_scope, node_types};
+use super::{NodeAcquisition, node_types};
 
 #[cfg(test)]
 mod tests;
@@ -48,6 +50,8 @@ struct NativeCall {
     reply: oneshot::Sender<Result<node_types::Emission, node_types::NodeError>>,
     failure: NativeCallFailure,
     trace: InvocationTrace,
+    retired_after_reply: Arc<AtomicBool>,
+    scope: Arc<InvocationScope>,
 }
 
 /// Restore the native identity after the request's capability scope is revoked.
@@ -61,6 +65,15 @@ impl Drop for ActiveScope<'_> {
         self.accessor.with(|mut access| {
             access.get().active_ctx.component_id = Arc::clone(&self.component_id);
         });
+    }
+}
+
+// This guard belongs to the dispatching caller, not the native guest task.
+// Cancellation revokes authority before native's abandoned-store grace ends.
+struct CloseScope(Arc<InvocationScope>);
+impl Drop for CloseScope {
+    fn drop(&mut self) {
+        self.0.close();
     }
 }
 
@@ -86,18 +99,26 @@ impl GuestCall for NativeCall {
                 request,
                 reply,
                 failure,
+                retired_after_reply,
+                scope,
                 ..
             } = *self;
             anyhow::ensure!(
                 Instant::now() < request.deadline,
                 "native-node-deadline-exceeded"
             );
-            let (component_id, scope) = accessor.with(|mut access| {
+            let native_id =
+                accessor.with(|mut access| access.get().active_ctx.component_id.clone());
+            let warm = request
+                .application
+                .workload
+                .resolved
+                .warm_instance_policy(&native_id)
+                .await
+                .keeps_instances_warm();
+            let component_id = accessor.with(|mut access| {
                 let active = &mut access.get().active_ctx;
-                let scope = next_scope(&active.component_id);
-                let component_id =
-                    std::mem::replace(&mut active.component_id, Arc::from(scope.as_ref()));
-                (component_id, scope)
+                std::mem::replace(&mut active.component_id, Arc::from(scope.id.as_ref()))
             });
             let active_scope = ActiveScope {
                 accessor,
@@ -149,17 +170,29 @@ impl GuestCall for NativeCall {
             // call_concurrent owns its parameters and performs post-return.
             // The unmoved application field stays owned by this call future
             // while native abandonment stops a cancelled caller's guest.
-            let (outcome,) = run
-                .call_concurrent(accessor, (request.context, request.input))
-                .await
-                .map_err(anyhow::Error::from)
-                .with_context(|| {
-                    format!("operation {:?} handler.run trapped", request.operation)
-                })?;
+            let result = tokio::select! {
+                biased;
+                () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
+                result = run.call_concurrent(accessor, (request.context, request.input)) => result,
+            };
+            let (outcome,) = result.map_err(anyhow::Error::from).with_context(|| {
+                format!("operation {:?} handler.run trapped", request.operation)
+            })?;
             let refused = outcome.is_err().then_some("handler");
             reply
                 .send(outcome)
                 .map_err(|_| anyhow::anyhow!("native-node-response-abandoned"))?;
+            if warm && accessor.with(|mut access| !access.get().table.is_empty()) {
+                // Deleting table entries and then reusing this store can alias a
+                // retained guest handle to a later invocation's resource. Native
+                // retirement discards the whole instance before accepting more work.
+                let resources = accessor.with(|mut access| std::mem::take(&mut access.get().table));
+                drop(resources);
+                retired_after_reply.store(true, Ordering::SeqCst);
+                anyhow::bail!(
+                    "native invocation completed with retained resources; retire instance"
+                );
+            }
             Ok(refused)
         }))
     }
@@ -212,6 +245,11 @@ pub(super) async fn invoke_native(
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
     let (reply, response) = oneshot::channel();
     let failure = NativeCallFailure::default();
+    let retired_after_reply = Arc::new(AtomicBool::new(false));
+    let scope = Arc::new(InvocationScope::new(Arc::clone(
+        &request.application.policy,
+    )));
+    let _close = CloseScope(Arc::clone(&scope));
     timeout_at(deadline, async move {
         // Await native completion first: an initialization or guest failure
         // must not be replaced by the resulting closed response channel.
@@ -224,9 +262,16 @@ pub(super) async fn invoke_native(
                 // span and subscriber into its GuestCall instead of creating
                 // another invocation span or relying on executor-local state.
                 trace: InvocationTrace::capture(),
+                retired_after_reply: Arc::clone(&retired_after_reply),
+                scope,
             })
             .await
         {
+            if retired_after_reply.load(Ordering::SeqCst) {
+                return response
+                    .await
+                    .context("retired native invocation lost its completed response");
+            }
             // Only host policy writes this request-owned error, before it
             // traps. Guest text cannot supply an error's Rust classification.
             let host_error = failure

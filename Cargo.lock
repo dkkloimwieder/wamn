@@ -5901,6 +5901,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-platform-identity",
  "wamn-project-state",
  "wamn-router",
  "wamn-runtime",

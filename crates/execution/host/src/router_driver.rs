@@ -135,6 +135,7 @@ impl std::error::Error for InvalidWiringCacheCapacity {}
 /// Process-owned construction facts shared by the host and executor leaves.
 #[derive(Debug, Clone)]
 pub struct RouterDriverConfig {
+    pub warm_reuse: crate::warm_reuse::WarmReuse,
     pub owner_prefix: String,
     pub project: String,
     pub schema: Option<String>,
@@ -1305,6 +1306,7 @@ impl RouterDriver {
                 namespace: self.config.project.clone(),
                 name: self.config.owner_prefix.clone(),
                 components,
+                warm_reuse: self.config.warm_reuse.clone(),
                 local_resources: wash_runtime::types::LocalResources::default(),
                 host_interfaces,
             },

@@ -107,6 +107,43 @@ pub(super) fn new_native_policy(
     }))
 }
 
+/// Caller-owned cancellation boundary, separate from the native store lifetime.
+#[derive(Debug)]
+pub(super) struct InvocationScope {
+    pub(super) id: Box<str>,
+    closed: Mutex<bool>,
+    cancelled: tokio::sync::Notify,
+    policy: Arc<NativePolicy>,
+}
+
+impl InvocationScope {
+    pub(super) fn new(policy: Arc<NativePolicy>) -> Self {
+        Self {
+            id: super::next_scope("native-invocation"),
+            closed: Mutex::new(false),
+            cancelled: tokio::sync::Notify::new(),
+            policy,
+        }
+    }
+
+    pub(super) async fn cancelled(&self) {
+        loop {
+            let notified = self.cancelled.notified();
+            if *self.closed.lock().expect("invocation scope lock poisoned") {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub(super) fn close(&self) {
+        let mut closed = self.closed.lock().expect("invocation scope lock poisoned");
+        *closed = true;
+        self.policy.revoke(&self.id);
+        self.cancelled.notify_waiters();
+    }
+}
+
 impl NativePolicy {
     /// Retain only a weak reference so native workload teardown has no ownership cycle.
     pub(super) fn bind_application(
@@ -122,10 +159,11 @@ impl NativePolicy {
     pub(super) async fn activate(
         &self,
         component_id: &str,
-        scope: &str,
+        invocation_scope: &InvocationScope,
         request: &NativeInvocation,
         failure: NativeCallFailure,
     ) -> anyhow::Result<NativeAuthorityGuard> {
+        let scope = invocation_scope.id.as_ref();
         let operation = request.operation.as_str();
         let acquisition = &request.acquisition;
         let caller = request.caller.as_ref();
@@ -196,6 +234,16 @@ impl NativePolicy {
             }
             return Err(error);
         }
+        // Serialize late activation with caller cancellation. No await follows
+        // this lock, so cancellation cannot leave a newly installed authority.
+        let closed = invocation_scope
+            .closed
+            .lock()
+            .expect("invocation scope lock poisoned");
+        anyhow::ensure!(
+            !*closed,
+            "native invocation was cancelled during activation"
+        );
         // Keep admission locked until every registry is installed. Shutdown
         // obtains the write lock before revoking, so no late insert survives.
         let bindings = self

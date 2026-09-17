@@ -212,6 +212,14 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
 }
 
 async fn authenticated(route: &FlowHttpRouting, child_grant: bool) -> AuthenticatedCaller {
+    authenticated_as(route, child_grant, None).await
+}
+
+async fn authenticated_as(
+    route: &FlowHttpRouting,
+    child_grant: bool,
+    principal: Option<&str>,
+) -> AuthenticatedCaller {
     let now = i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -220,6 +228,9 @@ async fn authenticated(route: &FlowHttpRouting, child_grant: bool) -> Authentica
     )
     .expect("Unix seconds fit i64");
     let mut body = claims();
+    if let Some(principal) = principal {
+        body["sub"] = json!(principal);
+    }
     body["aud"] = json!(AUDIENCE);
     body["iat"] = json!(now);
     body["exp"] = json!(now + 900);
@@ -595,4 +606,535 @@ fn native_authenticated_nested_authority_and_lifecycle() {
     drop(runtime);
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");
+}
+
+#[test]
+fn native_warm_alternating_callers_and_fresh_nested_component() {
+    super::run_isolated_test(
+        "authenticated::native_warm_alternating_callers_and_fresh_nested_component",
+        async {
+            let _lock = wamn_test_postgres::lock();
+            let database = wamn_test_postgres::database();
+            let (mut server, route) = authentication_fixture(database.url())
+                .await
+                .expect("scoped authentication fixture");
+            let alice = authenticated(&route, true).await;
+            let bob =
+                authenticated_as(&route, true, Some("00000000-0000-4000-8000-0000000000b2")).await;
+            assert_ne!(alice.principal_id(), bob.principal_id());
+            let (postgres, credentials) =
+                warm_postgres(database.url(), &[alice.principal_id(), bob.principal_id()])
+                    .await
+                    .expect("guest-generation fixture");
+            let fixture = Fixture::build_with_reuse(
+                Case::NestedRefusal,
+                Some((Case::Success, false)),
+                true,
+                None,
+                true,
+                Some(Arc::clone(&postgres)),
+            )
+            .await;
+            let target = fixture.target().await;
+            for (caller, input) in [
+                (&alice, "alice-only"),
+                (&bob, "bob-only"),
+                (&alice, "alice-again"),
+            ] {
+                let mut request = fixture.request(Instant::now() + CLEANUP);
+                request.input = input.into();
+                request.caller = Some(caller.clone());
+                let result = invoke_native(&target, request)
+                    .await
+                    .expect("authorized native dispatch")
+                    .expect("emission");
+                assert_eq!(
+                    result.payload, input,
+                    "no caller-dependent result crosses calls"
+                );
+                assert!(
+                    fixture
+                        .policy
+                        .invocations
+                        .lock()
+                        .expect("authority")
+                        .is_empty()
+                );
+                for event in fixture
+                    .events
+                    .lock()
+                    .expect("events")
+                    .iter()
+                    .filter(|event| event.phase == 1)
+                {
+                    assert!(
+                        fixture
+                            .policy
+                            .resources
+                            .postgres
+                            .session_claims(&event.scope)
+                            .is_none()
+                    );
+                    assert!(
+                        fixture
+                            .policy
+                            .resources
+                            .blobstore
+                            .invocation(&event.scope)
+                            .is_none()
+                    );
+                }
+            }
+            let observations = fixture.events.lock().expect("events").clone();
+            for (id, fact) in &fixture.workload.facts_by_component_id {
+                assert_eq!(
+                    observations
+                        .iter()
+                        .filter(|event| event.phase == 0 && event.scope == *id)
+                        .count(),
+                    if fact == &fixture.root { 1 } else { 3 },
+                    "warm root reuses while its independent child stays fresh"
+                );
+            }
+            let callers: Vec<_> = observations
+                .iter()
+                .filter(|event| event.phase == 1)
+                .map(|event| event.caller.as_ref().expect("bound caller").principal_id())
+                .collect();
+            assert_eq!(
+                callers,
+                vec![
+                    alice.principal_id(),
+                    alice.principal_id(),
+                    bob.principal_id(),
+                    bob.principal_id(),
+                    alice.principal_id(),
+                    alice.principal_id()
+                ]
+            );
+            let denied = authenticated_as(&route, false, Some(bob.principal_id())).await;
+            let mut request = fixture.request(Instant::now() + CLEANUP);
+            request.caller = Some(denied);
+            let error = invoke_native(&target, request)
+                .await
+                .expect_err("new caller cannot inherit the prior nested grant");
+            assert_eq!(
+                error
+                    .downcast_ref::<OperationRefusal>()
+                    .expect("typed permission refusal")
+                    .kind(),
+                OperationRefusalKind::PermissionDenied
+            );
+            super::warm::close(&fixture).await;
+
+            let fresh_only = Fixture::build_with_reuse(
+                Case::NestedRefusal,
+                Some((Case::Success, true)),
+                true,
+                None,
+                true,
+                Some(Arc::clone(&postgres)),
+            )
+            .await;
+            let mut request = fresh_only.request(Instant::now() + CLEANUP);
+            request.caller = Some(alice.clone());
+            let error = invoke_native(&fresh_only.target().await, request)
+                .await
+                .expect_err("a session still cannot invoke a fresh-only child");
+            assert_eq!(
+                error
+                    .downcast_ref::<OperationRefusal>()
+                    .expect("typed credential refusal")
+                    .kind(),
+                OperationRefusalKind::FreshCredentialRequired
+            );
+            let pat = pat_caller(
+                database.url(),
+                Arc::clone(&postgres),
+                &fresh_only.policy.resources.release,
+            )
+            .await
+            .expect("real PAT caller");
+            assert_eq!(pat.credential_kind(), CredentialKind::Pat);
+            for caller in [&pat, &pat] {
+                let mut request = fresh_only.request(Instant::now() + CLEANUP);
+                request.caller = Some(caller.clone());
+                invoke_native(&fresh_only.target().await, request)
+                    .await
+                    .expect("PAT admits fresh-only child")
+                    .expect("emission");
+            }
+            let root_id = fresh_only
+                .workload
+                .facts_by_component_id
+                .iter()
+                .find(|(_, fact)| *fact == &fresh_only.root)
+                .expect("root native identity")
+                .0;
+            assert_eq!(
+                fresh_only
+                    .events
+                    .lock()
+                    .expect("events")
+                    .iter()
+                    .filter(|event| event.phase == 0 && &event.scope == root_id)
+                    .count(),
+                2,
+                "the two PAT calls reuse the replacement root instance"
+            );
+            let mut request = fresh_only.request(Instant::now() + CLEANUP);
+            request.caller = Some(alice);
+            let error = invoke_native(&fresh_only.target().await, request)
+                .await
+                .expect_err("a reused instance cannot inherit the preceding PAT");
+            assert_eq!(
+                error
+                    .downcast_ref::<OperationRefusal>()
+                    .expect("fresh-only refusal after PAT")
+                    .kind(),
+                OperationRefusalKind::FreshCredentialRequired
+            );
+            super::warm::close(&fresh_only).await;
+            let retired =
+                Fixture::build_with_reuse(Case::Success, None, true, None, true, Some(postgres))
+                    .await;
+            let mut request = retired.request(Instant::now() + CLEANUP);
+            request.caller = Some(bob.clone());
+            invoke_native(&retired.target().await, request)
+                .await
+                .expect("credential initially available")
+                .expect("emission");
+            credentials
+                .enabled
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            let mut request = retired.request(Instant::now() + CLEANUP);
+            request.caller = Some(bob.clone());
+            assert!(
+                invoke_native(&retired.target().await, request)
+                    .await
+                    .is_err(),
+                "an unavailable credential refuses without substitution"
+            );
+            credentials
+                .enabled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let mut request = retired.request(Instant::now() + CLEANUP);
+            request.caller = Some(bob);
+            invoke_native(&retired.target().await, request)
+                .await
+                .expect("restored credential")
+                .expect("emission");
+            assert_eq!(
+                super::warm::starts(&retired),
+                2,
+                "credential refusal retires the previously reused instance"
+            );
+            super::warm::close(&retired).await;
+            server.stop().await;
+        },
+    );
+}
+
+struct WarmCredentials {
+    provider: StaticCredentialProvider,
+    enabled: std::sync::atomic::AtomicBool,
+}
+impl wamn_runtime::plugins::wamn_postgres::CredentialProvider for WarmCredentials {
+    fn resolve(
+        &self,
+        project: &str,
+        class: AuthorityClass,
+        tenant: Option<&str>,
+    ) -> anyhow::Result<Option<wamn_runtime::plugins::wamn_postgres::ResolvedCredential>> {
+        if !self.enabled.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(None);
+        }
+        self.provider.resolve(project, class, tenant)
+    }
+}
+
+async fn warm_postgres(
+    admin_url: &str,
+    principals: &[&str],
+) -> anyhow::Result<(Arc<WamnPostgres>, Arc<WarmCredentials>)> {
+    let admin = connect(admin_url).await?;
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+    let role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )?;
+    admin
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &role,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await?;
+    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
+    for principal in principals {
+        admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'person', $2 || '@example.invalid')", &[&TENANT, principal]).await?;
+    }
+    let mut url = url::Url::parse(admin_url)?;
+    url.set_username(&role)
+        .map_err(|()| anyhow::anyhow!("guest username"))?;
+    url.set_password(Some(PASSWORD))
+        .map_err(|()| anyhow::anyhow!("guest password"))?;
+    let http_role = workload_generation_role(
+        WorkloadRoleFamily::HttpAdmitter,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: ORG,
+            project: PROJECT,
+            environment: ENVIRONMENT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )?;
+    let mut http_url = url.clone();
+    http_url
+        .set_username(&http_role)
+        .map_err(|()| anyhow::anyhow!("HTTP reader username"))?;
+    let configuration = json!({ PROJECT: { "credentials": {
+        (AuthorityClass::GuestSql.as_str()): url.as_str(),
+        (AuthorityClass::CallableHttp.as_str()): http_url.as_str()
+    } } });
+    let projects = StaticCredentialProvider::projects_from_json(
+        &configuration.to_string(),
+        &WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2000,
+            statement_timeout_ms: 5000,
+            row_limit: 100,
+        },
+    )?;
+    let credentials = Arc::new(WarmCredentials {
+        provider: StaticCredentialProvider::new(projects, None),
+        enabled: std::sync::atomic::AtomicBool::new(true),
+    });
+    Ok((
+        Arc::new(WamnPostgres::with_provider(credentials.clone())),
+        credentials,
+    ))
+}
+
+#[test]
+fn native_warm_retirement_aborts_retained_postgres_transaction() {
+    super::run_isolated_test(
+        "authenticated::native_warm_retirement_aborts_retained_postgres_transaction",
+        async {
+            use wamn_runtime::plugins::wamn_postgres::{
+                PgTransaction, SessionClaims, retained_transaction_for_test,
+            };
+            use wash_runtime::engine::ctx::SharedCtx;
+            use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
+            use wash_runtime::wasmtime::component::{Accessor, Instance};
+
+            struct LeaveTransaction(PgTransaction);
+            impl GuestCall for LeaveTransaction {
+                fn describe(&self) -> &'static str {
+                    "retain an actual PostgreSQL transaction"
+                }
+                fn call(
+                    self: Box<Self>,
+                    accessor: &Accessor<SharedCtx>,
+                    _instance: Instance,
+                ) -> GuestCallFuture<'_> {
+                    Box::pin(async move {
+                        accessor.with(|mut access| access.get().table.push(self.0))?;
+                        Ok(None)
+                    })
+                }
+            }
+
+            let _lock = wamn_test_postgres::lock();
+            let database = wamn_test_postgres::database();
+            let (mut server, route) = authentication_fixture(database.url())
+                .await
+                .expect("database and signed caller");
+            let caller = authenticated(&route, true).await;
+            let (postgres, _) = warm_postgres(database.url(), &[caller.principal_id()])
+                .await
+                .expect("tenant guest generation");
+            let admin = connect(database.url()).await.expect("admin");
+            admin.batch_execute("CREATE TABLE public.warm_retirement (value text); GRANT INSERT ON public.warm_retirement TO wamn_app").await.expect("owned rollback marker");
+            postgres
+                .bind_session_claims(
+                    "retained-transaction",
+                    &SessionClaims {
+                        tenant: TENANT.into(),
+                        project: Some(PROJECT.into()),
+                        user_id: Some(caller.principal_id().into()),
+                        operation: Some(ROOT.into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("transaction owner authority");
+            let (transaction, pid) = retained_transaction_for_test(
+                &postgres,
+                "retained-transaction",
+                PROJECT,
+                "INSERT INTO public.warm_retirement VALUES ('must roll back')",
+            )
+            .await
+            .expect("actual guest transaction");
+            postgres.revoke_session_claims("retained-transaction");
+            let fixture = super::warm::fixture(Case::Success).await;
+            let target = fixture.target().await;
+            target
+                .dispatch(LeaveTransaction(transaction))
+                .await
+                .expect("native warm resource table");
+            let active: bool = admin.query_one("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid=$1 AND state='idle in transaction')", &[&pid]).await.expect("transaction state").get(0);
+            assert!(active, "the retained transaction is open before retirement");
+            invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
+                .await
+                .expect("completed result")
+                .expect("emission");
+            timeout(CLEANUP, async {
+                loop {
+                    let alive: bool = admin
+                        .query_one(
+                            "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid=$1)",
+                            &[&pid],
+                        )
+                        .await
+                        .expect("backend state")
+                        .get(0);
+                    if !alive {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("retirement destroys the session rather than repooling its transaction");
+            let rows: i64 = admin
+                .query_one("SELECT count(*) FROM public.warm_retirement", &[])
+                .await
+                .expect("rollback result")
+                .get(0);
+            assert_eq!(rows, 0);
+            invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
+                .await
+                .expect("later invocation")
+                .expect("emission");
+            assert_eq!(
+                super::warm::starts(&fixture),
+                2,
+                "no transaction handle survives into the next instance"
+            );
+            super::warm::close(&fixture).await;
+            server.stop().await;
+        },
+    );
+}
+
+async fn pat_caller(
+    admin_url: &str,
+    postgres: Arc<WamnPostgres>,
+    release: &LoadedRelease,
+) -> anyhow::Result<AuthenticatedCaller> {
+    use wamn_platform_identity::{create_human, grant_project_env_membership, issue_pat};
+    use wamn_runtime::plugins::flow_http_routing::RouteAuthentication;
+
+    let system_database = wamn_control_provision::test_database::system();
+    let system = connect(system_database.url()).await?;
+    system
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
+    system.execute("INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'warm-test')", &[&ORG]).await?;
+    system
+        .execute(
+            "INSERT INTO registry.projects (org, id) VALUES ($1, $2)",
+            &[&ORG, &PROJECT],
+        )
+        .await?;
+    let principal = create_human(
+        &system,
+        "warm-pat@example.invalid",
+        "warm-pat@example.invalid",
+        "Warm test caller",
+    )
+    .await?;
+    system.execute("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')", &[&ORG, &ENVIRONMENT]).await?;
+    system.execute("INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix) VALUES ($1, $2, $3, 'warm-test', 'a1b2c3d4')", &[&ORG, &PROJECT, &ENVIRONMENT]).await?;
+    grant_project_env_membership(&system, principal.id(), ORG, PROJECT, ENVIRONMENT).await?;
+    let token = issue_pat(
+        &system,
+        principal.id(),
+        "warm test",
+        Duration::from_secs(600),
+    )
+    .await?;
+    let admin = connect(admin_url).await?;
+    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
+    admin.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'person','warm-pat@example.invalid')", &[&TENANT, &principal.id().as_str()]).await?;
+    admin.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'native-child')", &[&TENANT, &principal.id().as_str()]).await?;
+    let reader_role = workload_generation_role(
+        WorkloadRoleFamily::IdentityReader,
+        WorkloadRoleScope::Control {
+            org: ORG,
+            project: PROJECT,
+            environment: ENVIRONMENT,
+            database: system_database.name(),
+        },
+        CredentialGeneration::A,
+    )?;
+    system
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::IdentityReader,
+            system_database.name(),
+            &reader_role,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await?;
+    let mut reader_url = url::Url::parse(system_database.url())?;
+    reader_url
+        .set_username(&reader_role)
+        .map_err(|()| anyhow::anyhow!("identity reader username"))?;
+    reader_url
+        .set_password(Some(PASSWORD))
+        .map_err(|()| anyhow::anyhow!("identity reader password"))?;
+    let reader = connect(reader_url.as_str()).await?;
+    let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {"host": "native.example.test", "path": "/native", "method": "POST"}});
+    let mut manifest = serde_json::to_value(release.manifest())?;
+    manifest["wirings"] = json!([{"package-id":"root","wiring-id":"trusted-wiring","wiring-version":1,"graph-hash":format!("sha256:{}", "b".repeat(64))}]);
+    manifest["attachments"] = json!({ATTACHMENT: {"kind":"http","package-id":"root","wiring-id":"trusted-wiring","wiring-version":1,"definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),"definition":definition,"auth-policy":{"modes":["pat"]},"registered-operation":ROOT}});
+    let release = Arc::new(LoadedRelease::load_canonical_bytes(
+        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        "warm PAT test",
+    )?);
+    let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
+        .with_authentication(Arc::new(
+            RouteAuthentication::new(
+                Arc::new(reader),
+                postgres,
+                ORG,
+                PROJECT,
+                "unused-human-subject",
+            )
+            .await?,
+        ));
+    routing
+        .authenticate_authorization_for_test(ATTACHMENT, Some(&format!("Bearer {}", token.token())))
+        .await
+        .map_err(|(status, code)| anyhow::anyhow!("PAT authentication refused: {status} {code}"))?
+        .ok_or_else(|| anyhow::anyhow!("PAT caller absent"))
 }

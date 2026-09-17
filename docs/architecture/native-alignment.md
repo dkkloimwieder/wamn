@@ -12,8 +12,8 @@ The resolved Wasmtime family is `47.0.4`.
 There are no carried upstream patches, and upstream default providers remain disabled.
 The existing owner rule forbids restoring the retired fork patches.
 
-Native loading and dispatch own compilation, linking, fresh stores, epoch interruption, and guest cancellation.
-WAMN uses public `GuestCall`, `InstancePolicy::Ephemeral`, `ProbeState`, `Liveness`, and bounded flush operations.
+Native loading and dispatch own compilation, linking, fresh and warm stores, epoch interruption, and guest cancellation.
+WAMN uses public `GuestCall`, `InstancePolicy::Ephemeral`, `InstancePolicy::Warm`, `ProbeState`, `Liveness`, and bounded flush operations.
 Host and executor process construction call native `raise_descriptor_limit()` before sizing descriptor-dependent resources.
 Their Tokio runtimes use `event_interval(1)` for timely timer polling.
 These choices make no general performance claim.
@@ -25,7 +25,7 @@ These choices make no general performance claim.
 | [`wamn:postgres`](data-access.md) | Commands need one exclusive session through admitted SQL and transaction finalization. | `wamn-0ct2.5` retains this owner. Native availability alone does not authorize a second database path. |
 | [Import admission](capabilities.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the tenant contract when considering any native replacement. |
 | [Immutable wiring releases](overview.md#release-identity) | Tenant-owned declarations need admission, rollback identity, and exact provenance. | Reconsider when native links supply equivalent tenant and per-link authorization. |
-| [Fresh invocation stores](execution.md#native-dispatch) | Compiled-byte reuse must not retain guest request state or share admitted authority. | Reuse requires tenant isolation, request-state separation, `maxConcurrency = 1`, and ephemeral fallback on saturation. |
+| [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
 | [Guest normalization](components.md#guest-build-identity) | Standard-library imports must satisfy the closed tenant capability set. | A replacement build must preserve that actual import boundary. |
 | `tools/build-components` | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
 | Operator Event permissions | Chart `2.9.0` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the scoped `create,patch` Role only when the pinned chart grants it. |

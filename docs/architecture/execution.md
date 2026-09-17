@@ -41,8 +41,26 @@ The native route controller can reach Pods directly, so a readiness change alone
 ## Native dispatch
 
 One native application owns a loaded release or frozen candidate.
-Native dispatch reuses compiled component bytes and creates a fresh invocation store.
-The store is Wasmtime's request state, including guest memory and bound authority.
+Native dispatch reuses compiled component bytes. Untrusted components receive a fresh store, which holds guest memory and resources, for each call.
+The deployment owner can select reviewed component digests for native warm-instance reuse.
+[Deployment configuration](../operations/deployment.md#trusted-component-reuse) owns this selection and pool sizing.
+Application manifests cannot grant that trust.
+
+Warm eligibility covers the complete unit that shares a native store.
+If any member requires fresh execution, native dispatch keeps the entire shared unit fresh.
+Independent components can use different lifetimes in one workload.
+The host does not split linked stores to permit reuse.
+
+Each call receives a new host-owned authority scope.
+Capability and nested calls use that scope, and cancellation revokes it independently of native store teardown.
+A retained guest context cannot select the next call's permissions.
+A call that leaves host resource handles open discards those resources and retires its instance while preserving its completed result.
+The host never clears a resource table and then reuses that instance, because old handles can alias new resources.
+
+Trusted component code owns request-local caller data, caller-dependent cache cleanup, and completion or cancellation of spawned tasks before return.
+The host does not sanitize guest memory or enforce those promises against faulty or malicious trusted code.
+Use fresh instances wherever that trust is unacceptable.
+`maxConcurrency = 1` serializes calls on an instance. It does not isolate guest memory or background tasks.
 One absolute deadline covers initialization, execution, and nested calls.
 A child cannot extend that deadline.
 
@@ -61,9 +79,17 @@ The column retains the latest attempt that reports a change.
 An absent header or null column means that no change was reported.
 Nested calls still inherit the enclosing deadline. Their remaining time is not a separate node deadline adjustment.
 
-Completed, cancelled, trapped, or timed-out invocations do not return that store to a reusable guest instance.
+Native dispatch retires warm instances after traps, deadlines, or cancellation.
+Caller authority ends immediately. Physical teardown follows native cancellation rules. A spinning abandoned guest must exceed both the native grace and its continuous-execution threshold.
+Successful calls can reuse an eligible instance only when no host resource handles remain.
+A full pool serves overflow from fresh stores.
+Native idle reclamation and a 1,000-call instance limit bound retention.
+Pools belong to one immutable release or candidate and never cross tenant or environment boundaries.
+A replacement release or deployment trust configuration uses new pools.
+Credential checks retain the exact pinned generation rules above.
 
-The runtime uses `InstancePolicy::Ephemeral` and refuses a positive `poolSize`.
+Pool capacity does not limit request admission or total memory.
+Existing route and queue admission limits, native memory accounting, and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
 All cleanup paths retain their resource bounds and return failures to their owner.

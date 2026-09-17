@@ -49,6 +49,8 @@ use super::{NATIVE_POLICY_ID, NativePolicy, NativePolicyResources, new_native_po
 mod authenticated;
 #[path = "tests/trace.rs"]
 mod trace;
+#[path = "tests/warm.rs"]
+mod warm;
 
 const ROOT: &str = "root:entry/run@1.0.0";
 const CHILD: &str = "child:entry/run@1.0.0";
@@ -86,7 +88,7 @@ const NODE_TYPES: &str = r#"
       (alias export $node "emission" (type $emission))
 "#;
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum Case {
     Success,
     NestedRefusal,
@@ -383,6 +385,17 @@ impl Fixture {
         registered_root: bool,
         resolution_pause: Option<Arc<ResolutionPause>>,
     ) -> Self {
+        Self::build_with_reuse(case, child, registered_root, resolution_pause, false, None).await
+    }
+
+    async fn build_with_reuse(
+        case: Case,
+        child: Option<(Case, bool)>,
+        registered_root: bool,
+        resolution_pause: Option<Arc<ResolutionPause>>,
+        warm: bool,
+        postgres: Option<Arc<WamnPostgres>>,
+    ) -> Self {
         let root_bytes = component_bytes(ROOT, case);
         let mut native = Vec::new();
         let dependencies = if let Some((child_case, fresh_only)) = child {
@@ -469,9 +482,11 @@ impl Fixture {
             )
             .expect("admit the exact release manifest"),
         );
-        let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
-            StaticCredentialProvider::new(HashMap::new(), None),
-        )));
+        let postgres = postgres.unwrap_or_else(|| {
+            Arc::new(WamnPostgres::with_provider(Arc::new(
+                StaticCredentialProvider::new(HashMap::new(), None),
+            )))
+        });
         let vault = Arc::new(WamnCredentials::from_projects(HashMap::new()));
         let policy = new_native_policy(
             &facts,
@@ -517,6 +532,12 @@ impl Fixture {
         let application = load_native_application(
             Arc::clone(&engine),
             NativeWorkloadSpec {
+                warm_reuse: if warm {
+                    crate::warm_reuse::WarmReuse::new(&[root.component_digest.clone()], 1, 1)
+                        .expect("trusted root with bounded native reuse")
+                } else {
+                    crate::warm_reuse::WarmReuse::default()
+                },
                 id: "native-policy-test".into(),
                 namespace: "test".into(),
                 name: "native-policy-test".into(),

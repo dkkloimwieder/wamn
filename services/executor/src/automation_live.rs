@@ -254,6 +254,7 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
         release,
         ComponentArtifactSource::local(scratch.path().to_owned()),
         RouterDriverConfig {
+            warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
             owner_prefix: "automation-live".to_owned(),
             project: "default".to_owned(),
             schema: Some("wamn_run".to_owned()),
