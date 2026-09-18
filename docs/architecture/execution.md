@@ -246,8 +246,9 @@ It shares the login throttle and request deadline with session issuance.
 An unavailable authority read fails the whole request instead of returning an incomplete list.
 Session issuance repeats the access checks after selection. A discovery result grants no access.
 
-The terminal still requires one configured target.
-The identity plan defines the pending environment-selection flow.
+The terminal matches this list against deployment-owned application addresses.
+It opens one match directly and asks the person to select among several matches.
+An empty match refuses login. The issuer never supplies application addresses.
 
 Unknown accounts and incorrect passwords receive the same unauthorized response.
 These routes are enabled only when the service has a Resend key and sender.

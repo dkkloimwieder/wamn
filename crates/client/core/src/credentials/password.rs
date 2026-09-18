@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use zeroize::Zeroizing;
@@ -96,6 +96,43 @@ impl PasswordCredentials {
         drop(invitation);
         drop(password);
         self.request("enroll", body, 204).await.map(|_| ())
+    }
+
+    /// List authorized audiences without issuing or retaining a credential.
+    ///
+    /// # Errors
+    /// Refuses failed authentication and malformed discovery responses.
+    pub async fn environments(
+        &self,
+        email: &str,
+        password: &SecretInput,
+    ) -> Result<Vec<String>, CredentialError> {
+        #[derive(Serialize)]
+        struct Discovery<'a> {
+            email: &'a str,
+            password: &'a str,
+        }
+        #[derive(Deserialize)]
+        struct Environment {
+            aud: String,
+        }
+        #[derive(Deserialize)]
+        struct Response {
+            environments: Vec<Environment>,
+        }
+        let body = serde_json::to_vec(&Discovery {
+            email,
+            password: password.expose(),
+        })
+        .map_err(|_| CredentialError::new("login input refused"))?;
+        let response = self.request("environments", body, 200).await?;
+        let response: Response = serde_json::from_str(&response)
+            .map_err(|_| CredentialError::new("environment response refused"))?;
+        Ok(response
+            .environments
+            .into_iter()
+            .map(|environment| environment.aud)
+            .collect())
     }
 
     /// Authenticate explicitly and replace the local session only on success.

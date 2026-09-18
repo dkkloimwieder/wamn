@@ -184,12 +184,34 @@ The bundle replaces the default trust roots for identity requests.
 
 If `WAMN_TOKEN` is set, the terminal retains the existing PAT path.
 For password login, unset `WAMN_TOKEN` before launching `wamn-receiving`.
-The first prompt shows the selected audience.
 Enter `I` to accept an invitation, or `L` to log in.
 Invitation acceptance asks for the principal ID, invitation secret, and a new password entered twice.
 After enrollment, enter the email and password again to log in.
 All prompt input is hidden. Paste is supported, and Esc or Ctrl-C cancels.
 Do not put human passwords or invitation secrets in arguments, environment variables, or files.
+
+For several environments, set `WAMN_RECEIVING_TARGETS` to a public JSON file with these fields:
+
+```json
+[
+  {
+    "audience": "<exact provisioned environment audience>",
+    "base_url": "https://receiving.example.com/",
+    "host": "receiving.example.com",
+    "target_instance": "<served activation instance>"
+  }
+]
+```
+
+Add one entry for each configured environment. The `host` field is optional.
+This file replaces the single-environment address and audience variables for password login.
+Keep `WAMN_SESSION_ISSUER` and any required `WAMN_SESSION_CA` configured.
+All entries use that issuer. The file contains no credentials.
+
+After password authentication, the terminal matches authorized environments against this file.
+One match opens directly. Several matches produce a numbered choice.
+No matches refuse login. The issuer repeats authorization when it issues the selected session.
+For PAT access, unset `WAMN_RECEIVING_TARGETS` and use the single-environment variables.
 
 The terminal keeps only the access token in process memory.
 After expiry, exit and log in again, then submit the operation explicitly.
@@ -203,7 +225,7 @@ The password terminal test uses owned HTTPS and HTTP fixtures, plus OpenSSL for 
 python3 apps/wamn_receiving/tests/password_login_pty.py --binary "$CARGO_TARGET_DIR/debug/wamn-receiving"
 ```
 
-This test covers hidden input, enrollment, login, expiry, local logout, cancellation, and refusal.
+This test covers hidden input, enrollment, login, environment selection, expiry, local logout, cancellation, and refusal.
 It does not establish the deployed Receiving journey.
 
 ## Issuer connection

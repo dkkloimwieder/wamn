@@ -5,6 +5,8 @@
 //! `WAMN_SESSION_ISSUER` and `WAMN_SESSION_AUDIENCE` optionally select session
 //! exchange with a PAT. Without a PAT they select interactive password login.
 //! `WAMN_SESSION_CA` optionally supplies the trusted issuer certificate bundle.
+//! `WAMN_RECEIVING_TARGETS` selects a public deployment file for password login
+//! across several environments under the configured issuer.
 //!
 //! The developer session in `docs/operations/development-loop.md` supplies
 //! the launch commands and interaction keys.
@@ -13,7 +15,6 @@ use std::error::Error;
 use std::io;
 use std::sync::Arc;
 
-use wamn_client::credentials::PasswordCredentials;
 use wamn_client::{ClientError, HttpRequest, HttpResponse, Transport, WamnClient};
 use wamn_client_terminal::operator::{ExitReason, run_application_with_client};
 use wamn_client_tui::submission::SessionBinding;
@@ -89,10 +90,6 @@ fn session_setting(name: &str) -> io::Result<Option<String>> {
 
 #[tokio::main]
 async fn main() -> Result<ExitReason, Box<dyn Error>> {
-    let base_url = required_env(
-        "WAMN_BASE_URL",
-        "WAMN_BASE_URL must name the deployment this client talks to",
-    )?;
     let token = match std::env::var("WAMN_TOKEN") {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
@@ -102,19 +99,41 @@ async fn main() -> Result<ExitReason, Box<dyn Error>> {
             );
         }
     };
-    let binding = SessionBinding {
-        url: base_url,
-        host: std::env::var("WAMN_HOST")
-            .ok()
-            .filter(|host| !host.is_empty()),
-        target_instance: required_env(
-            "WAMN_TARGET_INSTANCE",
-            "WAMN_TARGET_INSTANCE must identify the served activation",
-        )?,
-    };
     let issuer = session_setting("WAMN_SESSION_ISSUER")?;
     let audience = session_setting("WAMN_SESSION_AUDIENCE")?;
-    let target = login::session_target(issuer.as_deref(), audience.as_deref())?;
+    let targets_file = session_setting("WAMN_RECEIVING_TARGETS")?;
+    let (mut binding, target, environments) = if let Some(path) = targets_file {
+        if token.is_some() {
+            return Err(io::Error::other("WAMN_RECEIVING_TARGETS is for password login; use the single-target configuration for PAT access").into());
+        }
+        let bytes = std::fs::read(path)
+            .map_err(|_| io::Error::other("read Receiving environment configuration failed"))?;
+        let environments = login::environment_targets(&bytes)?;
+        (environments[0].binding.clone(), None, environments)
+    } else {
+        let binding = SessionBinding {
+            url: required_env(
+                "WAMN_BASE_URL",
+                "WAMN_BASE_URL must name the deployment this client talks to",
+            )?,
+            host: std::env::var("WAMN_HOST")
+                .ok()
+                .filter(|host| !host.is_empty()),
+            target_instance: required_env(
+                "WAMN_TARGET_INSTANCE",
+                "WAMN_TARGET_INSTANCE must identify the served activation",
+            )?,
+        };
+        let target = login::session_target(issuer.as_deref(), audience.as_deref())?;
+        let environments = audience
+            .map(|audience| login::EnvironmentTarget {
+                audience,
+                binding: binding.clone(),
+            })
+            .into_iter()
+            .collect();
+        (binding, target, environments)
+    };
     let transport: Arc<dyn Transport> = Arc::new(http_transport(reqwest::Client::builder())?);
     let mut identity_builder = reqwest::Client::builder().https_only(true);
     if let Some(path) = session_setting("WAMN_SESSION_CA")? {
@@ -131,17 +150,23 @@ async fn main() -> Result<ExitReason, Box<dyn Error>> {
     let credentials = if let Some(token) = token {
         login::credentials(token, target, identity_transport).await?
     } else {
-        let target = target.ok_or_else(|| {
-            io::Error::other(
-                "configure WAMN_SESSION_ISSUER and WAMN_SESSION_AUDIENCE for password login",
-            )
-        })?;
-        let session = Arc::new(PasswordCredentials::new(target, identity_transport));
-        if let Some(reason) = wamn_client_terminal::login::password_login(&session).await? {
-            return Ok(reason);
+        let issuer = issuer
+            .ok_or_else(|| io::Error::other("configure WAMN_SESSION_ISSUER for password login"))?;
+        let audiences = environments
+            .iter()
+            .map(|target| target.audience.clone())
+            .collect::<Vec<_>>();
+        match wamn_client_terminal::login::password_login(&issuer, &audiences, identity_transport)
+            .await?
+        {
+            wamn_client_terminal::login::PasswordLogin::Exit(reason) => return Ok(reason),
+            wamn_client_terminal::login::PasswordLogin::Authenticated { index, credentials } => {
+                binding = environments[index].binding.clone();
+                let session = credentials;
+                password_session = Some(session.clone());
+                session as Arc<dyn wamn_client::CredentialProvider>
+            }
         }
-        password_session = Some(session.clone());
-        session as Arc<dyn wamn_client::CredentialProvider>
     };
     let client = Arc::new(WamnClient::new(
         binding.url.clone(),

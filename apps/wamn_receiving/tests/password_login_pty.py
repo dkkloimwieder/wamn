@@ -37,6 +37,8 @@ class Identity:
         self.requests = []
         self.errors = []
         self.fail = False
+        self.audiences = [AUDIENCE]
+        self.selected = None
         certificate = directory / "tls.crt"
         key = directory / "tls.key"
         result = subprocess.run([
@@ -63,9 +65,15 @@ class Identity:
                     if self.path == "/password/enroll":
                         require(body == {"principal_id": PRINCIPAL, "invitation": INVITATION, "password": PASSWORD}, "enrollment body differed")
                         status, response = 204, b""
+                    elif self.path == "/password/environments":
+                        require(body == {"email": "alice@example.invalid", "password": PASSWORD}, "discovery body differed")
+                        status = 401 if owner.fail else 200
+                        response = json.dumps({"environments": [{"aud": aud} for aud in owner.audiences]}).encode()
                     else:
                         require(self.path == "/password/session", "unexpected authentication route")
-                        require(body == {"email": "alice@example.invalid", "password": PASSWORD, "aud": AUDIENCE}, "login body differed")
+                        require(body.get("aud") in owner.audiences, "login selected an unauthorized audience")
+                        owner.selected = body["aud"]
+                        require(body == {"email": "alice@example.invalid", "password": PASSWORD, "aud": owner.selected}, "login body differed")
                         status = 401 if owner.fail else 200
                         response = json.dumps({"access_token": TOKEN, "token_type": "Bearer", "expires_at": int(time.time()) + 3}).encode()
                     self.send_response(status)
@@ -119,7 +127,7 @@ def run(binary):
                 answer(terminal_session, "Password (hidden):", PASSWORD, True)
                 terminal_session.text("PTY-FIRST-ORDER")
                 require(fixture.snapshot()[0].headers.get("authorization") == f"Bearer {TOKEN}", "ordinary operation did not use the password session")
-                require(identity.requests == ["/password/enroll", "/password/session"], "authentication repeated unexpectedly")
+                require(identity.requests == ["/password/enroll", "/password/environments", "/password/session"], "authentication repeated unexpectedly")
                 deadline = time.monotonic() + 4
                 while time.monotonic() < deadline:
                     terminal_session.pump()
@@ -154,6 +162,39 @@ def run(binary):
                 secret_free(terminal_session)
             require(len(identity.requests) == len(before) + 1, "failed login retried")
             require(len(fixture.snapshot()) == 1, "login failure or expiry sent an application request")
+            identity.fail = False
+            second = operator.Fixture()
+            second.configure(False, "PTY-SECOND-ORDER")
+            try:
+                alternate = "urn:wamn:project-env:acme:receiving:prod:fixture2"
+                targets = Path(directory) / "targets.json"
+                targets.write_text(json.dumps([
+                    {"audience": AUDIENCE, "base_url": fixture.url, "host": operator.HOST, "target_instance": "first"},
+                    {"audience": alternate, "base_url": second.url, "host": operator.HOST, "target_instance": "second"},
+                ]))
+                for authorized in ([AUDIENCE, alternate, "not-configured"], [alternate], []):
+                    identity.audiences = authorized
+                    before_second = len(second.snapshot())
+                    environment = identity.environment() | {"WAMN_RECEIVING_TARGETS": str(targets)}
+                    with terminal.Session(binary, ROOT, fixture, "ignored", operator.HOST, None, environment) as terminal_session:
+                        answer(terminal_session, "Enter L", "l")
+                        answer(terminal_session, "Email:", "alice@example.invalid")
+                        answer(terminal_session, "Password (hidden):", PASSWORD)
+                        if len(authorized) > 1:
+                            answer(terminal_session, "Choose an environment number", "2")
+                        if authorized:
+                            terminal_session.text("PTY-SECOND-ORDER")
+                            require(identity.selected == alternate, "login used another audience")
+                            terminal_session.send(b"q")
+                            terminal_session.finish()
+                            require(len(second.snapshot()) == before_second + 1, "selected application was not called")
+                        else:
+                            terminal_session.finish(exit_code=1)
+                            require(len(second.snapshot()) == before_second, "unauthorized selection sent an application request")
+                        secret_free(terminal_session)
+                require(len(fixture.snapshot()) == 1, "environment selection called the wrong deployment")
+            finally:
+                second.close()
             require(not identity.errors, "identity fixture failed")
         except terminal.TestError:
             if "terminal_session" in locals():
@@ -165,7 +206,7 @@ def run(binary):
         finally:
             fixture.close()
             identity.close()
-    print("Password PTY: enrollment, login, expiry, logout, cancellation, failure and secret hiding passed.")
+    print("Password PTY: enrollment, login, expiry, logout, cancellation, selection, failure and secret hiding passed.")
 
 
 if __name__ == "__main__":

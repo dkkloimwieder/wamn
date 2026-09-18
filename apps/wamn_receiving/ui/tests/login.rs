@@ -170,3 +170,41 @@ async fn empty_pat_refuses_both_modes_before_an_exchange() {
         assert_eq!(exchange.calls.load(Ordering::SeqCst), 0);
     }
 }
+
+#[test]
+fn environment_configuration_binds_unique_audiences_to_explicit_addresses() {
+    use wamn_receiving_tui::login::environment_targets;
+    let first = json!({"audience": AUDIENCE, "base_url": "https://receiving.example.invalid", "host": "receiving.example.invalid", "target_instance": "activation-1"});
+    let second = json!({"audience": "urn:wamn:project-env:acme:receiving:prod:instance2", "base_url": "https://production.example.invalid", "target_instance": "activation-2"});
+    let targets =
+        environment_targets(&serde_json::to_vec(&json!([first, second])).unwrap()).unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(
+        targets[1].binding.url,
+        "https://production.example.invalid/"
+    );
+    assert_eq!(targets[1].binding.target_instance, "activation-2");
+    assert_eq!(
+        targets[0].binding.host.as_deref(),
+        Some("receiving.example.invalid")
+    );
+    for invalid in [
+        json!([]),
+        json!([first, first]),
+        json!([{"audience": AUDIENCE}]),
+    ] {
+        assert!(environment_targets(&serde_json::to_vec(&invalid).unwrap()).is_err());
+    }
+    for url in [
+        "https://user:secret@example.invalid",
+        "https://example.invalid/?secret=value",
+        "https://example.invalid/#fragment",
+        "file:///tmp/application",
+    ] {
+        let mut invalid = first.clone();
+        invalid["base_url"] = json!(url);
+        let error =
+            environment_targets(&serde_json::to_vec(&json!([invalid])).unwrap()).unwrap_err();
+        assert!(!error.to_string().contains(url));
+    }
+}

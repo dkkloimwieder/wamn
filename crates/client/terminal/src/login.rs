@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::io::{self, IsTerminal as _};
+use std::sync::Arc;
 
 use crossterm::{
     ExecutableCommand as _,
@@ -9,7 +10,8 @@ use crossterm::{
 };
 use futures_util::StreamExt as _;
 use ratatui::widgets::{Paragraph, Wrap};
-use wamn_client::credentials::{PasswordCredentials, SecretInput};
+use wamn_client::Transport;
+use wamn_client::credentials::{PasswordCredentials, SecretInput, SessionTarget};
 use zeroize::Zeroizing;
 
 use crate::{
@@ -17,14 +19,31 @@ use crate::{
     operator::{ExitReason, shutdown_signal},
 };
 
+/// The selected environment and its session, or a terminal exit request.
+#[derive(Debug)]
+pub enum PasswordLogin {
+    Authenticated {
+        index: usize,
+        credentials: Arc<PasswordCredentials>,
+    },
+    Exit(ExitReason),
+}
+
 /// Accept an optional invitation, then prompt for an explicit password login.
 ///
 /// # Errors
 /// Refuses redirected input and failed enrollment/login without printing secrets.
-/// A returned exit reason means the operator cancelled before application startup.
+/// An exit outcome means the operator cancelled before application startup.
 pub async fn password_login(
-    credentials: &PasswordCredentials,
-) -> Result<Option<ExitReason>, Box<dyn Error>> {
+    issuer: &str,
+    audiences: &[String],
+    transport: Arc<dyn Transport>,
+) -> Result<PasswordLogin, Box<dyn Error>> {
+    let first = audiences
+        .first()
+        .ok_or_else(|| io::Error::other("configure at least one environment"))?;
+    let credentials =
+        PasswordCredentials::new(SessionTarget::new(issuer, first)?, transport.clone());
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(io::Error::other("password login requires an interactive terminal").into());
     }
@@ -33,12 +52,12 @@ pub async fn password_login(
     let mut terminal = TerminalSession::enter()?;
     io::stdout().execute(EnableBracketedPaste)?;
     let mut events = crate::events();
-    let selected = format!("Environment: {}", credentials.audience());
+    let selected = "Receiving sign-in";
     let flow = async {
         let choice = prompt(
             &mut terminal,
             &mut events,
-            &selected,
+            selected,
             "Enter L to log in, or I to accept an invitation:",
         )
         .await?;
@@ -47,28 +66,28 @@ pub async fn password_login(
                 let principal = prompt(
                     &mut terminal,
                     &mut events,
-                    &selected,
+                    selected,
                     "Principal ID from the invitation:",
                 )
                 .await?;
                 let invitation = prompt(
                     &mut terminal,
                     &mut events,
-                    &selected,
+                    selected,
                     "Invitation secret (hidden):",
                 )
                 .await?;
                 let password = prompt(
                     &mut terminal,
                     &mut events,
-                    &selected,
+                    selected,
                     "New password (hidden, at least 15 characters):",
                 )
                 .await?;
                 let confirmation = prompt(
                     &mut terminal,
                     &mut events,
-                    &selected,
+                    selected,
                     "Confirm new password (hidden):",
                 )
                 .await?;
@@ -83,17 +102,61 @@ pub async fn password_login(
             "l" => (),
             _ => return Err(io::Error::other("enter L or I to select authentication").into()),
         }
-        let email = prompt(&mut terminal, &mut events, &selected, "Email:").await?;
-        let password = prompt(&mut terminal, &mut events, &selected, "Password (hidden):").await?;
+        let email = prompt(&mut terminal, &mut events, selected, "Email:").await?;
+        let password = prompt(&mut terminal, &mut events, selected, "Password (hidden):").await?;
+        let authorized = credentials.environments(email.expose(), &password).await?;
+        let choices: Vec<_> = audiences
+            .iter()
+            .enumerate()
+            .filter(|(_, audience)| authorized.contains(audience))
+            .collect();
+        let index = match choices.as_slice() {
+            [] => {
+                return Err(io::Error::other(
+                    "no authorized environment matches this deployment configuration",
+                )
+                .into());
+            }
+            [(index, _)] => *index,
+            _ => {
+                let list = choices
+                    .iter()
+                    .enumerate()
+                    .map(|(number, (_, audience))| format!("{}. {}", number + 1, audience))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let choice = prompt(
+                    &mut terminal,
+                    &mut events,
+                    &list,
+                    "Choose an environment number:",
+                )
+                .await?;
+                let number = choice
+                    .expose()
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|value| value.checked_sub(1));
+                number
+                    .and_then(|number| choices.get(number))
+                    .map(|(index, _)| *index)
+                    .ok_or_else(|| io::Error::other("environment selection refused"))?
+            }
+        };
+        let credentials =
+            PasswordCredentials::new(SessionTarget::new(issuer, &audiences[index])?, transport);
         credentials.login(email.expose(), password).await?;
-        Ok::<_, Box<dyn Error>>(None)
+        Ok::<_, Box<dyn Error>>(PasswordLogin::Authenticated {
+            index,
+            credentials: Arc::new(credentials),
+        })
     };
     tokio::select! {
         result = flow => match result {
-            Err(error) if error.downcast_ref::<io::Error>().is_some_and(|e| e.kind() == io::ErrorKind::Interrupted) => Ok(Some(ExitReason::Operator)),
+            Err(error) if error.downcast_ref::<io::Error>().is_some_and(|e| e.kind() == io::ErrorKind::Interrupted) => Ok(PasswordLogin::Exit(ExitReason::Operator)),
             result => result,
         },
-        result = &mut shutdown => Ok(Some(result?)),
+        result = &mut shutdown => Ok(PasswordLogin::Exit(result?)),
     }
 }
 
