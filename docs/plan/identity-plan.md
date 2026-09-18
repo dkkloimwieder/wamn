@@ -1,224 +1,253 @@
 # Human identity and login
 
-Review draft, 2026-09-17. Specification task: `wamn-mlsg`.
-This plan replaces `identity-notes.md` and proposes human login without mandatory personal access tokens (PATs).
-It does not authorize implementation or change the current authentication contract.
-The review questions below require owner decisions before implementation tasks are scheduled.
+Owner-directed implementation sequence, 2026-09-17.
+This revision incorporates the critical review and supersedes its bundled first-release proposal.
+Password-first is settled. OIDC remains planned future work.
+Beads owns scheduling, decisions, and implementation status.
 
-## Purpose and boundaries
+## Goal and planning rule
 
-A person can sign in, enter an authorized environment, continue working, and perform sensitive operations without creating a PAT.
-Every login method resolves to the existing canonical principal, the stable identity used across authentication methods.
-WAMN remains the session issuer, the service that signs access tokens.
-Applications receive authenticated callers through the existing host boundary.
+An invited person signs into Receiving with a password and performs an authorized operation without obtaining a personal access token (PAT).
+This is the first milestone, not the completed human-login release.
+Renewal, recovery, and PAT-free sensitive operations follow in separate increments.
+Their design must not block the first working password login.
 
-PATs remain available for integrations, scripts, stations, and optional developer access.
-This plan does not remove the current PAT path or silently convert human credentials into PATs.
-Machine authentication remains separate from human authentication.
+Only the first epic receives detailed implementation issues now.
+At every later epic start, review the preceding results and current implementation before planning that epic's issues.
+Do not pre-plan the complete backlog or treat an epic dependency becoming clear as permission to skip reassessment.
+OIDC has a future epic without implementation children.
 
-## Current implementation
+## Existing authority
 
-The [execution architecture](../architecture/execution.md#caller-authentication) defines current behavior and its limits.
-The existing `wamn-identity` service exchanges a human PAT through `POST /session` after establishing membership and environment roles.
-Service PATs cannot mint human sessions.
-The host authenticates Ed25519 signatures using the configured issuer's public keys and reads current role permissions for each request.
+The [execution architecture](../architecture/execution.md#caller-authentication) defines the current authentication contract.
+WAMN keeps its canonical principal, the stable identity shared across login methods.
+Explicit membership grants control entry to an environment.
+The environment's roles grant operation permissions.
+Authentication never creates membership or permission by itself.
 
-Access tokens last at most 900 seconds, with 30 seconds of time tolerance.
-Cached public keys remain usable for at most 300 seconds.
+The existing `wamn-identity` service exchanges a human PAT for an Ed25519-signed session token.
 The audience identifies the exact organization, project, environment, and environment instance.
-The current client keeps access tokens in memory and uses its PAT to obtain another token.
-There is no refresh token, login-session table, or access-token denylist.
+Tokens last at most 900 seconds with 30 seconds of tolerance.
+Hosts use the configured issuer's public keys, with a 300-second freshness limit, and read current role permissions per request.
+Membership, assigned-role removal, and principal disablement affect existing tokens through their remaining lifetime.
 
-Fresh-only operations currently require a PAT, including nested calls.
-Membership removal, assigned-role removal, and principal disablement affect existing sessions through their remaining lifetime.
-Changes to permissions granted by a role apply on the next request.
-These rules remain in force until an approved replacement ships.
+Human creation, membership grants, and tenant-user provisioning already exist through `create-human`, `grant-project-env-membership`, and `reconcile-run-plane`.
+Reuse these authorities and the existing token issuer.
+The same person keeps the same identifier through password login and optional PAT access.
+Service credentials never establish a human identity.
+PATs remain available for existing clients, integrations, scripts, and optional developer access.
 
-Human creation, explicit environment membership grants, and production tenant-user provisioning already exist.
-They use `create-human`, `grant-project-env-membership`, and `reconcile-run-plane`.
-The first human-login release must reuse these authorities rather than create another directory or membership model.
+## Delivery increments
 
-## Proposed first release
+| Increment | Usable outcome | Explicit limits |
+| --- | --- | --- |
+| 1. Password login | Operator invitation, first password, terminal login, existing session token, authorized Receiving operation. | No renewal or password recovery. Expiry requires another login. Logout clears local credentials. Fresh-only operations remain PAT-only. |
+| 2. Everyday account use | Renewal, server-side logout, and password recovery. | No persistent terminal credentials, renewal retry grace, account linking, or self-service email changes. |
+| 3. Sensitive operations | Password reauthentication supplies recent evidence for authorized fresh-only operations. | Requires explicit approval of the five-minute identity and membership window plus tolerance. |
 
-The first release provides invited email-and-password login, recovery, logout, session renewal, and recent authentication for sensitive operations.
-The existing identity service owns these functions and their storage in the system database.
-Application hosts hold no passwords, recovery secrets, or private signing keys.
-Outbound email is a required dependency for invitations and recovery.
+Complete the first milestone before adding the remaining session lifecycle.
+An implementation issue cannot pull later-increment machinery into increment 1 for convenience.
+The complete human-login release includes the agreed later increments; milestone 1 alone does not satisfy that larger scope.
+
+## Increment 1: password login
 
 The first client is the existing operator terminal.
-Browser login is a later delivery unless the owner selects it during review.
-The terminal stores access and renewal credentials only in process memory for the first release.
-Closing the process requires another login.
-Passwords never enter command arguments, environment variables, configuration files, or logs.
+The existing identity service owns passwords and invitation credentials in the system database.
+Hosts receive signed access tokens, never passwords or invitation secrets.
+This increment adds no renewal credential, session table, authentication-time claim, or token-profile change.
 
-## Identity and access
+An authenticated platform operator creates or selects a human principal and grants the required environment membership through existing operations.
+The operator issues an invitation for that explicitly selected, unenrolled principal.
+The identity service sends a single-use secret to the principal's email address.
+The person enters the secret and a new password through hidden terminal prompts, then logs in normally.
+No browser form is assumed or required.
 
-Authentication establishes a person but grants no environment membership by itself.
-Every token issue and renewal requires an active principal, explicit membership, the current environment instance, an active tenant-user row, and current assigned roles.
-The host continues to resolve operation permissions from those roles.
-Changing environments requires a separately authorized token with that environment's exact audience.
+An invitation can establish only the first password.
+It cannot overwrite an enrolled account, change the selected principal, or grant membership.
+Granting another membership never authorizes replacing a person's global password.
+The existing one-email-per-principal rule remains controlling.
+An existing-account conflict requires an authorized operator disposition; automatic linking is outside this increment.
 
-The same person retains the same identifier through password login, SSO, and optional PAT use.
-Email remains a contact and login attribute, not the immutable identity key.
-The existing rule that one email identifies one platform principal remains controlling.
-Invitation acceptance must not create a duplicate principal or silently attach credentials to an existing account.
-An email conflict requires authenticated account recovery or an authorized linking process.
+Password login reuses the existing membership, current environment instance, active tenant-user, role, and token-minting rules.
+The terminal keeps the access token only in process memory and discards password input after the request.
+It never retains the password to renew access automatically.
+Token expiry and process restart require another login.
+Logout clears local credentials and states that issued tokens retain their existing validity.
 
-An authorized platform operator creates or selects the principal and grants membership through existing operations.
-The invitation establishes the person's password and control of the invited address.
-It does not grant additional membership or roles.
-Public self-registration and organization-admin delegation are outside the first release.
+Fresh-only operations remain PAT-only, including nested calls.
+Password-issued tokens carry no claim of recent authentication beyond the existing profile.
+A refused mutation is never replayed automatically after login.
+The person explicitly submits it again.
 
-## Passwords and recovery
+## Safety from the first endpoint
+
+TLS, secure hashing, bounded password work, throttling, and secret-free logs are prerequisites for exposing password endpoints.
+They are not a later hardening phase.
+Use the existing identity service, logging, database, and test infrastructure.
+Do not add a revocation service, event bus, or generalized authentication framework.
 
 The identity service stores salted Argon2id password hashes with versioned parameters.
-Implementation must choose parameters against the supported deployment's memory and concurrency limits.
-The initial policy requires at least 15 characters, permits at least 64, and rejects common or compromised passwords.
-It permits password managers and paste, and imposes no composition rules or routine password expiration.
-These password rules follow [NIST guidance](https://pages.nist.gov/800-63-4/sp800-63b.html#passwordver).
+Choose parameters against the supported deployment's memory and concurrency limits before exposing the endpoint.
+The password policy requires at least 15 characters, permits at least 64, and rejects common or compromised passwords.
+It permits password managers and paste, with no composition rules or routine password expiration.
+These policy choices follow [NIST guidance](https://pages.nist.gov/800-63-4/sp800-63b.html#passwordver).
 
-Login, invitation, and recovery endpoints apply bounded request sizes and coordinated rate limits across service instances.
-Limits cover the account, request source, and total expensive password work.
-Unknown accounts receive equivalent public responses without exposing account existence.
-Failure handling must not provide an attacker with a permanent account-lockout operation.
-Exact rate limits and hash parameters require implementation review before deployment.
+Bound request sizes and concurrent expensive password work.
+Apply throttling to accounts, request sources, and total work, including across identity-service replicas.
+Preserve operator authentication on principal, membership, and invitation administration.
+Unknown-account and wrong-password responses must not reveal account existence through distinct status codes or obvious response paths.
+Do not introduce permanent attacker-triggered lockout or an elaborate constant-time networking requirement.
+These protections follow [OWASP authentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html).
 
-Invitation and reset credentials are random, short-lived, single-use secrets stored only as hashes.
-Consumption and password replacement occur atomically.
-Proposed expiry is 24 hours for invitations and 15 minutes for password reset links.
-Reset completion revokes all renewal credentials for that person and requires a new login.
-It does not silently create an authenticated session.
-Existing access tokens retain the bounded validity described below.
+Use one password-verification path for login and later reauthentication.
+Use one invitation/reset credential implementation with explicit purposes; increment 1 implements only invitation behavior.
+Bind each credential to its purpose and principal, store only its hash, and consume it atomically with the permitted password change.
+Invitation expiry is 24 hours; later reset expiry is 15 minutes.
+Successful enrollment or password replacement invalidates outstanding invitation/reset credentials that can otherwise overwrite that password.
 
-Email changes require recent authentication, verification of the new address, and notification to the old address.
-The principal identifier and memberships remain unchanged.
-Loss of the recovery mailbox requires an explicitly authorized support process, not an undocumented bypass.
-Automatic PAT revocation during password recovery is outside this proposal; operators retain the existing explicit revocation path.
+Passwords and bearer secrets never appear in command arguments, environment variables, configuration files, logs, or generated artifacts.
+Email delivery uses the selected deployment transport without a provider framework.
+A delivery failure must not be reported as a delivered invitation.
+The mail transport and concrete password-work limits must be resolved during the first epic, before the affected endpoints ship.
+Use existing operational logging and retention controls without adding an authentication-log subsystem.
 
-## Session renewal
+## Increment 2: everyday account use
 
-This plan proposes a revocable login record and an opaque renewal credential, separate from the signed access token.
-This is new identity state and explicitly changes the earlier no-session-database design.
-The record binds the principal, environment audience, authentication time, expiry, and renewal-credential family.
+Reassess increment 1 before filing this epic's implementation issues.
+This increment adds renewal, server-side logout, password reset, and the operational recovery procedure.
+It introduces revocable login records in the existing identity database, explicitly changing the earlier no-session-state design.
+It does not create another identity authority.
+
+A login record binds the principal, exact environment audience, authentication time, absolute expiry, and renewal-credential family.
 A family is the sequence of replacement credentials for one login.
-The database stores credential hashes, never their bearer values.
+Store only hashes of opaque renewal credentials.
+Every issue and renewal requires current principal status, membership, environment instance, tenant-user status, and assigned roles.
+Keep access and renewal credentials only in terminal process memory.
 
-Proposed limits are eight hours from interactive login and 30 minutes without successful renewal.
-Renewal never extends the eight-hour limit or updates the interactive authentication time.
-Clients renew only during active use, not through an unattended timer that defeats the inactivity limit.
-This measures renewal activity, not proof of physical user presence.
+The absolute deadline is eight hours after full interactive login.
+Renewal expires after 30 minutes without successful renewal and never moves the absolute deadline or authentication time.
+Clients renew during active use, not through an unattended timer.
+Renewal activity does not establish physical user presence.
+Cap every access token at the earlier of its normal expiry and the login's absolute deadline, with the existing clock tolerance applied separately.
 
-Each successful renewal atomically consumes its credential and returns a replacement plus a new access token.
+Each successful renewal atomically consumes its credential and returns one replacement and a new access token.
 Reusing a consumed credential revokes its family.
-Clients serialize renewals; a lost replacement response requires a new login in the initial design.
-This favors simple replay refusal over a retry grace period.
-Rotation and replay detection follow the approach described in [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14.2).
+Clients serialize renewals; a lost replacement response requires another login.
+Do not add a retry grace period.
+Retain consumed-credential evidence through family expiry, then remove obsolete records through bounded cleanup.
+This follows the rotation approach in [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14.2).
 
-Logout revokes the current family and clears local credentials.
-Logout-all and principal disablement revoke every family for that person.
-Already issued access tokens remain usable for at most their remaining 900-second lifetime plus 30-second tolerance.
-Immediate access-token revocation is not promised.
-Credential records require bounded cleanup without removing consumed-credential evidence before its family's absolute expiry.
+Logout revokes the current family; logout-all and principal disablement revoke all families for the person.
+Already issued access tokens retain their remaining validity, bounded by token expiry, absolute session expiry, and tolerance.
+If the issuer is unreachable, clear local credentials and report that server-side revocation was not confirmed.
+Do not promise immediate access-token revocation.
 
-## Recent authentication
+Password recovery uses an emailed single-use secret entered through a hidden terminal prompt.
+Reset completion replaces the password, invalidates outstanding invitation/reset secrets, and revokes every renewal family for the person.
+Notify the person after reset and require ordinary login instead of automatically opening a session.
+This follows [OWASP recovery guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+Mailbox-loss recovery requires a narrow, documented operator procedure before this increment is complete.
+Existing PATs retain their explicit revocation path; password reset does not silently revoke them.
 
-This plan proposes extending fresh-only admission to accept recent human authentication as an alternative to the existing PAT path.
-It does not silently weaken existing operation declarations.
-A long-lived PAT proves possession of that credential, not recent interactive authentication by a person.
+Implement revocation and issuance ordering with ordinary transactions in the existing identity database.
+Concurrent renewal cannot escape logout or reset as a usable successor credential.
+An in-flight login using the old password cannot create a surviving renewal family after password reset commits.
+Already issued access tokens retain the stated validity limitation.
+Test these races against real PostgreSQL when renewal and reset land, not as a prerequisite for increment 1.
 
-The proposed human freshness window is five minutes after successful interactive authentication.
-The issuer records that time from its own authentication process, never from a client-supplied timestamp.
-Renewal preserves that time and cannot make an old login recent.
-The host enforces freshness at the registered-operation boundary, including nested calls under the original caller.
-Freshness does not grant a permission or replace normal authorization.
+Self-service email changes, general account linking, persistent terminal credentials, and renewal retry grace remain outside this increment.
 
-The token contract needs a reviewed extension carrying authenticated evidence and its time.
-Legacy tokens without that evidence remain valid for ordinary operations but remain insufficient for fresh-only operations.
-Deployment must install compatible verifiers before the issuer emits the new profile.
-Exact claims, profile compatibility, and refusal literals require a separate contract review before code changes.
+## Increment 3: PAT-free sensitive operations
 
-When evidence is too old, the client requests another login challenge.
-The challenge binds the same principal and intended environment.
-Success supplies recent evidence but does not replay a previously refused mutation automatically.
+Reassess the preceding epics before planning this work.
+The owner must explicitly accept stale principal and membership evidence for five minutes plus the existing 30-second tolerance.
+Until that decision and implementation, fresh-only operations remain PAT-only.
+This decision does not block ordinary password login.
+
+The issuer records successful interactive authentication time from the shared password-verification path.
+The host enforces the proposed five-minute limit at the registered-operation boundary, including nested calls under the original caller.
+Current role permissions still apply to each request.
+Renewal never refreshes authentication time, and PAT exchange never invents interactive evidence.
+Password re-entry establishes recency, not multifactor authentication or phishing resistance.
+
+The reauthentication challenge binds the same principal and intended environment.
+It refreshes authentication evidence without moving the login's absolute deadline.
+A full login starts a new eight-hour session; renewal does neither.
+The client never automatically replays a refused mutation after a challenge.
 The person explicitly submits the operation again.
-No new per-operation identity lookup is proposed, so recent evidence retains its own bounded revocation window, including clock tolerance.
 
-## External identity providers
+Make the necessary parser, signer, issuer, verifier, and client changes in one coordinated update.
+The controlled greenfield deployment permits component restarts and requires login again after the update.
+Do not build prolonged dual-profile compatibility without a concrete consumer requiring it.
+Preserve the PAT path and existing permission boundaries.
+Resolve exact claims and refusal behavior within this epic, not as a separate rollout project.
 
-OIDC is a later login adapter inside `wamn-identity`, not a second identity authority.
-OIDC connects WAMN to an external authentication provider.
-The provider authenticates the person.
-WAMN establishes membership and issues its own environment-scoped token.
-Provider roles and groups do not automatically become application permissions.
+## OIDC and later methods
 
-An approved connection maps the provider's issuer and subject to an existing canonical principal.
-Email alone must never link accounts, including when the provider marks it verified.
-Issuer and subject form the stable identifier described by [OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability).
-Automatic principal creation on first login requires a separate owner decision.
-The initial proposal requires invited or explicitly linked accounts.
+OIDC remains a planned future epic, without detailed implementation issues now.
+It adds an external login adapter within `wamn-identity` and uses the same principal, membership, and session authority.
+Reassess the completed password implementation before selecting its provider and client flow.
+A terminal can use the system browser without requiring a browser application, as described in [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252.html).
 
-The adapter uses authorization code flow with PKCE, which binds code exchange to the initiating client.
-It enforces issuer, audience, redirect target, state, nonce, signature, and expiry requirements through a maintained protocol library.
-The configured connection establishes the trusted issuer and certificate roots.
-SSO does not imply directory synchronization, provisioning, or immediate upstream disablement detection.
+Map an approved provider's issuer and subject to the canonical principal.
+Never link accounts using email alone, even if the provider marks it verified.
+The stable identifier follows [OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability).
+Provider roles and groups do not automatically grant WAMN membership or permissions.
+Automatic account creation, directory synchronization, and immediate upstream disablement detection are separate decisions.
 
-Federation design must define upstream revalidation before renewal and how recent authentication evidence is established.
-A silent provider session cannot be assumed to represent a new interactive login.
-Federation cannot ship until its upstream disablement window is explicit and approved.
-The [existing federation plan](identity.md) remains subject to these proposed review decisions.
+Use a maintained protocol library and authorization code flow with PKCE, which binds code exchange to the initiating client.
+Establish trusted issuer configuration and certificate roots explicitly.
+Before implementation, define upstream disablement limits and the evidence required for recent authentication.
+A silent provider session is not automatically a new interactive login.
+The [federation plan](identity.md) retains these boundaries.
 
-## Shared stations and later methods
+Shared stations, passkeys, browser application delivery, SAML, and device certificates remain outside the three increments.
+A station authenticates as a service; an operator authenticates as a person.
+Station credentials alone cannot create human sessions, and badge identifiers alone do not establish authentication.
+Future station work must define attribution, operator switching, idle locking, and isolation of earlier requests and responses.
+No earlier request can acquire the next operator's authority.
 
-A station authenticates as a service principal; its operator authenticates as a person.
-The station credential alone cannot mint or renew a human session.
-A badge identifier selects a person but is not automatically an authenticator.
-PIN or badge authentication needs a separate policy for guessing resistance, enrollment, and recovery.
+## Acceptance by increment
 
-Application row history continues to identify the acting person.
-Station attribution requires a separately authenticated context and audit contract.
-The station design must define operator switching, idle locking, credential clearing, and requests admitted before a switch.
-An earlier request must never acquire the next operator's authority or deliver its response into the next operator's screen.
-This work is outside the first release.
+Use existing tests, controlled clocks for time rules, and real PostgreSQL for transaction behavior.
+Do not add a testing framework or broad benchmark campaign.
 
-Passkeys remain a later authentication method with explicit enrollment and recovery design.
-SAML and device certificates require a concrete customer need.
-OAuth client credentials remain a separate machine-token flow, not a rename of PATs.
-None requires another principal directory or permission model.
+Increment 1 must demonstrate:
 
-## Audit and acceptance
+- Operator invitation, password establishment, terminal login, and a real authorized Receiving operation without a human PAT.
+- The same canonical person identifier as optional PAT access, with existing membership and permission boundaries preserved.
+- Expiring, correctly bound invitation secrets that cannot overwrite enrolled credentials or succeed twice, including concurrent consumption.
+- TLS, bounded password work, throttling, protected operator endpoints, and public failure behavior that does not trivially enumerate accounts.
+- No secrets in logs or persistent terminal state, re-login on token expiry, local-only logout, and unchanged PAT-only fresh operations.
 
-Authentication records include principal identifiers, outcomes, and permitted operational context, never passwords or bearer secrets.
-The identity service records enrollment, login, recovery, linking, renewal replay, logout, and revocation events.
-Record writes continue to stamp the canonical actor identifier.
-Authentication logs need access controls and a retention decision before deployment.
+Increment 2 must demonstrate:
 
-The first release must demonstrate these behaviors with focused tests:
+- Last-minute renewal cannot extend access beyond absolute expiry plus tolerance; inactivity and replay rules hold.
+- Concurrent renewal, renewal versus logout/reset, and old-password login versus reset follow the defined transaction ordering.
+- Expired or consumed reset secrets refuse; successful reset invalidates other secrets, stops renewal, and notifies the person.
+- Unreachable logout clears local credentials without falsely claiming server revocation.
 
-- An invited person logs in and works without any PAT.
-- Missing membership, inactive users, and stale environment instances refuse token issue and renewal.
-- Renewal rotates credentials atomically, rejects replay, and preserves the original authentication time and absolute expiry.
-- Recovery tokens expire and cannot be consumed twice, including concurrent attempts.
-- Logout and recovery stop renewal while access-token validity stays within the documented bound.
-- Recent authentication permits an authorized fresh-only operation, while stale or absent evidence refuses direct and nested calls.
-- A challenge cannot change the principal, widen the audience, or replay a refused mutation.
-- Permission changes affect the next request; role and membership changes follow the documented token lifetime.
-- Existing PAT clients continue to work, and service PATs cannot establish a human session.
-- Credentials remain absent from logs, generated artifacts, and persistent terminal state.
+Increment 3 must demonstrate:
 
-Browser delivery additionally requires protected credential storage and protection against forged cross-site requests.
-It must not persist renewal credentials in JavaScript-readable browser storage.
-Those requirements do not authorize building a browser client in the first release.
+- Stale or absent authentication evidence refuses fresh-only operations while current permissions still apply.
+- Direct and nested calls preserve the original caller and enforce the approved freshness window.
+- Renewal and PAT exchange cannot fabricate recency, and reauthentication cannot extend absolute expiry or replay mutations.
+- The coordinated deployment preserves PAT access and requires a fresh login for changed session tokens.
 
-## Review questions
+## Remaining decisions and ownership
 
-1. Approve invited password login in the operator terminal as the first human-login release, with no mandatory human PAT?
-2. Approve revocable renewal records, an eight-hour absolute limit, a 30-minute renewal inactivity limit, and login after process restart?
-3. Approve recent human authentication within five minutes as an alternative to PATs for fresh-only operations?
-4. Accept remaining access-token validity after logout or recovery, bounded to 15 minutes plus 30 seconds?
-5. Approve operator-issued invitations, the proposed password and recovery rules, and an explicitly authorized mailbox-loss recovery process?
-6. Which outbound email service and authentication-log retention policy will the deployment use?
-7. Keep federation, automatic account creation, shared-station login, passkeys, and browser delivery outside the first release?
+Password-first and the three-increment order are settled.
+Choose the outbound email transport during the first epic before implementing invitation delivery.
+Choose concrete password-hash parameters and throttling limits against the actual deployment before exposing endpoints.
+Accept or reject the five-minute stale identity/membership window plus tolerance at the third epic's reassessment.
+The mailbox-loss procedure belongs to increment 2; the concrete OIDC provider and upstream limits belong to its future epic.
 
-Beads owns implementation status and scheduling.
-After review, approved work must receive implementation issues before coding starts.
-Closed historical issues `wamn-117` and `wamn-0h0g.9` do not supply an active implementation owner.
+The Beads epics carry this plan's scope and reassessment rule:
+
+- `wamn-a045`: Invited password login into Receiving.
+- `wamn-6uby`: Everyday account use and session lifecycle.
+- `wamn-k3mu`: PAT-free sensitive operations.
+- `wamn-jpx2`: Future OIDC login through the existing issuer.
+
+Only increment 1 has implementation children at initial planning.
+Later epic starts require another planning round informed by the preceding results.

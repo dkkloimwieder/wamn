@@ -1,15 +1,15 @@
 # External identity providers
 
 Federated login connects an external identity provider to WAMN.
-Historical work belongs to closed issues `wamn-117` and `wamn-0h0g.9`.
-The [human identity plan](identity-plan.md) proposes the next review scope.
-Implementation needs an active issue after approval.
-Its renewal-state and recent-authentication proposals change the constraints below only if the owner approves them.
+Future work belongs to `wamn-jpx2`; historical issues `wamn-117` and `wamn-0h0g.9` remain closed.
+The [human identity plan](identity-plan.md) settles password-first delivery and retains OIDC as future work.
+Reassess the preceding implementation at the OIDC epic start before planning its child issues.
 Current PAT issuance, session exchange, request authorization, and revocation limits belong in [execution](../architecture/execution.md).
 
 The existing `wamn-identity` service will own the external login adapter.
 Customer identity providers and outsourced login services must map approved external subjects to existing canonical principals.
-They must use the same environment memberships, roles, and session profile.
+They must use the same environment memberships, roles, and session authority.
+Reuse the session lifecycle available when this epic starts.
 This work adds no separate principal store, role model, session database, or identity service.
 
 External authentication and session minting remain separate steps.
