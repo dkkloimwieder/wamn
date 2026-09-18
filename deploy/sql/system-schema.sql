@@ -417,6 +417,65 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
+-- One password login owns a family of single-use renewal credentials.
+-- Credential material gets stamps but never row-image history.
+CREATE TABLE identity.password_logins (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    principal_id uuid NOT NULL,
+    principal_kind text NOT NULL DEFAULT 'human' CHECK (principal_kind = 'human'),
+    issuer text NOT NULL CHECK (octet_length(issuer) BETWEEN 1 AND 2048),
+    audience text NOT NULL CHECK (octet_length(audience) BETWEEN 1 AND 1024),
+    authenticated_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    renewal_expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    FOREIGN KEY (principal_id, principal_kind)
+        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT,
+    CHECK (expires_at = authenticated_at + interval '8 hours'),
+    CHECK (renewal_expires_at > authenticated_at AND renewal_expires_at <= expires_at)
+);
+CREATE INDEX password_logins_principal_idx ON identity.password_logins (principal_id);
+CREATE INDEX password_logins_expiry_idx ON identity.password_logins (issuer, expires_at);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.password_logins
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+CREATE TABLE identity.renewal_credentials (
+    token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
+    login_id uuid NOT NULL REFERENCES identity.password_logins (id) ON DELETE CASCADE,
+    consumed_at timestamptz,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL
+);
+CREATE INDEX renewal_credentials_login_idx ON identity.renewal_credentials (login_id);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.renewal_credentials
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- The principal lock orders disablement against every login writer. The trigger
+-- also covers administrative status changes outside the identity Rust library.
+CREATE FUNCTION identity.revoke_disabled_password_logins() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    UPDATE identity.password_logins SET revoked_at = clock_timestamp()
+    WHERE principal_id = NEW.id AND revoked_at IS NULL;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION identity.revoke_disabled_password_logins() FROM PUBLIC;
+CREATE TRIGGER revoke_disabled_password_logins
+    AFTER UPDATE OF status ON identity.principals
+    FOR EACH ROW WHEN (NEW.status = 'disabled')
+    EXECUTE FUNCTION identity.revoke_disabled_password_logins();
+
 -- Session signing authority (wamn-ctc8.15.1). This is key-generation state,
 -- never per-session state. A fresh UUID kid is generated for each publication;
 -- rotation never reuses the credential machinery's A/B slot names as kids.

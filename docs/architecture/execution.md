@@ -204,6 +204,25 @@ The [identity library](../../crates/identity/platform/src/password.rs) supports 
 The identity service exposes password HTTP endpoints. Receiving supports hidden terminal enrollment and password login.
 The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
 
+The [login storage library](../../crates/identity/platform/src/password_login.rs) supplies database primitives for renewal and revocation.
+The HTTP service and terminal do not yet use these primitives.
+Each login binds one human, issuer, and exact environment audience.
+Its authentication time and eight-hour absolute deadline remain fixed.
+Successful renewal extends the inactivity deadline by 30 minutes, capped at the absolute deadline.
+
+The database stores only hashes of random, single-use renewal credentials.
+Reusing a consumed credential revokes its login family, the sequence of replacement credentials for one login.
+The caller commits that refusal so revocation persists.
+Successful rotation, current authorization, and access-token signing must commit together.
+The caller locks the principal before password verification and keeps that lock through login creation.
+Renewal, logout, and reset use the same principal lock.
+Principal disablement revokes its families through a database trigger, so reactivation cannot restore them.
+
+The issuer cannot change a login's principal, audience, authentication time, or absolute deadline.
+All writes require an actor, and credential tables have no row-image history.
+Consumed credentials remain until absolute expiry.
+Cleanup removes at most 100 expired families per call, including their credentials.
+
 Enrollment accepts an active, unenrolled human principal and a matching, unexpired invitation.
 The library locks that principal, creates its password, and consumes every outstanding invitation in one database transaction.
 Issuance records the authorized operator. Successful enrollment records the invited person.

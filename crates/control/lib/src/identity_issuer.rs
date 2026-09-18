@@ -275,7 +275,7 @@ async fn exact_grants(
     // a partial upgrade or any extra grant remains unexpected drift.
     let foundation = matches!(expected, Grants::StableBeforePrepare)
         && rows.len() == 1 + IDENTITY_ISSUER_TABLES.len() * 4;
-    let password_count = 5 + IDENTITY_ISSUER_PASSWORD_COLUMNS
+    let password_count = 6 + IDENTITY_ISSUER_PASSWORD_COLUMNS
         .iter()
         .map(|(_, _, c)| c.len())
         .sum::<usize>();
@@ -336,6 +336,9 @@ async fn exact_grants(
                                     && ((kind == "routine"
                                         && object == "lock_password_principal"
                                         && privilege == "EXECUTE")
+                                        || (kind == "relation"
+                                            && object == "password_logins"
+                                            && privilege == "DELETE")
                                         || (kind == "relation"
                                             && object == "password_attempts"
                                             && ["SELECT", "INSERT", "UPDATE", "DELETE"]

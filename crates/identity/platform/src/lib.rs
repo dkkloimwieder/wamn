@@ -22,6 +22,7 @@ use subtle::ConstantTimeEq as _;
 use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
 
 pub mod password;
+pub mod password_login;
 pub mod session_keys;
 pub mod session_token;
 

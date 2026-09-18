@@ -92,6 +92,44 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
         &["token_hash", "principal_id", "purpose", "expires_at"],
     ),
     ("password_tokens", "UPDATE", &["consumed_at"]),
+    (
+        "password_logins",
+        "SELECT",
+        &[
+            "id",
+            "principal_id",
+            "issuer",
+            "audience",
+            "authenticated_at",
+            "expires_at",
+            "renewal_expires_at",
+            "revoked_at",
+        ],
+    ),
+    (
+        "password_logins",
+        "INSERT",
+        &[
+            "principal_id",
+            "issuer",
+            "audience",
+            "authenticated_at",
+            "expires_at",
+            "renewal_expires_at",
+        ],
+    ),
+    (
+        "password_logins",
+        "UPDATE",
+        &["renewal_expires_at", "revoked_at"],
+    ),
+    (
+        "renewal_credentials",
+        "SELECT",
+        &["token_hash", "login_id", "consumed_at"],
+    ),
+    ("renewal_credentials", "INSERT", &["token_hash", "login_id"]),
+    ("renewal_credentials", "UPDATE", &["consumed_at"]),
 ];
 
 /// Which input predicate refused an identity credential.
@@ -345,6 +383,7 @@ pub fn grant_identity_issuer_surface_sql() -> String {
         .expect("string write");
     }
     write!(sql, " GRANT SELECT, INSERT, UPDATE, DELETE ON identity.password_attempts TO {role}; GRANT EXECUTE ON FUNCTION identity.lock_password_principal(uuid) TO {role};").expect("string write");
+    write!(sql, " GRANT DELETE ON identity.password_logins TO {role};").expect("string write");
     sql
 }
 
