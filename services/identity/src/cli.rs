@@ -48,10 +48,34 @@ impl fmt::Debug for Cli {
     }
 }
 
+/// Email environment inputs with credential-safe diagnostics.
+#[derive(clap::Args)]
+struct MailArgs {
+    #[arg(
+        long,
+        env = "RESEND_API_KEY",
+        hide_env_values = true,
+        requires = "resend_from"
+    )]
+    resend_api_key: Option<String>,
+    #[arg(long, env = "RESEND_FROM", requires = "resend_api_key")]
+    resend_from: Option<String>,
+}
+impl fmt::Debug for MailArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MailArgs")
+            .field("resend_api_key", &"[REDACTED]")
+            .field("resend_from", &self.resend_from)
+            .finish()
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Serve public keys and explicitly configured human PAT exchanges over HTTPS.
+    /// Serve public keys and configured human authentication endpoints over HTTPS.
     Serve {
+        #[command(flatten)]
+        mail: MailArgs,
         #[arg(long, env = "WAMN_IDENTITY_BIND", default_value = "0.0.0.0:8443")]
         bind: SocketAddr,
         #[arg(long, env = "WAMN_IDENTITY_TLS_CERT")]
@@ -92,6 +116,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
     let config = IdentityConfig::new(&issuer, &raw)?;
     drop(raw);
     if let Command::Serve {
+        mail,
         bind,
         tls_cert,
         tls_key,
@@ -99,6 +124,17 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         session_target,
     } = cli.command
     {
+        let config = match (mail.resend_api_key, mail.resend_from) {
+            (Some(key), Some(from)) => {
+                config.with_resend(crate::mail::ResendConfig::new(key, from)?)
+            }
+            (None, None) => config,
+            _ => {
+                return Err(IdentityServiceError::new(
+                    "Resend key and sender are required together",
+                ));
+            }
+        };
         let mut targets = Vec::with_capacity(session_target.len());
         for path in session_target {
             // Bound startup parsing even if a mounted file is malformed or grows.

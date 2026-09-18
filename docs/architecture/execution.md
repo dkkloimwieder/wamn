@@ -195,14 +195,15 @@ External federation and unbuilt identity design remain in the [identity plan](..
 ## Password enrollment foundation
 
 The [identity library](../../crates/identity/platform/src/password.rs) supports password storage, invitation enrollment, and password authentication.
-This foundation exposes no password HTTP endpoint or terminal login yet.
+The identity service exposes password HTTP endpoints. Terminal enrollment and password login remain unbuilt.
 The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
 
 Enrollment accepts an active, unenrolled human principal and a matching, unexpired invitation.
 The library locks that principal, creates its password, and consumes every outstanding invitation in one database transaction.
 Issuance records the authorized operator. Successful enrollment records the invited person.
 The existing principal, memberships, and PATs remain unchanged.
-Only the system database owner has access to the new tables until scoped endpoint grants ship.
+The identity issuer has narrow grants for enrollment and authentication.
+A restricted database function locks a principal without granting permission to change that principal.
 
 Invitation secrets contain 32 random bytes and expire after 24 hours.
 The database stores their SHA-256 digests and explicit invitation purpose, never the bearer secret.
@@ -213,8 +214,25 @@ Cancellation retains the permit until the blocking worker ends.
 Stored hashes with another cost profile refuse before expensive work starts.
 
 Enrollment requires 15 Unicode characters and accepts at most 1,024 UTF-8 bytes without trimming or normalization.
-A required nonempty local blocklist supplies SHA-256 digests of common or compromised passwords.
-The endpoint owner must supply the deployment list and account/source throttling before exposing password login.
+The owner deferred common and compromised password screening.
+The service limits password requests to eight per replica and HTTPS connections to 128 per replica.
+Database counters enforce 60-second windows across replicas: 120 requests globally, 20 per source address, and five per account.
+Enrollment uses the principal ID for its account counter; login uses a digest of the normalized email.
+The source is the TLS peer address, never a forwarded header.
+Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
+Password requests expire after ten seconds and accept at most 8,192 body bytes.
+Operators behind a shared proxy also share its source limit.
+
+`POST /invitations` requires the existing verified operator certificate and a `principal_id`.
+The service sends the one-time secret through Resend to that principal's stored email.
+A successful provider response means accepted for delivery, not confirmed inbox delivery.
+The service makes no automatic send retry and reports failed or uncertain sends as unavailable.
+`POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
+`POST /password/session` accepts `email`, `password`, and `aud`.
+It reuses the PAT exchange's membership, current environment, active tenant user, role, and signing checks.
+Unknown accounts and incorrect passwords receive the same unauthorized response.
+These routes are enabled only when the service has a Resend key and sender.
+Session expiry requires another login. Renewal and server-side logout remain unbuilt.
 Unknown and unenrolled accounts perform the same bounded hashing profile as existing accounts.
 Password buffers erase their owned bytes on drop. Diagnostics redact passwords and invitation secrets.
 

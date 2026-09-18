@@ -4,8 +4,8 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, error::SqlState};
 use wamn_control_provision::{PlatformComponent, test_database};
 use wamn_platform_identity::password::{
-    Password, PasswordBlocklist, PasswordErrorKind, authenticate_password, enroll_password,
-    issue_invitation, password_work,
+    Password, PasswordErrorKind, authenticate_password, enroll_password, issue_invitation,
+    password_work,
 };
 use wamn_platform_identity::{
     Principal, PrincipalId, authenticate_pat, create_human, create_service, disable_principal,
@@ -15,9 +15,6 @@ use wamn_platform_identity::{
 const PASSWORD: &str = "my uncommon warehouse passphrase";
 fn password() -> Password {
     Password::new(PASSWORD.to_owned()).unwrap()
-}
-fn blocklist() -> PasswordBlocklist {
-    PasswordBlocklist::new([Sha256::digest(b"a commonly compromised password").into()]).unwrap()
 }
 fn actor() -> PrincipalId {
     PlatformComponent::Provisioning
@@ -62,7 +59,6 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     let person = human(&client, "alice").await;
     let other = human(&client, "bob").await;
     let work = password_work();
-    let blocked = blocklist();
     let pat = issue_pat(
         &client,
         person.id(),
@@ -105,72 +101,29 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     assert_ne!(first.secret(), second.secret());
     assert!(!format!("{first:?}").contains(first.secret()));
     assert_eq!(
-        enroll_password(
-            &mut client,
-            &work,
-            &blocked,
-            other.id(),
-            first.secret(),
-            password()
-        )
-        .await
-        .unwrap_err()
-        .kind(),
+        enroll_password(&mut client, &work, other.id(), first.secret(), password())
+            .await
+            .unwrap_err()
+            .kind(),
         PasswordErrorKind::Refused
     );
     let short = Password::new("short".into()).unwrap();
     assert_eq!(
-        enroll_password(
-            &mut client,
-            &work,
-            &blocked,
-            person.id(),
-            first.secret(),
-            short
-        )
-        .await
-        .unwrap_err()
-        .kind(),
-        PasswordErrorKind::Policy
-    );
-    let bad = Password::new("a commonly compromised password".into()).unwrap();
-    assert_eq!(
-        enroll_password(
-            &mut client,
-            &work,
-            &blocked,
-            person.id(),
-            first.secret(),
-            bad
-        )
-        .await
-        .unwrap_err()
-        .kind(),
-        PasswordErrorKind::Policy
-    );
-    enroll_password(
-        &mut client,
-        &work,
-        &blocked,
-        person.id(),
-        first.secret(),
-        password(),
-    )
-    .await
-    .unwrap();
-    for secret in [first.secret(), second.secret()] {
-        assert_eq!(
-            enroll_password(
-                &mut client,
-                &work,
-                &blocked,
-                person.id(),
-                secret,
-                password()
-            )
+        enroll_password(&mut client, &work, person.id(), first.secret(), short)
             .await
             .unwrap_err()
             .kind(),
+        PasswordErrorKind::Policy
+    );
+    enroll_password(&mut client, &work, person.id(), first.secret(), password())
+        .await
+        .unwrap();
+    for secret in [first.secret(), second.secret()] {
+        assert_eq!(
+            enroll_password(&mut client, &work, person.id(), secret, password())
+                .await
+                .unwrap_err()
+                .kind(),
             PasswordErrorKind::Refused
         );
     }
@@ -271,7 +224,6 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
     let mut client = connect(database.url()).await;
     let person = human(&client, "expired").await;
     let work = password_work();
-    let blocked = blocklist();
     let invitation = issue_invitation(&mut client, &actor(), person.id())
         .await
         .unwrap();
@@ -280,7 +232,6 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         enroll_password(
             &mut client,
             &work,
-            &blocked,
             person.id(),
             invitation.secret(),
             password()
@@ -319,7 +270,6 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         enroll_password(
             &mut client,
             &work,
-            &blocked,
             person.id(),
             invitation.secret(),
             password()
@@ -344,7 +294,6 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
     enroll_password(
         &mut client,
         &work,
-        &blocked,
         person.id(),
         invitation.secret(),
         password(),
@@ -367,20 +316,11 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
         .await
         .unwrap();
     let work = password_work();
-    let blocked = blocklist();
     let (a, b) = tokio::join!(
-        enroll_password(
-            &mut left,
-            &work,
-            &blocked,
-            person.id(),
-            first.secret(),
-            password()
-        ),
+        enroll_password(&mut left, &work, person.id(), first.secret(), password()),
         enroll_password(
             &mut right,
             &work,
-            &blocked,
             person.id(),
             second.secret(),
             Password::new("another uncommon passphrase".into()).unwrap()

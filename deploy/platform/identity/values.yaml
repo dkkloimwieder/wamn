@@ -9,7 +9,12 @@ issuer: ""
 databaseSecret: ""
 tlsSecret: ""
 
-# Dedicated operator CA Secret with ca.crt. Empty refuses POST /pats.
+# Enable password endpoints with an existing Secret containing api-key.
+# Supply the verified sender. Restart after changing the key or sender.
+resendSecret: ""
+resendFrom: ""
+
+# Dedicated operator CA Secret with ca.crt. Empty refuses POST /pats and POST /invitations.
 # Restart the service after a CA change to close existing TLS connections.
 operatorCaSecret: ""
 

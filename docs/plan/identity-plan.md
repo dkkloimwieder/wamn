@@ -88,9 +88,10 @@ Do not add a revocation service, event bus, or generalized authentication framew
 
 The identity service stores salted Argon2id password hashes with versioned parameters.
 Choose parameters against the supported deployment's memory and concurrency limits before exposing the endpoint.
-The password policy requires at least 15 characters, permits at least 64, and rejects common or compromised passwords.
+The password policy requires at least 15 characters and permits at least 64.
+The owner deferred common and compromised password screening.
 It permits password managers and paste, with no composition rules or routine password expiration.
-These policy choices follow [NIST guidance](https://pages.nist.gov/800-63-4/sp800-63b.html#passwordver).
+The length policy follows [NIST guidance](https://pages.nist.gov/800-63-4/sp800-63b.html#passwordver).
 
 Bound request sizes and concurrent expensive password work.
 Apply throttling to accounts, request sources, and total work, including across identity-service replicas.
@@ -105,7 +106,7 @@ Bind each credential to its purpose and principal, store only its hash, and cons
 Invitation expiry is 24 hours; later reset expiry is 15 minutes.
 Successful enrollment or password replacement invalidates outstanding invitation/reset credentials that can otherwise overwrite that password.
 
-Passwords and bearer secrets never appear in command arguments, environment variables, configuration files, logs, or generated artifacts.
+Human passwords and invitation/session secrets never appear in command arguments, environment variables, configuration files, logs, or generated artifacts.
 Email delivery uses the selected deployment transport without a provider framework.
 A delivery failure must not be reported as a delivered invitation.
 The mail transport and concrete password-work limits must be resolved during the first epic, before the affected endpoints ship.

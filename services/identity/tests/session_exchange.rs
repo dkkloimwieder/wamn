@@ -1336,6 +1336,10 @@ async fn start_with_targets(fixture: &Fixture, targets: Vec<SessionTarget>) -> H
     let config = config
         .with_session_targets(targets)
         .expect_redacted("provisioned targets");
+    start_config(config).await
+}
+
+async fn start_config(config: IdentityConfig) -> Https {
     assert!(!format!("{config:?}").contains(PASSWORD));
     let service = IdentityService::connect(config)
         .await
@@ -1439,4 +1443,194 @@ fn certificates() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         key.serialize_pem().into_bytes(),
         ca.pem().into_bytes(),
     )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn password_enrollment_and_sessions_preserve_current_authority() {
+    use wamn_platform_identity::password::issue_invitation;
+    let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("fresh password fixture");
+    let db = postgres
+        .create_database("wamn_system")
+        .expect_redacted("password system database");
+    let fixture = setup(db.url()).await;
+    let alice = create_human(
+        &fixture.system.client,
+        "password-alice",
+        "password-alice@example.invalid",
+        "Alice",
+    )
+    .await
+    .expect_redacted("password human");
+    seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
+    grant(&fixture.system.client, &alice, "acme", "dev").await;
+    let actor = PlatformComponent::Provisioning
+        .principal_id()
+        .to_string()
+        .parse()
+        .unwrap();
+    let mut issuer = connect(&fixture.issuer_url).await;
+    let invitation = issue_invitation(&mut issuer.client, &actor, alice.id())
+        .await
+        .expect_redacted("invitation through actual issuer grants");
+    let config = IdentityConfig::new(ISSUER, &fixture.issuer_url)
+        .unwrap()
+        .with_session_targets(fixture.targets.clone())
+        .unwrap()
+        .with_resend(
+            wamn_identity::mail::ResendConfig::new(
+                "fixture-key".into(),
+                "WAMN <fixture@example.invalid>".into(),
+            )
+            .unwrap(),
+        );
+    let https = start_config(config.clone()).await;
+    let replica = start_config(config).await;
+    let post = |server: &Https, path: &str, body: Value| {
+        server
+            .client
+            .post(format!("{}{path}", server.endpoint))
+            .json(&body)
+    };
+    // Never contact Resend: operator authentication refuses before mail work.
+    let denied = post(
+        &https,
+        "/invitations",
+        json!({"principal_id":alice.id().as_str()}),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(denied.status(), 403);
+    let enroll = json!({"principal_id":alice.id().as_str(),"invitation":invitation.secret(),"password":PASSWORD});
+    assert_eq!(
+        post(&https, "/password/enroll", enroll.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    assert_eq!(
+        post(&https, "/password/enroll", enroll)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    let login = json!({"email":" PASSWORD-ALICE@EXAMPLE.INVALID ","password":PASSWORD,"aud":fixture.targets[0].audience()});
+    let jwks = wamn_platform_identity::session_keys::session_jwks(&issuer.client, ISSUER)
+        .await
+        .unwrap();
+    verify_response(
+        post(&https, "/password/session", login.clone())
+            .send()
+            .await
+            .unwrap(),
+        &fixture.targets[0],
+        &alice,
+        &["receiver"],
+        &jwks,
+    )
+    .await;
+    for (email, password) in [
+        ("absent@example.invalid", PASSWORD),
+        ("password-alice@example.invalid", "incorrect password"),
+    ] {
+        let reply = post(
+            &replica,
+            "/password/session",
+            json!({"email":email,"password":password,"aud":fixture.targets[0].audience()}),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_failure(reply, 401, "{\"error\":\"unauthorized\"}").await;
+    }
+    revoke_project_env_membership(
+        &fixture.system.client,
+        alice.id(),
+        "acme",
+        "receiving",
+        "dev",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        post(&https, "/password/session", login.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    grant(&fixture.system.client, &alice, "acme", "dev").await;
+    fixture.environments[0]
+        .client
+        .execute(
+            "UPDATE app_system.users SET status='disabled' WHERE id=$1::text::uuid",
+            &[&alice.id().as_str()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        post(&replica, "/password/session", login.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    fixture.environments[0]
+        .client
+        .execute(
+            "UPDATE app_system.users SET status='active' WHERE id=$1::text::uuid",
+            &[&alice.id().as_str()],
+        )
+        .await
+        .unwrap();
+    disable_principal(&fixture.system.client, alice.id())
+        .await
+        .unwrap();
+    assert_eq!(
+        post(&https, "/password/session", login.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let throttled = post(&replica, "/password/session", login.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(throttled.status(), 429);
+    assert_eq!(throttled.headers()["retry-after"], "60");
+    // Advance only the owned counters, without sleeping, to test recovery.
+    fixture.system.client.batch_execute("UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'; UPDATE identity.principals SET status='active', disabled_at=NULL WHERE subject='password-alice'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='acme' AND env='dev'").await.unwrap();
+    assert_eq!(
+        post(&replica, "/password/session", login.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='acme' AND env='dev'").await.unwrap();
+    verify_response(
+        post(&replica, "/password/session", login)
+            .send()
+            .await
+            .unwrap(),
+        &fixture.targets[0],
+        &alice,
+        &["receiver"],
+        &jwks,
+    )
+    .await;
+    drop(issuer);
+    drop(https);
+    drop(replica);
+    cleanup(fixture).await;
 }

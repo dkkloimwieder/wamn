@@ -49,7 +49,7 @@
 -- encodes / makes each testable:
 --   (1) control-plane authority: tenant workloads cannot connect here.
 --       Scoped identity readers perform fresh PAT authentication.
---       The separate identity issuer reads and mutates only its key tables.
+--       The separate identity issuer has explicit key, credential, and throttle grants.
 --   (2) no tenant-database credentials (R8b) — `project_envs` stores a Secret
 --       *reference* (secret_name + optional secret_namespace) and NO tenant DB
 --       credential column (no url/password/dsn). First-party human login hashes
@@ -658,4 +658,23 @@ CREATE TABLE provisioning.sagas (
         CHECK (status IN ('pending', 'running', 'completed', 'failed',
                           'compensating', 'compensated')),
     CONSTRAINT sagas_step_nonneg CHECK (step >= 0)
+);
+
+-- The issuer can lock a principal without gaining principal mutation rights.
+CREATE FUNCTION identity.lock_password_principal(principal uuid) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE eligible boolean;
+BEGIN
+    SELECT status = 'active' AND kind = 'human' INTO eligible
+    FROM identity.principals WHERE id = principal FOR UPDATE;
+    RETURN COALESCE(eligible, false);
+END;
+$$;
+REVOKE ALL ON FUNCTION identity.lock_password_principal(uuid) FROM PUBLIC;
+
+-- Fixed-window password admission shared by every identity replica.
+CREATE TABLE identity.password_attempts (
+    bucket text PRIMARY KEY CHECK (octet_length(bucket) <= 160),
+    started_at timestamptz NOT NULL,
+    attempts integer NOT NULL CHECK (attempts > 0)
 );

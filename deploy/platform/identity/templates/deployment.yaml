@@ -4,6 +4,9 @@
 {{- if not (hasPrefix "https://" $issuer) -}}
 {{- fail "issuer must use HTTPS." -}}
 {{- end -}}
+{{- if and .Values.resendFrom (not .Values.resendSecret) -}}
+{{- fail "Set resendSecret when resendFrom is enabled." -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,6 +49,16 @@ spec:
                   name: {{ $databaseSecret | quote }}
                   key: url
                   optional: false
+            {{- if .Values.resendSecret }}
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.resendSecret | quote }}
+                  key: api-key
+                  optional: false
+            - name: RESEND_FROM
+              value: {{ required "Set resendFrom when resendSecret is enabled." .Values.resendFrom | quote }}
+            {{- end }}
             - name: WAMN_IDENTITY_TLS_CERT
               value: /var/run/wamn-identity/tls/tls.crt
             - name: WAMN_IDENTITY_TLS_KEY

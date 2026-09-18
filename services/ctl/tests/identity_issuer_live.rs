@@ -15,7 +15,8 @@ use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_ROLE, identity_issuer_generation_role, parse_identity_issuer_url,
+    IDENTITY_ISSUER_PASSWORD_COLUMNS, IDENTITY_ISSUER_ROLE, identity_issuer_generation_role,
+    parse_identity_issuer_url,
 };
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
@@ -179,6 +180,40 @@ async fn stable_acl(admin: &Client) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
+async fn revoke_password_surface(admin: &Client) -> anyhow::Result<()> {
+    for (table, privilege, columns) in IDENTITY_ISSUER_PASSWORD_COLUMNS {
+        admin
+            .batch_execute(&format!(
+                "REVOKE {privilege} ({}) ON identity.{table} FROM wamn_identity_issuer",
+                columns.join(",")
+            ))
+            .await?;
+    }
+    admin.batch_execute("REVOKE ALL ON identity.password_attempts FROM wamn_identity_issuer; REVOKE EXECUTE ON FUNCTION identity.lock_password_principal(uuid) FROM wamn_identity_issuer;").await?;
+    Ok(())
+}
+
+async fn upgrade_password_surface(
+    admin: &Client,
+    admin_url: &str,
+    b_path: &Path,
+) -> anyhow::Result<()> {
+    let current = stable_acl(admin).await?;
+    success(&cli(admin_url, "--abort-generation", "b", None).await?)?;
+    fs::remove_file(b_path)?;
+    revoke_password_surface(admin).await?;
+    anyhow::ensure!(
+        stable_acl(admin).await?.len() == 37,
+        "exact preceding PAT issuance grants"
+    );
+    success(&cli(admin_url, "--prepare-generation", "b", Some(b_path)).await?)?;
+    anyhow::ensure!(
+        stable_acl(admin).await? == current,
+        "password grants restore exactly"
+    );
+    Ok(())
+}
+
 /// Keep A connected while the real CLI upgrades the exact foundation ACL for B.
 async fn upgrade_foundation_surface(
     admin: &Client,
@@ -187,9 +222,10 @@ async fn upgrade_foundation_surface(
 ) -> anyhow::Result<()> {
     let current = stable_acl(admin).await?;
     anyhow::ensure!(
-        current.len() == 37,
+        current.len() == 57,
         "current issuer must hold exactly the approved expanded ACL"
     );
+    revoke_password_surface(admin).await?;
     // Reproduce the installed foundation's actual privileges, not its SQL text.
     admin.batch_execute(
         "REVOKE SELECT (id,kind,subject,display_name,status) ON identity.principals FROM wamn_identity_issuer; \
@@ -266,6 +302,7 @@ async fn upgrade_read_only_pat_surface(
     let current = stable_acl(admin).await?;
     success(&cli(admin_url, "--abort-generation", "b", None).await?)?;
     fs::remove_file(b_path)?;
+    revoke_password_surface(admin).await?;
     admin.batch_execute(
         "REVOKE SELECT (id,label,created_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE INSERT (principal_id,principal_kind,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer;"
@@ -552,6 +589,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
 
     upgrade_foundation_surface(admin, admin_url, &b_path).await?;
     upgrade_read_only_pat_surface(admin, admin_url, &b_path).await?;
+    upgrade_password_surface(admin, admin_url, &b_path).await?;
     a.query("SELECT token_hash FROM identity.pats", &[])
         .await
         .context("existing A inherits the approved upgraded read surface")?;

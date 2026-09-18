@@ -414,3 +414,56 @@ fn certificates() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         ca.pem().into_bytes(),
     )
 }
+
+#[test]
+fn dotenv_loading_precedence_and_secret_redaction() {
+    let directory = std::env::temp_dir().join(format!("wamn-a045-dotenv-{}", std::process::id()));
+    std::fs::create_dir(&directory).expect("private fixture directory");
+    let role = identity_issuer_generation_role(ISSUER, CredentialGeneration::A).unwrap();
+    let url = format!("postgres://{role}:fixture@127.0.0.1/wamn_system");
+    let run = |key: Option<&str>, flag: Option<&str>| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_wamn-identity"));
+        command.current_dir(&directory).env_clear().args([
+            "--issuer",
+            ISSUER,
+            "--database-url",
+            &url,
+            "serve",
+            "--tls-cert",
+            "missing.crt",
+            "--tls-key",
+            "missing.key",
+        ]);
+        if let Some(key) = key {
+            command.env("RESEND_API_KEY", key);
+        }
+        if let Some(flag) = flag {
+            command.args(["--resend-api-key", flag]);
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        String::from_utf8(output.stderr).unwrap()
+    };
+    std::fs::write(
+        directory.join(".env"),
+        "RESEND_API_KEY='fixture secret'\nRESEND_FROM='WAMN <fixture@example.invalid>'\n",
+    )
+    .unwrap();
+    assert_eq!(run(None, None).trim(), "Resend configuration refused");
+    assert_eq!(
+        run(Some("fixture-key"), None).trim(),
+        "read identity TLS certificate failed"
+    );
+    assert_eq!(
+        run(Some("fixture-key"), Some("fixture secret")).trim(),
+        "Resend configuration refused"
+    );
+    std::fs::write(
+        directory.join(".env"),
+        "RESEND_API_KEY='unterminated-secret",
+    )
+    .unwrap();
+    assert_eq!(run(None, None).trim(), "identity .env file refused");
+    std::fs::remove_file(directory.join(".env")).unwrap();
+    std::fs::remove_dir(directory).unwrap();
+}

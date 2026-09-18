@@ -1,6 +1,8 @@
-//! The identity authority serves public keys, PAT exchanges, and operator PAT issuance.
+//! The identity authority serves public keys, human login, and operator credential issuance.
 
 pub mod cli;
+pub mod mail;
+mod password;
 mod pat;
 mod session;
 
@@ -40,6 +42,7 @@ pub struct IdentityConfig {
     issuer: String,
     connection: IdentityIssuerConnection,
     targets: BTreeMap<String, SessionTarget>,
+    mail: Option<mail::ResendConfig>,
 }
 
 impl IdentityConfig {
@@ -51,7 +54,14 @@ impl IdentityConfig {
             issuer: issuer.to_owned(),
             connection,
             targets: BTreeMap::new(),
+            mail: None,
         })
+    }
+
+    /// Enable invitation and password endpoints with explicit mail configuration.
+    pub fn with_resend(mut self, mail: mail::ResendConfig) -> Self {
+        self.mail = Some(mail);
+        self
     }
 
     /// Enable exchanges only for explicitly provisioned, nonduplicated audiences.
@@ -83,6 +93,7 @@ pub struct IdentityService {
 #[derive(Debug)]
 struct Inner {
     issuer: String,
+    passwords: Option<password::State>,
     database: Database,
     // PAT issuance needs a transaction, so it holds its own connection.
     issuance: Mutex<Database>,
@@ -148,9 +159,15 @@ impl IdentityService {
         } else {
             Some(Mutex::new(connect(&config).await?))
         };
+        let passwords = if let Some(mail) = config.mail.clone() {
+            Some(password::State::new(mail, config.connection.clone())?)
+        } else {
+            None
+        };
         Ok(Self {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
+                passwords,
                 database,
                 issuance,
                 signing,
@@ -175,7 +192,18 @@ impl IdentityService {
         &self,
         request: Request<Incoming>,
         operator: bool,
+        source: std::net::IpAddr,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
+        if request.method() == Method::POST
+            && request.uri().query().is_none()
+            && matches!(
+                request.uri().path(),
+                "/invitations" | "/password/enroll" | "/password/session"
+            )
+            && let Some(state) = &self.inner.passwords
+        {
+            return Ok(password::respond(&self.inner, state, request, operator, source).await);
+        }
         if request.method() == Method::POST
             && request.uri().path() == "/pats"
             && request.uri().query().is_none()
@@ -322,13 +350,16 @@ pub async fn serve(
 ) -> Result<(), IdentityServiceError> {
     let acceptor = TlsAcceptor::from(Arc::new(tls));
     let mut connections = JoinSet::new();
+    let slots = Arc::new(tokio::sync::Semaphore::new(128));
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let (tcp, _) = accepted.map_err(|_| IdentityServiceError::new("identity HTTPS accept failed"))?;
+                let (tcp, peer) = accepted.map_err(|_| IdentityServiceError::new("identity HTTPS accept failed"))?;
+                let Ok(slot) = slots.clone().try_acquire_owned() else { drop(tcp); continue; };
                 let acceptor = acceptor.clone();
                 let service = service.clone();
                 connections.spawn(async move {
+                    let _slot = slot;
                     let Ok(Ok(tls)) = tokio::time::timeout(IO_TIMEOUT, acceptor.accept(tcp)).await else { return; };
                     // Only the accepted TLS session supplies operator authority.
                     // Certificate headers and bearer credentials cannot set it.
@@ -336,7 +367,7 @@ pub async fn serve(
                         .is_some_and(|certificates| !certificates.is_empty());
                     let handler = service_fn(move |request| {
                         let service = service.clone();
-                        async move { service.respond(request, operator).await }
+                        async move { service.respond(request, operator, peer.ip()).await }
                     });
                     let _ = http1::Builder::new().timer(TokioTimer::new())
                         .header_read_timeout(IO_TIMEOUT)

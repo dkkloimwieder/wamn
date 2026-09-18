@@ -4,7 +4,6 @@
 //! principal row, then consumes every outstanding invitation atomically. The
 //! service must share one password-work budget across all its requests.
 
-use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -244,7 +243,13 @@ async fn lock_unenrolled(
     tx: &Transaction<'_>,
     principal: &PrincipalId,
 ) -> Result<bool, PasswordError> {
-    let row = tx.query_opt("SELECT status = 'active' AND kind = 'human' FROM identity.principals WHERE id = $1::text::uuid FOR UPDATE", &[&principal.as_str()]).await.map_err(|source| database(&source))?;
+    let row = tx
+        .query_opt(
+            "SELECT identity.lock_password_principal($1::text::uuid)",
+            &[&principal.as_str()],
+        )
+        .await
+        .map_err(|source| database(&source))?;
     if !row.is_some_and(|row| row.get::<_, bool>(0)) {
         return Ok(false);
     }
@@ -292,34 +297,8 @@ async fn usable_invitation(
     client.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3 AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp() AND p.status = 'active' AND p.kind = 'human')", &[&hash, &principal.as_str(), &INVITATION_PURPOSE]).await.map(|row| row.get(0)).map_err(|source| database(&source))
 }
 
-/// Server-supplied SHA-256 digests of disallowed passwords, compared exactly.
-///
-/// The service loads its deployment-approved common/compromised password list.
-/// An empty list is refused. This type performs no network or filesystem access.
-#[derive(Debug)]
-pub struct PasswordBlocklist(HashSet<[u8; 32]>);
-impl PasswordBlocklist {
-    /// Build from the service's complete local list of password digests.
-    pub fn new(digests: impl IntoIterator<Item = [u8; 32]>) -> Result<Self, PasswordError> {
-        let digests: HashSet<_> = digests.into_iter().collect();
-        if digests.is_empty() {
-            return Err(failure(
-                PasswordErrorKind::Policy,
-                "password blocklist is empty",
-            ));
-        }
-        Ok(Self(digests))
-    }
-}
-fn enrollment_policy(
-    password: &Password,
-    blocked: &PasswordBlocklist,
-) -> Result<(), PasswordError> {
-    if password.0.chars().count() < MIN_PASSWORD_CHARACTERS
-        || blocked
-            .0
-            .contains(&<[u8; 32]>::from(Sha256::digest(password.0.as_bytes())))
-    {
+fn enrollment_policy(password: &Password) -> Result<(), PasswordError> {
+    if password.0.chars().count() < MIN_PASSWORD_CHARACTERS {
         return Err(failure(
             PasswordErrorKind::Policy,
             "password policy refused",
@@ -335,12 +314,11 @@ fn enrollment_policy(
 pub async fn enroll_password(
     client: &mut Client,
     work: &PasswordWork,
-    blocked: &PasswordBlocklist,
     principal: &PrincipalId,
     secret: &str,
     password: Password,
 ) -> Result<(), PasswordError> {
-    enrollment_policy(&password, blocked)?;
+    enrollment_policy(&password)?;
     let digest = token_hash(secret)
         .ok_or_else(|| failure(PasswordErrorKind::Refused, "invitation refused"))?;
     if !usable_invitation(client, principal, &digest).await? {
@@ -401,22 +379,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn enrollment_policy_counts_characters_and_refuses_blocked_values() {
-        let blocked =
-            PasswordBlocklist::new([Sha256::digest(b"a commonly compromised password").into()])
-                .unwrap();
-        assert!(PasswordBlocklist::new([]).is_err());
+    fn enrollment_policy_counts_characters() {
         assert!(Password::new("x".repeat(MAX_PASSWORD_BYTES + 1)).is_err());
-        assert!(enrollment_policy(&Password::new("界".repeat(14)).unwrap(), &blocked).is_err());
-        assert!(enrollment_policy(&Password::new("界".repeat(15)).unwrap(), &blocked).is_ok());
-        assert!(enrollment_policy(&Password::new("界".repeat(64)).unwrap(), &blocked).is_ok());
-        assert!(
-            enrollment_policy(
-                &Password::new("a commonly compromised password".into()).unwrap(),
-                &blocked
-            )
-            .is_err()
-        );
+        assert!(enrollment_policy(&Password::new("界".repeat(14)).unwrap()).is_err());
+        assert!(enrollment_policy(&Password::new("界".repeat(15)).unwrap()).is_ok());
+        assert!(enrollment_policy(&Password::new("界".repeat(64)).unwrap()).is_ok());
         let password = Password::new("  spaces remain part of me  ".into()).unwrap();
         assert_eq!(&*password.0, "  spaces remain part of me  ");
         assert!(!format!("{password:?}").contains("spaces"));

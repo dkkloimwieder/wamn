@@ -195,6 +195,20 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
         assert_eq!(
             acl,
             [
+                "column|identity|password_credentials.password_hash|INSERT|f",
+                "column|identity|password_credentials.password_hash|SELECT|f",
+                "column|identity|password_credentials.principal_id|INSERT|f",
+                "column|identity|password_credentials.principal_id|SELECT|f",
+                "column|identity|password_tokens.consumed_at|SELECT|f",
+                "column|identity|password_tokens.consumed_at|UPDATE|f",
+                "column|identity|password_tokens.expires_at|INSERT|f",
+                "column|identity|password_tokens.expires_at|SELECT|f",
+                "column|identity|password_tokens.principal_id|INSERT|f",
+                "column|identity|password_tokens.principal_id|SELECT|f",
+                "column|identity|password_tokens.purpose|INSERT|f",
+                "column|identity|password_tokens.purpose|SELECT|f",
+                "column|identity|password_tokens.token_hash|INSERT|f",
+                "column|identity|password_tokens.token_hash|SELECT|f",
                 "column|identity|pats.created_at|SELECT|f",
                 "column|identity|pats.expires_at|INSERT|f",
                 "column|identity|pats.expires_at|SELECT|f",
@@ -210,6 +224,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "column|identity|pats.token_prefix|INSERT|f",
                 "column|identity|pats.token_prefix|SELECT|f",
                 "column|identity|principals.display_name|SELECT|f",
+                "column|identity|principals.email|SELECT|f",
                 "column|identity|principals.id|SELECT|f",
                 "column|identity|principals.kind|SELECT|f",
                 "column|identity|principals.status|SELECT|f",
@@ -222,6 +237,10 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "column|registry|project_envs.instance_suffix|SELECT|f",
                 "column|registry|project_envs.org|SELECT|f",
                 "column|registry|project_envs.project|SELECT|f",
+                "relation|identity|password_attempts|DELETE|f",
+                "relation|identity|password_attempts|INSERT|f",
+                "relation|identity|password_attempts|SELECT|f",
+                "relation|identity|password_attempts|UPDATE|f",
                 "relation|identity|session_keys|DELETE|f",
                 "relation|identity|session_keys|INSERT|f",
                 "relation|identity|session_keys|SELECT|f",
@@ -230,6 +249,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "relation|identity|session_signing_state|INSERT|f",
                 "relation|identity|session_signing_state|SELECT|f",
                 "relation|identity|session_signing_state|UPDATE|f",
+                "routine|identity|lock_password_principal|EXECUTE|f",
                 "schema|identity|identity|USAGE|f",
                 "schema|registry|registry|USAGE|f",
             ]
@@ -241,7 +261,10 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
              WHERE n.nspname = 'identity' AND c.relkind = 'r' \
                AND has_table_privilege(current_user, c.oid, 'SELECT') ORDER BY c.relname",
         );
-        assert_eq!(actual, "session_keys\nsession_signing_state");
+        assert_eq!(
+            actual,
+            "password_attempts\nsession_keys\nsession_signing_state"
+        );
         for url in [&a_url, &b_url] {
             // Execute each fresh-read shape as the actual scoped issuer login.
             run(

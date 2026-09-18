@@ -173,6 +173,30 @@ It does not apply migrations to the target.
 The [repository delivery commands](delivery.md) serialize activation against the existing selected release.
 A CI completion order does not set deployment precedence.
 
+## Identity password configuration
+
+`wamn-identity` loads `.env` from its working directory before it starts the runtime.
+Existing environment variables take precedence over `.env`; explicit command flags take precedence over both.
+A missing `.env` is allowed. An unreadable or malformed file stops startup without printing its contents.
+The root `.env.example` documents `RESEND_API_KEY` and `RESEND_FROM`.
+The private `.env` is ignored by Git and needs owner-only read and write permissions (`0600`).
+No home-directory path is required.
+
+For local email configuration, copy `.env.example` to `.env` before adding the key and verified sender.
+Keep the existing issuer, database, TLS, operator CA, and session target configuration.
+Both Resend values are required to enable the password routes.
+The CLI also accepts `--resend-api-key` and `--resend-from`; prefer environment input for the secret.
+
+For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
+Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
+Set `operatorCaSecret` to permit operator invitation requests.
+Restart the Deployment after changing the credential, sender, or operator CA.
+The issuer credential needs the current grants from `provision-identity-issuer --prepare-generation`.
+Use the current system schema on a fresh database, following the repository's schema installation contract.
+
+The route bodies and limits are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
+The terminal enrollment and password login commands remain separate implementation work.
+
 ## Identity target credentials
 
 After replacing the identity service target Secret, restart the identity service.

@@ -16,10 +16,11 @@ use tokio_postgres::{Client, Config, GenericClient, NoTls, Row};
 use url::Url;
 use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_PAT_INSERT_COLUMNS, IDENTITY_ISSUER_READ_COLUMNS,
-    IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, identity_issuer_generation_role,
-    parse_identity_issuer_url, prepare_identity_issuer_generation_sql,
-    retire_identity_issuer_generation_sql, validate_identity_issuer,
+    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_PASSWORD_COLUMNS, IDENTITY_ISSUER_PAT_INSERT_COLUMNS,
+    IDENTITY_ISSUER_READ_COLUMNS, IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES,
+    identity_issuer_generation_role, parse_identity_issuer_url,
+    prepare_identity_issuer_generation_sql, retire_identity_issuer_generation_sql,
+    validate_identity_issuer,
 };
 use wamn_control_provision::sql;
 
@@ -269,28 +270,35 @@ async fn exact_grants(
                 .map(|(schema, _, _)| *schema),
         )
         .collect();
-    // The foundation and session exchange shipped two exact prior surfaces.
-    // Recognize either complete old surface only at preparation preflight;
+    // Recognize complete preceding key, exchange, and PAT issuance surfaces
+    // only at preparation preflight;
     // a partial upgrade or any extra grant remains unexpected drift.
     let foundation = matches!(expected, Grants::StableBeforePrepare)
         && rows.len() == 1 + IDENTITY_ISSUER_TABLES.len() * 4;
-    let current_count = schemas.len()
+    let password_count = 5 + IDENTITY_ISSUER_PASSWORD_COLUMNS
+        .iter()
+        .map(|(_, _, c)| c.len())
+        .sum::<usize>();
+    let previous_count = schemas.len()
         + IDENTITY_ISSUER_TABLES.len() * 4
         + IDENTITY_ISSUER_READ_COLUMNS
             .iter()
             .map(|(_, _, columns)| columns.len())
             .sum::<usize>()
         + IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len();
+    let current_count = previous_count + password_count;
+    let previous = matches!(expected, Grants::StableBeforePrepare) && rows.len() == previous_count;
     let read_only_pat = matches!(expected, Grants::StableBeforePrepare)
         && rows.len()
-            == current_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len();
+            == previous_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len();
     let count = match expected {
         Grants::None => 0,
         Grants::Generation => 1,
         Grants::StableBeforePrepare if foundation => 1 + IDENTITY_ISSUER_TABLES.len() * 4,
         Grants::StableBeforePrepare if read_only_pat => {
-            current_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len()
+            previous_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len()
         }
+        Grants::StableBeforePrepare if previous => previous_count,
         Grants::Stable | Grants::StableBeforePrepare => current_count,
     };
     anyhow::ensure!(
@@ -321,6 +329,26 @@ async fn exact_grants(
                                     && schema == "identity"
                                     && IDENTITY_ISSUER_TABLES.contains(&object)
                                     && ["SELECT", "INSERT", "UPDATE", "DELETE"].contains(&privilege)
+                                || !foundation
+                                    && !previous
+                                    && !read_only_pat
+                                    && schema == "identity"
+                                    && ((kind == "routine"
+                                        && object == "lock_password_principal"
+                                        && privilege == "EXECUTE")
+                                        || (kind == "relation"
+                                            && object == "password_attempts"
+                                            && ["SELECT", "INSERT", "UPDATE", "DELETE"]
+                                                .contains(&privilege))
+                                        || (kind == "column"
+                                            && IDENTITY_ISSUER_PASSWORD_COLUMNS.iter().any(
+                                                |(table, p, columns)| {
+                                                    privilege == *p
+                                                        && columns.iter().any(|column| {
+                                                            object == format!("{table}.{column}")
+                                                        })
+                                                },
+                                            )))
                                 || !foundation
                                     && kind == "column"
                                     && privilege == "SELECT"

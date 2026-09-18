@@ -40,14 +40,14 @@ struct ExchangeResponse<'a> {
 }
 
 #[derive(Debug)]
-enum FailureKind {
+pub(super) enum FailureKind {
     Unauthorized,
     Unavailable,
 }
 
 #[derive(Debug)]
-struct ExchangeFailure {
-    kind: FailureKind,
+pub(super) struct ExchangeFailure {
+    pub(super) kind: FailureKind,
 }
 
 fn refused() -> ExchangeFailure {
@@ -130,7 +130,7 @@ async fn exchange(
 
 // This is an internal seam, not an unauthenticated principal-to-token API.
 // Its caller must establish the principal using the current credential path.
-async fn mint_for_principal(
+pub(super) async fn mint_for_principal(
     inner: &Inner,
     principal: &AuthenticatedPrincipal,
     configured: &ConfiguredTarget,
@@ -219,7 +219,7 @@ async fn mint_for_principal(
         .map_err(|_| failed())
 }
 
-fn unix_seconds() -> Option<i64> {
+pub(super) fn unix_seconds() -> Option<i64> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()?
@@ -228,7 +228,7 @@ fn unix_seconds() -> Option<i64> {
         .ok()
 }
 
-fn token_response(token: &IssuedSessionToken) -> Response<Full<Bytes>> {
+pub(super) fn token_response(token: &IssuedSessionToken) -> Response<Full<Bytes>> {
     match serde_json::to_vec(&ExchangeResponse {
         access_token: token.token(),
         token_type: "Bearer",
@@ -239,7 +239,7 @@ fn token_response(token: &IssuedSessionToken) -> Response<Full<Bytes>> {
     }
 }
 
-fn unauthorized() -> Response<Full<Bytes>> {
+pub(super) fn unauthorized() -> Response<Full<Bytes>> {
     let mut response = response(
         StatusCode::UNAUTHORIZED,
         "application/json",

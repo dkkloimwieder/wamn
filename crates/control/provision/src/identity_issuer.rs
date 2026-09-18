@@ -62,6 +62,38 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
     ),
 ];
 
+/// Narrow password endpoint column grants; principal administration stays separate.
+pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
+    ("principals", "SELECT", &["email"]),
+    (
+        "password_credentials",
+        "SELECT",
+        &["principal_id", "password_hash"],
+    ),
+    (
+        "password_credentials",
+        "INSERT",
+        &["principal_id", "password_hash"],
+    ),
+    (
+        "password_tokens",
+        "SELECT",
+        &[
+            "token_hash",
+            "principal_id",
+            "purpose",
+            "expires_at",
+            "consumed_at",
+        ],
+    ),
+    (
+        "password_tokens",
+        "INSERT",
+        &["token_hash", "principal_id", "purpose", "expires_at"],
+    ),
+    ("password_tokens", "UPDATE", &["consumed_at"]),
+];
+
 /// Which input predicate refused an identity credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityIssuerUrlErrorKind {
@@ -299,6 +331,20 @@ pub fn grant_identity_issuer_surface_sql() -> String {
         " GRANT INSERT ({columns}) ON TABLE identity.pats TO {role};"
     )
     .expect("writing to a String cannot fail");
+    for (table, privilege, columns) in IDENTITY_ISSUER_PASSWORD_COLUMNS {
+        let columns = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(
+            sql,
+            " GRANT {privilege} ({columns}) ON TABLE identity.{} TO {role};",
+            quote_ident(table)
+        )
+        .expect("string write");
+    }
+    write!(sql, " GRANT SELECT, INSERT, UPDATE, DELETE ON identity.password_attempts TO {role}; GRANT EXECUTE ON FUNCTION identity.lock_password_principal(uuid) TO {role};").expect("string write");
     sql
 }
 
@@ -354,7 +400,10 @@ mod tests {
     #[test]
     fn issuer_surface_sql_preserves_exact_column_grants() {
         assert_eq!(
-            grant_identity_issuer_surface_sql(),
+            grant_identity_issuer_surface_sql()
+                .split(" GRANT SELECT (\"email\")")
+                .next()
+                .unwrap(),
             "DO $workload_acl$ DECLARE role_name text := 'wamn_identity_issuer'; BEGIN \
              PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
              IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \

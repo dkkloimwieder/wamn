@@ -6074,6 +6074,8 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "clap",
+ "dotenvy",
+ "hex",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -6083,6 +6085,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
@@ -6093,6 +6096,7 @@ dependencies = [
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-test-postgres",
+ "zeroize",
 ]
 
 [[package]]

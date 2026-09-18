@@ -165,6 +165,7 @@ object_store = { version = "0.14.1", default-features = false, features = ["aws"
 # `fork`/`timeout` features pull `rusty-fork` and are not used.
 proptest = { version = "1.11", default-features = false, features = ["std", "bit-set"] }
 rand_core = "0.10"
+dotenvy = "0.15.7"
 reqwest = { version = "0.13", default-features = false }
 ring = "0.17"
 rcgen = "0.14.8"
