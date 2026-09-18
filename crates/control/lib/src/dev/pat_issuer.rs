@@ -1,4 +1,4 @@
-//! Start the separate PAT authority for disposable environment provisioning.
+//! Own the separate identity process for disposable development environments.
 
 use std::fmt;
 use std::fs::{DirBuilder, OpenOptions};
@@ -22,8 +22,7 @@ use tokio::process::{Child, Command};
 use url::Url;
 use wamn_control_provision::CredentialGeneration;
 
-// These bounds match the identity service's existing I/O timeout. The local
-// certificates cover startup only and are deleted when provisioning ends.
+// Bound startup and cleanup. Temporary provisioning certificates last one hour.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const CERTIFICATE_LIFETIME: Duration = Duration::from_secs(3600);
 
@@ -35,6 +34,7 @@ pub struct Bootstrap {
     system_url: String,
     secret_name: String,
     files: PrivateDirectory,
+    session_target: Option<PathBuf>,
 }
 
 impl fmt::Debug for Bootstrap {
@@ -91,7 +91,10 @@ impl Bootstrap {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true);
+            .kill_on_drop(false);
+        if let Some(target) = &self.session_target {
+            command.arg("--session-target").arg(target);
+        }
         let child = command
             .spawn()
             .context("start the separate identity process")?;
@@ -126,6 +129,7 @@ pub async fn start(system_url: &str, root: &Path) -> anyhow::Result<Bootstrap> {
         CERTIFICATE_LIFETIME,
         None,
         "wamn-dev-identity-db",
+        None,
     )
     .await
 }
@@ -146,6 +150,7 @@ pub async fn start_for_issuer(
         certificate_lifetime,
         Some(ca_path_length),
         secret_name,
+        None,
     )
     .await
 }
@@ -157,6 +162,7 @@ async fn start_with(
     certificate_lifetime: Duration,
     ca_path_length: Option<u8>,
     secret_name: &str,
+    session_target: Option<&Path>,
 ) -> anyhow::Result<Bootstrap> {
     let binary = preflight(system_url)?;
     let socket = std::net::TcpListener::bind("127.0.0.1:0")
@@ -193,8 +199,28 @@ async fn start_with(
         system_url: system_url.to_owned(),
         secret_name: secret_name.to_owned(),
         files,
+        session_target: session_target.map(Path::to_path_buf),
     };
     provision_identity_issuer(bootstrap.generation_args(true)).await?;
+    if session_target.is_some() {
+        use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
+        let database = secret_value(&bootstrap.files.0.join("database.json"), "url")?;
+        let (mut client, connection) = tokio_postgres::connect(&database, tokio_postgres::NoTls)
+            .await
+            .context("connect the development signing authority")?;
+        let driver = tokio::spawn(connection);
+        let result = async {
+            let key = publish_session_key(&mut client, &bootstrap.issuer).await?;
+            activate_session_key(&mut client, &bootstrap.issuer, &key.kid).await
+        }
+        .await;
+        drop(client);
+        driver.abort();
+        if let Err(error) = result {
+            bootstrap.stop().await?;
+            return Err(error.into());
+        }
+    }
     // A competing bind fails startup. Never retry with another authority or
     // fall back to direct database minting.
     drop(socket);
@@ -238,7 +264,7 @@ pub fn identity_binary() -> anyhow::Result<PathBuf> {
     Ok(binary)
 }
 
-struct PrivateDirectory(PathBuf);
+struct PrivateDirectory(PathBuf, bool);
 
 impl PrivateDirectory {
     fn new(root: &Path) -> anyhow::Result<Self> {
@@ -251,14 +277,16 @@ impl PrivateDirectory {
             .mode(0o700)
             .create(&path)
             .context("create the private identity directory")?;
-        Ok(Self(path))
+        Ok(Self(path, false))
     }
 }
 
 impl Drop for PrivateDirectory {
     fn drop(&mut self) {
         // This path names only the fresh private directory created above.
-        let _ = std::fs::remove_dir_all(&self.0);
+        if !self.1 {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }
 
@@ -310,5 +338,139 @@ fn certificates(
         file.write_all(pem.as_bytes())
             .context("write a private TLS file")?;
     }
+    Ok(())
+}
+
+/// Start one development issuer with its provisioned session target.
+pub async fn start_environment(
+    system_url: &str,
+    root: &Path,
+    target: &Path,
+) -> anyhow::Result<Bootstrap> {
+    start_with(
+        system_url,
+        root,
+        None,
+        Duration::from_hours(720),
+        None,
+        "wamn-dev-identity-db",
+        Some(target),
+    )
+    .await
+}
+
+impl Drop for Bootstrap {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.child {
+            let _ = child.start_kill();
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedProcess {
+    pid: u32,
+    started: String,
+    issuer: String,
+    system_url: String,
+    secret_name: String,
+    directory: PathBuf,
+}
+
+fn process_start(pid: u32) -> anyhow::Result<String> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    stat.rsplit_once(") ")
+        .and_then(|(_, rest)| rest.split_whitespace().nth(19))
+        .map(|started| format!("{}:{started}", boot.trim()))
+        .context("read the owned identity process start time")
+}
+
+impl Bootstrap {
+    /// Transfer this process to the environment, independent of UI lifetime.
+    pub fn retain(mut self, root: &Path) -> anyhow::Result<()> {
+        let pid = self
+            .child
+            .as_ref()
+            .and_then(Child::id)
+            .context("the identity process exited")?;
+        let state = OwnedProcess {
+            pid,
+            started: process_start(pid)?,
+            issuer: self.issuer.clone(),
+            system_url: self.system_url.clone(),
+            secret_name: self.secret_name.clone(),
+            directory: self.files.0.clone(),
+        };
+        crate::provision_project_env::write_secret_json(
+            &root.join("identity-process.json"),
+            &serde_json::to_value(state)?,
+        )?;
+        self.files.1 = true;
+        drop(self.child.take());
+        Ok(())
+    }
+}
+
+/// Stop only the identity process recorded by this environment's startup.
+#[cfg(target_os = "linux")]
+pub async fn stop_environment(root: &Path) -> anyhow::Result<()> {
+    use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
+    let path = root.join("identity-process.json");
+    let state: OwnedProcess = serde_json::from_slice(&std::fs::read(&path)?)
+        .context("read the owned identity process record")?;
+    anyhow::ensure!(
+        state.directory.parent() == Some(root)
+            && state
+                .directory
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".pat-issuer-")),
+        "identity cleanup directory is outside the environment"
+    );
+    let pid = Pid::from_raw(state.pid.try_into()?).context("invalid owned identity PID")?;
+    match pidfd_open(pid, PidfdFlags::empty()) {
+        Ok(fd) => {
+            anyhow::ensure!(
+                process_start(state.pid)? == state.started,
+                "identity PID belongs to another process; refusing to stop it"
+            );
+            pidfd_send_signal(&fd, Signal::KILL)?;
+            tokio::time::timeout(IO_TIMEOUT, async {
+                loop {
+                    match std::fs::read_to_string(format!("/proc/{}/stat", state.pid)) {
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                        Ok(stat)
+                            if stat
+                                .rsplit_once(") ")
+                                .is_some_and(|(_, rest)| rest.starts_with("Z ")) =>
+                        {
+                            break;
+                        }
+                        Err(error) => return Err(error),
+                        _ => tokio::time::sleep(Duration::from_millis(25)).await,
+                    }
+                }
+                Ok::<_, std::io::Error>(())
+            })
+            .await
+            .context("owned identity shutdown timed out")??;
+        }
+        Err(rustix::io::Errno::SRCH) => (),
+        Err(error) => return Err(error.into()),
+    }
+    provision_identity_issuer(IdentityIssuerRequest {
+        issuer: state.issuer,
+        system_database_url: state.system_url,
+        prepare_generation: None,
+        retire_generation: None,
+        abort_generation: Some(CredentialGeneration::A),
+        emit_secret: None,
+        namespace: "wamn-system".into(),
+        secret_name: state.secret_name,
+    })
+    .await?;
+    std::fs::remove_dir_all(state.directory)?;
+    std::fs::remove_file(path)?;
     Ok(())
 }

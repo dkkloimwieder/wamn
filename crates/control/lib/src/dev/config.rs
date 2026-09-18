@@ -78,6 +78,15 @@ pub struct LocalArtifacts {
     pub bindings: Option<PathBuf>,
 }
 
+/// Public trust for the identity process owned by the development environment.
+#[derive(Clone, Debug, Deserialize, serde::Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionIdentity {
+    pub issuer: String,
+    pub ca: PathBuf,
+    pub instance_suffix: String,
+}
+
 /// Sole field authority for the strict deployment-owned `dev.json` document.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -88,6 +97,8 @@ struct DevConfigDocument {
     target_database_acl_file: PathBuf,
     system_database_url: String,
     identity_database_url: String,
+    #[serde(default)]
+    session_identity: Option<SessionIdentity>,
     guest_database_url: String,
     executor_platform_database_url: String,
     http_admitter_database_url: String,
@@ -512,6 +523,7 @@ pub struct DevConfig {
     target_database_acl_file: PathBuf,
     system_database_url: Box<str>,
     identity_database_url: Box<str>,
+    session_identity: Option<SessionIdentity>,
     guest_database_url: Box<str>,
     executor_platform_database_url: Box<str>,
     http_admitter_database_url: Box<str>,
@@ -600,6 +612,11 @@ impl fmt::Debug for DevConfig {
 }
 
 impl DevConfig {
+    /// Trusted issuer inputs for the managed environment, when configured.
+    pub fn session_identity(&self) -> Option<&SessionIdentity> {
+        self.session_identity.as_ref()
+    }
+
     fn sanitized_endpoint(&self, key: &str) -> &str {
         self.probes
             .iter()
@@ -814,6 +831,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         target_database_acl_file,
         system_database_url,
         identity_database_url,
+        session_identity,
         guest_database_url,
         executor_platform_database_url,
         http_admitter_database_url,
@@ -1026,6 +1044,28 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         otel_exporter_probe,
     ];
 
+    if let Some(identity) = &session_identity {
+        let valid =
+            wamn_control_provision::identity_issuer::validate_identity_issuer(&identity.issuer)
+                .is_ok()
+                && wamn_control_provision::session_target::session_audience(
+                    &wamn_control_registry::Triple::new(
+                        &activation_identity.org,
+                        &activation_identity.project,
+                        activation_identity.environment.as_str(),
+                    ),
+                    &identity.instance_suffix,
+                )
+                .is_ok()
+                && identity.ca.is_absolute();
+        if !valid {
+            return Err(DevConfigError::new(
+                DevConfigErrorKind::MalformedDocument,
+                "session_identity",
+                "issuer, instance suffix, or absolute CA path refused",
+            ));
+        }
+    }
     Ok(DevConfig {
         target_database_url,
         target_privileges_file,
@@ -1033,6 +1073,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         target_database_acl_file,
         system_database_url,
         identity_database_url,
+        session_identity,
         guest_database_url,
         executor_platform_database_url,
         http_admitter_database_url,
@@ -1237,6 +1278,16 @@ fn validate_config_document_shape(
         }
     }
     for (key, value) in object {
+        if key == "session_identity" {
+            serde_json::from_value::<Option<SessionIdentity>>(value.clone()).map_err(|_| {
+                DevConfigError::new(
+                    DevConfigErrorKind::InvalidValue,
+                    key.as_str(),
+                    "session identity requires issuer, ca, and instance_suffix",
+                )
+            })?;
+            continue;
+        }
         if key == LOCAL_ARTIFACTS {
             serde_json::from_value::<LocalArtifacts>(value.clone()).map_err(|_| {
                 DevConfigError::new(

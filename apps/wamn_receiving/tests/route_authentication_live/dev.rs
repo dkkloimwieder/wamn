@@ -3,6 +3,7 @@
 use super::*;
 
 mod local_delivery;
+mod password;
 
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_mins(12);
 pub(super) const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
@@ -387,9 +388,11 @@ pub(super) async fn current_database_acl(
 }
 
 #[tokio::test]
-#[ignore = "requires: WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
+#[ignore = "requires: RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
 async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
+        "RESEND_API_KEY",
+        "RESEND_FROM",
         "WAMN_RECEIVING_DEV_BIN",
         "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
         "WAMN_RECEIVING_DEV_HOST_BIN",
@@ -475,6 +478,14 @@ pub(super) async fn assert_dev_command(
         // The literal command emits this result only after native workload
         // stop and supervised host reaping have both succeeded.
         verify_dev_command_output(&output)?;
+        let login = password::Login::start(&environment, system_url).await?;
+        // Change only the input timestamp so Cargo recompiles the application
+        // without changing authored source or its declared digest.
+        std::fs::File::open(package_root().join("component/src/lib.rs"))?
+            .set_modified(std::time::SystemTime::now())?;
+        let rebuilt = run_dev_product_command(inputs, &config).await?;
+        verify_dev_command_output(&rebuilt)?;
+        login.available().await?;
         let (project, project_task) = connect(&environment.route.database_url).await?;
         let system_acl_after = current_database_acl(admin.as_ref()).await?;
         let durable_acl_after = current_database_acl(project.as_ref()).await?;
@@ -490,11 +501,13 @@ pub(super) async fn assert_dev_command(
         );
         verify_dev_target_package_and_acl_state(project.as_ref()).await?;
         project_task.abort();
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, anyhow::Error>(login)
     }
     .await;
 
+    let stopped = environment.issuer.stop().await;
     admin_task.abort();
-
-    command_result
+    let login = command_result?;
+    stopped?;
+    login.stopped().await
 }

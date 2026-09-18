@@ -24,6 +24,27 @@
         "flow_http_component"
       ],
       "type": "object"
+    },
+    "SessionIdentity": {
+      "additionalProperties": false,
+      "description": "Public trust for the identity process owned by the development environment.",
+      "properties": {
+        "ca": {
+          "type": "string"
+        },
+        "instance_suffix": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ca",
+        "instance_suffix",
+        "issuer"
+      ],
+      "type": "object"
     }
   },
   "description": "Sole field authority for the strict deployment-owned `dev.json` document.",
@@ -116,6 +137,17 @@
     },
     "schema": {
       "type": "string"
+    },
+    "session_identity": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SessionIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "stream_replicas": {
       "format": "uint",

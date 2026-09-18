@@ -684,7 +684,7 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         "--schema".to_owned(),
         identity.schema.clone(),
     ];
-    let env = vec![
+    let mut env = vec![
         (
             "WAMN_SYSTEM_URL".to_owned(),
             request.config.identity_database_url().to_owned(),
@@ -755,6 +755,19 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             OTEL_BSP_MAX_EXPORT_BATCH_SIZE.to_owned(),
         ),
     ];
+    if let Some(identity) = request.config.session_identity() {
+        env.extend([
+            ("WAMN_SESSION_ISSUER".to_owned(), identity.issuer.clone()),
+            (
+                "WAMN_SESSION_JWKS_CA".to_owned(),
+                identity.ca.display().to_string(),
+            ),
+            (
+                "WAMN_SESSION_INSTANCE_SUFFIX".to_owned(),
+                identity.instance_suffix.clone(),
+            ),
+        ]);
+    }
     HostProcessSpec {
         program: request.host_binary.to_owned(),
         args: args.into_boxed_slice(),
@@ -1705,6 +1718,40 @@ mod tests {
             workload_state: state.into(),
             message: state.as_str_name().to_owned(),
         }
+    }
+
+    #[test]
+    fn session_identity_reaches_the_host_without_ambient_environment() {
+        let mut document = config_document();
+        document["session_identity"] = serde_json::json!({
+            "issuer": "https://127.0.0.1:8443", "ca": "/tmp/owned-identity-ca.pem", "instance_suffix": "abc12345"
+        });
+        let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
+        let release = release();
+        let identity = identity();
+        let request = DevActivationRequest {
+            config: &config,
+            release: &release,
+            identity: &identity,
+            host_binary: config.host_binary(),
+            wasmtime_cache_dir: config.wasmtime_cache_dir(),
+            host_output_log: None,
+            local_admission_digest: None,
+        };
+        let spec = host_process_spec(&request);
+        for (name, value) in [
+            ("WAMN_SESSION_ISSUER", "https://127.0.0.1:8443"),
+            ("WAMN_SESSION_JWKS_CA", "/tmp/owned-identity-ca.pem"),
+            ("WAMN_SESSION_INSTANCE_SUFFIX", "abc12345"),
+        ] {
+            assert!(
+                spec.env
+                    .iter()
+                    .any(|(key, actual)| key == name && actual == value)
+            );
+        }
+        document["session_identity"]["issuer"] = "http://127.0.0.1:8443".into();
+        assert!(parse_config(&serde_json::to_vec(&document).unwrap()).is_err());
     }
 
     #[tokio::test]

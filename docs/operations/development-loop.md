@@ -34,7 +34,23 @@ Declare `--stream-replicas` and `--dup-window-secs` explicitly.
 Use `--event-provisioning-username` and `--event-provisioning-password-file` for stream creation.
 Use `--event-nats-username` and `--event-nats-password-file` for runtime access.
 
-The command writes private `dev.json`, prints the next developer command, and exits.
+The command starts `wamn-identity`, writes private `dev.json`, prints the next developer command, and exits.
+The identity process keeps running across application builds and operator exits.
+Startup creates its signing key once. Application rebuilds preserve that key and the identity database.
+The `session_identity` field supplies the issuer address, certificate authority file, and environment instance to each application host.
+The identity process uses the existing [password configuration](deployment.md#identity-password-configuration), including `.env` in the working directory.
+
+At environment teardown, stop the owned identity process:
+
+```bash
+"$CARGO_TARGET_DIR/debug/wamn" dev down --root "$WAMN_DEV_ENV_DIR"
+```
+
+This command removes the owned process, its database login authority, and its private certificate directory.
+It leaves externally supplied PostgreSQL, NATS, and telemetry services running.
+Stop the environment before running `dev up` again against the same directory.
+Local identity certificates last 30 days. A new disposable environment creates new certificates.
+
 Use its emitted configuration:
 
 ```bash

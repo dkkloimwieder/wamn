@@ -251,6 +251,19 @@ cargo test --locked --offline -p wamn-ctl --features ops \
 The case applies `run-state.sql` and `run-queue.sql`, mints the run retention generation, and runs `wamn-ctl-ops prune-run-history`.
 It tests the removed and kept runs, the refusals, and the grants of the generation.
 
+### Development identity lifecycle
+
+The development command case also tests password login across an application recompile and owned identity shutdown.
+For this case, supply `RESEND_API_KEY=unused-development-fixture` and `RESEND_FROM='WAMN <fixture@example.invalid>'` to the test process.
+It creates the invitation through the scoped database authority and sends no email.
+The focused identity case also covers application database recreation:
+
+```bash
+RESEND_API_KEY=unused-development-fixture RESEND_FROM='WAMN <fixture@example.invalid>' \
+  cargo test --locked --offline -p wamn-ctl --test pat_bootstrap_live \
+  development_identity_survives_target_recreation_and_owned_teardown -- --ignored --exact
+```
+
 ### Local saved-edit acceptance
 
 Use a clean linked worktree reserved for this test.

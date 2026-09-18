@@ -126,7 +126,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         .as_deref()
         .map(|root| format!(" --overlay-root {}", root.display()))
         .unwrap_or_default();
-    println!("environment ready");
+    println!("environment ready; identity remains running until wamn dev down");
     println!("  config: {}", config.display());
     // The operator token is also in dev.json for generated client launch.
     // The local Gate uses its separate management-author token.
@@ -137,5 +137,19 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     println!();
     println!("run the loop from the repository root, in another terminal:");
     println!("  wamn dev --config {}{overlay} --tui", config.display());
+    Ok(())
+}
+
+/// Stop the identity process owned by one development environment.
+#[derive(Debug, Args)]
+pub struct DevDownArgs {
+    #[arg(long, env = "WAMN_DEV_ENV_ROOT")]
+    root: PathBuf,
+}
+
+/// Leave externally supplied databases and brokers untouched.
+pub async fn down(args: DevDownArgs) -> anyhow::Result<()> {
+    wamn_control::dev::pat_issuer::stop_environment(&args.root.canonicalize()?).await?;
+    println!("development identity stopped");
     Ok(())
 }

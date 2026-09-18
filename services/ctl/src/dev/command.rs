@@ -227,7 +227,7 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
 ///
 /// Read off the same seam the interactive client reads, so the two cannot
 /// disagree about which endpoint the release was reachable on. Past tense on
-/// purpose: the one-shot loop has already torn the environment down by the time
+/// purpose: the one-shot loop has already stopped the application by the time
 /// this prints, while --tui holds it and shows the same fact live.
 fn print_serving(session: &DevSession) {
     if let Some(endpoint) = session.last_served() {

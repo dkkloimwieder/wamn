@@ -74,6 +74,7 @@ pub struct DevEnvironment {
     pub route: ProvisionedRoute,
     pub credentials: JourneyCredentials,
     pub identity: DevActivationIdentity,
+    pub issuer: super::pat_issuer::Bootstrap,
 }
 
 /// Stand the environment up on a disposable PostgreSQL 18 cluster.
@@ -99,6 +100,10 @@ pub async fn provision(
         "the development environment requires PostgreSQL 18 or newer"
     );
 
+    anyhow::ensure!(
+        !root.join("identity-process.json").exists(),
+        "stop the existing development environment before provisioning again"
+    );
     provision_journey_control(system_url, admin).await?;
     admin
         .execute(
@@ -107,20 +112,49 @@ pub async fn provision(
         )
         .await
         .context("record the disposable deployment platform domain")?;
-    let route = provision_route(
-        system_url,
-        admin,
-        root,
-        Some(&root.join("management-author-pat.json")),
-    )
-    .await?;
+    let route_secret = root.join("route-caller-pat.json");
+    let management_secret = root.join("management-author-pat.json");
+    let mut args = provisioning_args(system_url, root, &route_secret, Some(&management_secret));
+    args.emit_management_author_pat_secret = None;
+    args.emit_route_caller_pat_secret = None;
+    provision_project_env::provision_project_env(&args).await?;
+    let project_url = prepare_route_database(system_url, admin, root).await?;
 
     // Only the platform floor. The product command remains the sole owner of
     // both package migrations and their generated ACL union.
-    let (project, project_task) = connect(&route.database_url).await?;
+    let (project, project_task) = connect(&project_url).await?;
     install_journey_platform_floor(project.as_ref(), TENANT, platform_domain).await?;
     drop(project);
     project_task.abort();
+
+    reconcile_journey_run_plane(system_url, &project_url).await?;
+    let target_secret = root.join("session-role-reader.json");
+    provision_project_env::run_workload_action(&generation_args(
+        WorkloadRoleFamily::SessionRoleReader,
+        system_url,
+        Some(&project_url),
+        &target_secret,
+    ))
+    .await?;
+    let target = secret_value(&target_secret, "target.json")?;
+    let target_path = root.join("identity-target.json");
+    provision_project_env::write_secret_json(&target_path, &serde_json::from_str(&target)?)?;
+    let issuer = super::pat_issuer::start_environment(system_url, root, &target_path).await?;
+    args.emit_management_author_pat_secret = Some(management_secret.clone());
+    args.emit_route_caller_pat_secret = Some(route_secret.clone());
+    args.pat_issuer = issuer.args.clone();
+    provision_project_env::provision_project_env(&args).await?;
+    let route = route_credentials(project_url, root, Some(&management_secret))?;
+    let target =
+        wamn_control_provision::session_target::SessionTarget::from_json(target.as_bytes())?;
+    provision_project_env::write_secret_json(
+        &root.join("identity-trust.json"),
+        &serde_json::json!({
+            "issuer": issuer.args.endpoint,
+            "ca": issuer.args.server_ca,
+            "instance_suffix": target.instance_suffix(),
+        }),
+    )?;
 
     reconcile_journey_run_plane(system_url, &route.database_url).await?;
     let credentials =
@@ -138,6 +172,7 @@ pub async fn provision(
         route,
         credentials,
         identity,
+        issuer,
     })
 }
 
@@ -319,6 +354,15 @@ pub async fn provision_route(
     }
     stopped?;
 
+    let database_url = prepare_route_database(system_url, admin, root).await?;
+    route_credentials(database_url, root, management_secret)
+}
+
+async fn prepare_route_database(
+    system_url: &str,
+    admin: &Client,
+    root: &Path,
+) -> anyhow::Result<String> {
     let database = read_json(&root.join("database.json"))?["spec"]["name"]
         .as_str()
         .context("Database CR carries spec.name")?
@@ -347,8 +391,17 @@ pub async fn provision_route(
         .await
         .context("apply emitted privilege SQL")?;
 
+    database_url(system_url, &database)
+}
+
+fn route_credentials(
+    database_url: String,
+    root: &Path,
+    management_secret: Option<&Path>,
+) -> anyhow::Result<ProvisionedRoute> {
+    let route_secret = root.join("route-caller-pat.json");
     Ok(ProvisionedRoute {
-        database_url: database_url(system_url, &database)?,
+        database_url,
         token: secret_value(&route_secret, "token")?,
         token_prefix: secret_annotation(&route_secret, "wamn.io/pat-prefix")?,
         principal_subject: secret_annotation(&route_secret, "wamn.io/principal-subject")?,
@@ -433,6 +486,13 @@ pub async fn prepare_target_template(
         ))
         .await
         .context("snapshot the pristine target database as a template")?;
+    admin
+        .batch_execute(&format!(
+            "REVOKE CONNECT, TEMPORARY ON DATABASE {} FROM PUBLIC",
+            Identifier::new(template.clone())?.quoted(),
+        ))
+        .await
+        .context("preserve the cluster PUBLIC CONNECT floor on the template")?;
 
     // The fingerprint is stamped ON the template, so it cannot be separated
     // from the thing it describes. A run compares it before it drops anything.
@@ -865,6 +925,9 @@ pub fn write_dev_config(
     // A separate insert keeps the literal above inside the json! recursion limit.
     config["platform_domain"] = inputs.platform_domain.as_str().into();
     config["local_artifacts"] = serde_json::to_value(&inputs.local_artifacts)?;
+    if root.join("identity-trust.json").exists() {
+        config["session_identity"] = read_json(&root.join("identity-trust.json"))?;
+    }
     let path = root.join("dev.json");
     std::fs::write(&path, serde_json::to_vec_pretty(&config)?)
         .context("write the strict product-command configuration")?;

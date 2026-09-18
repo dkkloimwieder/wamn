@@ -29,7 +29,7 @@ pub struct DevUpRequest {
 }
 
 /// Provision the environment and return the configuration file.
-pub async fn provision_environment(args: DevUpRequest) -> anyhow::Result<PathBuf> {
+pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<PathBuf> {
     // Settled before a single credential is minted: an environment is
     // expensive to stand up.
     wamn_control_provision::validate_platform_domain(&args.platform_domain)?;
@@ -39,6 +39,8 @@ pub async fn provision_environment(args: DevUpRequest) -> anyhow::Result<PathBuf
     // Minted PATs and credential URLs land here, so the directory is the wall.
     std::fs::set_permissions(&args.root, Permissions::from_mode(0o700))
         .with_context(|| format!("restrict {} to its owner", args.root.display()))?;
+
+    args.root = args.root.canonicalize()?;
 
     let mut package_sources = Vec::with_capacity(args.packages.len());
     for package in &args.packages {
@@ -119,6 +121,7 @@ pub async fn provision_environment(args: DevUpRequest) -> anyhow::Result<PathBuf
         &environment.identity,
     )?;
 
+    environment.issuer.retain(&args.root.canonicalize()?)?;
     admin_task.abort();
     Ok(config)
 }

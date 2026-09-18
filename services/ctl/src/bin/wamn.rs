@@ -50,6 +50,8 @@ struct DevArgs {
 enum DevEnvironmentCommand {
     /// Stand up the disposable environment the loop runs against, and hold it.
     Up(Box<wamn_ctl::dev::up::DevUpArgs>),
+    /// Stop the identity process owned by this development environment.
+    Down(wamn_ctl::dev::up::DevDownArgs),
     /// Reset this environment's idle disposable application target.
     Reset(wamn_ctl::dev::target_database::DevResetArgs),
     /// Execute selected correctness cases through the shared owned-fixture runner.
@@ -71,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Ui(args) => wamn_ctl::ui::run(args).await,
         Command::Dev(dev) => match dev.environment {
             Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(*args).await,
+            Some(DevEnvironmentCommand::Down(args)) => wamn_ctl::dev::up::down(args).await,
             Some(DevEnvironmentCommand::Reset(args)) => {
                 wamn_ctl::dev::target_database::reset(args).await
             }

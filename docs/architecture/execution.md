@@ -250,6 +250,10 @@ The terminal matches this list against deployment-owned application addresses.
 It opens one match directly and asks the person to select among several matches.
 An empty match refuses login. The issuer never supplies application addresses.
 
+The development environment owns a separate identity process from startup until explicit teardown.
+Application builds and operator exits preserve that process, its identity database, and its signing keys.
+This process ownership does not add an external identity provider or change the planned OIDC adapter.
+
 Unknown accounts and incorrect passwords receive the same unauthorized response.
 These routes are enabled only when the service has a Resend key and sender.
 Session expiry requires another login. Renewal and server-side logout remain unbuilt.
