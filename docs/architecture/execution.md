@@ -231,9 +231,24 @@ Operators behind a shared proxy also share its source limit.
 The service sends the one-time secret through Resend to that principal's stored email.
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.
+
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`.
 It reuses the PAT exchange's membership, current environment, active tenant user, role, and signing checks.
+
+`POST /password/environments` accepts only `email` and `password`.
+After password authentication, it returns the configured environments that pass those same access checks.
+Its response is `{"environments":[{"aud":"...","org":"...","project":"...","env":"..."}]}`.
+The list is ordered by audience and can be empty.
+
+Discovery returns no session, PAT, application address, or database credential.
+It shares the login throttle and request deadline with session issuance.
+An unavailable authority read fails the whole request instead of returning an incomplete list.
+Session issuance repeats the access checks after selection. A discovery result grants no access.
+
+The terminal still requires one configured target.
+The identity plan defines the pending environment-selection flow.
+
 Unknown accounts and incorrect passwords receive the same unauthorized response.
 These routes are enabled only when the service has a Resend key and sender.
 Session expiry requires another login. Renewal and server-side logout remain unbuilt.

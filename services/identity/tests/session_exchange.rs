@@ -1634,3 +1634,212 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     drop(replica);
     cleanup(fixture).await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn password_environment_discovery_requires_current_authority() {
+    use wamn_platform_identity::password::issue_invitation;
+
+    let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("fresh discovery fixture");
+    let db = postgres
+        .create_database("wamn_system")
+        .expect_redacted("discovery database");
+    let fixture = setup(db.url()).await;
+    let alice = create_human(
+        &fixture.system.client,
+        "discovery-alice",
+        "discovery@example.invalid",
+        "Alice",
+    )
+    .await
+    .expect_redacted("discovery human");
+    for database in &fixture.environments {
+        seed_user(&database.client, &alice, TENANT, "receiver").await;
+    }
+    let actor = PlatformComponent::Provisioning
+        .principal_id()
+        .to_string()
+        .parse()
+        .unwrap();
+    let mut issuer = connect(&fixture.issuer_url).await;
+    let invitation = issue_invitation(&mut issuer.client, &actor, alice.id())
+        .await
+        .expect_redacted("discovery invitation");
+    let config = IdentityConfig::new(ISSUER, &fixture.issuer_url)
+        .unwrap()
+        .with_session_targets(fixture.targets.clone())
+        .unwrap()
+        .with_resend(
+            wamn_identity::mail::ResendConfig::new(
+                "unused".into(),
+                "WAMN <fixture@example.invalid>".into(),
+            )
+            .unwrap(),
+        );
+    let https = start_config(config).await;
+    let response = https.client.post(format!("{}/password/enroll", https.endpoint))
+        .json(&json!({"principal_id":alice.id().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
+        .send().await.expect_redacted("enroll discovery account");
+    assert_eq!(response.status(), 204);
+    let credentials = json!({"email":" DISCOVERY@EXAMPLE.INVALID ", "password":PASSWORD});
+    let discover = || {
+        https
+            .client
+            .post(format!("{}/password/environments", https.endpoint))
+            .json(&credentials)
+    };
+    let expected = |indices: &[usize]| {
+        json!({"environments": indices.iter().map(|index| {
+        let target = &fixture.targets[*index];
+        json!({"aud":target.audience(), "org":target.triple().org, "project":"receiving", "env":target.triple().env.as_str()})
+    }).collect::<Vec<_>>()})
+    };
+
+    // A tenant role alone never supplies membership, including across organizations.
+    assert_environments(discover().send().await.unwrap(), expected(&[])).await;
+    grant(&fixture.system.client, &alice, "acme", "dev").await;
+    assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
+    grant(&fixture.system.client, &alice, "acme", "prod").await;
+    assert_environments(discover().send().await.unwrap(), expected(&[0, 1])).await;
+    grant(&fixture.system.client, &alice, "other", "dev").await;
+    assert_environments(discover().send().await.unwrap(), expected(&[0, 1, 2])).await;
+    revoke_project_env_membership(
+        &fixture.system.client,
+        alice.id(),
+        "other",
+        "receiving",
+        "dev",
+    )
+    .await
+    .unwrap();
+    assert_environments(discover().send().await.unwrap(), expected(&[0, 1])).await;
+    // Discovery and issuance consume the same account budget; selecting a new route
+    // cannot bypass it. No token is minted by the five preceding discoveries.
+    let login = json!({"email":"discovery@example.invalid", "password":PASSWORD, "aud":fixture.targets[0].audience()});
+    assert_eq!(
+        https
+            .client
+            .post(format!("{}/password/session", https.endpoint))
+            .json(&login)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        429
+    );
+    discovery_window(&fixture).await;
+
+    fixture.environments[1]
+        .client
+        .execute(
+            "DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid",
+            &[&TENANT, &alice.id().as_str()],
+        )
+        .await
+        .unwrap();
+    assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
+    fixture.environments[0].client.execute(
+        "UPDATE app_system.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
+        &[&TENANT, &alice.id().as_str()],
+    ).await.unwrap();
+    assert_environments(discover().send().await.unwrap(), expected(&[])).await;
+    seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='acme' AND env='dev'").await.unwrap();
+    assert_environments(discover().send().await.unwrap(), expected(&[])).await;
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='acme' AND env='dev'").await.unwrap();
+    assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
+    // A prior discovery cannot authorize issuance after membership changes.
+    revoke_project_env_membership(
+        &fixture.system.client,
+        alice.id(),
+        "acme",
+        "receiving",
+        "dev",
+    )
+    .await
+    .unwrap();
+    assert_failure(
+        https
+            .client
+            .post(format!("{}/password/session", https.endpoint))
+            .json(&login)
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "{\"error\":\"unauthorized\"}",
+    )
+    .await;
+    discovery_window(&fixture).await;
+
+    for (email, password) in [
+        ("absent@example.invalid", PASSWORD),
+        ("discovery@example.invalid", "incorrect password"),
+    ] {
+        let response = https
+            .client
+            .post(format!("{}/password/environments", https.endpoint))
+            .json(&json!({"email":email,"password":password}))
+            .send()
+            .await
+            .unwrap();
+        assert_failure(response, 401, "{\"error\":\"unauthorized\"}").await;
+    }
+    disable_principal(&fixture.system.client, alice.id())
+        .await
+        .unwrap();
+    assert_failure(
+        discover().send().await.unwrap(),
+        401,
+        "{\"error\":\"unauthorized\"}",
+    )
+    .await;
+    // Discovery accepts no caller-provided authority or database addresses.
+    for extra in ["aud", "roles", "database_url"] {
+        let mut invalid = credentials.clone();
+        invalid[extra] = json!("untrusted");
+        assert_eq!(
+            https
+                .client
+                .post(format!("{}/password/environments", https.endpoint))
+                .json(&invalid)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    let pats: i64 = fixture
+        .system
+        .client
+        .query_one(
+            "SELECT count(*) FROM identity.pats WHERE principal_id=$1::text::uuid",
+            &[&alice.id().as_str()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(pats, 0, "discovery must not create a hidden PAT");
+    drop(issuer);
+    drop(https);
+    cleanup(fixture).await;
+}
+
+async fn assert_environments(response: reqwest::Response, expected: Value) {
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let actual = response
+        .json::<Value>()
+        .await
+        .expect_redacted("public environment response");
+    // Exact public fields also exclude session tokens and database credentials.
+    assert!(
+        actual == expected,
+        "authorized public environment list differs"
+    );
+}
+
+async fn discovery_window(fixture: &Fixture) {
+    fixture.system.client.batch_execute("UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'")
+        .await.expect_redacted("advance only the owned throttle window");
+}

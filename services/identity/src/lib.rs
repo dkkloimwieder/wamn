@@ -198,7 +198,10 @@ impl IdentityService {
             && request.uri().query().is_none()
             && matches!(
                 request.uri().path(),
-                "/invitations" | "/password/enroll" | "/password/session"
+                "/invitations"
+                    | "/password/enroll"
+                    | "/password/session"
+                    | "/password/environments"
             )
             && let Some(state) = &self.inner.passwords
         {

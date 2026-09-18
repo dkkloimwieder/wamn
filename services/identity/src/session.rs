@@ -136,6 +136,43 @@ pub(super) async fn mint_for_principal(
     configured: &ConfiguredTarget,
     started_at: i64,
 ) -> Result<IssuedSessionToken, ExchangeFailure> {
+    let roles = authorized_roles(inner, principal, configured).await?;
+    let principal = principal.principal();
+    let target = &configured.binding;
+    let triple = target.triple();
+
+    let mut random = [0u8; 32];
+    SystemRandom::new()
+        .fill(&mut random)
+        .map_err(|_| failed())?;
+    let jti: String = random.iter().fold(String::new(), |mut out, byte| {
+        use std::fmt::Write as _;
+        write!(out, "{byte:02x}").expect("writing to a string is infallible");
+        out
+    });
+    let claims = SessionClaims {
+        iss: inner.issuer.clone(),
+        sub: principal.id().to_string(),
+        org: triple.org.clone(),
+        aud: target.audience().to_owned(),
+        roles,
+        exp: 0,
+        iat: 0,
+        jti,
+    };
+    let mut signing = inner.signing.as_ref().ok_or_else(failed)?.lock().await;
+    sign_session_token(&mut signing.client, claims, started_at)
+        .await
+        .map_err(|_| failed())
+}
+
+// Discovery and issuance share the same current authority checks. A discovery
+// result is not a credential: issuance repeats these checks after selection.
+pub(super) async fn authorized_roles(
+    inner: &Inner,
+    principal: &AuthenticatedPrincipal,
+    configured: &ConfiguredTarget,
+) -> Result<Vec<String>, ExchangeFailure> {
     let principal = principal.principal();
     let target = &configured.binding;
     let triple = target.triple();
@@ -194,29 +231,7 @@ pub(super) async fn mint_for_principal(
         return Err(refused());
     }
 
-    let mut random = [0u8; 32];
-    SystemRandom::new()
-        .fill(&mut random)
-        .map_err(|_| failed())?;
-    let jti: String = random.iter().fold(String::new(), |mut out, byte| {
-        use std::fmt::Write as _;
-        write!(out, "{byte:02x}").expect("writing to a string is infallible");
-        out
-    });
-    let claims = SessionClaims {
-        iss: inner.issuer.clone(),
-        sub: principal.id().to_string(),
-        org: triple.org.clone(),
-        aud: target.audience().to_owned(),
-        roles,
-        exp: 0,
-        iat: 0,
-        jti,
-    };
-    let mut signing = inner.signing.as_ref().ok_or_else(failed)?.lock().await;
-    sign_session_token(&mut signing.client, claims, started_at)
-        .await
-        .map_err(|_| failed())
+    Ok(roles)
 }
 
 pub(super) fn unix_seconds() -> Option<i64> {

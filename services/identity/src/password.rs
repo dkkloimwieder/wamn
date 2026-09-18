@@ -6,7 +6,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
 use tokio_postgres::Client;
@@ -64,6 +64,21 @@ struct EnrollmentRequest {
     invitation: String,
     password: String,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnvironmentsRequest {
+    email: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct Environment<'a> {
+    aud: &'a str,
+    org: &'a str,
+    project: &'a str,
+    env: &'a str,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoginRequest {
@@ -218,17 +233,25 @@ async fn handle(
                 Err(error) => password_failure(&error),
             }
         }
-        "/password/session" => {
-            let Ok(request) = serde_json::from_slice::<LoginRequest>(&bytes) else {
-                return invalid();
+        "/password/session" | "/password/environments" => {
+            let (email, password, audience) = if parts.uri.path() == "/password/environments" {
+                let Ok(request) = serde_json::from_slice::<EnvironmentsRequest>(&bytes) else {
+                    return invalid();
+                };
+                (request.email, request.password, None)
+            } else {
+                let Ok(request) = serde_json::from_slice::<LoginRequest>(&bytes) else {
+                    return invalid();
+                };
+                (request.email, request.password, Some(request.aud))
             };
-            let Ok(password) = Password::new(request.password) else {
+            let Ok(password) = Password::new(password) else {
                 return session::unauthorized();
             };
-            if request.email.len() > 320 {
+            if email.len() > 320 {
                 return session::unauthorized();
             }
-            let email = request.email.trim().to_lowercase();
+            let email = email.trim().to_lowercase();
             let bucket = format!("login:{}", hex::encode(Sha256::digest(email.as_bytes())));
             match admit(&mut database.client, &[(&bucket, 5)]).await {
                 Ok(true) => (),
@@ -247,7 +270,33 @@ async fn handle(
                 Ok(None) => return session::unauthorized(),
                 Err(error) => return password_failure(&error),
             };
-            let Some(target) = inner.targets.get(&request.aud) else {
+            let Some(audience) = audience else {
+                let mut environments = Vec::new();
+                for configured in inner.targets.values() {
+                    match session::authorized_roles(inner, &principal, configured).await {
+                        Ok(_) => {
+                            let target = &configured.binding;
+                            let triple = target.triple();
+                            environments.push(Environment {
+                                aud: target.audience(),
+                                org: &triple.org,
+                                project: &triple.project,
+                                env: triple.env.as_str(),
+                            });
+                        }
+                        Err(error) => match error.kind {
+                            session::FailureKind::Unauthorized => (),
+                            session::FailureKind::Unavailable => return unavailable(),
+                        },
+                    }
+                }
+                return match serde_json::to_vec(&serde_json::json!({"environments": environments}))
+                {
+                    Ok(bytes) => response(StatusCode::OK, "application/json", bytes),
+                    Err(_) => unavailable(),
+                };
+            };
+            let Some(target) = inner.targets.get(&audience) else {
                 return session::unauthorized();
             };
             match session::mint_for_principal(inner, &principal, target, started_at).await {
