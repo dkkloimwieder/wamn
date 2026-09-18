@@ -258,7 +258,7 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
             .kind(),
         PasswordErrorKind::Refused
     );
-    let error = client.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'reset', clock_timestamp() + interval '1 hour')", &[&vec![1u8;32], &person.id().as_str()]).await.unwrap_err();
+    let error = client.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'unknown-purpose', clock_timestamp() + interval '1 hour')", &[&vec![1u8;32], &person.id().as_str()]).await.unwrap_err();
     assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
     let error = client.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'invitation', clock_timestamp() + interval '1 hour')", &[&vec![2u8;32], &service.id().as_str()]).await.unwrap_err();
     assert_eq!(error.code(), Some(&SqlState::FOREIGN_KEY_VIOLATION));
@@ -347,5 +347,140 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
         .unwrap()
         .get::<_, i64>(0),
         0
+    );
+}
+
+#[tokio::test]
+async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat() {
+    use wamn_platform_identity::{
+        password::{issue_reset, reset_password},
+        password_login,
+    };
+    let _lock = wamn_test_postgres::lock();
+    let database = test_database::system();
+    let mut client = connect(database.url()).await;
+    let person = human(&client, "reset-person").await;
+    let other = human(&client, "reset-other").await;
+    let work = password_work();
+    let invitation = issue_invitation(&mut client, &actor(), person.id())
+        .await
+        .unwrap();
+    enroll_password(
+        &mut client,
+        &work,
+        person.id(),
+        invitation.secret(),
+        password(),
+    )
+    .await
+    .unwrap();
+    let pat = issue_pat(
+        &client,
+        person.id(),
+        "preserved",
+        std::time::Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    let tx = client.transaction().await.unwrap();
+    let renewal =
+        password_login::create_login(&tx, person.id(), "https://reset.invalid", "receiving")
+            .await
+            .unwrap()
+            .unwrap();
+    tx.commit().await.unwrap();
+    let first = issue_reset(&mut client, &actor(), person.id())
+        .await
+        .unwrap();
+    let second = issue_reset(&mut client, &actor(), person.id())
+        .await
+        .unwrap();
+    assert!(
+        reset_password(&mut client, &work, other.id(), first.secret(), password())
+            .await
+            .is_err()
+    );
+    assert!(
+        enroll_password(&mut client, &work, person.id(), first.secret(), password())
+            .await
+            .is_err()
+    );
+    let replacement = || Password::new("the new long replacement password".into()).unwrap();
+    reset_password(
+        &mut client,
+        &work,
+        person.id(),
+        first.secret(),
+        replacement(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        reset_password(
+            &mut client,
+            &work,
+            person.id(),
+            first.secret(),
+            replacement()
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        reset_password(
+            &mut client,
+            &work,
+            person.id(),
+            second.secret(),
+            replacement()
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        authenticate_password(&client, &work, "reset-person@example.invalid", password())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        authenticate_password(
+            &client,
+            &work,
+            "reset-person@example.invalid",
+            replacement()
+        )
+        .await
+        .unwrap()
+        .is_some()
+    );
+    let tx = client.transaction().await.unwrap();
+    assert!(
+        password_login::rotate_login(&tx, "https://reset.invalid", "receiving", renewal.secret())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    tx.commit().await.unwrap();
+    assert!(
+        authenticate_pat(&client, pat.token())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let expired = issue_reset(&mut client, &actor(), person.id())
+        .await
+        .unwrap();
+    client.batch_execute("UPDATE identity.password_tokens SET expires_at=created_at+interval '1 microsecond' WHERE purpose='reset'").await.unwrap();
+    assert!(
+        reset_password(
+            &mut client,
+            &work,
+            person.id(),
+            expired.secret(),
+            replacement()
+        )
+        .await
+        .is_err()
     );
 }

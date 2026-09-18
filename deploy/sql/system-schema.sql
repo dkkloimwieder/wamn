@@ -400,7 +400,7 @@ CREATE TABLE identity.password_tokens (
     token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
     principal_id uuid NOT NULL,
     principal_kind text NOT NULL DEFAULT 'human' CHECK (principal_kind = 'human'),
-    purpose text NOT NULL CHECK (purpose = 'invitation'),
+    purpose text NOT NULL CHECK (purpose IN ('invitation', 'reset')),
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
     created_at timestamptz NOT NULL,

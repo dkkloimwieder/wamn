@@ -391,13 +391,20 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         401
     );
 
-    let other = enroll(
-        &fixture,
-        "new-password@example.invalid",
-        "a different valid replacement password",
+    let before_reset = login(&https, &fixture).await;
+    let mut reset_connection = connect(&fixture.issuer_url).await;
+    let actor = PlatformComponent::Provisioning
+        .principal_id()
+        .to_string()
+        .parse()
+        .unwrap();
+    let reset_secret = wamn_platform_identity::password::issue_reset(
+        &mut reset_connection.client,
+        &actor,
+        person.id(),
     )
-    .await;
-    let new_hash:String=fixture.system.client.query_one("SELECT password_hash FROM identity.password_credentials WHERE principal_id=$1::text::uuid",&[&other.id().as_str()]).await.unwrap().get(0);
+    .await
+    .unwrap();
     discovery_window(&fixture).await;
     fixture.system.client.batch_execute("BEGIN").await.unwrap();
     fixture
@@ -409,17 +416,30 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         )
         .await
         .unwrap();
+    let reset_principal = person.id().clone();
+    let reset = tokio::spawn(async move {
+        wamn_platform_identity::password::reset_password(
+            &mut reset_connection.client,
+            &password_work(),
+            &reset_principal,
+            reset_secret.secret(),
+            Password::new("a different valid replacement password".into()).unwrap(),
+        )
+        .await
+    });
+    wait_for_blocked_issuer(&fixture.system.client, &fixture.issuer_role).await;
     let pending = post(
         &https,
         "/password/session",
         &json!({"email":EMAIL,"password":PASSWORD,"aud":fixture.targets[0].audience()}),
     );
     let old_login = tokio::spawn(async move { pending.send().await });
+    let pending_renewal = request(&https, &fixture, "/password/renew", &before_reset);
+    let reset_racing_renewal = tokio::spawn(async move { pending_renewal.send().await });
     wait_for_blocked_issuer(&fixture.system.client, &fixture.issuer_role).await;
-    // Simulate the reset transaction; the reset HTTP endpoint is a later issue.
-    fixture.system.client.execute("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid",&[&person.id().as_str(),&new_hash]).await.unwrap();
-    fixture.system.client.execute("UPDATE identity.password_logins SET revoked_at=clock_timestamp() WHERE principal_id=$1::text::uuid",&[&person.id().as_str()]).await.unwrap();
     fixture.system.client.batch_execute("COMMIT").await.unwrap();
+    reset.await.unwrap().unwrap();
+    assert_eq!(reset_racing_renewal.await.unwrap().unwrap().status(), 401);
     assert_failure(
         old_login.await.unwrap().unwrap(),
         401,

@@ -218,7 +218,7 @@ Credential rotation and access-token signing share one transaction after those c
 The service delivers credentials only after that transaction commits.
 Access-token expiry cannot exceed the login's absolute deadline.
 The caller locks the principal before password verification and keeps that lock through login creation.
-Renewal and logout use the same principal lock. Password reset must also use that lock when implemented.
+Renewal, logout, and password reset use the same principal lock.
 Principal disablement revokes its families through a database trigger, so reactivation cannot restore them.
 
 The issuer cannot change a login's principal, audience, authentication time, or absolute deadline.
@@ -234,7 +234,8 @@ The identity issuer has narrow grants for enrollment and authentication.
 A restricted database function locks a principal without granting permission to change that principal.
 
 Invitation secrets contain 32 random bytes and expire after 24 hours.
-The database stores their SHA-256 digests and explicit invitation purpose, never the bearer secret.
+Reset secrets use the same implementation with a separate prefix, reset purpose, and 15-minute expiry.
+The database stores their SHA-256 digests and explicit purpose, never the bearer secret.
 Password hashes use Argon2id version 19 with 19 MiB, two iterations, one lane, and independent 16-byte salts.
 These parameters meet the [OWASP minimum profile](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#argon2id).
 One shared worker budget permits two jobs, with no waiting queue, for 38 MiB of Argon2 working memory.
@@ -272,6 +273,22 @@ It returns HTTP 204, including when the credential is already unusable.
 It revokes all password login families for that person and returns HTTP 204.
 Neither operation requires continued application access. Neither revokes PATs.
 Previously issued access tokens retain their existing bounded validity.
+
+`POST /password/recover` accepts `email` and shares the global, source, and account limits.
+The service sends a reset secret only for an active human with an established password.
+After admission, the account-dependent path has a six-second deadline and a fixed response delay.
+Known and unknown accounts receive HTTP 202 with `{"status":"if_eligible_email_will_arrive"}`.
+That response does not promise delivery. Provider failure does not expose account existence.
+The service makes no automatic mail retry.
+
+`POST /password/reset` accepts `email`, `secret`, and `password`.
+It requires a matching, unexpired reset credential and the existing password policy.
+One transaction replaces the password, consumes all outstanding invitation/reset secrets, and revokes all renewal families for that person.
+The service sends a password-change notification after commit and creates no session.
+HTTP 200 reports `{"status":"password_reset","notification":"accepted_for_delivery"}` when the provider accepts the notification.
+If notification fails, the response reports `"notification":"unavailable"`. The password change remains committed.
+Normal login uses the replacement password. Existing PATs retain their separate revocation path.
+Terminal recovery and the operator procedure for mailbox loss remain unbuilt.
 
 `POST /password/environments` accepts only `email` and `password`.
 After password authentication, it returns the configured environments that pass those same access checks.

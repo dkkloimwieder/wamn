@@ -15,7 +15,7 @@ use wamn_platform_identity::{
     PrincipalId,
     password::{
         Password, PasswordError, PasswordErrorKind, PasswordWork, authenticate_password,
-        enroll_password, issue_invitation, password_work,
+        enroll_password, issue_invitation, issue_reset, password_work, reset_password,
     },
     password_login,
     session_token::{IssuedSessionToken, sign_session_token_in_transaction},
@@ -94,6 +94,19 @@ struct LoginRequest {
 struct RenewalRequest {
     renewal_token: String,
     aud: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryRequest {
+    email: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResetRequest {
+    email: String,
+    secret: String,
+    password: String,
 }
 
 #[derive(Serialize)]
@@ -364,6 +377,88 @@ async fn handle(
             };
             finish_session(tx, claims, renewal, started_at).await
         }
+        "/password/recover" | "/password/reset" => {
+            let resetting = parts.uri.path() == "/password/reset";
+            let (email, reset) = if resetting {
+                let Ok(request) = serde_json::from_slice::<ResetRequest>(&bytes) else {
+                    return invalid();
+                };
+                (
+                    request.email,
+                    Some((Zeroizing::new(request.secret), request.password)),
+                )
+            } else {
+                let Ok(request) = serde_json::from_slice::<RecoveryRequest>(&bytes) else {
+                    return invalid();
+                };
+                (request.email, None)
+            };
+            if email.len() > 320 {
+                return invalid();
+            }
+            let email = email.trim().to_lowercase();
+            let bucket = format!("recovery:{}", hex::encode(Sha256::digest(email.as_bytes())));
+            match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
+                Ok(true) => (),
+                Ok(false) => return throttled(),
+                Err(_) => return unavailable(),
+            }
+            // Pad the whole account-dependent recovery path, including provider failures.
+            // No mail task outlives the request or performs automatic retries.
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+            let action = async {
+                let Ok(row) = database.client.query_opt("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.kind='human' AND p.status='active'", &[&email]).await else { return unavailable(); };
+                let Some(row) = row else {
+                    return invalid();
+                };
+                let Ok(principal) = row.get::<_, String>(0).parse::<PrincipalId>() else {
+                    return unavailable();
+                };
+                if let Some((secret, password)) = reset {
+                    let Ok(password) = Password::new(password) else {
+                        return invalid();
+                    };
+                    if let Err(error) = reset_password(
+                        &mut database.client,
+                        &state.work,
+                        &principal,
+                        &secret,
+                        password,
+                    )
+                    .await
+                    {
+                        return password_failure(&error);
+                    }
+                    let notified = state.mail.password_changed(&email).await.is_ok();
+                    return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
+                }
+                let actor: PrincipalId = PlatformComponent::Provisioning
+                    .principal_id()
+                    .to_string()
+                    .parse()
+                    .expect("platform principal");
+                let Ok(token) = issue_reset(&mut database.client, &actor, &principal).await else {
+                    return unavailable();
+                };
+                if state.mail.reset(&email, token.secret()).await.is_err() {
+                    let hash = Sha256::digest(token.secret().as_bytes()).to_vec();
+                    if let Ok(tx) = database.client.transaction().await
+                        && tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor.as_str()]).await.is_ok()
+                        && tx.execute("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL", &[&hash]).await.is_ok() { let _ = tx.commit().await; }
+                }
+                response(StatusCode::ACCEPTED, "application/json", Vec::new())
+            };
+            if resetting {
+                return action.await;
+            }
+            let _ = tokio::time::timeout_at(deadline, action).await;
+            tokio::time::sleep_until(deadline).await;
+            response(
+                StatusCode::ACCEPTED,
+                "application/json",
+                br#"{"status":"if_eligible_email_will_arrive"}"#.to_vec(),
+            )
+        }
         "/password/renew" | "/password/logout" | "/password/logout-all" => {
             let Ok(request) = serde_json::from_slice::<RenewalRequest>(&bytes) else {
                 return invalid();
@@ -616,7 +711,12 @@ mod tests {
             .mail = Mailer::fixture(mail_endpoint);
         let (sent, mut received) = tokio::sync::mpsc::channel(2);
         let mail_task = tokio::spawn(async move {
-            for status in [StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR] {
+            for status in [
+                StatusCode::OK,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::OK,
+                StatusCode::OK,
+            ] {
                 let (tcp, _) = mail_listener.accept().await.unwrap();
                 let sent = sent.clone();
                 let handler = service_fn(move |request: Request<Incoming>| {
@@ -641,7 +741,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let requests = tokio::spawn(async move {
-            for _ in 0..3 {
+            for _ in 0..7 {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let service = service.clone();
                 let handler = service_fn(move |request| {
@@ -705,6 +805,52 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(remaining, 0);
+        let unknown = client
+            .post(format!("{endpoint}/password/recover"))
+            .json(&json!({"email":"unknown@example.invalid"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), 202);
+        let unknown_body = unknown.bytes().await.unwrap();
+        let recovery = client
+            .post(format!("{endpoint}/password/recover"))
+            .json(&json!({"email":"alice@example.invalid"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(recovery.status(), 202);
+        assert_eq!(recovery.bytes().await.unwrap(), unknown_body);
+        let mail = received.recv().await.unwrap();
+        assert_eq!(mail["subject"], "Reset your WAMN password");
+        let secret = mail["text"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("Reset secret: "))
+            .unwrap();
+        let reset_body = json!({"email":"alice@example.invalid", "secret":secret, "password":"a replacement long password"});
+        let reset = client
+            .post(format!("{endpoint}/password/reset"))
+            .json(&reset_body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reset.status(), 200);
+        assert_eq!(
+            reset.json::<serde_json::Value>().await.unwrap()["notification"],
+            "accepted_for_delivery"
+        );
+        let notification = received.recv().await.unwrap();
+        assert_eq!(notification["subject"], "Your WAMN password changed");
+        assert!(!notification["text"].as_str().unwrap().contains(secret));
+        let repeated = client
+            .post(format!("{endpoint}/password/reset"))
+            .json(&reset_body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(repeated.status(), 400);
         mail_task.await.unwrap();
         requests.await.unwrap();
         // Concurrent requests through separate scoped connections share the limit.

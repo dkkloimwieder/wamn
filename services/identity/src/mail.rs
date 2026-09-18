@@ -125,13 +125,43 @@ impl Mailer {
         let endpoint = "https://api.resend.com/emails";
         #[cfg(any(test, feature = "test-util"))]
         let endpoint = self.endpoint.as_deref().unwrap_or(endpoint);
-        self.send(endpoint, email, &text).await
+        self.send(endpoint, email, "Your WAMN invitation", &text)
+            .await
+    }
+
+    pub(super) async fn reset(
+        &self,
+        email: &str,
+        secret: &str,
+    ) -> Result<(), IdentityServiceError> {
+        let text = Zeroizing::new(format!(
+            "Reset your WAMN password.\n\nReset secret: {secret}\n\nEnter your email and this secret in the password reset prompt. It expires after 15 minutes and works once. If you did not request this, ignore this email."
+        ));
+        self.password_email(email, "Reset your WAMN password", &text)
+            .await
+    }
+
+    pub(super) async fn password_changed(&self, email: &str) -> Result<(), IdentityServiceError> {
+        self.password_email(email, "Your WAMN password changed", "Your WAMN password changed. Sign in with your new password. If you did not make this change, contact your administrator immediately.").await
+    }
+
+    async fn password_email(
+        &self,
+        email: &str,
+        subject: &'static str,
+        text: &str,
+    ) -> Result<(), IdentityServiceError> {
+        let endpoint = "https://api.resend.com/emails";
+        #[cfg(any(test, feature = "test-util"))]
+        let endpoint = self.endpoint.as_deref().unwrap_or(endpoint);
+        self.send(endpoint, email, subject, text).await
     }
 
     async fn send(
         &self,
         endpoint: &str,
         email: &str,
+        subject: &'static str,
         text: &str,
     ) -> Result<(), IdentityServiceError> {
         // Never retry automatically: a timeout can follow provider acceptance.
@@ -142,7 +172,7 @@ impl Mailer {
             .json(&Email {
                 from: &self.config.from,
                 to: [email],
-                subject: "Your WAMN invitation",
+                subject,
                 text,
             })
             .send()
@@ -212,7 +242,12 @@ mod tests {
                     .unwrap(),
             };
             let result = mail
-                .send(&endpoint, "person@example.invalid", "fixture invitation")
+                .send(
+                    &endpoint,
+                    "person@example.invalid",
+                    "Your WAMN invitation",
+                    "fixture invitation",
+                )
                 .await;
             if status == 200 {
                 assert!(result.is_ok());

@@ -92,6 +92,7 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
         &["token_hash", "principal_id", "purpose", "expires_at"],
     ),
     ("password_tokens", "UPDATE", &["consumed_at"]),
+    ("password_credentials", "UPDATE", &["password_hash"]),
     (
         "password_logins",
         "SELECT",

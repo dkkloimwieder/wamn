@@ -197,6 +197,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
             [
                 "column|identity|password_credentials.password_hash|INSERT|f",
                 "column|identity|password_credentials.password_hash|SELECT|f",
+                "column|identity|password_credentials.password_hash|UPDATE|f",
                 "column|identity|password_credentials.principal_id|INSERT|f",
                 "column|identity|password_credentials.principal_id|SELECT|f",
                 "column|identity|password_logins.audience|INSERT|f",

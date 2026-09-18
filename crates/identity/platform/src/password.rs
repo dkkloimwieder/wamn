@@ -30,6 +30,8 @@ pub const PASSWORD_MEMORY_KIB: u32 = 19 * 1024;
 pub const MAX_PASSWORD_JOBS: usize = 2;
 const INVITATION_PREFIX: &str = "wamn_inv_";
 const INVITATION_PURPOSE: &str = "invitation";
+const RESET_PURPOSE: &str = "reset";
+const RESET_PREFIX: &str = "wamn_reset_";
 
 /// Failure classes inside the password owner, not HTTP or WIT outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,7 +208,7 @@ impl PasswordWork {
     }
 }
 
-/// A one-time invitation secret, never persisted in bearer form.
+/// A one-time email secret for invitation or reset, never persisted in bearer form.
 pub struct Invitation(Zeroizing<String>);
 impl Invitation {
     /// Supply this secret to the intended recipient once; never log it.
@@ -219,8 +221,13 @@ impl fmt::Debug for Invitation {
         f.write_str("Invitation(<redacted>)")
     }
 }
-fn token_hash(secret: &str) -> Option<Vec<u8>> {
-    let suffix = secret.strip_prefix(INVITATION_PREFIX)?;
+fn token_hash(secret: &str, purpose: &str) -> Option<Vec<u8>> {
+    let prefix = if purpose == INVITATION_PURPOSE {
+        INVITATION_PREFIX
+    } else {
+        RESET_PREFIX
+    };
+    let suffix = secret.strip_prefix(prefix)?;
     if suffix.len() != 64
         || !suffix
             .bytes()
@@ -239,9 +246,10 @@ async fn bind_actor(tx: &Transaction<'_>, actor: &PrincipalId) -> Result<(), Pas
     .map_err(|source| database(&source))?;
     Ok(())
 }
-async fn lock_unenrolled(
+async fn lock_account(
     tx: &Transaction<'_>,
     principal: &PrincipalId,
+    enrolled: bool,
 ) -> Result<bool, PasswordError> {
     let row = tx
         .query_opt(
@@ -253,7 +261,7 @@ async fn lock_unenrolled(
     if !row.is_some_and(|row| row.get::<_, bool>(0)) {
         return Ok(false);
     }
-    Ok(!tx.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)", &[&principal.as_str()]).await.map_err(|source| database(&source))?.get::<_, bool>(0))
+    Ok(enrolled == tx.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)", &[&principal.as_str()]).await.map_err(|source| database(&source))?.get::<_, bool>(0))
 }
 
 /// Issue an invitation for an active, unenrolled human under an authorized actor.
@@ -265,36 +273,62 @@ pub async fn issue_invitation(
     actor: &PrincipalId,
     principal: &PrincipalId,
 ) -> Result<Invitation, PasswordError> {
+    issue_token(client, actor, principal, INVITATION_PURPOSE).await
+}
+
+/// Issue a reset credential for an active human who already has a password.
+pub async fn issue_reset(
+    client: &mut Client,
+    actor: &PrincipalId,
+    principal: &PrincipalId,
+) -> Result<Invitation, PasswordError> {
+    issue_token(client, actor, principal, RESET_PURPOSE).await
+}
+
+async fn issue_token(
+    client: &mut Client,
+    actor: &PrincipalId,
+    principal: &PrincipalId,
+    purpose: &str,
+) -> Result<Invitation, PasswordError> {
+    let prefix = if purpose == INVITATION_PURPOSE {
+        INVITATION_PREFIX
+    } else {
+        RESET_PREFIX
+    };
+    let lifetime: i64 = if purpose == INVITATION_PURPOSE {
+        86400
+    } else {
+        900
+    };
     let mut bytes = [0u8; 32];
     SystemRandom::new().fill(&mut bytes).map_err(|_| {
         failure(
             PasswordErrorKind::Infrastructure,
-            "invitation entropy failed",
+            "email credential entropy failed",
         )
     })?;
-    let secret = Invitation(Zeroizing::new(format!(
-        "{INVITATION_PREFIX}{}",
-        hex::encode(bytes)
-    )));
-    let hash = token_hash(secret.secret()).expect("generated invitation is valid");
+    let secret = Invitation(Zeroizing::new(format!("{prefix}{}", hex::encode(bytes))));
+    let hash = token_hash(secret.secret(), purpose).expect("generated email credential is valid");
     let tx = client
         .transaction()
         .await
         .map_err(|source| database(&source))?;
-    if !lock_unenrolled(&tx, principal).await? {
+    if !lock_account(&tx, principal, purpose == RESET_PURPOSE).await? {
         return Err(failure(PasswordErrorKind::Refused, "invitation refused"));
     }
     bind_actor(&tx, actor).await?;
-    tx.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + interval '24 hours')", &[&hash, &principal.as_str(), &INVITATION_PURPOSE]).await.map_err(|source| database(&source))?;
+    tx.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second')", &[&hash, &principal.as_str(), &purpose, &lifetime]).await.map_err(|source| database(&source))?;
     tx.commit().await.map_err(|source| database(&source))?;
     Ok(secret)
 }
-async fn usable_invitation(
+async fn usable_token(
     client: &(impl GenericClient + Sync),
     principal: &PrincipalId,
     hash: &[u8],
+    purpose: &str,
 ) -> Result<bool, PasswordError> {
-    client.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3 AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp() AND p.status = 'active' AND p.kind = 'human')", &[&hash, &principal.as_str(), &INVITATION_PURPOSE]).await.map(|row| row.get(0)).map_err(|source| database(&source))
+    client.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3 AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp() AND p.status = 'active' AND p.kind = 'human')", &[&hash, &principal.as_str(), &purpose]).await.map(|row| row.get(0)).map_err(|source| database(&source))
 }
 
 fn enrollment_policy(password: &Password) -> Result<(), PasswordError> {
@@ -318,33 +352,72 @@ pub async fn enroll_password(
     secret: &str,
     password: Password,
 ) -> Result<(), PasswordError> {
+    establish_password(
+        client,
+        work,
+        principal,
+        secret,
+        password,
+        INVITATION_PURPOSE,
+    )
+    .await
+}
+
+/// Replace a password, consume all email credentials, and revoke renewal families atomically.
+/// The caller sends notification after success and requires ordinary login.
+pub async fn reset_password(
+    client: &mut Client,
+    work: &PasswordWork,
+    principal: &PrincipalId,
+    secret: &str,
+    password: Password,
+) -> Result<(), PasswordError> {
+    establish_password(client, work, principal, secret, password, RESET_PURPOSE).await
+}
+
+async fn establish_password(
+    client: &mut Client,
+    work: &PasswordWork,
+    principal: &PrincipalId,
+    secret: &str,
+    password: Password,
+    purpose: &str,
+) -> Result<(), PasswordError> {
     enrollment_policy(&password)?;
-    let digest = token_hash(secret)
+    let digest = token_hash(secret, purpose)
         .ok_or_else(|| failure(PasswordErrorKind::Refused, "invitation refused"))?;
-    if !usable_invitation(client, principal, &digest).await? {
+    if !usable_token(client, principal, &digest, purpose).await? {
         return Err(failure(PasswordErrorKind::Refused, "invitation refused"));
     }
     let hash = work.hash(password).await?;
-    store_enrollment(client, principal, &digest, &hash).await
+    store_password(client, principal, &digest, &hash, purpose).await
 }
 
-async fn store_enrollment(
+async fn store_password(
     client: &mut Client,
     principal: &PrincipalId,
     token_digest: &[u8],
     hash: &str,
+    purpose: &str,
 ) -> Result<(), PasswordError> {
     let tx = client
         .transaction()
         .await
         .map_err(|source| database(&source))?;
-    if !lock_unenrolled(&tx, principal).await?
-        || !usable_invitation(&tx, principal, token_digest).await?
+    if !lock_account(&tx, principal, purpose == RESET_PURPOSE).await?
+        || !usable_token(&tx, principal, token_digest, purpose).await?
     {
         return Err(failure(PasswordErrorKind::Refused, "invitation refused"));
     }
     bind_actor(&tx, principal).await?;
-    tx.execute("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1::text::uuid, $2)", &[&principal.as_str(), &hash]).await.map_err(|source| database(&source))?;
+    if purpose == RESET_PURPOSE {
+        tx.execute("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid", &[&principal.as_str(), &hash]).await.map_err(|source| database(&source))?;
+        crate::password_login::revoke_all(&tx, principal)
+            .await
+            .map_err(|source| infrastructure("reset revocation failed", source))?;
+    } else {
+        tx.execute("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1::text::uuid, $2)", &[&principal.as_str(), &hash]).await.map_err(|source| database(&source))?;
+    }
     tx.execute("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1::text::uuid AND consumed_at IS NULL", &[&principal.as_str()]).await.map_err(|source| database(&source))?;
     tx.commit().await.map_err(|source| database(&source))
 }
