@@ -34,7 +34,6 @@ fn system_schema_contains_the_platform_identity_core() {
     for removed in [
         "identity.local_credentials",
         "identity.sessions",
-        "password_hash",
         "cookie_hash",
         "csrf_hash",
     ] {

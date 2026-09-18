@@ -24,7 +24,7 @@
 -- what .6 provision-org connects as. A superuser driving the apply `SET ROLE
 -- wamn_system` first.
 --
--- RECORD HISTORY: the four identity authority relations carry created_at,
+-- RECORD HISTORY: stamped identity authority relations carry created_at,
 -- created_by, updated_at, and updated_by as NOT NULL columns, and a
 -- wamn_record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
@@ -373,6 +373,49 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
+
+-- Password enrollment (wamn-a045.1). Only human principals can enroll.
+-- These tables hold credential material and stamps, never row-image history.
+-- The identity library serializes enrollment on the principal row and consumes
+-- all outstanding invitations in the same transaction as password creation.
+-- Scoped issuer grants belong to the password endpoint implementation.
+CREATE TABLE identity.password_credentials (
+    principal_id uuid PRIMARY KEY,
+    principal_kind text NOT NULL DEFAULT 'human' CHECK (principal_kind = 'human'),
+    password_hash text NOT NULL CHECK (octet_length(password_hash) <= 256
+                                      AND password_hash LIKE '$argon2id$v=19$%'),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    FOREIGN KEY (principal_id, principal_kind)
+        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT
+);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.password_credentials
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+CREATE TABLE identity.password_tokens (
+    token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
+    principal_id uuid NOT NULL,
+    principal_kind text NOT NULL DEFAULT 'human' CHECK (principal_kind = 'human'),
+    purpose text NOT NULL CHECK (purpose = 'invitation'),
+    expires_at timestamptz NOT NULL,
+    consumed_at timestamptz,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    FOREIGN KEY (principal_id, principal_kind)
+        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT,
+    CHECK (expires_at > created_at)
+);
+CREATE INDEX password_tokens_principal_idx ON identity.password_tokens (principal_id);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.password_tokens
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Session signing authority (wamn-ctc8.15.1). This is key-generation state,
 -- never per-session state. A fresh UUID kid is generated for each publication;

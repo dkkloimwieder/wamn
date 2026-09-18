@@ -192,6 +192,32 @@ The service keeps no session table, denylist, per-session write, or refresh toke
 The current client retains its session token only in memory.
 External federation and unbuilt identity design remain in the [identity plan](../plan/identity.md).
 
+## Password enrollment foundation
+
+The [identity library](../../crates/identity/platform/src/password.rs) supports password storage, invitation enrollment, and password authentication.
+This foundation exposes no password HTTP endpoint or terminal login yet.
+The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
+
+Enrollment accepts an active, unenrolled human principal and a matching, unexpired invitation.
+The library locks that principal, creates its password, and consumes every outstanding invitation in one database transaction.
+Issuance records the authorized operator. Successful enrollment records the invited person.
+The existing principal, memberships, and PATs remain unchanged.
+Only the system database owner has access to the new tables until scoped endpoint grants ship.
+
+Invitation secrets contain 32 random bytes and expire after 24 hours.
+The database stores their SHA-256 digests and explicit invitation purpose, never the bearer secret.
+Password hashes use Argon2id version 19 with 19 MiB, two iterations, one lane, and independent 16-byte salts.
+These parameters meet the [OWASP minimum profile](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#argon2id).
+One shared worker budget permits two jobs, with no waiting queue, for 38 MiB of Argon2 working memory.
+Cancellation retains the permit until the blocking worker ends.
+Stored hashes with another cost profile refuse before expensive work starts.
+
+Enrollment requires 15 Unicode characters and accepts at most 1,024 UTF-8 bytes without trimming or normalization.
+A required nonempty local blocklist supplies SHA-256 digests of common or compromised passwords.
+The endpoint owner must supply the deployment list and account/source throttling before exposing password login.
+Unknown and unenrolled accounts perform the same bounded hashing profile as existing accounts.
+Password buffers erase their owned bytes on drop. Diagnostics redact passwords and invitation secrets.
+
 ## Session keys
 
 The host uses an explicit HTTPS issuer endpoint and nonempty trusted CA configuration.

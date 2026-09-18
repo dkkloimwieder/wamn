@@ -3,7 +3,7 @@
 //! MVP outcome: management auth.
 //!
 //! This crate owns human and service principals, project-role assignments,
-//! project-environment memberships, opaque personal access tokens, and session keys.
+//! project-environment memberships, passwords, invitations, personal access tokens, and session keys.
 //! It owns the fixed session-token profile but contains no HTTP, OIDC,
 //! or per-project `app_system` authority: every function here is
 //! transport-neutral and takes an already-open client. An OIDC adapter may
@@ -21,6 +21,7 @@ use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
 
+pub mod password;
 pub mod session_keys;
 pub mod session_token;
 
