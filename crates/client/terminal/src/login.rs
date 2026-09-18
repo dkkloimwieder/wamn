@@ -98,6 +98,12 @@ pub async fn password_login(
             "r" => {
                 let email =
                     visible_prompt(&mut terminal, &mut events, selected, "Recovery email:").await?;
+                terminal.draw(
+                    Paragraph::new(
+                        "Requesting recovery email. Please wait for the reset-code prompt.",
+                    )
+                    .wrap(Wrap { trim: false }),
+                )?;
                 credentials.recover(email.expose()).await?;
                 let secret = prompt(&mut terminal, &mut events, selected, "If the account is eligible, a recovery email will arrive.\nReset secret from your email (hidden):").await?;
                 let password = prompt(
@@ -245,6 +251,9 @@ async fn input_prompt(
                     ));
                 }
                 KeyCode::Enter => {
+                    if input.is_empty() {
+                        continue;
+                    }
                     return SecretInput::new(std::mem::take(&mut *input))
                         .map_err(|_| io::Error::other("input must contain 1 to 1024 bytes"));
                 }

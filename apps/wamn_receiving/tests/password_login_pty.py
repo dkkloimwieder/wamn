@@ -40,6 +40,7 @@ class Identity:
         self.errors = []
         self.fail = False
         self.logout_fail = False
+        self.recovery_delay = 0
         self.absolute = int(time.time()) + 3600
         self.audiences = [AUDIENCE]
         self.selected = None
@@ -70,6 +71,7 @@ class Identity:
                         require(body == {"principal_id": PRINCIPAL, "invitation": INVITATION, "password": PASSWORD}, "enrollment body differed")
                         status, response = 204, b""
                     elif self.path == "/password/recover":
+                        time.sleep(owner.recovery_delay)
                         require(body == {"email": "alice@example.invalid"}, "recovery body differed")
                         status, response = 202, b'{}'
                     elif self.path == "/password/reset":
@@ -127,7 +129,38 @@ def secret_free(session):
         require(secret.encode() not in session.output, "terminal exposed a secret")
 
 
+def recovery_pending(binary):
+    with tempfile.TemporaryDirectory(prefix="wamn-recovery-pending-pty-") as directory:
+        identity = Identity(Path(directory))
+        fixture = operator.Fixture()
+        identity.recovery_delay = 0.5
+        try:
+            with terminal.Session(binary, ROOT, fixture, "password-fixture", operator.HOST, None, identity.environment()) as session:
+                answer(session, "Enter L", "r")
+                session.text("Recovery email:")
+                # A second Enter while email is pending must not cancel the next prompt.
+                session.send(b"alice@example.invalid\r\r")
+                session.text("Reset secret from your email")
+                session.quiet(0)
+                answer(session, "Reset secret from your email", RESET, True)
+                answer(session, "New password", PASSWORD, True)
+                answer(session, "Confirm new password", PASSWORD, True)
+                answer(session, "Password changed. Enter L", "l")
+                answer(session, "Email:", "alice@example.invalid")
+                answer(session, "Password (hidden):", PASSWORD, True)
+                session.text("PTY-FIRST-ORDER")
+                session.send(b"q")
+                session.finish()
+                secret_free(session)
+            require(not identity.errors, "recovery fixture failed")
+        finally:
+            fixture.close()
+            identity.close()
+    print("Recovery pending PTY: an extra Enter does not abort reset entry.")
+
+
 def run(binary):
+    recovery_pending(binary)
     with tempfile.TemporaryDirectory(prefix="wamn-password-pty-") as directory:
         identity = Identity(Path(directory))
         fixture = operator.Fixture()
