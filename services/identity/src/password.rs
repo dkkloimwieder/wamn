@@ -437,7 +437,8 @@ async fn handle(
                     .to_string()
                     .parse()
                     .expect("platform principal");
-                let Ok(token) = issue_reset(&mut database.client, &actor, &principal).await else {
+                let Ok(token) = issue_reset(&mut database.client, &actor, &principal, &email).await
+                else {
                     return unavailable();
                 };
                 if state.mail.reset(&email, token.secret()).await.is_err() {

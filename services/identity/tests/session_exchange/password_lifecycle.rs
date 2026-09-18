@@ -402,6 +402,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         &mut reset_connection.client,
         &actor,
         person.id(),
+        EMAIL,
     )
     .await
     .unwrap();

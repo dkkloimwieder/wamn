@@ -273,7 +273,7 @@ pub async fn issue_invitation(
     actor: &PrincipalId,
     principal: &PrincipalId,
 ) -> Result<Invitation, PasswordError> {
-    issue_token(client, actor, principal, INVITATION_PURPOSE).await
+    issue_token(client, actor, principal, INVITATION_PURPOSE, None).await
 }
 
 /// Issue a reset credential for an active human who already has a password.
@@ -281,8 +281,9 @@ pub async fn issue_reset(
     client: &mut Client,
     actor: &PrincipalId,
     principal: &PrincipalId,
+    email: &str,
 ) -> Result<Invitation, PasswordError> {
-    issue_token(client, actor, principal, RESET_PURPOSE).await
+    issue_token(client, actor, principal, RESET_PURPOSE, Some(email)).await
 }
 
 async fn issue_token(
@@ -290,6 +291,7 @@ async fn issue_token(
     actor: &PrincipalId,
     principal: &PrincipalId,
     purpose: &str,
+    expected_email: Option<&str>,
 ) -> Result<Invitation, PasswordError> {
     let prefix = if purpose == INVITATION_PURPOSE {
         INVITATION_PREFIX
@@ -316,6 +318,22 @@ async fn issue_token(
         .map_err(|source| database(&source))?;
     if !lock_account(&tx, principal, purpose == RESET_PURPOSE).await? {
         return Err(failure(PasswordErrorKind::Refused, "invitation refused"));
+    }
+    if let Some(email) = expected_email {
+        let current: String = tx
+            .query_one(
+                "SELECT email FROM identity.principals WHERE id=$1::text::uuid",
+                &[&principal.as_str()],
+            )
+            .await
+            .map_err(|source| database(&source))?
+            .get(0);
+        if current != email {
+            return Err(failure(
+                PasswordErrorKind::Refused,
+                "recovery address changed",
+            ));
+        }
     }
     bind_actor(&tx, actor).await?;
     tx.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second')", &[&hash, &principal.as_str(), &purpose, &lifetime]).await.map_err(|source| database(&source))?;

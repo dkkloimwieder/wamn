@@ -288,7 +288,9 @@ The service sends a password-change notification after commit and creates no ses
 HTTP 200 reports `{"status":"password_reset","notification":"accepted_for_delivery"}` when the provider accepts the notification.
 If notification fails, the response reports `"notification":"unavailable"`. The password change remains committed.
 Normal login uses the replacement password. Existing PATs retain their separate revocation path.
-Terminal recovery and the operator procedure for mailbox loss remain unbuilt.
+Terminal recovery remains unbuilt.
+For mailbox loss, an authorized administrator updates the existing principal's email through the [operator procedure](../operations/deployment.md#mailbox-loss-recovery).
+That transaction consumes outstanding email secrets and revokes renewal families. The person then uses normal recovery at the replacement address.
 
 `POST /password/environments` accepts only `email` and `password`.
 After password authentication, it returns the configured environments that pass those same access checks.

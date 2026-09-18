@@ -389,12 +389,22 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             .unwrap()
             .unwrap();
     tx.commit().await.unwrap();
-    let first = issue_reset(&mut client, &actor(), person.id())
-        .await
-        .unwrap();
-    let second = issue_reset(&mut client, &actor(), person.id())
-        .await
-        .unwrap();
+    let first = issue_reset(
+        &mut client,
+        &actor(),
+        person.id(),
+        "reset-person@example.invalid",
+    )
+    .await
+    .unwrap();
+    let second = issue_reset(
+        &mut client,
+        &actor(),
+        person.id(),
+        "reset-person@example.invalid",
+    )
+    .await
+    .unwrap();
     assert!(
         reset_password(&mut client, &work, other.id(), first.secret(), password())
             .await
@@ -468,9 +478,25 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             .unwrap()
             .is_some()
     );
-    let expired = issue_reset(&mut client, &actor(), person.id())
+    client.execute("UPDATE identity.principals SET email='replacement@example.invalid' WHERE id=$1::text::uuid", &[&person.id().as_str()]).await.unwrap();
+    assert!(
+        issue_reset(
+            &mut client,
+            &actor(),
+            person.id(),
+            "reset-person@example.invalid"
+        )
         .await
-        .unwrap();
+        .is_err()
+    );
+    let expired = issue_reset(
+        &mut client,
+        &actor(),
+        person.id(),
+        "replacement@example.invalid",
+    )
+    .await
+    .unwrap();
     client.batch_execute("UPDATE identity.password_tokens SET expires_at=created_at+interval '1 microsecond' WHERE purpose='reset'").await.unwrap();
     assert!(
         reset_password(

@@ -188,7 +188,10 @@ Password recovery uses an emailed single-use secret entered through a hidden ter
 Reset completion replaces the password, invalidates outstanding invitation/reset secrets, and revokes every renewal family for the person.
 Notify the person after reset and require ordinary login instead of automatically opening a session.
 This follows [OWASP recovery guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
-Mailbox-loss recovery requires a narrow, documented operator procedure before this increment is complete.
+If a person loses mailbox access, an authorized administrator updates the email on the existing human principal.
+The person then uses normal password recovery at the replacement address.
+There is no separate trusted-contact channel. The administrator owns approval of the email correction.
+The [operator procedure](../operations/deployment.md#mailbox-loss-recovery) defines the transaction and remaining access-token limitation.
 Existing PATs retain their explicit revocation path; password reset does not silently revoke them.
 
 Implement revocation and issuance ordering with ordinary transactions in the existing identity database.

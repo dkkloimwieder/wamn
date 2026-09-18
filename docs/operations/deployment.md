@@ -197,6 +197,65 @@ Use the current system schema on a fresh database, following the repository's sc
 The route bodies and limits are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
 Use the [Receiving password login](development-loop.md#receiving-password-login) flow after provisioning the identity target and environment membership.
 
+## Mailbox-loss recovery
+
+An authorized administrator approves the replacement email and updates the existing human principal.
+There is no separate trusted-contact channel or self-service email change.
+The person then uses normal password recovery at the replacement address.
+
+Use an authorized administrative connection to the identity service's `wamn_system` database.
+The connection must permit `SET ROLE wamn_system`.
+Do not use the scoped identity issuer credential, which cannot edit principals.
+Use the administrator's existing principal UUID as the audit actor.
+Use the affected person's existing principal UUID as the target.
+Do not create another principal or change its subject, memberships, or roles.
+
+Run this transaction in `psql` on that administrative connection:
+
+```sql
+\set ON_ERROR_STOP on
+\prompt 'Administrator principal UUID: ' administrator_id
+\prompt 'Affected human principal UUID: ' principal_id
+\prompt 'Replacement email: ' replacement_email
+BEGIN;
+SET LOCAL ROLE wamn_system;
+SELECT set_config('app.user_id', :'administrator_id', true);
+SELECT EXISTS (
+    SELECT 1 FROM identity.principals
+    WHERE id = :'principal_id'::uuid AND kind = 'human'
+    FOR UPDATE
+) AS account_found \gset
+\if :account_found
+UPDATE identity.principals
+SET email = lower(btrim(:'replacement_email'))
+WHERE id = :'principal_id'::uuid AND kind = 'human';
+UPDATE identity.password_tokens
+SET consumed_at = clock_timestamp()
+WHERE principal_id = :'principal_id'::uuid AND consumed_at IS NULL;
+UPDATE identity.password_logins
+SET revoked_at = clock_timestamp()
+WHERE principal_id = :'principal_id'::uuid AND revoked_at IS NULL;
+COMMIT;
+\else
+ROLLBACK;
+\echo 'No matching human principal. Nothing changed.'
+\endif
+```
+
+The database enforces email format and uniqueness. A failed statement leaves the transaction uncommitted.
+If a statement fails, run `ROLLBACK` before correcting the input.
+The principal lock serializes this update with password login, enrollment, reset, and renewal.
+Old email secrets and renewal credentials cannot survive a successful correction.
+Issued access tokens retain their existing validity. PATs retain their separate revocation procedure.
+The correction does not reactivate a disabled account or replace its password.
+
+After commit, ask the person to request normal recovery with the replacement email.
+The recovery endpoint and reset fields are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
+Terminal recovery remains pending. An authorized HTTP client can call the existing HTTPS endpoints.
+Keep reset secrets and passwords out of command arguments and logs.
+After reset, require normal login with the new email and password.
+Run the existing `reconcile-run-plane` procedure for affected environments to update their copied person rows.
+
 ## Identity target credentials
 
 After replacing the identity service target Secret, restart the identity service.
