@@ -194,6 +194,8 @@ python3 apps/wamn_receiving/tests/operator_pty.py --binary "$CARGO_TARGET_DIR/de
 
 ## Receiving password login
 
+The [Receiving operator guide](../../apps/wamn_receiving/operator-guide.md) covers sign-in, receipt entry, keyboard controls, history, recovery, and logout.
+
 Build `wamn-receiving` before starting the terminal.
 Configure `WAMN_BASE_URL`, `WAMN_HOST` when needed, and `WAMN_TARGET_INSTANCE` for the selected deployment.
 Set `WAMN_SESSION_ISSUER` to its HTTPS identity issuer and `WAMN_SESSION_AUDIENCE` to the exact provisioned environment audience.
