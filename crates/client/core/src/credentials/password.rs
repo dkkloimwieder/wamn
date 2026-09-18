@@ -42,12 +42,50 @@ impl fmt::Debug for SecretInput {
     }
 }
 
-/// A password-issued session with no renewal credential or PAT fallback.
+/// In-memory password sessions with serialized renewal and no PAT fallback.
 pub struct PasswordCredentials {
     target: SessionTarget,
     transport: Arc<dyn Transport>,
-    cached: Mutex<Option<CachedSession>>,
+    cached: Mutex<Option<PasswordSession>>,
 }
+struct PasswordSession {
+    access: CachedSession,
+    renewal: SecretInput,
+    absolute: SystemTime,
+    absolute_deadline: Instant,
+    idle_deadline: Instant,
+}
+fn decode_password_session(body: &str) -> Result<PasswordSession, CredentialError> {
+    #[derive(Deserialize)]
+    struct Renewal {
+        renewal_token: String,
+        login_expires_at: u64,
+    }
+    let response: Renewal =
+        serde_json::from_str(body).map_err(|_| CredentialError::new("renewal response refused"))?;
+    let renewal = SecretInput::new(response.renewal_token)?;
+    let access = decode_session(body)?;
+    let absolute = SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(response.login_expires_at))
+        .ok_or_else(|| CredentialError::new("login expiry refused"))?;
+    let remaining = absolute
+        .duration_since(SystemTime::now())
+        .map_err(|_| CredentialError::new("login expired"))?;
+    if access.expires_at > absolute {
+        return Err(CredentialError::new("session exceeds login expiry"));
+    }
+    let absolute_deadline = Instant::now()
+        .checked_add(remaining)
+        .ok_or_else(|| CredentialError::new("login expiry refused"))?;
+    Ok(PasswordSession {
+        access,
+        renewal,
+        absolute,
+        absolute_deadline,
+        idle_deadline: Instant::now() + Duration::from_mins(30),
+    })
+}
+
 impl fmt::Debug for PasswordCredentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PasswordCredentials")
@@ -156,13 +194,71 @@ impl PasswordCredentials {
         .map_err(|_| CredentialError::new("login input refused"))?;
         drop(password);
         let response = self.request("session", body, 200).await?;
-        *cached = Some(decode_session(&response)?);
+        *cached = Some(decode_password_session(&response)?);
         Ok(())
     }
 
-    /// Clear the local token. Issued tokens retain their existing server validity.
-    pub async fn logout(&self) {
+    /// Revoke this login and clear local credentials even if the issuer is unreachable.
+    ///
+    /// # Errors
+    /// Reports unconfirmed server revocation. Issued access tokens keep their expiry.
+    pub async fn logout(&self) -> Result<(), CredentialError> {
+        let mut cached = self.cached.lock().await;
+        let Some(session) = cached.take() else {
+            return Err(CredentialError::new(
+                "Local credentials cleared. No renewal credential remains to confirm server logout.",
+            ));
+        };
+        let body = self.renewal_body(&session)?;
+        self.request("logout", body, 204)
+            .await
+            .map(|_| ())
+            .map_err(|_| {
+                CredentialError::new(
+                    "Local credentials cleared. Server logout could not be confirmed.",
+                )
+            })
+    }
+
+    /// Request an email without revealing whether the account exists.
+    ///
+    /// # Errors
+    /// Reports throttling or transport failure without retrying.
+    pub async fn recover(&self, email: &str) -> Result<(), CredentialError> {
+        let body = serde_json::to_vec(&serde_json::json!({"email":email})).expect("string JSON");
+        self.request("recover", body, 202).await.map(|_| ())
+    }
+
+    /// Reset a password without automatically logging in. Returns notification acceptance.
+    ///
+    /// # Errors
+    /// Refuses invalid secrets and failed requests without retrying.
+    pub async fn reset(
+        &self,
+        email: &str,
+        secret: SecretInput,
+        password: SecretInput,
+    ) -> Result<bool, CredentialError> {
+        #[derive(Deserialize)]
+        struct Reset {
+            status: String,
+            notification: String,
+        }
         *self.cached.lock().await = None;
+        let body = serde_json::to_vec(&serde_json::json!({"email":email,"secret":secret.expose(),"password":password.expose()})).expect("string JSON");
+        let response = self.request("reset", body, 200).await?;
+        let response: Reset = serde_json::from_str(&response)
+            .map_err(|_| CredentialError::new("reset response refused; try normal login"))?;
+        if response.status != "password_reset" {
+            return Err(CredentialError::new(
+                "reset response refused; try normal login",
+            ));
+        }
+        Ok(response.notification == "accepted_for_delivery")
+    }
+
+    fn renewal_body(&self, session: &PasswordSession) -> Result<Vec<u8>, CredentialError> {
+        serde_json::to_vec(&serde_json::json!({"aud":self.target.audience,"renewal_token":session.renewal.expose()})).map_err(|_| CredentialError::new("renewal input refused"))
     }
 
     async fn request(
@@ -205,14 +301,42 @@ impl CredentialProvider for PasswordCredentials {
     async fn bearer(&self) -> Result<String, CredentialError> {
         let mut cached = self.cached.lock().await;
         if let Some(session) = cached.as_ref()
-            && Instant::now() < session.deadline
-            && SystemTime::now() < session.expires_at
+            && Instant::now() < session.access.deadline
+            && SystemTime::now() < session.access.expires_at
+            && Instant::now() < session.absolute_deadline
+            && SystemTime::now() < session.absolute
         {
-            return Ok(session.token.to_string());
+            return Ok(session.access.token.to_string());
         }
-        *cached = None;
-        Err(CredentialError::new(
-            "log in again and explicitly submit the operation",
-        ))
+        // Taking the credential before I/O also clears it if renewal is cancelled.
+        let session = cached.take().ok_or_else(|| {
+            CredentialError::new("log in again and explicitly submit the operation")
+        })?;
+        if Instant::now() >= session.absolute_deadline
+            || SystemTime::now() >= session.absolute
+            || Instant::now() >= session.idle_deadline
+        {
+            return Err(CredentialError::new(
+                "log in again and explicitly submit the operation",
+            ));
+        }
+        let response = self
+            .request("renew", self.renewal_body(&session)?, 200)
+            .await
+            .map_err(|_| {
+                CredentialError::new(
+                    "renewal failed; log in again and explicitly submit the operation",
+                )
+            })?;
+        let mut renewed = decode_password_session(&response)?;
+        if renewed.absolute != session.absolute {
+            return Err(CredentialError::new(
+                "renewal changed login expiry; log in again",
+            ));
+        }
+        renewed.absolute_deadline = session.absolute_deadline;
+        let token = renewed.access.token.to_string();
+        *cached = Some(renewed);
+        Ok(token)
     }
 }

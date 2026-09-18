@@ -82,8 +82,7 @@ def main():
     with login.terminal.Session(args.binary, login.ROOT, Application(facts["url"]),
                                 facts["instance"], facts["host"], None, environment) as session:
         login.answer(session, "Enter L", "i")
-        login.answer(session, "Principal ID", facts["principal"])
-        login.answer(session, "Invitation secret", facts["invitation"], True)
+        login.answer(session, "Invitation code", facts["principal"] + ":" + facts["invitation"], True)
         login.answer(session, "New password", facts["password"], True)
         login.answer(session, "Confirm new password", facts["password"], True)
         login.answer(session, "Email:", facts["email"])
@@ -94,7 +93,7 @@ def main():
         login.require(facts["invitation"].encode() not in session.output, "terminal exposed the invitation")
         login.require(facts["password"].encode() not in session.output,
                       "terminal exposed the password")
-        login.require(b"Logged out locally" in session.output, "local logout was not reported")
+        login.require(b"Logged out." in session.output, "local logout was not reported")
     print("Password login and authorized Receiving query passed without a PAT.")
 
 

@@ -192,9 +192,9 @@ Authentication deadlines bound new admission and do not cancel work already acce
 The [session token owner](../../crates/identity/platform/src/session_token.rs) defines the token and time rules.
 PAT exchange keeps no login record or renewal credential.
 The current client retains its session token only in memory.
-Password sessions have no PAT fallback or automatic renewal.
+Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
-Expiry requires explicit login and submission. Quitting clears the local password session without revoking issued tokens.
+Failed renewal or login expiry requires explicit login and submission. Quitting clears local credentials and requests server logout.
 [Terminal login](../operations/development-loop.md#receiving-password-login) describes configuration and prompts.
 External federation and unbuilt identity design remain in the [identity plan](../plan/identity.md).
 
@@ -205,7 +205,7 @@ The identity service exposes password HTTP endpoints. Receiving supports hidden 
 The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
 
 The [login storage library](../../crates/identity/platform/src/password_login.rs) supplies database primitives for renewal and revocation.
-The HTTP service uses these primitives. Terminal renewal and server-side logout remain unbuilt.
+The HTTP service and terminal use these primitives for renewal and server-side logout.
 Each login binds one human, issuer, and exact environment audience.
 Its authentication time and eight-hour absolute deadline remain fixed.
 Successful renewal extends the inactivity deadline by 30 minutes, capped at the absolute deadline.
@@ -288,7 +288,7 @@ The service sends a password-change notification after commit and creates no ses
 HTTP 200 reports `{"status":"password_reset","notification":"accepted_for_delivery"}` when the provider accepts the notification.
 If notification fails, the response reports `"notification":"unavailable"`. The password change remains committed.
 Normal login uses the replacement password. Existing PATs retain their separate revocation path.
-Terminal recovery remains unbuilt.
+The terminal supports recovery through the same endpoints and requires normal login after reset.
 For mailbox loss, an authorized administrator updates the existing principal's email through the [operator procedure](../operations/deployment.md#mailbox-loss-recovery).
 That transaction consumes outstanding email secrets and revokes renewal families. The person then uses normal recovery at the replacement address.
 
@@ -312,7 +312,9 @@ This process ownership does not add an external identity provider or change the 
 
 Unknown accounts and incorrect passwords receive the same unauthorized response.
 These routes are enabled only when the service has a Resend key and sender.
-The terminal still requires another login after session expiry and clears credentials locally on exit.
+The terminal serializes renewal and preserves the original absolute deadline with both wall-clock and monotonic expiry checks.
+It clears credentials before renewal I/O, so failure or cancellation requires another login without retrying a consumed credential.
+Logout clears local credentials even when server revocation cannot be confirmed.
 Unknown and unenrolled accounts perform the same bounded hashing profile as existing accounts.
 Password buffers erase their owned bytes on drop. Diagnostics redact passwords and invitation secrets.
 

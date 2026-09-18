@@ -120,7 +120,7 @@ impl Mailer {
         secret: &str,
     ) -> Result<(), IdentityServiceError> {
         let text = Zeroizing::new(format!(
-            "You have been invited to WAMN.\n\nPrincipal: {principal}\nInvitation secret: {secret}\n\nEnter this secret in the terminal enrollment prompt. It expires after 24 hours and can be used once. If you did not expect this invitation, ignore this email."
+            "You have been invited to WAMN.\n\nInvitation code: {principal}:{secret}\n\nPaste this complete code into the invitation prompt. No PAT is needed. It expires after 24 hours and can be used once. If you did not expect this invitation, ignore this email."
         ));
         let endpoint = "https://api.resend.com/emails";
         #[cfg(any(test, feature = "test-util"))]

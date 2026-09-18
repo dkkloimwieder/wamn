@@ -781,7 +781,8 @@ mod tests {
         let text = mail["text"].as_str().unwrap();
         let secret = text
             .lines()
-            .find_map(|l| l.strip_prefix("Invitation secret: "))
+            .find_map(|l| l.strip_prefix("Invitation code: "))
+            .and_then(|code| code.split_once(':').map(|(_, secret)| secret))
             .unwrap();
         let reply = client.post(format!("{endpoint}/password/enroll")).json(&json!({"principal_id":alice.id().as_str(),"invitation":secret,"password":"a long enough password"})).send().await.unwrap();
         assert_eq!(reply.status(), 204);

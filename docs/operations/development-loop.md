@@ -202,10 +202,14 @@ The bundle replaces the default trust roots for identity requests.
 
 If `WAMN_TOKEN` is set, the terminal retains the existing PAT path.
 For password login, unset `WAMN_TOKEN` before launching `wamn-receiving`.
-Enter `I` to accept an invitation, or `L` to log in.
-Invitation acceptance asks for the principal ID, invitation secret, and a new password entered twice.
+Enter `I` to accept an invitation, `L` to log in, or `R` to recover your password.
+Invitation acceptance asks for one complete emailed code and a new password entered twice.
+The code carries the account binding. You do not copy a principal UUID or create a PAT.
 After enrollment, enter the email and password again to log in.
-All prompt input is hidden. Paste is supported, and Esc or Ctrl-C cancels.
+Menu choices and email addresses are visible. Passwords and email secrets display only masking characters.
+Paste is supported, and Esc or Ctrl-C cancels.
+For recovery, enter your email, the emailed reset secret, and your new password twice.
+After reset, use normal login. A notification delivery failure does not undo the password change.
 Do not put human passwords or invitation secrets in arguments, environment variables, or files.
 
 For several environments, set `WAMN_RECEIVING_TARGETS` to a public JSON file with these fields:
@@ -231,10 +235,14 @@ One match opens directly. Several matches produce a numbered choice.
 No matches refuse login. The issuer repeats authorization when it issues the selected session.
 For PAT access, unset `WAMN_RECEIVING_TARGETS` and use the single-environment variables.
 
-The terminal keeps only the access token in process memory.
-After expiry, exit and log in again, then submit the operation explicitly.
-The client does not renew a password session or replay an operation automatically.
-Quitting clears the local token and reports that issued tokens retain their existing validity until expiry.
+The terminal keeps access and renewal credentials only in process memory.
+When an application request needs a new access token, the client renews once before submission.
+Concurrent requests share that renewal. Idle terminals send no renewal requests.
+After renewal failure, inactivity expiry, or absolute expiry, exit and log in again before explicitly submitting the operation.
+The client never replays an application operation automatically.
+Quitting clears local credentials and asks the issuer to revoke the login.
+If logout fails, the terminal reports that server revocation is unconfirmed.
+Issued access tokens retain their existing validity until expiry.
 Fresh-only operations still require a PAT.
 
 The password terminal test uses owned HTTPS and HTTP fixtures, plus OpenSSL for a disposable certificate:

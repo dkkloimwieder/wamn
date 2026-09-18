@@ -28,6 +28,8 @@ require = terminal.require
 PASSWORD = "private-password-with-spaces"
 INVITATION = "private-invitation-secret"
 TOKEN = "private-password-session"
+RENEWAL = "private-renewal-secret"
+RESET = "private-reset-secret"
 PRINCIPAL = "00000000-0000-0000-0000-000000000001"
 AUDIENCE = "urn:wamn:project-env:acme:receiving:dev:fixture1"
 
@@ -37,6 +39,8 @@ class Identity:
         self.requests = []
         self.errors = []
         self.fail = False
+        self.logout_fail = False
+        self.absolute = int(time.time()) + 3600
         self.audiences = [AUDIENCE]
         self.selected = None
         certificate = directory / "tls.crt"
@@ -65,6 +69,19 @@ class Identity:
                     if self.path == "/password/enroll":
                         require(body == {"principal_id": PRINCIPAL, "invitation": INVITATION, "password": PASSWORD}, "enrollment body differed")
                         status, response = 204, b""
+                    elif self.path == "/password/recover":
+                        require(body == {"email": "alice@example.invalid"}, "recovery body differed")
+                        status, response = 202, b'{}'
+                    elif self.path == "/password/reset":
+                        require(body == {"email": "alice@example.invalid", "secret": RESET, "password": PASSWORD}, "reset body differed")
+                        status, response = 200, b'{"status":"password_reset","notification":"accepted_for_delivery"}'
+                    elif self.path in ("/password/renew", "/password/logout"):
+                        require(body == {"aud": owner.selected, "renewal_token": RENEWAL}, "renewal binding differed")
+                        if self.path == "/password/logout":
+                            status, response = (503, b'{}') if owner.logout_fail else (204, b'')
+                        else:
+                            status = 200
+                            response = json.dumps({"access_token": TOKEN, "token_type": "Bearer", "expires_at": int(time.time()) + 3, "renewal_token": RENEWAL, "login_expires_at": owner.absolute}).encode()
                     elif self.path == "/password/environments":
                         require(body == {"email": "alice@example.invalid", "password": PASSWORD}, "discovery body differed")
                         status = 401 if owner.fail else 200
@@ -75,7 +92,7 @@ class Identity:
                         owner.selected = body["aud"]
                         require(body == {"email": "alice@example.invalid", "password": PASSWORD, "aud": owner.selected}, "login body differed")
                         status = 401 if owner.fail else 200
-                        response = json.dumps({"access_token": TOKEN, "token_type": "Bearer", "expires_at": int(time.time()) + 3}).encode()
+                        response = json.dumps({"access_token": TOKEN, "token_type": "Bearer", "expires_at": int(time.time()) + 3, "renewal_token": RENEWAL, "login_expires_at": owner.absolute}).encode()
                     self.send_response(status)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(response)))
@@ -106,7 +123,7 @@ def answer(session, label, value, paste=False):
 
 
 def secret_free(session):
-    for secret in (PASSWORD, INVITATION, TOKEN):
+    for secret in (PASSWORD, INVITATION, TOKEN, RENEWAL, RESET):
         require(secret.encode() not in session.output, "terminal exposed a secret")
 
 
@@ -119,8 +136,7 @@ def run(binary):
                 return terminal.Session(binary, ROOT, fixture, "password-fixture", operator.HOST, None, identity.environment())
             with session() as terminal_session:
                 answer(terminal_session, "Enter L", "i")
-                answer(terminal_session, "Principal ID", PRINCIPAL)
-                answer(terminal_session, "Invitation secret", INVITATION, True)
+                answer(terminal_session, "Invitation code", PRINCIPAL + ":" + INVITATION, True)
                 answer(terminal_session, "New password", PASSWORD, True)
                 answer(terminal_session, "Confirm new password", PASSWORD, True)
                 answer(terminal_session, "Email:", "alice@example.invalid")
@@ -132,11 +148,14 @@ def run(binary):
                 while time.monotonic() < deadline:
                     terminal_session.pump()
                 terminal_session.send(b"\x1b[15~")
-                terminal_session.text("Authentication required")
-                terminal_session.quiet(1)
+                deadline = time.monotonic() + 5
+                while len(fixture.snapshot()) < 2 and time.monotonic() < deadline:
+                    terminal_session.pump()
+                require(len(fixture.snapshot()) == 2, "active request did not renew and reload")
+                require(identity.requests[-1] == "/password/renew", "expiry did not renew")
                 terminal_session.send(b"q")
                 terminal_session.finish()
-                require(b"Logged out locally" in terminal_session.output, "logout was not reported")
+                require(b"Logged out." in terminal_session.output, "logout was not reported")
                 secret_free(terminal_session)
             before = list(identity.requests)
             for stop in (b"\x03", signal.SIGTERM):
@@ -161,7 +180,7 @@ def run(binary):
                 terminal_session.finish(exit_code=1)
                 secret_free(terminal_session)
             require(len(identity.requests) == len(before) + 1, "failed login retried")
-            require(len(fixture.snapshot()) == 1, "login failure or expiry sent an application request")
+            require(len(fixture.snapshot()) == 2, "login failure or expiry sent an application request")
             identity.fail = False
             second = operator.Fixture()
             second.configure(False, "PTY-SECOND-ORDER")
@@ -192,21 +211,37 @@ def run(binary):
                             terminal_session.finish(exit_code=1)
                             require(len(second.snapshot()) == before_second, "unauthorized selection sent an application request")
                         secret_free(terminal_session)
-                require(len(fixture.snapshot()) == 1, "environment selection called the wrong deployment")
+                require(len(fixture.snapshot()) == 2, "environment selection called the wrong deployment")
             finally:
                 second.close()
+            identity.audiences = [AUDIENCE]
+            identity.logout_fail = True
+            with session() as terminal_session:
+                answer(terminal_session, "Enter L", "r")
+                answer(terminal_session, "Recovery email:", "alice@example.invalid")
+                answer(terminal_session, "Reset secret", RESET, True)
+                answer(terminal_session, "New password", PASSWORD, True)
+                answer(terminal_session, "Confirm new password", PASSWORD, True)
+                answer(terminal_session, "Password changed. Enter L", "l")
+                answer(terminal_session, "Email:", "alice@example.invalid")
+                answer(terminal_session, "Password (hidden):", PASSWORD, True)
+                terminal_session.text("PTY-FIRST-ORDER")
+                terminal_session.send(b"q")
+                terminal_session.finish()
+                require(b"Server logout could not be confirmed" in terminal_session.output, "unreachable logout claimed success")
+                secret_free(terminal_session)
             require(not identity.errors, "identity fixture failed")
         except terminal.TestError:
             if "terminal_session" in locals():
                 diagnostic = terminal_session.output.decode(errors="replace")[-1600:]
-                for secret in (PASSWORD, INVITATION, TOKEN):
+                for secret in (PASSWORD, INVITATION, TOKEN, RENEWAL, RESET):
                     diagnostic = diagnostic.replace(secret, "[redacted]")
                 print(repr(diagnostic), file=sys.stderr)
             raise
         finally:
             fixture.close()
             identity.close()
-    print("Password PTY: enrollment, login, expiry, logout, cancellation, selection, failure and secret hiding passed.")
+    print("Password PTY: enrollment, login, renewal, recovery, logout, cancellation, selection, failure and secret hiding passed.")
 
 
 if __name__ == "__main__":

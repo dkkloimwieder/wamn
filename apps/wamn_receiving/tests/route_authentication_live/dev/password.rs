@@ -122,16 +122,16 @@ impl Login {
         )?)?;
         ensure!(mail["to"] == json!([EMAIL]), "invitation recipient differs");
         let body = mail["text"].as_str().context("invitation email text")?;
+        let code = body
+            .lines()
+            .find_map(|line| line.strip_prefix("Invitation code: "))
+            .context("invitation code")?;
+        let (principal, invitation) = code.split_once(':').context("invitation account binding")?;
         ensure!(
-            body.lines()
-                .any(|line| line == format!("Principal: {}", human.id().as_str())),
+            principal == human.id().as_str(),
             "invitation principal differs"
         );
-        let invitation = body
-            .lines()
-            .find_map(|line| line.strip_prefix("Invitation secret: "))
-            .context("invitation email secret")?
-            .to_owned();
+        let invitation = invitation.to_owned();
         let keys = http
             .get(format!("{endpoint}/.well-known/jwks.json"))
             .send()

@@ -177,8 +177,12 @@ async fn main() -> Result<ExitReason, Box<dyn Error>> {
     let result =
         run_application_with_client("Receiving", binding, client, ReceivingApplication::new).await;
     if let Some(session) = password_session {
-        session.logout().await;
-        eprintln!("Logged out locally. Issued tokens retain their existing validity until expiry.");
+        match session.logout().await {
+            Ok(()) => eprintln!(
+                "Logged out. Local credentials cleared. Issued tokens retain their validity until expiry."
+            ),
+            Err(error) => eprintln!("{error}"),
+        }
     }
     result
 }

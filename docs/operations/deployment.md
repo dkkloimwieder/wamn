@@ -251,7 +251,7 @@ The correction does not reactivate a disabled account or replace its password.
 
 After commit, ask the person to request normal recovery with the replacement email.
 The recovery endpoint and reset fields are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
-Terminal recovery remains pending. An authorized HTTP client can call the existing HTTPS endpoints.
+Use `R` in the [Receiving sign-in screen](development-loop.md#receiving-password-login) to request recovery.
 Keep reset secrets and passwords out of command arguments and logs.
 After reset, require normal login with the new email and password.
 Run the existing `reconcile-run-plane` procedure for affected environments to update their copied person rows.

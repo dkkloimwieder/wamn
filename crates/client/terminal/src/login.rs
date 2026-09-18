@@ -54,29 +54,27 @@ pub async fn password_login(
     let mut events = crate::events();
     let selected = "Receiving sign-in";
     let flow = async {
-        let choice = prompt(
+        let choice = visible_prompt(
             &mut terminal,
             &mut events,
             selected,
-            "Enter L to log in, or I to accept an invitation:",
+            "Enter L to log in, I to accept an invitation, or R to reset your password:",
         )
         .await?;
         match choice.expose().to_ascii_lowercase().as_str() {
             "i" => {
-                let principal = prompt(
-                    &mut terminal,
-                    &mut events,
-                    selected,
-                    "Principal ID from the invitation:",
-                )
-                .await?;
                 let invitation = prompt(
                     &mut terminal,
                     &mut events,
                     selected,
-                    "Invitation secret (hidden):",
+                    "Invitation code from your email (hidden):",
                 )
                 .await?;
+                let (principal, secret) = invitation.expose().split_once(':').ok_or_else(|| {
+                    io::Error::other("paste the complete invitation code from your email")
+                })?;
+                let principal = principal.to_owned();
+                let secret = SecretInput::new(secret.to_owned())?;
                 let password = prompt(
                     &mut terminal,
                     &mut events,
@@ -95,14 +93,46 @@ pub async fn password_login(
                     return Err(io::Error::other("password confirmation did not match").into());
                 }
                 drop(confirmation);
-                credentials
-                    .enroll(principal.expose(), invitation, password)
-                    .await?;
+                credentials.enroll(&principal, secret, password).await?;
+            }
+            "r" => {
+                let email =
+                    visible_prompt(&mut terminal, &mut events, selected, "Recovery email:").await?;
+                credentials.recover(email.expose()).await?;
+                let secret = prompt(&mut terminal, &mut events, selected, "If the account is eligible, a recovery email will arrive.\nReset secret from your email (hidden):").await?;
+                let password = prompt(
+                    &mut terminal,
+                    &mut events,
+                    selected,
+                    "New password (hidden, at least 15 characters):",
+                )
+                .await?;
+                let confirmation = prompt(
+                    &mut terminal,
+                    &mut events,
+                    selected,
+                    "Confirm new password (hidden):",
+                )
+                .await?;
+                if password.expose() != confirmation.expose() {
+                    return Err(io::Error::other("password confirmation did not match").into());
+                }
+                drop(confirmation);
+                let notified = credentials.reset(email.expose(), secret, password).await?;
+                let message = if notified {
+                    "Password changed. Enter L to sign in:"
+                } else {
+                    "Password changed. Notification delivery failed. Enter L to sign in:"
+                };
+                let choice = visible_prompt(&mut terminal, &mut events, selected, message).await?;
+                if !choice.expose().eq_ignore_ascii_case("l") {
+                    return Err(io::Error::other("enter L to sign in").into());
+                }
             }
             "l" => (),
-            _ => return Err(io::Error::other("enter L or I to select authentication").into()),
+            _ => return Err(io::Error::other("enter L, I, or R to select authentication").into()),
         }
-        let email = prompt(&mut terminal, &mut events, selected, "Email:").await?;
+        let email = visible_prompt(&mut terminal, &mut events, selected, "Email:").await?;
         let password = prompt(&mut terminal, &mut events, selected, "Password (hidden):").await?;
         let authorized = credentials.environments(email.expose(), &password).await?;
         let choices: Vec<_> = audiences
@@ -125,7 +155,7 @@ pub async fn password_login(
                     .map(|(number, (_, audience))| format!("{}. {}", number + 1, audience))
                     .collect::<Vec<_>>()
                     .join("\n");
-                let choice = prompt(
+                let choice = visible_prompt(
                     &mut terminal,
                     &mut events,
                     &list,
@@ -166,14 +196,40 @@ async fn prompt(
     selected: &str,
     label: &str,
 ) -> io::Result<SecretInput> {
+    input_prompt(terminal, events, selected, label, false).await
+}
+async fn visible_prompt(
+    terminal: &mut TerminalSession,
+    events: &mut EventStream,
+    selected: &str,
+    label: &str,
+) -> io::Result<SecretInput> {
+    input_prompt(terminal, events, selected, label, true).await
+}
+
+async fn input_prompt(
+    terminal: &mut TerminalSession,
+    events: &mut EventStream,
+    selected: &str,
+    label: &str,
+    visible: bool,
+) -> io::Result<SecretInput> {
     let mut input = Zeroizing::new(String::new());
-    terminal.draw(
-        Paragraph::new(format!(
-            "{selected}\n\n{label}\n\nInput is hidden. Enter submits. Esc or Ctrl-C cancels."
-        ))
-        .wrap(Wrap { trim: false }),
-    )?;
     loop {
+        let shown = if visible {
+            input
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect::<String>()
+        } else {
+            "*".repeat(input.chars().count())
+        };
+        terminal.draw(
+            Paragraph::new(format!(
+                "{selected}\n\n{label}\n\n{shown}\n\nEnter submits. Esc or Ctrl-C cancels."
+            ))
+            .wrap(Wrap { trim: false }),
+        )?;
         match events.next().await {
             Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Esc => {

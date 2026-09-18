@@ -570,85 +570,103 @@ async fn nested_fresh_required_remains_visible_without_retrying_the_operation() 
     assert_eq!(pat.fresh_calls.load(Ordering::Relaxed), 1);
 }
 
+fn password_reply(token: &str, absolute: u64) -> HttpResponse {
+    let mut body: serde_json::Value = serde_json::from_str(&session_reply(token).body).unwrap();
+    body["renewal_token"] = json!(format!("renew-{token}"));
+    body["login_expires_at"] = json!(absolute);
+    reply(200, body.to_string())
+}
+
 #[tokio::test(start_paused = true)]
-async fn password_session_expiry_logout_and_fresh_calls_never_renew_or_replay() {
+async fn password_active_use_serializes_renewal_and_logout_clears_locally() {
     use wamn_client::credentials::{PasswordCredentials, SecretInput};
+    let absolute = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 28800;
     let exchange = transport([
-        Ok(reply(204, "")),
-        Ok(session_reply(OPAQUE_SESSION)),
-        Ok(session_reply("explicit-second-login")),
+        Ok(password_reply(OPAQUE_SESSION, absolute)),
+        Ok(password_reply("renewed", absolute)),
+        Ok(reply(503, "private failure")),
     ]);
     let credentials = Arc::new(PasswordCredentials::new(
-        SessionTarget::new("https://identity.example/identity/", AUDIENCE).unwrap(),
+        SessionTarget::new("https://identity.example", AUDIENCE).unwrap(),
         exchange.clone(),
     ));
-    let secret = || SecretInput::new("hidden fixture password".into()).unwrap();
-    assert!(!format!("{:?}", secret()).contains("hidden fixture password"));
     credentials
-        .enroll(
-            "fixture-principal",
-            SecretInput::new("invitation-secret".into()).unwrap(),
-            secret(),
+        .login(
+            "alice@example.invalid",
+            SecretInput::new("hidden fixture password".into()).unwrap(),
         )
         .await
         .unwrap();
-    credentials
-        .login("alice@example.invalid", secret())
-        .await
-        .unwrap();
-    let sent = requests(&exchange);
-    assert_eq!(
-        sent[0].url,
-        "https://identity.example/identity/password/enroll"
-    );
-    assert_eq!(
-        sent[1].url,
-        "https://identity.example/identity/password/session"
-    );
-    assert!(!sent[1].headers.contains_key("authorization"));
-    let body: serde_json::Value = serde_json::from_slice(&sent[1].body).unwrap();
-    assert_eq!(body["aud"], AUDIENCE);
-    assert_eq!(body["password"], "hidden fixture password");
-    assert!(!format!("{:?} {credentials:?}", sent[1]).contains("hidden fixture password"));
-    let operations = transport([Ok(reply(200, r#"[{"request_id":"one","value":{}}]"#))]);
-    let client = WamnClient::new(
-        "https://application.example",
-        None,
-        credentials.clone(),
-        operations.clone(),
-    );
-    client
-        .invoke(&route(), &BTreeMap::new(), &[json!({"request_id":"one"})])
-        .await
-        .unwrap();
-    assert_eq!(
-        requests(&operations)[0].headers["authorization"],
-        format!("Bearer {OPAQUE_SESSION}")
-    );
-    assert!(
-        client
-            .invoke_fresh(&route(), &BTreeMap::new(), &[json!({"request_id":"two"})])
-            .await
-            .is_err()
-    );
-    assert_eq!(requests(&operations).len(), 1);
     tokio::time::advance(Duration::from_secs(301)).await;
-    assert!(
-        client
-            .invoke(&route(), &BTreeMap::new(), &[json!({"request_id":"three"})])
-            .await
-            .is_err()
+    assert_eq!(
+        requests(&exchange).len(),
+        1,
+        "idle clients send no renewals"
     );
-    assert_eq!(requests(&operations).len(), 1);
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let credentials = credentials.clone();
+        tasks.spawn(async move { credentials.bearer().await });
+    }
+    while let Some(result) = tasks.join_next().await {
+        assert_eq!(result.unwrap().unwrap(), "renewed");
+    }
     assert_eq!(requests(&exchange).len(), 2);
-    credentials
-        .login("alice@example.invalid", secret())
-        .await
-        .unwrap();
-    assert_eq!(credentials.bearer().await.unwrap(), "explicit-second-login");
-    credentials.logout().await;
+    assert!(requests(&exchange)[1].url.ends_with("/password/renew"));
+    assert!(credentials.fresh_bearer().await.is_err());
+    let error = credentials.logout().await.unwrap_err();
+    assert!(error.to_string().contains("Local credentials cleared"));
+    assert!(!error.to_string().contains("private failure"));
     assert!(credentials.bearer().await.is_err());
     assert_eq!(requests(&exchange).len(), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn password_lost_renewal_requires_login_and_idle_expiry_sends_nothing() {
+    use wamn_client::credentials::{PasswordCredentials, SecretInput};
+    let absolute = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 28800;
+    for idle in [301, 1801, 28801] {
+        let exchange = transport([
+            Ok(password_reply(OPAQUE_SESSION, absolute)),
+            Ok(reply(503, "lost renewal")),
+        ]);
+        let credentials = Arc::new(PasswordCredentials::new(
+            SessionTarget::new("https://identity.example", AUDIENCE).unwrap(),
+            exchange.clone(),
+        ));
+        credentials
+            .login(
+                "alice@example.invalid",
+                SecretInput::new("hidden fixture password".into()).unwrap(),
+            )
+            .await
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(idle)).await;
+        let operations = transport([]);
+        let client = WamnClient::new(
+            "https://application.example",
+            None,
+            credentials.clone(),
+            operations.clone(),
+        );
+        assert!(
+            client
+                .invoke(&route(), &BTreeMap::new(), &[json!({"request_id":"one"})])
+                .await
+                .is_err()
+        );
+        assert!(credentials.bearer().await.is_err());
+        assert!(requests(&operations).is_empty());
+        assert_eq!(requests(&exchange).len(), if idle == 301 { 2 } else { 1 });
+    }
 }
 
 #[tokio::test]
