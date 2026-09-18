@@ -1,7 +1,7 @@
 # Human identity and login
 
 Owner-directed implementation sequence, updated 2026-09-18.
-This revision incorporates the critical review and the Receiving enrollment and route-policy decisions.
+This revision incorporates the owner decision against operation-specific password reauthentication.
 Password-first is settled. OIDC remains planned future work.
 Beads owns scheduling, decisions, and implementation status.
 
@@ -50,7 +50,8 @@ Private event handlers remain private and gain no application route.
 
 Route acceptance does not override an operation's stricter authentication requirement.
 Preserve the existing PAT-only check for fresh-only operations during initial session enablement, including nested calls.
-The [sensitive-operation increment](#increment-3-pat-free-sensitive-operations) defines the intended human replacement and its required security decision.
+The [session-policy increment](#increment-3-renewable-sessions-for-all-permitted-operations) replaces that transitional restriction.
+The owner rejects operation-specific password prompts and human PAT requirements.
 
 ## Delivery increments
 
@@ -58,14 +59,13 @@ The [sensitive-operation increment](#increment-3-pat-free-sensitive-operations) 
 | --- | --- | --- |
 | 1. Password login | Operator invitation, first password, terminal login, existing session token, authorized Receiving operation. | No renewal or password recovery. Expiry requires another login. Logout clears local credentials. Fresh-only operations remain PAT-only. |
 | 2. Everyday account use | Renewal, server-side logout, and password recovery. | No persistent terminal credentials, renewal retry grace, account linking, or self-service email changes. |
-| 3. Sensitive operations | Password reauthentication supplies recent evidence for authorized fresh-only operations. | Requires explicit approval of the five-minute identity and membership window plus tolerance. |
+| 3. Consistent session access | Renewable sessions authorize all permitted application operations, including nested calls. | Normal login expiry and permission checks remain. No operation-specific password prompt. |
 
 Complete the first milestone before adding the remaining session lifecycle.
 An implementation issue cannot pull later-increment machinery into increment 1 for convenience.
 The complete human-login release includes the agreed later increments; milestone 1 alone does not satisfy that larger scope.
-If an ordinary Receiving workflow needs a fresh-only operation, its human reauthentication path belongs in the first usable release.
-That condition requires the explicit freshness decision below. It does not authorize silently weakening the current check.
-Otherwise, reauthentication remains outside the first login increment.
+The third increment removes the remaining human PAT requirement.
+It does not add password reauthentication or a five-minute authentication window.
 
 ## Increment 1: password login
 
@@ -141,7 +141,8 @@ Unknown-account and wrong-password responses must not reveal account existence t
 Do not introduce permanent attacker-triggered lockout or an elaborate constant-time networking requirement.
 These protections follow [OWASP authentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html).
 
-Use one password-verification path for login and later reauthentication.
+Use one password-verification path for login.
+Renewal uses its own credential and never asks for or retains the password.
 Use one invitation/reset credential implementation with explicit purposes; increment 1 implements only invitation behavior.
 Bind each credential to its purpose and principal, store only its hash, and consume it atomically with the permitted password change.
 Invitation expiry is 24 hours; later reset expiry is 15 minutes.
@@ -202,37 +203,43 @@ Test these races against real PostgreSQL when renewal and reset land, not as a p
 
 Self-service email changes, general account linking, persistent terminal credentials, and renewal retry grace remain outside this increment.
 
-## Increment 3: PAT-free sensitive operations
+## Increment 3: renewable sessions for all permitted operations
 
 Reassess the preceding epics before planning this work.
-The owner must explicitly accept stale principal and membership evidence for five minutes plus the existing 30-second tolerance.
-Until that decision and implementation, fresh-only operations remain PAT-only.
-This decision does not block ordinary password login.
-The current fresh-only path checks identity freshly. The proposed alternative accepts bounded identity evidence.
-Those guarantees are different. A PAT does not inherently establish stronger evidence of a person's current presence than password confirmation.
+The owner rejects operation-specific password reauthentication, regardless of the operation.
+A person uses the existing renewable session for every permitted application operation.
+PATs remain supported for separately provisioned clients. Human workflows never require them.
 
-For a sensitive action, the terminal asks the person to confirm their password.
-The shared login verification code authenticates them again, and the host applies the existing permission checks.
-The person then explicitly resubmits the action.
-This interaction follows [OWASP reauthentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html#require-re-authentication-for-sensitive-features).
+Access-token expiry, renewal, and permission checks have separate purposes.
+An access token supplies signed caller and environment evidence for a bounded lifetime.
+Renewal uses a single-use credential to obtain replacement access without another password prompt.
+The issuer checks current account, membership, environment, tenant-user status, and assigned roles before issuing that replacement.
+Every operation still requires its normal permissions, including nested calls under the original caller.
+Neither token acceptance nor renewal grants additional permissions.
 
-The issuer records successful interactive authentication time from the shared password-verification path.
-The host enforces the proposed five-minute limit at the registered-operation boundary, including nested calls under the original caller.
-Current role permissions still apply to each request.
-Renewal never refreshes authentication time, and PAT exchange never invents interactive evidence.
-Password re-entry establishes recency, not multifactor authentication or phishing resistance.
+Do not add a five-minute password window, an authentication-time claim, or a password-confirmation endpoint.
+Do not treat successful renewal as evidence of physical user presence.
+Keep the eight-hour absolute login deadline and the 30-minute renewal inactivity limit.
+A failed or expired login requires normal login again. An operation classification does not trigger another password prompt.
+The client never automatically replays an application mutation after a refusal or new login.
 
-The reauthentication challenge binds the same principal and intended environment.
-It refreshes authentication evidence without moving the login's absolute deadline.
-A full login starts a new eight-hour session; renewal does neither.
-The client never automatically replays a refused mutation after a challenge.
-The person explicitly submits the operation again.
+The existing PAT-only rule also provides a current identity lookup.
+Removing the password requirement does not by itself select a replacement for that lookup.
+Before changing enforcement, resolve the remaining account and membership policy for formerly PAT-only operations:
 
-Make the necessary parser, signer, issuer, verifier, and client changes in one coordinated update.
-The controlled greenfield deployment permits component restarts and requires login again after the update.
-Do not build prolonged dual-profile compatibility without a concrete consumer requiring it.
-Preserve the PAT path and existing permission boundaries.
-Resolve exact claims and refusal behavior within this epic, not as a separate rollout project.
+One choice uses the existing session lifetime, at most 900 seconds plus 30 seconds of clock tolerance.
+The other preserves current account and membership checks on the server without asking the person for a password.
+
+The first choice accepts the same delay for account and membership changes as ordinary session operations.
+The second choice requires a server lookup and its availability for those operations.
+Neither choice changes the existing permission checks or introduces periodic password confirmation.
+Beads records the owner answer before implementation.
+
+Coordinate host enforcement, direct route admission, client credential selection, generated clients, and their tests.
+Remove obsolete PAT-only guidance and password challenges from the proposed design.
+Preserve caller identity, private-handler boundaries, exact environment binding, and the existing PAT path.
+Use the current token profile unless the selected enforcement approach requires a concrete change.
+The controlled deployment permits coordinated restarts and login again. Do not build a prolonged compatibility rollout.
 
 ## OIDC and later methods
 
@@ -249,7 +256,7 @@ Automatic account creation, directory synchronization, and immediate upstream di
 
 Use a maintained protocol library and authorization code flow with PKCE, which binds code exchange to the initiating client.
 Establish trusted issuer configuration and certificate roots explicitly.
-Before implementation, define upstream disablement limits and the evidence required for recent authentication.
+Before implementation, define upstream disablement limits and the external login lifecycle.
 A silent provider session is not automatically a new interactive login.
 The [federation plan](identity.md) retains these boundaries.
 
@@ -285,25 +292,26 @@ Increment 2 must demonstrate:
 
 Increment 3 must demonstrate:
 
-- Stale or absent authentication evidence refuses fresh-only operations while current permissions still apply.
-- Direct and nested calls preserve the original caller and enforce the approved freshness window.
-- Renewal and PAT exchange cannot fabricate recency, and reauthentication cannot extend absolute expiry or replay mutations.
-- The coordinated deployment preserves PAT access and requires a fresh login for changed session tokens.
+- Sessions and PATs reach every permitted application operation without operation-specific password prompts.
+- Direct and nested calls preserve the original caller, environment binding, and normal permission refusals.
+- Account and membership changes follow the selected policy, with explicit tests for its effect on existing sessions.
+- Renewal preserves absolute expiry and inactivity limits, and no authentication failure automatically replays an application mutation.
+- Existing PAT access and private-handler boundaries remain intact.
 
 ## Remaining decisions and ownership
 
 Password-first and the three-increment order are settled.
 Resend is the initial email transport, with sender `WAMN <d@wamn.dev>`.
 The [execution architecture](../architecture/execution.md#caller-authentication) records the implemented password protections and their limits.
-Accept or reject the five-minute stale identity/membership window plus tolerance before implementing password reauthentication.
-Make that decision at the third epic's reassessment unless an ordinary Receiving workflow requires it for the first usable release.
+Operation-specific password reauthentication is rejected.
+Resolve only the server enforcement choice described in increment 3 before replacing the existing PAT-only check.
 The mailbox-loss procedure belongs to increment 2; the concrete OIDC provider and upstream limits belong to its future epic.
 
 The Beads epics carry this plan's scope and reassessment rule:
 
 - `wamn-a045`: Invited password login into Receiving.
 - `wamn-6uby`: Everyday account use and session lifecycle.
-- `wamn-k3mu`: PAT-free sensitive operations.
+- `wamn-k3mu`: Renewable sessions for all permitted application operations.
 - `wamn-jpx2`: Future OIDC login through the existing issuer.
 
 Only increment 1 has implementation children at initial planning.
