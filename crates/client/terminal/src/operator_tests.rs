@@ -1041,11 +1041,15 @@ async fn a_fresh_screen_without_fresh_credentials_never_falls_back_to_a_session(
     let (client, transport) = recorded_client(Arc::new(SessionOnly), []);
 
     let (screen, attempt, response) = submit_request(&client, &request).await;
-    assert!(response.is_err());
+    assert!(matches!(response, Err(ClientError::Unauthenticated)));
     app.resolve(screen, attempt, response);
 
     assert!(transport.requests.lock().unwrap().is_empty());
-    assert!(app.unresolved());
+    assert!(!app.unresolved());
+    assert!(matches!(
+        app.screens[0].submission().state(),
+        State::Refused(_)
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]

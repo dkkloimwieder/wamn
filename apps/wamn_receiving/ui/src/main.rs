@@ -3,7 +3,8 @@
 //! `WAMN_BASE_URL`, `WAMN_HOST`, and `WAMN_TARGET_INSTANCE` bind this client to
 //! the served activation. `WAMN_TOKEN` supplies the operator PAT.
 //! `WAMN_SESSION_ISSUER` and `WAMN_SESSION_AUDIENCE` optionally select session
-//! login. Configure both or neither. Login completes before terminal entry.
+//! exchange with a PAT. Without a PAT they select interactive password login.
+//! `WAMN_SESSION_CA` optionally supplies the trusted issuer certificate bundle.
 //!
 //! The developer session in `docs/operations/development-loop.md` supplies
 //! the launch commands and interaction keys.
@@ -12,6 +13,7 @@ use std::error::Error;
 use std::io;
 use std::sync::Arc;
 
+use wamn_client::credentials::PasswordCredentials;
 use wamn_client::{ClientError, HttpRequest, HttpResponse, Transport, WamnClient};
 use wamn_client_terminal::operator::{ExitReason, run_application_with_client};
 use wamn_client_tui::submission::SessionBinding;
@@ -25,6 +27,9 @@ struct HttpTransport {
 
 fn http_transport(builder: reqwest::ClientBuilder) -> Result<HttpTransport, ClientError> {
     let client = builder
+        .no_proxy()
+        .retry(reqwest::retry::never())
+        .timeout(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| ClientError::Transport {
@@ -88,10 +93,15 @@ async fn main() -> Result<ExitReason, Box<dyn Error>> {
         "WAMN_BASE_URL",
         "WAMN_BASE_URL must name the deployment this client talks to",
     )?;
-    let token = required_env(
-        "WAMN_TOKEN",
-        "WAMN_TOKEN must carry the operator's access token",
-    )?;
+    let token = match std::env::var("WAMN_TOKEN") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(
+                io::Error::other("WAMN_TOKEN must carry the operator's access token").into(),
+            );
+        }
+    };
     let binding = SessionBinding {
         url: base_url,
         host: std::env::var("WAMN_HOST")
@@ -106,14 +116,46 @@ async fn main() -> Result<ExitReason, Box<dyn Error>> {
     let audience = session_setting("WAMN_SESSION_AUDIENCE")?;
     let target = login::session_target(issuer.as_deref(), audience.as_deref())?;
     let transport: Arc<dyn Transport> = Arc::new(http_transport(reqwest::Client::builder())?);
-    let credentials = login::credentials(token, target, transport.clone()).await?;
+    let mut identity_builder = reqwest::Client::builder().https_only(true);
+    if let Some(path) = session_setting("WAMN_SESSION_CA")? {
+        let pem = std::fs::read(path).map_err(|_| io::Error::other("read identity CA failed"))?;
+        let certificates = reqwest::Certificate::from_pem_bundle(&pem)
+            .map_err(|_| io::Error::other("identity CA refused"))?;
+        if certificates.is_empty() {
+            return Err(io::Error::other("identity CA is empty").into());
+        }
+        identity_builder = identity_builder.tls_certs_only(certificates);
+    }
+    let identity_transport: Arc<dyn Transport> = Arc::new(http_transport(identity_builder)?);
+    let mut password_session = None;
+    let credentials = if let Some(token) = token {
+        login::credentials(token, target, identity_transport).await?
+    } else {
+        let target = target.ok_or_else(|| {
+            io::Error::other(
+                "configure WAMN_SESSION_ISSUER and WAMN_SESSION_AUDIENCE for password login",
+            )
+        })?;
+        let session = Arc::new(PasswordCredentials::new(target, identity_transport));
+        if let Some(reason) = wamn_client_terminal::login::password_login(&session).await? {
+            return Ok(reason);
+        }
+        password_session = Some(session.clone());
+        session as Arc<dyn wamn_client::CredentialProvider>
+    };
     let client = Arc::new(WamnClient::new(
         binding.url.clone(),
         binding.host.clone(),
         credentials,
         transport,
     ));
-    run_application_with_client("Receiving", binding, client, ReceivingApplication::new).await
+    let result =
+        run_application_with_client("Receiving", binding, client, ReceivingApplication::new).await;
+    if let Some(session) = password_session {
+        session.logout().await;
+        eprintln!("Logged out locally. Issued tokens retain their existing validity until expiry.");
+    }
+    result
 }
 
 #[cfg(test)]

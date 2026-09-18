@@ -3,7 +3,9 @@
 //! Providers supply either a static PAT or an in-memory session. Fresh-only
 //! operations request a PAT explicitly and never replay a refused session call.
 
+mod password;
 mod session;
+pub use password::{PasswordCredentials, SecretInput};
 
 pub use session::{SessionCredentials, SessionTarget};
 

@@ -116,7 +116,7 @@ class Display:
 
 
 class Session:
-    def __init__(self, binary, root, fixture, instance, host, token):
+    def __init__(self, binary, root, fixture, instance, host, token, extra_env=None):
         self.master, self.slave = pty.openpty()
         self.process = None
         self.fixture = fixture
@@ -133,6 +133,10 @@ class Session:
                 "WAMN_BASE_URL": fixture.url, "WAMN_HOST": host,
                 "WAMN_TOKEN": token, "WAMN_TARGET_INSTANCE": instance,
             }
+            if token is None:
+                environment.pop("WAMN_TOKEN")
+            if extra_env:
+                environment.update(extra_env)
             # Exec a small child helper to acquire the controlling terminal.
             # No preexec_fn runs Python after fork in this threaded parent.
             self.process = subprocess.Popen(
@@ -201,7 +205,8 @@ class Session:
         require((WARNING in self.output) == unresolved, "shutdown warning did not match unresolved server work")
         if unresolved:
             require(self.output.find(WARNING) > left, "unresolved warning was printed before terminal restoration")
-        require(self.token.encode() not in self.output, "operator output exposed the fixture credential")
+        if self.token:
+            require(self.token.encode() not in self.output, "operator output exposed the fixture credential")
 
     def close(self):
         try:

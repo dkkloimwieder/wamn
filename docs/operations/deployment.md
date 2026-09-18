@@ -195,7 +195,7 @@ The issuer credential needs the current grants from `provision-identity-issuer -
 Use the current system schema on a fresh database, following the repository's schema installation contract.
 
 The route bodies and limits are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
-The terminal enrollment and password login commands remain separate implementation work.
+Use the [Receiving password login](development-loop.md#receiving-password-login) flow after provisioning the identity target and environment membership.
 
 ## Identity target credentials
 

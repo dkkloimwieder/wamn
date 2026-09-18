@@ -11,6 +11,7 @@
 //! them in the reverse order, and leaving them even when the process panics —
 //! happens here and nowhere else.
 
+pub mod login;
 pub mod operator;
 
 use std::io::{self, Stdout};
@@ -101,11 +102,14 @@ fn restore_with(
     disable_raw: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
     // Run every cleanup step before returning the first error.
+    let paste = output
+        .execute(crossterm::event::DisableBracketedPaste)
+        .map(|_| ());
     let show = output.execute(Show).map(|_| ());
     let leave = output.execute(LeaveAlternateScreen).map(|_| ());
     let raw = disable_raw();
     let flush = output.flush();
-    show.and(leave).and(raw).and(flush)
+    paste.and(show).and(leave).and(raw).and(flush)
 }
 
 #[cfg(test)]

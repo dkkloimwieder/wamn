@@ -165,7 +165,11 @@ pub async fn run_application_with_client<A: Application>(
                 tokio::select! {
                     signal = &mut shutdown => { exit_reason = signal?; Action::Exit },
                     Some((index, attempt, response)) = pending.next(), if transport_pending => {
+                        let login_required = matches!(&response, Err(ClientError::Unauthenticated));
                         app.resolve(index, attempt, response);
+                        if login_required {
+                            app.set_message("Authentication required. Exit and log in again. Fresh-only operations require a PAT. Submit the operation explicitly.".into());
+                        }
                         Action::None
                     },
                     event = events.next() => match event {
@@ -305,7 +309,7 @@ async fn submit_request(
 type Pending =
     Pin<Box<dyn Future<Output = (usize, Attempt, Result<HttpResponse, ClientError>)> + Send>>;
 
-fn shutdown_signal() -> io::Result<impl Future<Output = io::Result<ExitReason>>> {
+pub(crate) fn shutdown_signal() -> io::Result<impl Future<Output = io::Result<ExitReason>>> {
     #[cfg(unix)]
     {
         let mut interrupt =

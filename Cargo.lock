@@ -5645,6 +5645,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-execution-contract",
+ "zeroize",
 ]
 
 [[package]]
@@ -5672,6 +5673,7 @@ dependencies = [
  "wamn-client",
  "wamn-client-tui",
  "wamn-generated-wms-tui",
+ "zeroize",
 ]
 
 [[package]]

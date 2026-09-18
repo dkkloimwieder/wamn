@@ -174,6 +174,38 @@ cargo build --locked --offline -p wamn-receiving-tui
 python3 apps/wamn_receiving/tests/operator_pty.py --binary "$CARGO_TARGET_DIR/debug/wamn-receiving"
 ```
 
+## Receiving password login
+
+Build `wamn-receiving` before starting the terminal.
+Configure `WAMN_BASE_URL`, `WAMN_HOST` when needed, and `WAMN_TARGET_INSTANCE` for the selected deployment.
+Set `WAMN_SESSION_ISSUER` to its HTTPS identity issuer and `WAMN_SESSION_AUDIENCE` to the exact provisioned environment audience.
+For a private issuer CA, set `WAMN_SESSION_CA` to its certificate bundle.
+The bundle replaces the default trust roots for identity requests.
+
+If `WAMN_TOKEN` is set, the terminal retains the existing PAT path.
+For password login, unset `WAMN_TOKEN` before launching `wamn-receiving`.
+The first prompt shows the selected audience.
+Enter `I` to accept an invitation, or `L` to log in.
+Invitation acceptance asks for the principal ID, invitation secret, and a new password entered twice.
+After enrollment, enter the email and password again to log in.
+All prompt input is hidden. Paste is supported, and Esc or Ctrl-C cancels.
+Do not put human passwords or invitation secrets in arguments, environment variables, or files.
+
+The terminal keeps only the access token in process memory.
+After expiry, exit and log in again, then submit the operation explicitly.
+The client does not renew a password session or replay an operation automatically.
+Quitting clears the local token and reports that issued tokens retain their existing validity until expiry.
+Fresh-only operations still require a PAT.
+
+The password terminal test uses owned HTTPS and HTTP fixtures, plus OpenSSL for a disposable certificate:
+
+```bash
+python3 apps/wamn_receiving/tests/password_login_pty.py --binary "$CARGO_TARGET_DIR/debug/wamn-receiving"
+```
+
+This test covers hidden input, enrollment, login, expiry, local logout, cancellation, and refusal.
+It does not establish the deployed Receiving journey.
+
 ## Issuer connection
 
 `wamn dev` uses `--pat-issuer`, `--pat-client-cert`, and `--pat-client-key` for the identity issuer.

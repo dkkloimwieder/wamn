@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+zeroize = { workspace = true }
 # The BACKEND half of the ratatui 0.30 split, which is what a driver is: the
 # widget half lives in wamn-client-tui and never enters a terminal.
 ratatui = { workspace = true }

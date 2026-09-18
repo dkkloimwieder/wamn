@@ -569,3 +569,111 @@ async fn nested_fresh_required_remains_visible_without_retrying_the_operation() 
     assert_eq!(pat.ordinary_calls.load(Ordering::Relaxed), 0);
     assert_eq!(pat.fresh_calls.load(Ordering::Relaxed), 1);
 }
+
+#[tokio::test(start_paused = true)]
+async fn password_session_expiry_logout_and_fresh_calls_never_renew_or_replay() {
+    use wamn_client::credentials::{PasswordCredentials, SecretInput};
+    let exchange = transport([
+        Ok(reply(204, "")),
+        Ok(session_reply(OPAQUE_SESSION)),
+        Ok(session_reply("explicit-second-login")),
+    ]);
+    let credentials = Arc::new(PasswordCredentials::new(
+        SessionTarget::new("https://identity.example/identity/", AUDIENCE).unwrap(),
+        exchange.clone(),
+    ));
+    let secret = || SecretInput::new("hidden fixture password".into()).unwrap();
+    assert!(!format!("{:?}", secret()).contains("hidden fixture password"));
+    credentials
+        .enroll(
+            "fixture-principal",
+            SecretInput::new("invitation-secret".into()).unwrap(),
+            secret(),
+        )
+        .await
+        .unwrap();
+    credentials
+        .login("alice@example.invalid", secret())
+        .await
+        .unwrap();
+    let sent = requests(&exchange);
+    assert_eq!(
+        sent[0].url,
+        "https://identity.example/identity/password/enroll"
+    );
+    assert_eq!(
+        sent[1].url,
+        "https://identity.example/identity/password/session"
+    );
+    assert!(!sent[1].headers.contains_key("authorization"));
+    let body: serde_json::Value = serde_json::from_slice(&sent[1].body).unwrap();
+    assert_eq!(body["aud"], AUDIENCE);
+    assert_eq!(body["password"], "hidden fixture password");
+    assert!(!format!("{:?} {credentials:?}", sent[1]).contains("hidden fixture password"));
+    let operations = transport([Ok(reply(200, r#"[{"request_id":"one","value":{}}]"#))]);
+    let client = WamnClient::new(
+        "https://application.example",
+        None,
+        credentials.clone(),
+        operations.clone(),
+    );
+    client
+        .invoke(&route(), &BTreeMap::new(), &[json!({"request_id":"one"})])
+        .await
+        .unwrap();
+    assert_eq!(
+        requests(&operations)[0].headers["authorization"],
+        format!("Bearer {OPAQUE_SESSION}")
+    );
+    assert!(
+        client
+            .invoke_fresh(&route(), &BTreeMap::new(), &[json!({"request_id":"two"})])
+            .await
+            .is_err()
+    );
+    assert_eq!(requests(&operations).len(), 1);
+    tokio::time::advance(Duration::from_secs(301)).await;
+    assert!(
+        client
+            .invoke(&route(), &BTreeMap::new(), &[json!({"request_id":"three"})])
+            .await
+            .is_err()
+    );
+    assert_eq!(requests(&operations).len(), 1);
+    assert_eq!(requests(&exchange).len(), 2);
+    credentials
+        .login("alice@example.invalid", secret())
+        .await
+        .unwrap();
+    assert_eq!(credentials.bearer().await.unwrap(), "explicit-second-login");
+    credentials.logout().await;
+    assert!(credentials.bearer().await.is_err());
+    assert_eq!(requests(&exchange).len(), 3);
+}
+
+#[tokio::test]
+async fn password_refusals_hide_provider_content_and_do_not_retry() {
+    use wamn_client::credentials::{PasswordCredentials, SecretInput};
+    for response in [
+        reply(401, "hidden-password"),
+        reply(429, "hidden-password"),
+        reply(503, "hidden-password"),
+        reply(200, "hidden-password"),
+    ] {
+        let exchange = transport([Ok(response)]);
+        let credentials = PasswordCredentials::new(
+            SessionTarget::new("https://identity.example", AUDIENCE).unwrap(),
+            exchange.clone(),
+        );
+        let error = credentials
+            .login(
+                "alice@example.invalid",
+                SecretInput::new("hidden-password".into()).unwrap(),
+            )
+            .await
+            .unwrap_err();
+        assert!(!format!("{error:?} {error}").contains("hidden-password"));
+        assert!(credentials.bearer().await.is_err());
+        assert_eq!(requests(&exchange).len(), 1);
+    }
+}

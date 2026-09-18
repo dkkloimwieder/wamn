@@ -190,12 +190,16 @@ Authentication deadlines bound new admission and do not cancel work already acce
 The [session token owner](../../crates/identity/platform/src/session_token.rs) defines the token and time rules.
 The service keeps no session table, denylist, per-session write, or refresh token.
 The current client retains its session token only in memory.
+Password sessions have no PAT fallback or automatic renewal.
+A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
+Expiry requires explicit login and submission. Quitting clears the local password session without revoking issued tokens.
+[Terminal login](../operations/development-loop.md#receiving-password-login) describes configuration and prompts.
 External federation and unbuilt identity design remain in the [identity plan](../plan/identity.md).
 
 ## Password enrollment foundation
 
 The [identity library](../../crates/identity/platform/src/password.rs) supports password storage, invitation enrollment, and password authentication.
-The identity service exposes password HTTP endpoints. Terminal enrollment and password login remain unbuilt.
+The identity service exposes password HTTP endpoints. Receiving supports hidden terminal enrollment and password login.
 The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
 
 Enrollment accepts an active, unenrolled human principal and a matching, unexpired invitation.

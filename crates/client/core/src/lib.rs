@@ -244,9 +244,8 @@ impl WamnClient {
         } else {
             self.credentials.bearer().await
         }
-        .map_err(|error| ClientError::Transport {
-            detail: error.to_string(),
-        })?;
+        // Credential acquisition failed before an application request was sent.
+        .map_err(|_| ClientError::Unauthenticated)?;
 
         let mut headers = BTreeMap::new();
         headers.insert("content-type".to_owned(), "application/json".to_owned());

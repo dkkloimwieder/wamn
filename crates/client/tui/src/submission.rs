@@ -321,6 +321,9 @@ pub fn classify(
 ) -> Evidence {
     let response = match response {
         Ok(response) => response,
+        Err(ClientError::Unauthenticated) => {
+            return Evidence::Refused(json!({"code":"unauthenticated"}));
+        }
         Err(error) => return Evidence::Uncertain(error.to_string()),
     };
     if response.status == 401 && contract.direct {

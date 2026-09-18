@@ -14,8 +14,8 @@ use crate::{HttpRequest, Transport};
 /// The explicitly configured issuer and project-environment audience.
 #[derive(Debug, Clone)]
 pub struct SessionTarget {
-    endpoint: url::Url,
-    audience: String,
+    pub(super) endpoint: url::Url,
+    pub(super) audience: String,
 }
 
 impl SessionTarget {
@@ -68,10 +68,10 @@ pub struct SessionCredentials {
     cached: Mutex<Option<CachedSession>>,
 }
 
-struct CachedSession {
-    token: String,
-    expires_at: SystemTime,
-    deadline: Instant,
+pub(super) struct CachedSession {
+    pub(super) token: zeroize::Zeroizing<String>,
+    pub(super) expires_at: SystemTime,
+    pub(super) deadline: Instant,
 }
 
 impl core::fmt::Debug for SessionCredentials {
@@ -130,37 +130,41 @@ impl SessionCredentials {
         if response.status != 200 {
             return Err(CredentialError::new("the session exchange was refused"));
         }
-        let response: ExchangeResponse = serde_json::from_str(&response.body)
-            .map_err(|_| CredentialError::new("the session exchange response is invalid"))?;
-        if response.token_type != "Bearer"
-            || response.access_token.is_empty()
-            || !response
-                .access_token
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/=".contains(&byte))
-        {
-            return Err(CredentialError::new(
-                "the session exchange response is invalid",
-            ));
-        }
-        let expires_at = u64::try_from(response.expires_at)
-            .ok()
-            .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
-            .ok_or_else(|| CredentialError::new("the session expiry is invalid"))?;
-        let remaining = expires_at
-            .duration_since(SystemTime::now())
-            .ok()
-            .filter(|remaining| !remaining.is_zero())
-            .ok_or_else(|| CredentialError::new("the session is already expired"))?;
-        let deadline = Instant::now()
-            .checked_add(remaining)
-            .ok_or_else(|| CredentialError::new("the session expiry is invalid"))?;
-        Ok(CachedSession {
-            token: response.access_token,
-            expires_at,
-            deadline,
-        })
+        decode_session(&response.body)
     }
+}
+
+pub(super) fn decode_session(body: &str) -> Result<CachedSession, CredentialError> {
+    let response: ExchangeResponse = serde_json::from_str(body)
+        .map_err(|_| CredentialError::new("the session exchange response is invalid"))?;
+    if response.token_type != "Bearer"
+        || response.access_token.is_empty()
+        || !response
+            .access_token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/=".contains(&byte))
+    {
+        return Err(CredentialError::new(
+            "the session exchange response is invalid",
+        ));
+    }
+    let expires_at = u64::try_from(response.expires_at)
+        .ok()
+        .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        .ok_or_else(|| CredentialError::new("the session expiry is invalid"))?;
+    let remaining = expires_at
+        .duration_since(SystemTime::now())
+        .ok()
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| CredentialError::new("the session is already expired"))?;
+    let deadline = Instant::now()
+        .checked_add(remaining)
+        .ok_or_else(|| CredentialError::new("the session expiry is invalid"))?;
+    Ok(CachedSession {
+        token: zeroize::Zeroizing::new(response.access_token),
+        expires_at,
+        deadline,
+    })
 }
 
 #[async_trait::async_trait]
@@ -172,12 +176,12 @@ impl CredentialProvider for SessionCredentials {
             && Instant::now() < session.deadline
             && SystemTime::now() < session.expires_at
         {
-            return Ok(session.token.clone());
+            return Ok(session.token.to_string());
         }
         // Do not keep an expired session after a failed or cancelled renewal.
         *cached = None;
         let session = self.exchange().await?;
-        let token = session.token.clone();
+        let token = session.token.to_string();
         *cached = Some(session);
         Ok(token)
     }
