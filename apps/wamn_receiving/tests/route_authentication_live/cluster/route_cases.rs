@@ -20,7 +20,7 @@ async fn command_histories() -> anyhow::Result<()> {
 }
 
 async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
-    let mut cluster = start(evidence, true, false).await?;
+    let mut cluster = start(evidence, true).await?;
     let result = async {
         let (route, _, _, _) = released_http(&cluster, 3).await?;
         let endpoint = materializer_case::endpoint(&cluster, "receiving-correctness-nodeport").await?;
@@ -66,7 +66,7 @@ async fn human_membership_and_permission_revocation() -> anyhow::Result<()> {
 }
 
 async fn run_membership(evidence: &std::path::Path) -> anyhow::Result<()> {
-    let mut cluster = start(evidence, true, false).await?;
+    let mut cluster = start(evidence, true).await?;
     let result = async {
         let (route, _, _, _) = released_http(&cluster, 1).await?;
         membership_job(&cluster, &route.database_url).await?;

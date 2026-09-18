@@ -27,6 +27,51 @@ use super::{ReceivingCluster, Resources, apply, kubectl};
 const IDENTITY: &str = "host-session-identity";
 const DEPLOYMENTS: [&str; 2] = ["flow-http-session-a", "flow-http-session-b"];
 
+/// Supply the real issuer required by the published application's session routes.
+pub(super) async fn prepare_application(
+    cluster: &ReceivingCluster,
+    carrier: &ReleaseCarrier,
+) -> anyhow::Result<(String, String)> {
+    let (database, task) = super::super::connect(&cluster.inputs.system_pg_url).await?;
+    let instance: String = database.query_one(
+        "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
+        &[&ORG, &PROJECT, &ENVIRONMENT],
+    ).await?.get(0);
+    drop(database);
+    task.abort();
+    let audience = wamn_control_provision::session_target::session_audience(
+        &wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT),
+        &instance,
+    )?;
+    let fixture = cluster.resources.work.join("application-session.json");
+    write_private(
+        &fixture,
+        &serde_json::to_vec(&json!({
+            "manifest_digest": carrier.manifest_digest.to_string(),
+            "instance_suffix": instance,
+            "audience": audience,
+        }))?,
+    )?;
+    let issuer = prepare(cluster, carrier, &fixture).await?;
+    let database = wamn_control::provision_project_env::secret_value(
+        &cluster.resources.work.join("session-identity-db.json"),
+        "url",
+    )?;
+    let (mut client, connection) =
+        tokio_postgres::connect(&database, tokio_postgres::NoTls).await?;
+    let driver = tokio::spawn(connection);
+    let result = async {
+        let key =
+            wamn_platform_identity::session_keys::publish_session_key(&mut client, &issuer).await?;
+        wamn_platform_identity::session_keys::activate_session_key(&mut client, &issuer, &key.kid)
+            .await
+    }
+    .await;
+    driver.abort();
+    result?;
+    Ok((issuer, instance))
+}
+
 pub(super) async fn prepare(
     cluster: &ReceivingCluster,
     carrier: &ReleaseCarrier,
@@ -47,11 +92,9 @@ pub(super) async fn prepare(
     let identity_digest = image_loaded(cluster, identity_image, "identity", false)
         .await?
         .0;
-    let gates_image = resources
-        .gates_image
-        .as_deref()
-        .context("the session gates image is built")?;
-    image_loaded(cluster, gates_image, "gates", true).await?;
+    if let Some(gates_image) = resources.gates_image.as_deref() {
+        image_loaded(cluster, gates_image, "gates", true).await?;
+    }
     let identity_secret = resources.work.join("session-identity-db.json");
     provision_identity_issuer(IdentityIssuerRequest {
         issuer: issuer.clone(),
@@ -182,12 +225,18 @@ pub(super) async fn prepare(
     )
     .await?;
     let chart = resources.repository.join("deploy/platform/identity");
+    let tagged = identity_image
+        .split('@')
+        .next()
+        .context("identity image name")?;
+    let (repository, _) = tagged.rsplit_once(':').context("identity image tag")?;
+    let tag = &identity_image[repository.len() + 1..];
     let args = [
         format!("issuer={issuer}"),
         "databaseSecret=host-session-identity-db".to_owned(),
         "tlsSecret=host-session-identity-tls".to_owned(),
-        "image.repository=wamn-identity".to_owned(),
-        format!("image.tag={}", resources.name),
+        format!("image.repository={repository}"),
+        format!("image.tag={tag}"),
         "image.pullPolicy=Never".to_owned(),
         format!("sessionTargetSecrets[0]={target_name}"),
     ];

@@ -44,7 +44,7 @@ case "$action" in
     roles=(host)
     if [[ $cluster == wamn-receiving-* ]]; then
       "$cache" ensure "$repository" executor executor "$source" "$cluster" "$cluster"
-      roles+=(gates executor)
+      roles+=(gates executor identity)
     fi
     docker run --detach --name "$cluster-native-registry" --network kind \
       --publish 127.0.0.1::5000 registry:2
@@ -66,7 +66,7 @@ case "$action" in
     for node in $(kind get nodes --name "$cluster"); do
       docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
       docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
-      for role in host gates executor; do
+      for role in host gates executor identity; do
         [[ -f $work/native-$role-image ]] || continue
         image=$(cat "$work/native-$role-image")
         # CRI removes a tag when resolving a digest-pinned image.
@@ -87,7 +87,7 @@ case "$action" in
     if [[ -f $work/native-registry-port ]]; then
       port=$(cat "$work/native-registry-port")
       [[ $port =~ ^[0-9]+$ ]] || exit 64
-      for role in host gates executor; do
+      for role in host gates executor identity; do
         tag="localhost:$port/wamn-$role:$cluster"
         if docker image inspect "$tag" >/dev/null 2>&1; then docker image rm "$tag" || status=$?; fi
       done

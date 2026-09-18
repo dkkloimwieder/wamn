@@ -51,10 +51,12 @@ async fn receiving_fresh_authority() -> anyhow::Result<()> {
 async fn prepare(
     evidence: &Path,
 ) -> anyhow::Result<(ReceivingCluster, ProvisionedRoute, measurement::ColdHost)> {
-    let cluster = start(evidence, false, false).await?;
+    let cluster = start(evidence, false).await?;
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
     let secrets = deployment::native_secrets(&cluster)?;
     let resources = &cluster.resources;
+    let (issuer, instance) =
+        super::session_cluster::prepare_application(&cluster, &carrier).await?;
     install_host(
         resources,
         &cluster.inputs,
@@ -64,7 +66,7 @@ async fn prepare(
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
             source: &cluster.source,
-            session: None,
+            session: Some((&issuer, &instance)),
         },
     )
     .await?;

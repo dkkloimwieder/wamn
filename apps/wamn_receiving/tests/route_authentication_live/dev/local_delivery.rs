@@ -322,10 +322,10 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .build()?)
 }
 
-struct Served {
-    url: String,
-    host: String,
-    instance: String,
+pub(super) struct Served {
+    pub(super) url: String,
+    pub(super) host: String,
+    pub(super) instance: String,
     skipped: BTreeSet<String>,
 }
 
@@ -431,7 +431,7 @@ fn retain_diagnostic(diagnostics: &mut VecDeque<String>, line: String) {
     diagnostics.push_back(line);
 }
 
-struct Watch {
+pub(super) struct Watch {
     child: Child,
     process_group: Option<u32>,
     stdout: Lines<BufReader<ChildStdout>>,
@@ -442,7 +442,7 @@ struct Watch {
 }
 
 impl Watch {
-    fn start(binary: &Path, repository: &Path, config: &Path) -> anyhow::Result<Self> {
+    pub(super) fn start(binary: &Path, repository: &Path, config: &Path) -> anyhow::Result<Self> {
         let mut child = Command::new(binary)
             .current_dir(repository)
             .args(["dev", "--config"])
@@ -497,7 +497,7 @@ impl Watch {
         }
     }
 
-    async fn served(&mut self) -> anyhow::Result<Served> {
+    pub(super) async fn served(&mut self) -> anyhow::Result<Served> {
         tokio::time::timeout(DEV_COMMAND_TIMEOUT, async {
             let mut skipped = BTreeSet::new();
             loop {
@@ -550,7 +550,7 @@ impl Watch {
         .context("the local watch did not refuse invalid SQL within the product bound")?
     }
 
-    async fn stop(&mut self) -> anyhow::Result<()> {
+    pub(super) async fn stop(&mut self) -> anyhow::Result<()> {
         if let Some(pid) = self.child.id() {
             let _ = Command::new("kill")
                 .args(["-TERM", &pid.to_string()])

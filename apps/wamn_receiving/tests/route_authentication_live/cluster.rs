@@ -54,22 +54,17 @@ struct ReceivingCluster {
     source: async_nats::jetstream::stream::Config,
 }
 
-async fn start(
-    evidence: &Path,
-    gates_image: bool,
-    session_host: bool,
-) -> anyhow::Result<ReceivingCluster> {
-    start_with(evidence, gates_image, session_host, false).await
+async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCluster> {
+    start_with(evidence, gates_image, false).await
 }
 
 async fn start_with(
     evidence: &Path,
     gates_image: bool,
-    session_host: bool,
     startup_burst: bool,
 ) -> anyhow::Result<ReceivingCluster> {
     let repository = repository_root()?;
-    let mut cluster = resources::prepare(&repository, evidence, gates_image, session_host).await?;
+    let mut cluster = resources::prepare(&repository, evidence, gates_image).await?;
     let artifacts =
         build::components_and_tools(&repository, &cluster.evidence, startup_burst).await?;
     let registry_password = resources::prepare_files(&cluster).await?;
@@ -664,6 +659,7 @@ async fn released_http(
     candidate_executor(cluster, &carrier).await?;
     let secrets = deployment::native_secrets(cluster)?;
     let resources = &cluster.resources;
+    let (issuer, instance) = session_cluster::prepare_application(cluster, &carrier).await?;
     install_host(
         resources,
         &cluster.inputs,
@@ -673,7 +669,7 @@ async fn released_http(
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
             source: &cluster.source,
-            session: None,
+            session: Some((&issuer, &instance)),
         },
     )
     .await?;

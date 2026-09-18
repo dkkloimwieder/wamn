@@ -40,7 +40,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:purchase-order/get@1.0.0"
   },
@@ -134,7 +134,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:purchase-order/query@1.0.0"
   },
@@ -198,7 +198,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:purchase-order/update@1.0.0"
   },
@@ -243,7 +243,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:receipt/get@1.0.0"
   },
@@ -292,7 +292,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:receipt/query@1.0.0"
   },
@@ -385,7 +385,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:receiving/record-receipt@1.0.0"
   },
@@ -430,7 +430,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:receiving/load-receipt-screen@1.0.0"
   },
@@ -485,7 +485,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:receiving/load-purchase-order-history@1.0.0"
   },
@@ -525,7 +525,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:location/list@1.0.0"
   }

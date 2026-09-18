@@ -155,6 +155,8 @@ A configured durability class alone supplies no such protection.
 ## Caller authentication
 
 The route declares PAT authentication, session authentication, or both.
+Receiving and Acme publish both modes on their existing authenticated application routes.
+Both modes use the same operation permissions. Private event handlers remain private.
 A personal access token, or PAT, is an opaque bearer credential.
 PAT authentication reads the current principal, credential, organization scope, and applicable membership before admitting the request.
 Authorization reads current operation permissions.

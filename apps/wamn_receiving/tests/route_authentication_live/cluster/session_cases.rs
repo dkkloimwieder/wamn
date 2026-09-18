@@ -41,7 +41,7 @@ async fn session_client_login_and_fresh_selection() -> anyhow::Result<()> {
 }
 
 async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow::Result<()> {
-    let mut cluster = start(evidence, true, true).await?;
+    let mut cluster = start(evidence, true).await?;
     if fresh_only {
         cluster.inputs.fresh_only_packages =
             Some(cluster.resources.work.join("fresh-only-packages"));

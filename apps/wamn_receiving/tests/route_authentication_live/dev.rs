@@ -473,6 +473,10 @@ pub(super) async fn assert_dev_command(
         &environment.identity,
     )?;
 
+    let pat_count: i64 = admin
+        .query_one("SELECT count(*) FROM identity.pats", &[])
+        .await?
+        .get(0);
     let command_result = async {
         let output = run_dev_product_command(inputs, &config).await?;
         // The literal command emits this result only after native workload
@@ -486,6 +490,21 @@ pub(super) async fn assert_dev_command(
         let rebuilt = run_dev_product_command(inputs, &config).await?;
         verify_dev_command_output(&rebuilt)?;
         login.available().await?;
+        let mut watch =
+            local_delivery::Watch::start(&inputs.wamn_binary, &repository_root()?, &config)?;
+        let terminal = async {
+            let served = watch.served().await?;
+            login.terminal(&environment, &served).await
+        }
+        .await;
+        let stopped = watch.stop().await;
+        terminal?;
+        stopped?;
+        let after: i64 = admin
+            .query_one("SELECT count(*) FROM identity.pats", &[])
+            .await?
+            .get(0);
+        anyhow::ensure!(after == pat_count, "password access created a PAT");
         let (project, project_task) = connect(&environment.route.database_url).await?;
         let system_acl_after = current_database_acl(admin.as_ref()).await?;
         let durable_acl_after = current_database_acl(project.as_ref()).await?;

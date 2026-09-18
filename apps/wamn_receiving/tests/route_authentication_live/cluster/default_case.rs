@@ -18,7 +18,7 @@ async fn released_routes_materializer_startup_and_environment_isolation() -> any
 }
 
 async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
-    let mut cluster = start_with(evidence, false, false, true).await?;
+    let mut cluster = start_with(evidence, false, true).await?;
     let result = async {
         let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
         let replication_password = uuid::Uuid::new_v4().simple().to_string();
@@ -76,6 +76,8 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
         )
         .await?;
         let secrets = deployment::native_secrets(&cluster)?;
+        let (issuer, instance) =
+            super::session_cluster::prepare_application(&cluster, &carrier).await?;
         install_host(
             resources,
             &cluster.inputs,
@@ -85,7 +87,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
                 nats_url: &cluster.nats_url,
                 native_nats_secrets: &secrets,
                 source: &cluster.source,
-                session: None,
+                session: Some((&issuer, &instance)),
             },
         )
         .await?;
@@ -167,7 +169,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             "receiving-materializer-nodeport",
         ]))
         .await?;
-        startup_case::assert_startup(&cluster, &carrier).await?;
+        startup_case::assert_startup(&cluster, &carrier, &issuer, &instance).await?;
         workload::cross_environment_refused(
             &resources.name,
             &resources.work,

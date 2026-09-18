@@ -31,6 +31,8 @@ use super::{ReceivingCluster, checked, kubectl, write_private};
 pub(super) async fn assert_startup(
     cluster: &ReceivingCluster,
     carrier: &ReleaseCarrier,
+    issuer: &str,
+    instance: &str,
 ) -> anyhow::Result<()> {
     let private = cluster.resources.work.join("startup-burst");
     DirBuilder::new().mode(0o700).create(&private)?;
@@ -80,6 +82,7 @@ pub(super) async fn assert_startup(
             otlp_endpoint:format!("http://127.0.0.1:{otlp}"),
             test_id:format!("startup-{}",uuid::Uuid::new_v4().simple()),
             component_artifact_base:cluster.inputs.component_artifact_base.clone(), release_artifact_base:carrier.artifact_base.clone(),
+            session_issuer:issuer.to_owned(), session_instance:instance.to_owned(), session_ca:cluster.resources.work.join("session-ca.crt"),
             manifest_digest:carrier.manifest_digest.to_string(), org:super::super::ORG.to_owned(), project:super::super::PROJECT.to_owned(),
             schema:"receiving".to_owned(), environment:cluster.resources.name.clone(), route_host:cluster.inputs.route_host.clone(),
             route_path:"/purchase_order/get".to_owned(), probe_body:json!({"id":"00000000-0000-0000-0000-000000000301"}), max_concurrent_starts:limit,

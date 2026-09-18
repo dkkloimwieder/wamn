@@ -44,7 +44,6 @@ pub(super) async fn prepare(
     repository: &Path,
     evidence: &Path,
     gates_image: bool,
-    session_host: bool,
 ) -> anyhow::Result<Resources> {
     let candidate = super::super::delivery::candidate()?;
     if let Some((candidate, _)) = &candidate {
@@ -53,7 +52,7 @@ pub(super) async fn prepare(
             "this Receiving case requires a supplied gates image"
         );
         ensure!(
-            !session_host || candidate.identity_image.is_some(),
+            candidate.identity_image.is_some(),
             "this Receiving case requires a supplied identity image"
         );
     }
@@ -128,7 +127,7 @@ pub(super) async fn prepare(
                 .map(super::super::delivery::image_reference)
                 .transpose()?
         } else {
-            session_host.then(|| format!("wamn-identity:{name}"))
+            Some(format!("wamn-identity:{name}"))
         },
         candidate,
         name,

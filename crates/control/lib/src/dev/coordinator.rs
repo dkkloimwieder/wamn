@@ -1276,19 +1276,44 @@ impl ProductionDevStageRunner {
                             "Build produced no selected native binary",
                         )
                     })?;
-                let operator_token = self.config.operator_bearer_token().ok_or_else(|| {
-                    ProductionDevStageError::invalid(
-                        "launch operator terminal",
-                        "dev.json has no operator_bearer_token",
+                let authentication = if let Some(session) = self.config.session_identity() {
+                    let identity = self.config.activation_identity();
+                    let audience = wamn_control_provision::session_target::session_audience(
+                        &wamn_control_registry::Triple::new(
+                            &identity.org,
+                            &identity.project,
+                            identity.environment.as_str(),
+                        ),
+                        &session.instance_suffix,
                     )
-                })?;
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("select operator audience", source.into())
+                    })?;
+                    super::operator::Authentication::Password {
+                        issuer: session.issuer.clone(),
+                        ca: session.ca.clone(),
+                        audience,
+                    }
+                } else {
+                    super::operator::Authentication::Pat(
+                        self.config
+                            .operator_bearer_token()
+                            .ok_or_else(|| {
+                                ProductionDevStageError::invalid(
+                                    "launch operator terminal",
+                                    "dev.json has no operator_bearer_token",
+                                )
+                            })?
+                            .to_owned(),
+                    )
+                };
                 control
                     .start(super::operator::LaunchSpec {
                         executable: executable.clone(),
                         base_url: endpoint.base_url().to_owned(),
                         route_host: endpoint.route_host().to_owned(),
                         target_instance: endpoint.target_instance().to_owned(),
-                        operator_token: operator_token.to_owned(),
+                        authentication,
                     })
                     .await
                     .map_err(|source| {

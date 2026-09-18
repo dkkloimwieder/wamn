@@ -253,7 +253,10 @@ It tests the removed and kept runs, the refusals, and the grants of the generati
 
 ### Development identity lifecycle
 
-The development command case also tests password login across an application recompile and owned identity shutdown.
+The development command case tests password login across an application recompile and owned identity shutdown.
+It also drives the real terminal through password login and an authorized Receiving query without creating a PAT.
+Build `wamn-receiving` in the same debug target before this case.
+The fixture issues its invitation directly through the identity library. It does not test email delivery.
 For this case, supply `RESEND_API_KEY=unused-development-fixture` and `RESEND_FROM='WAMN <fixture@example.invalid>'` to the test process.
 It creates the invitation through the scoped database authority and sends no email.
 The focused identity case also covers application database recreation:

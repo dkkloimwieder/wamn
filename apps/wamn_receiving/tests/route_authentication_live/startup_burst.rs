@@ -53,6 +53,9 @@ pub(crate) struct Inputs {
     pub(crate) component_artifact_base: String,
     pub(crate) release_artifact_base: String,
     pub(crate) manifest_digest: String,
+    pub(crate) session_issuer: String,
+    pub(crate) session_instance: String,
+    pub(crate) session_ca: PathBuf,
     pub(crate) org: String,
     pub(crate) project: String,
     pub(crate) schema: String,
@@ -422,6 +425,9 @@ pub(crate) async fn assert_startup(
         .arg(&cache)
         .arg("--oci-cache-dir")
         .arg(&oci_cache)
+        .env("WAMN_SESSION_ISSUER", &inputs.session_issuer)
+        .env("WAMN_SESSION_INSTANCE_SUFFIX", &inputs.session_instance)
+        .env("WAMN_SESSION_JWKS_CA", &inputs.session_ca)
         .env("WAMN_EVT_NATS_URL", &inputs.nats_url)
         .env("OTEL_EXPORTER_OTLP_ENDPOINT", &inputs.otlp_endpoint)
         .env("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")

@@ -181,7 +181,7 @@ fn package_owned_inputs_declare_the_exact_nine_route_closure() {
         );
         assert_eq!(
             attachment.auth_policy,
-            serde_json::json!({"modes": ["pat"]})
+            serde_json::json!({"modes": ["pat", "session"]})
         );
         assert_eq!(attachment.definition["id"], operation.attachment);
         assert_eq!(attachment.definition["kind"], "http");

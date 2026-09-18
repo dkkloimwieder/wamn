@@ -38,6 +38,8 @@ The command starts `wamn-identity`, writes private `dev.json`, prints the next d
 The identity process keeps running across application builds and operator exits.
 Startup creates its signing key once. Application rebuilds preserve that key and the identity database.
 The `session_identity` field supplies the issuer address, certificate authority file, and environment instance to each application host.
+The operator terminal uses that issuer for password login and receives no PAT from the launcher.
+An older configuration without `session_identity` retains its explicit `operator_bearer_token` path.
 The identity process uses the existing [password configuration](deployment.md#identity-password-configuration), including `.env` in the working directory.
 
 At environment teardown, stop the owned identity process:

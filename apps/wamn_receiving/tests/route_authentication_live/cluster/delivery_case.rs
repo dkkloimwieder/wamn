@@ -34,7 +34,7 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
     let evidence = super::evidence_directory()?;
     let cancelled = pg_walstream::CancellationToken::new();
     let mut operation = Box::pin(async {
-        let mut cluster = super::start(&evidence, true, false).await?;
+        let mut cluster = super::start(&evidence, true).await?;
         let result = exercise(&cluster, &cancelled).await;
         if result.is_err() {
             resources::capture_failure(&cluster.resources).await;
@@ -110,7 +110,9 @@ async fn exercise(
     let host_image = fs::read_to_string(resources.work.join("native-host-image"))?;
     let gates_image = fs::read_to_string(resources.work.join("native-gates-image"))?;
     let executor_image = fs::read_to_string(resources.work.join("native-executor-image"))?;
+    let identity_image = fs::read_to_string(resources.work.join("native-identity-image"))?;
     let native_secrets = deployment::native_secrets(cluster)?;
+    let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     let (base, _) = super::prepare_host(
         resources,
         &cluster.inputs,
@@ -120,7 +122,7 @@ async fn exercise(
             nats_url: &cluster.nats_url,
             native_nats_secrets: &native_secrets,
             source: &cluster.source,
-            session: None,
+            session: Some((&issuer, &instance)),
         },
     )
     .await?;
@@ -244,6 +246,8 @@ async fn exercise(
             &gates_image,
             "--executor-image",
             &executor_image,
+            "--identity-image",
+            &identity_image,
             "--native-registry-endpoint",
             &format!("{}-native-registry:5000", resources.name),
             "--native-registry-insecure",

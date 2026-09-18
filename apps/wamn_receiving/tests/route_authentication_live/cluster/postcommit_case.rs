@@ -46,7 +46,7 @@ pub(super) async fn run_selected(
             || matches!(base, BaseCandidate::Baseline),
         "supplied-artifact execution supports only the baseline Receiving and Acme installation"
     );
-    let mut cluster = start(evidence, true, false).await?;
+    let mut cluster = start(evidence, true).await?;
     cluster.inputs.overlay_compatibility = Some(CompatibilityPhase {
         base,
         package_directory: cluster.resources.work.join("compatibility-packages"),
@@ -117,6 +117,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     )
     .await?;
     let secrets = deployment::native_secrets(cluster)?;
+    let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     install_host(
         &cluster.resources,
         &cluster.inputs,
@@ -126,7 +127,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
             source: &cluster.source,
-            session: None,
+            session: Some((&issuer, &instance)),
         },
     )
     .await?;

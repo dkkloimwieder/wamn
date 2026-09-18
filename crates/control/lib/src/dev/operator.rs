@@ -25,7 +25,18 @@ pub(super) struct LaunchSpec {
     pub base_url: String,
     pub route_host: String,
     pub target_instance: String,
-    pub operator_token: String,
+    pub authentication: Authentication,
+}
+
+/// Human login uses the managed issuer; explicit legacy environments retain PAT access.
+#[derive(Clone)]
+pub(super) enum Authentication {
+    Pat(String),
+    Password {
+        issuer: String,
+        ca: PathBuf,
+        audience: String,
+    },
 }
 
 impl fmt::Debug for LaunchSpec {
@@ -36,7 +47,7 @@ impl fmt::Debug for LaunchSpec {
             .field("base_url", &self.base_url)
             .field("route_host", &self.route_host)
             .field("target_instance", &self.target_instance)
-            .field("operator_token", &"[REDACTED]")
+            .field("authentication", &"[REDACTED]")
             .finish()
     }
 }
@@ -246,7 +257,6 @@ fn launch(spec: &LaunchSpec) -> Result<Child, OperatorError> {
         ("WAMN_BASE_URL", spec.base_url.as_str()),
         ("WAMN_HOST", spec.route_host.as_str()),
         ("WAMN_TARGET_INSTANCE", spec.target_instance.as_str()),
-        ("WAMN_TOKEN", spec.operator_token.as_str()),
     ] {
         if value.is_empty() {
             return Err(OperatorError::new(
@@ -255,11 +265,42 @@ fn launch(spec: &LaunchSpec) -> Result<Child, OperatorError> {
             ));
         }
     }
-    Command::new(&spec.executable)
+    let mut command = Command::new(&spec.executable);
+    command
         .env("WAMN_BASE_URL", &spec.base_url)
         .env("WAMN_HOST", &spec.route_host)
-        .env("WAMN_TARGET_INSTANCE", &spec.target_instance)
-        .env("WAMN_TOKEN", &spec.operator_token)
+        .env("WAMN_TARGET_INSTANCE", &spec.target_instance);
+    for name in [
+        "WAMN_TOKEN",
+        "WAMN_SESSION_ISSUER",
+        "WAMN_SESSION_AUDIENCE",
+        "WAMN_SESSION_CA",
+        "WAMN_RECEIVING_TARGETS",
+    ] {
+        command.env_remove(name);
+    }
+    match &spec.authentication {
+        Authentication::Pat(token) => {
+            if token.is_empty() {
+                return Err(OperatorError::new(
+                    "start operator terminal",
+                    "WAMN_TOKEN is empty",
+                ));
+            }
+            command.env("WAMN_TOKEN", token);
+        }
+        Authentication::Password {
+            issuer,
+            ca,
+            audience,
+        } => {
+            command
+                .env("WAMN_SESSION_ISSUER", issuer)
+                .env("WAMN_SESSION_CA", ca)
+                .env("WAMN_SESSION_AUDIENCE", audience);
+        }
+    }
+    command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -400,7 +441,7 @@ mod tests {
             base_url: "http://127.0.0.1:31001".to_owned(),
             route_host: "receiving.localhost".to_owned(),
             target_instance: instance.to_owned(),
-            operator_token: "fixture-operator-secret".to_owned(),
+            authentication: Authentication::Pat("fixture-operator-secret".to_owned()),
         }
     }
 
@@ -446,7 +487,7 @@ mod tests {
     fn launch_debug_redacts_the_operator_credential() {
         let spec = spec(PathBuf::from("/fixture/operator"), "instance-a");
         let rendered = format!("{spec:?}");
-        assert!(!rendered.contains(&spec.operator_token));
+        assert!(!rendered.contains("fixture-operator-secret"));
         assert!(rendered.contains("[REDACTED]"));
         assert!(rendered.contains("instance-a"));
     }
@@ -469,6 +510,29 @@ mod tests {
             .stop("finish the session")
             .await
             .expect("reap a normal exit");
+    }
+
+    #[tokio::test]
+    async fn password_launch_supplies_issuer_without_a_pat() {
+        let fixture = Fixture::new();
+        let executable = fixture.script("password-facts", "printf '%s\\n' \"$WAMN_SESSION_ISSUER\" \"$WAMN_SESSION_CA\" \"$WAMN_SESSION_AUDIENCE\" \"${WAMN_TOKEN-unset}\" > facts\nexit 0");
+        let mut spec = spec(executable, "instance-a");
+        spec.authentication = Authentication::Password {
+            issuer: "https://identity.localhost".to_owned(),
+            ca: PathBuf::from("/fixture/ca.pem"),
+            audience: "fixture-audience".to_owned(),
+        };
+        let (control, stopped) = supervisor();
+        control.start(spec).await.expect("launch password login");
+        wait_for_shutdown(&stopped).await;
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("facts")).expect("read child facts"),
+            "https://identity.localhost\n/fixture/ca.pem\nfixture-audience\nunset\n"
+        );
+        control
+            .stop("finish the session")
+            .await
+            .expect("reap the terminal");
     }
 
     #[test]
