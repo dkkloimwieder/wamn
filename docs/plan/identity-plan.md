@@ -1,7 +1,7 @@
 # Human identity and login
 
-Owner-directed implementation sequence, 2026-09-17.
-This revision incorporates the critical review and supersedes its bundled first-release proposal.
+Owner-directed implementation sequence, updated 2026-09-18.
+This revision incorporates the critical review and the Receiving enrollment and route-policy decisions.
 Password-first is settled. OIDC remains planned future work.
 Beads owns scheduling, decisions, and implementation status.
 
@@ -11,6 +11,8 @@ An invited person signs into Receiving with a password and performs an authorize
 This is the first milestone, not the completed human-login release.
 Renewal, recovery, and PAT-free sensitive operations follow in separate increments.
 Their design must not block the first working password login.
+People sign in. Integrations use separately provisioned credentials.
+Ordinary onboarding and daily Receiving use must never require a person to create, copy, or understand a PAT.
 
 Only the first epic receives detailed implementation issues now.
 At every later epic start, review the preceding results and current implementation before planning that epic's issues.
@@ -25,7 +27,7 @@ Explicit membership grants control entry to an environment.
 The environment's roles grant operation permissions.
 Authentication never creates membership or permission by itself.
 
-The existing `wamn-identity` service exchanges a human PAT for an Ed25519-signed session token.
+The existing `wamn-identity` service issues Ed25519-signed session tokens through password login or optional human PAT exchange.
 The audience identifies the exact organization, project, environment, and environment instance.
 Tokens last at most 900 seconds with 30 seconds of tolerance.
 Hosts use the configured issuer's public keys, with a 300-second freshness limit, and read current role permissions per request.
@@ -36,6 +38,19 @@ Reuse these authorities and the existing token issuer.
 The same person keeps the same identifier through password login and optional PAT access.
 Service credentials never establish a human identity.
 PATs remain available for existing clients, integrations, scripts, and optional developer access.
+Password login issues a session directly. It never creates a PAT behind the scenes or requires PAT exchange.
+
+## Receiving route policy
+
+Receiving's existing authenticated application routes accept both session tokens and PATs.
+Sessions are the default for people.
+Both credentials use one set of routes, the same canonical caller, and one permission model.
+Accepting a credential establishes the caller. It grants no additional membership, role, or operation permission.
+Private event handlers remain private and gain no application route.
+
+Route acceptance does not override an operation's stricter authentication requirement.
+Preserve the existing PAT-only check for fresh-only operations during initial session enablement, including nested calls.
+The [sensitive-operation increment](#increment-3-pat-free-sensitive-operations) defines the intended human replacement and its required security decision.
 
 ## Delivery increments
 
@@ -48,6 +63,9 @@ PATs remain available for existing clients, integrations, scripts, and optional 
 Complete the first milestone before adding the remaining session lifecycle.
 An implementation issue cannot pull later-increment machinery into increment 1 for convenience.
 The complete human-login release includes the agreed later increments; milestone 1 alone does not satisfy that larger scope.
+If an ordinary Receiving workflow needs a fresh-only operation, its human reauthentication path belongs in the first usable release.
+That condition requires the explicit freshness decision below. It does not authorize silently weakening the current check.
+Otherwise, reauthentication remains outside the first login increment.
 
 ## Increment 1: password login
 
@@ -56,17 +74,39 @@ The existing identity service owns passwords and invitation credentials in the s
 Hosts receive signed access tokens, never passwords or invitation secrets.
 This increment adds no renewal credential, session table, authentication-time claim, or token-profile change.
 
-An authenticated platform operator creates or selects a human principal and grants the required environment membership through existing operations.
+Enrollment is invitation-based, with no public self-registration.
+An authorized operator enters the person's email and creates or selects the canonical human principal.
+The operator assigns application and environment access through the existing membership and role operations.
 The operator issues an invitation for that explicitly selected, unenrolled principal.
-The identity service sends a single-use secret to the principal's email address.
-The person enters the secret and a new password through hidden terminal prompts, then logs in normally.
-No browser form is assumed or required.
+
+The identity service sends an invitation to the principal's email address.
+The email identifies Receiving and asks the person to set a password.
+It contains a random, time-limited, single-use link or code, never a password or PAT.
+The terminal accepts the emailed secret through a hidden prompt.
+A future browser setup form calls the same enrollment and login functions.
+Browser delivery remains outside this increment.
+
+WAMN validates the invitation's account binding, stores the password hash, and consumes the invitation atomically.
+Successful consumption establishes control of the invited mailbox and credentials for that account.
+It grants no organizational membership or operation permission.
+The random, expiring, single-use secret follows [OWASP email verification guidance](https://cheatsheetseries.owasp.org/cheatsheets/Email_Validation_and_Verification_Cheat_Sheet.html#email-ownership-verification).
+
+After enrollment, the person signs in through the normal email-and-password path.
+Do not add a separate automatic-login mechanism after enrollment.
+`wamn-identity` checks the account and authorized environment, then issues the session directly.
+With one authorized environment, Receiving opens it directly.
+With several authorized environments, the person chooses one.
+Every session remains bound to the selected environment and its current instance.
+Application requests use that session automatically.
 
 An invitation can establish only the first password.
 It cannot overwrite an enrolled account, change the selected principal, or grant membership.
 Granting another membership never authorizes replacing a person's global password.
 The existing one-email-per-principal rule remains controlling.
 An existing-account conflict requires an authorized operator disposition; automatic linking is outside this increment.
+Already enrolled people use their existing password.
+Another invitation must neither overwrite that password nor create a duplicate identity.
+Subsequent normal logins need no email step. Email serves enrollment and later recovery.
 
 Password login reuses the existing membership, current environment instance, active tenant-user, role, and token-minting rules.
 The terminal keeps the access token only in process memory and discards password input after the request.
@@ -74,10 +114,11 @@ It never retains the password to renew access automatically.
 Token expiry and process restart require another login.
 Logout clears local credentials and states that issued tokens retain their existing validity.
 
-Fresh-only operations remain PAT-only, including nested calls.
+The initial fresh-only restriction is transitional, not the intended human experience.
 Password-issued tokens carry no claim of recent authentication beyond the existing profile.
 A refused mutation is never replayed automatically after login.
 The person explicitly submits it again.
+Do not teach ordinary users to generate PATs or retry a partially executed workflow with another credential.
 
 ## Safety from the first endpoint
 
@@ -164,6 +205,13 @@ Reassess the preceding epics before planning this work.
 The owner must explicitly accept stale principal and membership evidence for five minutes plus the existing 30-second tolerance.
 Until that decision and implementation, fresh-only operations remain PAT-only.
 This decision does not block ordinary password login.
+The current fresh-only path checks identity freshly. The proposed alternative accepts bounded identity evidence.
+Those guarantees are different. A PAT does not inherently establish stronger evidence of a person's current presence than password confirmation.
+
+For a sensitive action, the terminal asks the person to confirm their password.
+The shared login verification code authenticates them again, and the host applies the existing permission checks.
+The person then explicitly resubmits the action.
+This interaction follows [OWASP reauthentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html#require-re-authentication-for-sensitive-features).
 
 The issuer records successful interactive authentication time from the shared password-verification path.
 The host enforces the proposed five-minute limit at the registered-operation boundary, including nested calls under the original caller.
@@ -216,8 +264,12 @@ Do not add a testing framework or broad benchmark campaign.
 Increment 1 must demonstrate:
 
 - Operator invitation, password establishment, terminal login, and a real authorized Receiving operation without a human PAT.
+- Direct password-to-session issuance, with no hidden PAT creation or required exchange.
+- Both credentials accepted on the existing authenticated routes, with no added permissions or exposed private event handlers.
+- Direct opening of the sole authorized environment, or explicit choice among several authorized environments.
 - The same canonical person identifier as optional PAT access, with existing membership and permission boundaries preserved.
 - Expiring, correctly bound invitation secrets that cannot overwrite enrolled credentials or succeed twice, including concurrent consumption.
+- Existing users sign in without a new email step, duplicate identity, or password replacement.
 - TLS, bounded password work, throttling, protected operator endpoints, and public failure behavior that does not trivially enumerate accounts.
 - No secrets in logs or persistent terminal state, re-login on token expiry, local-only logout, and unchanged PAT-only fresh operations.
 
@@ -238,9 +290,10 @@ Increment 3 must demonstrate:
 ## Remaining decisions and ownership
 
 Password-first and the three-increment order are settled.
-Choose the outbound email transport during the first epic before implementing invitation delivery.
-Choose concrete password-hash parameters and throttling limits against the actual deployment before exposing endpoints.
-Accept or reject the five-minute stale identity/membership window plus tolerance at the third epic's reassessment.
+Resend is the initial email transport, with sender `WAMN <d@wamn.dev>`.
+The [execution architecture](../architecture/execution.md#caller-authentication) records the implemented password protections and their limits.
+Accept or reject the five-minute stale identity/membership window plus tolerance before implementing password reauthentication.
+Make that decision at the third epic's reassessment unless an ordinary Receiving workflow requires it for the first usable release.
 The mailbox-loss procedure belongs to increment 2; the concrete OIDC provider and upstream limits belong to its future epic.
 
 The Beads epics carry this plan's scope and reassessment rule:
