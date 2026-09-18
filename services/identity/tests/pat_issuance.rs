@@ -246,6 +246,9 @@ async fn operator_pat_issuance_over_https() {
             exp: 0,
             iat: 0,
             jti: "operator-denial-control".to_owned(),
+            authority: wamn_platform_identity::session_token::SessionAuthority::Login(
+                "ed7056a9-5639-455f-9640-4678458794c0".into(),
+            ),
         },
         started,
     )

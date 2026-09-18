@@ -407,9 +407,9 @@ async fn provider_and_transport_errors_do_not_expose_credentials() {
 }
 
 #[tokio::test]
-async fn fresh_invoke_before_login_sends_only_the_pat_operation() {
+async fn legacy_fresh_invoke_uses_the_normal_session_path() {
     let pat = Arc::new(PatSource::default());
-    let exchange = transport([]);
+    let exchange = transport([Ok(session_reply(OPAQUE_SESSION))]);
     let operations = transport([Ok(reply(
         200,
         r#"[{"request_id":"r1","value":{"ok":true}}]"#,
@@ -424,7 +424,7 @@ async fn fresh_invoke_before_login_sends_only_the_pat_operation() {
     let outcomes = client
         .invoke_fresh(&route(), &BTreeMap::new(), &[json!({"request_id":"r1"})])
         .await
-        .expect("fresh invocation needs no session login");
+        .expect("legacy invocation obtains an ordinary session");
 
     assert_eq!(
         serde_json::to_value(outcomes).expect("outcomes"),
@@ -435,19 +435,16 @@ async fn fresh_invoke_before_login_sends_only_the_pat_operation() {
     assert_eq!(sent[0].url, "https://routes.example/inventory/adjust");
     assert_eq!(
         sent[0].headers["authorization"],
-        format!("Bearer {PRIVATE_PAT}-1")
+        format!("Bearer {OPAQUE_SESSION}")
     );
     assert_eq!(sent[0].body, br#"[{"request_id":"r1"}]"#);
-    assert!(
-        requests(&exchange).is_empty(),
-        "no session exchange before the operation"
-    );
+    assert_eq!(requests(&exchange).len(), 1);
     assert_eq!(pat.ordinary_calls.load(Ordering::Relaxed), 0);
     assert_eq!(pat.fresh_calls.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]
-async fn fresh_invoke_and_submit_use_pats_without_replacing_the_cached_session() {
+async fn legacy_fresh_invoke_and_submit_use_the_cached_session() {
     let pat = Arc::new(PatSource::default());
     let exchange = transport([Ok(session_reply(OPAQUE_SESSION))]);
     let credentials = Arc::new(session(pat.clone(), exchange.clone()));
@@ -510,7 +507,7 @@ async fn fresh_invoke_and_submit_use_pats_without_replacing_the_cached_session()
 
     let sent = requests(&operations);
     assert_eq!(sent.len(), 2);
-    for (request, suffix) in sent.iter().zip([2, 3]) {
+    for request in &sent {
         assert_eq!(request.url, "https://routes.example/inventory/adjust");
         assert_eq!(request.method, "POST");
         assert_eq!(request.body, br#"[{"request_id":"r1"}]"#);
@@ -519,7 +516,7 @@ async fn fresh_invoke_and_submit_use_pats_without_replacing_the_cached_session()
             BTreeMap::from([
                 (
                     "authorization".to_owned(),
-                    format!("Bearer {PRIVATE_PAT}-{suffix}")
+                    format!("Bearer {OPAQUE_SESSION}")
                 ),
                 ("content-type".to_owned(), "application/json".to_owned()),
                 ("host".to_owned(), "receiving.localhost".to_owned()),
@@ -528,7 +525,7 @@ async fn fresh_invoke_and_submit_use_pats_without_replacing_the_cached_session()
     }
     assert_eq!(requests(&exchange).len(), 1);
     assert_eq!(pat.ordinary_calls.load(Ordering::Relaxed), 0);
-    assert_eq!(pat.fresh_calls.load(Ordering::Relaxed), 3);
+    assert_eq!(pat.fresh_calls.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

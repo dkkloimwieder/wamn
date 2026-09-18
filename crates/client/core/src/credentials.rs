@@ -1,7 +1,7 @@
 //! Where a caller's credential comes from.
 //!
-//! Providers supply either a static PAT or an in-memory session. Fresh-only
-//! operations request a PAT explicitly and never replay a refused session call.
+//! Providers supply either a static PAT or an in-memory session. Application
+//! operations use the ordinary bearer path and never replay a refused call.
 
 mod password;
 mod session;

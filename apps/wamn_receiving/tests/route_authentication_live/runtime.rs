@@ -413,7 +413,7 @@ pub(super) async fn build_journey_runtime(
     let mut routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authentication(Arc::new(
             RouteAuthentication::new(
-                identity_reader,
+                Arc::clone(&identity_reader),
                 Arc::clone(&postgres),
                 ORG,
                 PROJECT,
@@ -423,7 +423,10 @@ pub(super) async fn build_journey_runtime(
         ));
     if let Some(verifier) = session_verifier {
         routing = routing.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
-            verifier, postgres, PROJECT,
+            verifier,
+            identity_reader,
+            postgres,
+            PROJECT,
         )));
     }
     let routing = Arc::new(routing);

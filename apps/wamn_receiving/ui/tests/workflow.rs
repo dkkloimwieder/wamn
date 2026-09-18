@@ -170,7 +170,7 @@ async fn a_nested_fresh_credential_refusal_is_visible_without_a_retry() {
     );
     let displayed = render(&app);
     assert!(displayed.contains("fresh-credential-required"));
-    assert!(displayed.contains("requires a PAT"));
+    assert!(displayed.contains("server refused this credential"));
     assert!(matches!(app.next_action(), Action::None));
     assert_eq!(deployment.sent.lock().expect("sent").len(), 1);
 }

@@ -31,7 +31,8 @@ The existing `wamn-identity` service issues Ed25519-signed session tokens throug
 The audience identifies the exact organization, project, environment, and environment instance.
 Tokens last at most 900 seconds with 30 seconds of tolerance.
 Hosts use the configured issuer's public keys, with a 300-second freshness limit, and read current role permissions per request.
-Membership, assigned-role removal, and principal disablement affect existing tokens through their remaining lifetime.
+New session admissions read current account, membership, login or source-PAT validity, and assigned roles.
+Revocation blocks the next admission without waiting for token expiry.
 
 Human creation, membership grants, and tenant-user provisioning already exist through `create-human`, `grant-project-env-membership`, and `reconcile-run-plane`.
 Reuse these authorities and the existing token issuer.
@@ -48,8 +49,7 @@ Both credentials use one set of routes, the same canonical caller, and one permi
 Accepting a credential establishes the caller. It grants no additional membership, role, or operation permission.
 Private event handlers remain private and gain no application route.
 
-Route acceptance does not override an operation's stricter authentication requirement.
-Preserve the existing PAT-only check for fresh-only operations during initial session enablement, including nested calls.
+The first increment preserves the original PAT-only restriction during initial session enablement.
 The [session-policy increment](#increment-3-renewable-sessions-for-all-permitted-operations) replaces that transitional restriction.
 The owner rejects operation-specific password prompts and human PAT requirements.
 
@@ -181,9 +181,9 @@ Retain consumed-credential evidence through family expiry, then remove obsolete 
 This follows the rotation approach in [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14.2).
 
 Logout revokes the current family; logout-all and principal disablement revoke all families for the person.
-Already issued access tokens retain their remaining validity, bounded by token expiry, absolute session expiry, and tolerance.
+Increment 2 alone leaves issued tokens valid until expiry. Increment 3 adds current revocation checks at admission.
 If the issuer is unreachable, clear local credentials and report that server-side revocation was not confirmed.
-Do not promise immediate access-token revocation.
+Do not claim immediate revocation before increment 3 is deployed.
 
 Password recovery uses an emailed single-use secret entered through a hidden terminal prompt.
 Reset completion replaces the password, invalidates outstanding invitation/reset secrets, and revokes every renewal family for the person.
@@ -198,7 +198,7 @@ Existing PATs retain their explicit revocation path; password reset does not sil
 Implement revocation and issuance ordering with ordinary transactions in the existing identity database.
 Concurrent renewal cannot escape logout or reset as a usable successor credential.
 An in-flight login using the old password cannot create a surviving renewal family after password reset commits.
-Already issued access tokens retain the stated validity limitation.
+Increment 3 extends these revocations to issued tokens at the next admission.
 Test these races against real PostgreSQL when renewal and reset land, not as a prerequisite for increment 1.
 
 Self-service email changes, general account linking, persistent terminal credentials, and renewal retry grace remain outside this increment.
@@ -223,22 +223,26 @@ Keep the eight-hour absolute login deadline and the 30-minute renewal inactivity
 A failed or expired login requires normal login again. An operation classification does not trigger another password prompt.
 The client never automatically replays an application mutation after a refusal or new login.
 
-The existing PAT-only rule also provides a current identity lookup.
-Removing the password requirement does not by itself select a replacement for that lookup.
-Before changing enforcement, resolve the remaining account and membership policy for formerly PAT-only operations:
+The owner selects current server-side validity checks for every human session admission.
+Reuse the existing identity reader and login records. Do not cache an active-session result.
+Signed tokens identify their password login or the source PAT of an optional exchange.
+The host checks the record, principal status, and environment membership before admitting a new request.
+It intersects signed roles with current assignments and reads current permissions for the active tenant user.
+A revoked, expired, missing, or mismatched authority refuses admission.
+Unavailable revocation state also refuses admission. The client never falls back to a PAT.
 
-One choice uses the existing session lifetime, at most 900 seconds plus 30 seconds of clock tolerance.
-The other preserves current account and membership checks on the server without asking the person for a password.
-
-The first choice accepts the same delay for account and membership changes as ordinary session operations.
-The second choice requires a server lookup and its availability for those operations.
-Neither choice changes the existing permission checks or introduces periodic password confirmation.
-Beads records the owner answer before implementation.
+Logout revokes one password login. Logout-all, reset, and account disablement revoke all password logins for that person.
+PAT exchange remains bound to its source PAT, including that PAT's revocation and expiry.
+Password reset does not revoke independently provisioned PATs or their exchanged sessions.
+Revocation blocks new admissions after the change commits. It does not undo work already admitted.
+Nested calls retain the admitted caller and continue normal operation permission checks.
+No extra password confirmation is required.
 
 Coordinate host enforcement, direct route admission, client credential selection, generated clients, and their tests.
 Remove obsolete PAT-only guidance and password challenges from the proposed design.
 Preserve caller identity, private-handler boundaries, exact environment binding, and the existing PAT path.
-Use the current token profile unless the selected enforcement approach requires a concrete change.
+Add the required signed `authority` claim and update issuer, verifier, and clients together.
+Reject old tokens without that claim and require login again after deployment.
 The controlled deployment permits coordinated restarts and login again. Do not build a prolonged compatibility rollout.
 
 ## OIDC and later methods
@@ -294,7 +298,8 @@ Increment 3 must demonstrate:
 
 - Sessions and PATs reach every permitted application operation without operation-specific password prompts.
 - Direct and nested calls preserve the original caller, environment binding, and normal permission refusals.
-- Account and membership changes follow the selected policy, with explicit tests for its effect on existing sessions.
+- Logout, reset, disablement, membership removal, and source-PAT revocation affect the next admission using an already issued token.
+- Missing authority and unavailable revocation state refuse admission without a cached approval.
 - Renewal preserves absolute expiry and inactivity limits, and no authentication failure automatically replays an application mutation.
 - Existing PAT access and private-handler boundaries remain intact.
 
@@ -304,7 +309,7 @@ Password-first and the three-increment order are settled.
 Resend is the initial email transport, with sender `WAMN <d@wamn.dev>`.
 The [execution architecture](../architecture/execution.md#caller-authentication) records the implemented password protections and their limits.
 Operation-specific password reauthentication is rejected.
-Resolve only the server enforcement choice described in increment 3 before replacing the existing PAT-only check.
+Immediate revocation checks for new human session admissions are approved. No account-freshness decision remains open.
 The mailbox-loss procedure belongs to increment 2; the concrete OIDC provider and upstream limits belong to its future epic.
 
 The Beads epics carry this plan's scope and reassessment rule:

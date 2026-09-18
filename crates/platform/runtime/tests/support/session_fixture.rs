@@ -38,7 +38,7 @@ pub(super) fn header() -> Value {
 pub(super) fn claims() -> Value {
     json!({"iss": ISSUER, "sub": "ed7056a9-5639-455f-9640-4678458794c0",
         "org": ORG, "aud": AUDIENCE, "roles": ["purchase-reader"],
-        "iat": 1000, "exp": 1900, "jti": "session-test"})
+        "iat": 1000, "exp": 1900, "authority": {"login": "ed7056a9-5639-455f-9640-4678458794c0"}, "jti": "session-test"})
 }
 
 pub(super) fn signed(header: &Value, claims: &Value) -> String {
@@ -206,4 +206,38 @@ impl Drop for Server {
             task.abort();
         }
     }
+}
+
+/// Minimal identity rows for route tests; lifecycle tests use the full system schema.
+pub(super) async fn install_authority(
+    client: &tokio_postgres::Client,
+    project: &str,
+    environment: &str,
+    audience: &str,
+    principals: &[&str],
+) -> anyhow::Result<()> {
+    client.batch_execute("CREATE SCHEMA identity; CREATE SCHEMA provisioning; CREATE SCHEMA registry;
+        CREATE TABLE identity.principals (id uuid PRIMARY KEY, kind text, status text);
+        CREATE TABLE identity.project_env_memberships (principal_id uuid, org text, project text, env text);
+        CREATE TABLE identity.password_logins (id uuid PRIMARY KEY, principal_id uuid, issuer text, audience text,
+            revoked_at timestamptz, expires_at timestamptz, renewal_expires_at timestamptz);
+        CREATE TABLE identity.pats (id uuid PRIMARY KEY, principal_id uuid, revoked_at timestamptz, expires_at timestamptz);
+        CREATE TABLE identity.project_roles (principal_id uuid, org text, project text, role text);").await?;
+    for principal in principals {
+        client
+            .execute(
+                "INSERT INTO identity.principals VALUES ($1::text::uuid,'human','active')",
+                &[principal],
+            )
+            .await?;
+        client
+            .execute(
+                "INSERT INTO identity.project_env_memberships VALUES ($1::text::uuid,$2,$3,$4)",
+                &[principal, &ORG, &project, &environment],
+            )
+            .await?;
+        client.execute("INSERT INTO identity.password_logins VALUES ($1::text::uuid,$1::text::uuid,$2,$3,NULL,clock_timestamp()+interval '8 hours',clock_timestamp()+interval '30 minutes')",
+            &[principal,&ISSUER,&audience]).await?;
+    }
+    Ok(())
 }

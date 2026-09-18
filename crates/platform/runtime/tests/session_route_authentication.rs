@@ -324,8 +324,25 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
 
     let mut server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
+    session_fixture::install_authority(
+        &admin,
+        PROJECT,
+        "dev",
+        AUDIENCE,
+        &[claims()["sub"].as_str().unwrap(), SECOND_PRINCIPAL],
+    )
+    .await?;
+    admin
+        .batch_execute(&sql::grant_identity_reader_surface_sql())
+        .await?;
+    admin.batch_execute("CREATE ROLE session_identity_reader LOGIN; GRANT wamn_identity_reader TO session_identity_reader;").await?;
+    let identity_reader = connect(admin_url).await?;
+    identity_reader
+        .batch_execute("SET ROLE session_identity_reader")
+        .await?;
     let authentication = Arc::new(SessionRouteAuthentication::new(
         verifier,
+        Arc::new(identity_reader),
         permission_reader(url.as_str())?,
         PROJECT,
     ));
@@ -335,6 +352,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     first["roles"] = json!(["purchase-reader", "purchase-writer"]);
     let mut second = claims();
     second["sub"] = json!(SECOND_PRINCIPAL);
+    second["authority"] = json!({"login": SECOND_PRINCIPAL});
     accepted(&route, &first).await;
     let before = statements(&admin, &generation).await?;
     let admitted = accepted(&route, &first).await;
@@ -397,10 +415,76 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         .await?;
     let snapshot = accepted(&route, &first).await;
     assert!(
-        snapshot.permits(READ) && snapshot.permits(WRITE),
-        "signed roles remain the accepted identity snapshot"
+        !snapshot.permits(READ) && !snapshot.permits(WRITE),
+        "removed roles and disabled users affect the next admission"
     );
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 2);
+
+    // Each request reuses the same unexpired signed token. No cached approval survives.
+    for (revoke, restore) in [
+        (
+            "UPDATE identity.password_logins SET revoked_at=clock_timestamp()",
+            "UPDATE identity.password_logins SET revoked_at=NULL",
+        ),
+        (
+            "UPDATE identity.principals SET status='disabled'",
+            "UPDATE identity.principals SET status='active'",
+        ),
+        (
+            "UPDATE identity.project_env_memberships SET env='removed'",
+            "UPDATE identity.project_env_memberships SET env='dev'",
+        ),
+        (
+            "UPDATE identity.password_logins SET audience='wrong'",
+            "UPDATE identity.password_logins SET audience='urn:wamn:project-env:org-a:project:dev:instance-one'",
+        ),
+        (
+            "UPDATE identity.password_logins SET expires_at=clock_timestamp()-interval '1 second'",
+            "UPDATE identity.password_logins SET expires_at=clock_timestamp()+interval '8 hours'",
+        ),
+    ] {
+        admin.batch_execute(revoke).await?;
+        assert_eq!(
+            route
+                .authenticate_authorization_for_test(
+                    ATTACHMENT,
+                    Some(&format!("Bearer {}", signed(&header(), &first)))
+                )
+                .await
+                .unwrap_err(),
+            (401, "unauthorized".into())
+        );
+        admin.batch_execute(restore).await?;
+        accepted(&route, &first).await;
+    }
+    let mut wrong_login = first.clone();
+    wrong_login["authority"] = json!({"login": SECOND_PRINCIPAL});
+    assert_eq!(
+        route
+            .authenticate_authorization_for_test(
+                ATTACHMENT,
+                Some(&format!("Bearer {}", signed(&header(), &wrong_login)))
+            )
+            .await
+            .unwrap_err(),
+        (401, "unauthorized".into())
+    );
+    admin
+        .batch_execute("REVOKE SELECT ON identity.password_logins FROM wamn_identity_reader")
+        .await?;
+    assert_eq!(
+        route
+            .authenticate_authorization_for_test(
+                ATTACHMENT,
+                Some(&format!("Bearer {}", signed(&header(), &first)))
+            )
+            .await
+            .unwrap_err(),
+        (503, "authentication-unavailable".into())
+    );
+    admin
+        .batch_execute("GRANT SELECT ON identity.password_logins TO wamn_identity_reader")
+        .await?;
 
     let before = statements(&admin, &generation).await?;
     for (field, value) in [

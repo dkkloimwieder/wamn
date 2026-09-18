@@ -197,7 +197,10 @@ pub async fn authenticate_renewal(
     }
     Ok(resolve_principal(tx, &login.principal)
         .await?
-        .map(|principal| AuthenticatedPrincipal { principal }))
+        .map(|principal| AuthenticatedPrincipal {
+            principal,
+            pat_id: None,
+        }))
 }
 
 /// Consume a credential once and create its replacement in the same transaction.

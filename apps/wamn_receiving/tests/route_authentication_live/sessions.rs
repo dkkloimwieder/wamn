@@ -621,7 +621,7 @@ pub(super) async fn assert_nested_session(
     }
     let (trace_id, traceparent) = journey_trace(31);
     // The existing command keeps the two-host GET fixture and event set unchanged.
-    // A fresh-only refusal must stop before the base guest runs.
+    // Legacy fresh-only metadata accepts the same authorized session.
     let response = invoke_journey_route(
         &JourneyRuntime {
             engine: &engine,
@@ -637,23 +637,21 @@ pub(super) async fn assert_nested_session(
     )
     .await?;
     if fresh_only {
-        assert_operation_refusal(&response, "fresh-credential-required", BASE_RECORD_RECEIPT)?;
-        let spans = traces.spans();
-        assert_nested_permission_denial_trace(
-            &spans,
+        anyhow::ensure!(
+            successful_value(&response, "session-nested-replay")? == expected_replay,
+            "authorized session failed the nested operation"
+        );
+        assert_nested_record_receipt_trace(
+            &traces.spans(),
             &trace_id,
             &digests[OVERLAY_PACKAGE_ID],
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
-        );
-        let invoked = trace_component_invocations(&spans, &trace_id);
-        anyhow::ensure!(
-            span_attribute(invoked[0], "wamn.caller_credential_kind").as_deref() == Some("session"),
-            "nested fresh-only refusal changed the originating credential"
+            "session",
         );
         anyhow::ensure!(
             nested_receipt_state(project.as_ref()).await? == before,
-            "session refusal changed committed Receipt state"
+            "session replay changed the committed result"
         );
 
         // This is an explicit new request from the same human, not a host retry.
@@ -704,11 +702,22 @@ pub(super) async fn assert_nested_session(
             request_body.clone(),
         )
         .await?;
-        assert_operation_refusal(&response, "fresh-credential-required", BASE_RECORD_RECEIPT)?;
-        assert_no_component_trace(&traces.spans(), &direct_session_trace);
+        let session_value = successful_value(&response, "session-nested-replay")?;
+        anyhow::ensure!(
+            session_value["receipt_id"] == expected_replay["receipt_id"],
+            "direct session returned the wrong receipt"
+        );
+        assert_direct_route_trace(
+            &traces.spans(),
+            &direct_session_trace,
+            direct_attachment.wiring_id,
+            BASE_RECORD_RECEIPT,
+            &digests[BASE_PACKAGE_ID],
+            human.id().as_str(),
+        );
         anyhow::ensure!(
             nested_receipt_state(project.as_ref()).await? == before,
-            "direct session refusal changed committed Receipt state"
+            "direct session replay changed committed Receipt state"
         );
 
         let (direct_pat_trace, direct_pat_parent) = journey_trace(36);
@@ -876,7 +885,7 @@ pub(super) async fn assert_nested_session(
     admin_task.abort();
     if fresh_only {
         println!(
-            "HOST_FRESH_ONLY_NESTED result=pass session=refused pat=accepted direct_session=refused direct_pat=accepted role_revocation=refused membership_revocation=refused committed_state=unchanged fixture_release=3 manifest_format=1"
+            "HOST_FRESH_ONLY_NESTED result=pass session=accepted pat=accepted direct_session=accepted direct_pat=accepted role_revocation=refused membership_revocation=refused committed_state=unchanged fixture_release=3 manifest_format=1"
         );
     } else {
         println!(

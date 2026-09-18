@@ -169,7 +169,7 @@ For an unknown earlier result, follow the submission guidance above before resub
 Outside a field editor, press `q` to quit and log out.
 If a discard prompt appears, press `y` to proceed.
 Logout clears local credentials and asks the server to stop further renewal.
-Already issued access credentials retain their validity until expiry.
+After server logout succeeds, existing login credentials cannot start another application request.
 If server logout cannot be confirmed, Receiving reports that limitation.
 
 ## Administrator and developer setup

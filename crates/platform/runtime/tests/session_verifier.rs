@@ -7,6 +7,10 @@ use serde_json::json;
 use wamn_runtime::session_verifier::SessionVerifier;
 
 #[path = "support/session_fixture.rs"]
+#[expect(
+    dead_code,
+    reason = "The shared fixture also provides database admission state."
+)]
 mod session_fixture;
 use session_fixture::{AUDIENCE, ISSUER, ORG, Server, claims, header, signed};
 

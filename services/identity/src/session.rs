@@ -12,7 +12,7 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, authenticate_pat, has_project_env_membership,
-    session_token::{IssuedSessionToken, SessionClaims, sign_session_token},
+    session_token::{IssuedSessionToken, SessionAuthority, SessionClaims, sign_session_token},
 };
 
 use crate::{ConfiguredTarget, IO_TIMEOUT, Inner, connect_database, response, unavailable};
@@ -136,7 +136,8 @@ pub(super) async fn mint_for_principal(
     configured: &ConfiguredTarget,
     started_at: i64,
 ) -> Result<IssuedSessionToken, ExchangeFailure> {
-    let claims = claims_for_principal(inner, principal, configured).await?;
+    let authority = SessionAuthority::Pat(principal.pat_id().ok_or_else(refused)?.to_owned());
+    let claims = claims_for_principal(inner, principal, configured, authority).await?;
     let mut signing = inner.signing.as_ref().ok_or_else(failed)?.lock().await;
     sign_session_token(&mut signing.client, claims, started_at)
         .await
@@ -147,6 +148,7 @@ pub(super) async fn claims_for_principal(
     inner: &Inner,
     principal: &AuthenticatedPrincipal,
     configured: &ConfiguredTarget,
+    authority: SessionAuthority,
 ) -> Result<SessionClaims, ExchangeFailure> {
     let roles = authorized_roles(inner, principal, configured).await?;
     let principal = principal.principal();
@@ -171,6 +173,7 @@ pub(super) async fn claims_for_principal(
         exp: 0,
         iat: 0,
         jti,
+        authority,
     })
 }
 

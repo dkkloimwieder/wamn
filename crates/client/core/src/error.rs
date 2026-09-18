@@ -165,7 +165,7 @@ impl core::fmt::Display for ClientError {
             ),
             Self::Operation { literal, .. } if literal == "fresh-credential-required" => {
                 formatter.write_str(
-                    "fresh-credential-required: this operation requires a PAT. The request was not retried",
+                    "fresh-credential-required: the server refused this credential. The request was not retried",
                 )
             }
             Self::Operation { literal, detail } if literal == "schema-invalid" => {

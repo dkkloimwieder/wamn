@@ -12,7 +12,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{ED25519, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
-use tokio_postgres::{Client, Transaction};
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 use crate::{
     IdentityError, IdentityErrorKind, PrincipalId,
@@ -27,6 +27,16 @@ pub const TOLERANCE: i64 = 30;
 pub const SESSION_ALGORITHM: &str = "Ed25519";
 /// Exact media type of a WAMN session token.
 pub const SESSION_TYPE: &str = "wamn-session+jwt";
+
+/// Revocable authority that issued a session token.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionAuthority {
+    /// An existing password login and its renewal family.
+    Login(String),
+    /// The source credential of an optional PAT exchange.
+    Pat(String),
+}
 
 /// Required wire claims; deserialization alone does not authenticate them.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -48,6 +58,8 @@ pub struct SessionClaims {
     pub iat: i64,
     /// Token identifier only; never a server-side session record.
     pub jti: String,
+    /// Current server-side authority, checked for every new admission.
+    pub authority: SessionAuthority,
 }
 
 /// Host-configured scope; no field is inferred from the token or its key ID.
@@ -253,6 +265,17 @@ fn decode_header(encoded: &str) -> Result<SessionHeader, IdentityError> {
 }
 
 fn validate_claim_shape(claims: &SessionClaims) -> Result<(), IdentityError> {
+    let authority = match &claims.authority {
+        SessionAuthority::Login(id) | SessionAuthority::Pat(id) => id,
+    };
+    if authority
+        .parse::<PrincipalId>()
+        .map_err(|_| refused())?
+        .as_str()
+        != authority
+    {
+        return Err(refused());
+    }
     let principal = claims.sub.parse::<PrincipalId>().map_err(|_| refused())?;
     if principal.as_str() != claims.sub
         || claims.iss.trim().is_empty()
@@ -280,4 +303,46 @@ fn unix_seconds() -> Result<i64, IdentityError> {
 
 fn refused() -> IdentityError {
     IdentityError::new(IdentityErrorKind::InvalidInput, "session token refused")
+}
+
+/// Check current session authority and membership without caching an approval.
+///
+/// Signature and exact audience verification must precede this read. The caller
+/// supplies project and environment from the loaded release, never the request.
+pub async fn session_is_active(
+    client: &(impl GenericClient + Sync),
+    claims: &SessionClaims,
+    project: &str,
+    environment: &str,
+) -> Result<bool, IdentityError> {
+    let (login, pat) = match &claims.authority {
+        SessionAuthority::Login(id) => (Some(id.as_str()), None),
+        SessionAuthority::Pat(id) => (None, Some(id.as_str())),
+    };
+    client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM identity.principals p \
+         JOIN identity.project_env_memberships m ON m.principal_id=p.id \
+         WHERE p.id=$1::text::uuid AND p.kind='human' AND p.status='active' \
+         AND m.org=$2 AND m.project=$3 AND m.env=$4 AND ( \
+         EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id=$5::text::uuid \
+         AND l.principal_id=p.id AND l.issuer=$7 AND l.audience=$8 AND l.revoked_at IS NULL \
+         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()) OR \
+         EXISTS (SELECT 1 FROM identity.pats t WHERE t.id=$6::text::uuid \
+         AND t.principal_id=p.id AND t.revoked_at IS NULL AND t.expires_at>clock_timestamp())))",
+            &[
+                &claims.sub,
+                &claims.org,
+                &project,
+                &environment,
+                &login,
+                &pat,
+                &claims.iss,
+                &claims.aud,
+            ],
+        )
+        .await
+        .map_err(key_database_error)?
+        .try_get(0)
+        .map_err(key_database_error)
 }

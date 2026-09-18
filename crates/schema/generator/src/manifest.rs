@@ -34,7 +34,7 @@ pub struct PackageManifest {
 pub struct CustomOperationDeclaration {
     pub kind: CustomOperationKind,
     pub visibility: OperationVisibility,
-    /// Whether this public operation requires the original caller's fresh PAT.
+    /// Legacy operation metadata; all sessions require current admission authority.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
     #[serde(default)]
@@ -2223,7 +2223,7 @@ impl CrudAction {
 #[serde(deny_unknown_fields)]
 pub struct OperationDeclaration {
     pub permission: String,
-    /// Whether this registered operation requires the original caller's fresh PAT.
+    /// Legacy operation metadata retained in published component contracts.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

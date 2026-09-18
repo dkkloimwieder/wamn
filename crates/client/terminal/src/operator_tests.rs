@@ -909,7 +909,7 @@ fn lost_response() -> ClientError {
 async fn the_driver_selects_credentials_before_sending_the_declared_screen() {
     for (spec, selection, bearer) in [
         (&SPEC, "ordinary", "Bearer operator-session"),
-        (&FRESH, "fresh", "Bearer operator-pat-1"),
+        (&FRESH, "ordinary", "Bearer operator-session"),
     ] {
         let mut app = ready_screen(spec);
         app.active = Some(0);
@@ -937,7 +937,7 @@ async fn the_driver_selects_credentials_before_sending_the_declared_screen() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn captured_retry_keeps_the_fresh_selection_route_and_exact_body() {
+async fn captured_retry_keeps_the_session_route_and_exact_body() {
     let mut app = ready_screen(&FRESH);
     let first = prepare_application(&mut app, send(false)).unwrap();
     let expected_body = first.body.body().to_vec();
@@ -964,14 +964,14 @@ async fn captured_retry_keeps_the_fresh_selection_route_and_exact_body() {
 
     let requests = transport.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    assert_eq!(*credentials.0.lock().unwrap(), ["fresh", "fresh"]);
+    assert_eq!(*credentials.0.lock().unwrap(), ["ordinary", "ordinary"]);
     assert_eq!(
         requests[0].headers["authorization"],
-        "Bearer operator-pat-1"
+        "Bearer operator-session"
     );
     assert_eq!(
         requests[1].headers["authorization"],
-        "Bearer operator-pat-2"
+        "Bearer operator-session"
     );
     for request in requests.iter() {
         assert_eq!(request.url, "https://example.invalid/record/dock-1");
@@ -1018,7 +1018,7 @@ async fn a_nested_fresh_only_refusal_never_replays_the_outer_request() {
         State::Uncertain { .. }
     ));
     let message = state_text(&app.screens[0]);
-    assert!(message.contains("requires a PAT"));
+    assert!(message.contains("server refused this credential"));
     assert!(message.contains("request was not retried"));
     assert!(prepare_application(&mut app, send(true)).is_err());
     assert!(prepare_application(&mut app, send(false)).is_err());
@@ -1027,29 +1027,24 @@ async fn a_nested_fresh_only_refusal_never_replays_the_outer_request() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_fresh_screen_without_fresh_credentials_never_falls_back_to_a_session() {
+async fn a_legacy_fresh_screen_accepts_session_only_credentials() {
     #[derive(Debug)]
     struct SessionOnly;
     #[async_trait::async_trait]
     impl CredentialProvider for SessionOnly {
         async fn bearer(&self) -> Result<String, CredentialError> {
-            panic!("a fresh-only screen must not request the ordinary session")
+            Ok("session-only".into())
         }
     }
     let mut app = ready_screen(&FRESH);
     let request = prepare_application(&mut app, send(false)).unwrap();
-    let (client, transport) = recorded_client(Arc::new(SessionOnly), []);
-
+    let (client, transport) = recorded_client(Arc::new(SessionOnly), [Err(lost_response())]);
     let (screen, attempt, response) = submit_request(&client, &request).await;
-    assert!(matches!(response, Err(ClientError::Unauthenticated)));
     app.resolve(screen, attempt, response);
-
-    assert!(transport.requests.lock().unwrap().is_empty());
-    assert!(!app.unresolved());
-    assert!(matches!(
-        app.screens[0].submission().state(),
-        State::Refused(_)
-    ));
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].headers["authorization"], "Bearer session-only");
+    assert!(app.unresolved());
 }
 
 #[tokio::test(flavor = "current_thread")]

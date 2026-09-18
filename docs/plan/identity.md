@@ -21,5 +21,5 @@ Any configurable lifetime or freshness limits belong to that design.
 The current 900-second lifetime, 30-second tolerance, and 300-second key freshness limit remain unchanged until a separate decision changes them.
 
 The external connection path must establish its issuer and trusted certificate roots explicitly.
-A browser login must not bypass the current request verifier or fresh-only operation restriction.
+A browser login must not bypass the current request verifier, revocation checks, or operation permissions.
 Federation remains deferred and does not block the existing PAT and session paths.

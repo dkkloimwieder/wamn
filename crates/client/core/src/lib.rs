@@ -152,8 +152,8 @@ impl WamnClient {
             .await
     }
 
-    /// Invoke an operation that explicitly requires fresh PAT authentication.
-    /// No session request runs first, and a refusal is never replayed.
+    /// Invoke an operation with legacy freshness metadata using the normal credential.
+    /// A refusal is never replayed.
     ///
     /// # Errors
     ///
@@ -211,11 +211,12 @@ impl WamnClient {
             .await
     }
 
-    /// Submit a captured request with a PAT when its operation requires freshness.
+    /// Submit a captured request using the ordinary renewable credential.
+    /// The legacy operation flag no longer selects a PAT.
     ///
     /// # Errors
     ///
-    /// Refuses an unavailable PAT or returns a route or transport error.
+    /// Refuses an unavailable credential or returns a route or transport error.
     pub async fn submit_fresh(
         &self,
         route: &RouteMetadata,
@@ -231,7 +232,7 @@ impl WamnClient {
         route: &RouteMetadata,
         parameters: &BTreeMap<String, String>,
         body: Vec<u8>,
-        fresh_only: bool,
+        _fresh_only: bool,
     ) -> Result<HttpResponse, ClientError> {
         let path = route
             .path(parameters)
@@ -239,13 +240,12 @@ impl WamnClient {
                 literal: error.code().to_owned(),
                 detail: serde_json::json!({ "detail": error.to_string() }),
             })?;
-        let bearer = if fresh_only {
-            self.credentials.fresh_bearer().await
-        } else {
-            self.credentials.bearer().await
-        }
-        // Credential acquisition failed before an application request was sent.
-        .map_err(|_| ClientError::Unauthenticated)?;
+        let bearer = self
+            .credentials
+            .bearer()
+            .await
+            // Credential acquisition failed before an application request was sent.
+            .map_err(|_| ClientError::Unauthenticated)?;
 
         let mut headers = BTreeMap::new();
         headers.insert("content-type".to_owned(), "application/json".to_owned());

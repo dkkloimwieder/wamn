@@ -31,7 +31,7 @@ fn fixture() -> (Ed25519KeyPair, PublicSessionKey, Value, Value) {
     let claims = json!({
         "iss":"https://identity.internal", "sub":"ed7056a9-5639-455f-9640-4678458794c0",
         "org":"org-a", "aud":"environment-id-a-dev", "roles":["purchase-reader"],
-        "iat":1000, "exp":1900, "jti":"token-one"
+        "iat":1000, "exp":1900, "authority": {"login": "ed7056a9-5639-455f-9640-4678458794c0"}, "jti":"token-one"
     });
     (pair, key, header, claims)
 }
@@ -213,7 +213,17 @@ fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
             verify_session_token(&signed(&pair, &malformed, &claims), &key, scope(), 1000).is_err()
         );
     }
-    for field in ["iss", "sub", "org", "aud", "roles", "exp", "iat", "jti"] {
+    for field in [
+        "iss",
+        "sub",
+        "org",
+        "aud",
+        "roles",
+        "exp",
+        "iat",
+        "jti",
+        "authority",
+    ] {
         let mut malformed = claims.clone();
         malformed.as_object_mut().unwrap().remove(field);
         assert!(
@@ -223,6 +233,15 @@ fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
     }
     for (field, value) in [
         ("sub", json!("not-a-uuid")),
+        ("authority", json!({"login": "not-a-uuid"})),
+        (
+            "authority",
+            json!({"unknown": "ed7056a9-5639-455f-9640-4678458794c0"}),
+        ),
+        (
+            "authority",
+            json!({"login": "ed7056a9-5639-455f-9640-4678458794c0", "pat": "ed7056a9-5639-455f-9640-4678458794c0"}),
+        ),
         ("roles", json!(["Not A Role"])),
         ("roles", json!(["Purchase-reader"])),
         ("roles", json!([" purchase-reader "])),

@@ -571,6 +571,9 @@ fn claims(issuer: &str) -> SessionClaims {
         iat: 0,
         exp: 0,
         jti: "fixture-token-id".into(),
+        authority: wamn_platform_identity::session_token::SessionAuthority::Login(
+            "ed7056a9-5639-455f-9640-4678458794c0".into(),
+        ),
     }
 }
 

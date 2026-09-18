@@ -200,7 +200,32 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let server = Server::start().await;
     let (keys, _) = server.cache();
     let verifier = SessionVerifier::new(keys, ORG, AUDIENCE)?;
-    let authentication = Arc::new(SessionRouteAuthentication::new(verifier, postgres, PROJECT));
+    let admin = connect(admin_url).await?;
+    let first = claims()["sub"].as_str().unwrap().to_owned();
+    let second = "00000000-0000-4000-8000-0000000000b2";
+    session_fixture::install_authority(&admin, PROJECT, ENVIRONMENT, AUDIENCE, &[&first, second])
+        .await?;
+    admin
+        .execute(
+            "SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:seed-session-authority',false)",
+            &[&FIXTURE_PRINCIPAL],
+        )
+        .await?;
+    for (principal, email) in [
+        (&*first, "alice@example.test"),
+        (second, "bob@example.test"),
+    ] {
+        admin.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'person',$3)", &[&TENANT,&principal,&email]).await?;
+        for role in ["native-parent", "native-child"] {
+            admin.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)", &[&TENANT,&principal,&role]).await?;
+        }
+    }
+    let authentication = Arc::new(SessionRouteAuthentication::new(
+        verifier,
+        Arc::new(admin),
+        postgres,
+        PROJECT,
+    ));
     let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
         "host": "native.example.test", "path": "/native", "method": "POST"
     }});
@@ -247,6 +272,7 @@ async fn authenticated_as(
     let mut body = claims();
     if let Some(principal) = principal {
         body["sub"] = json!(principal);
+        body["authority"] = json!({"login":principal});
     }
     body["aud"] = json!(AUDIENCE);
     body["iat"] = json!(now);
@@ -316,17 +342,24 @@ fn child_has_started(fixture: &Fixture) -> bool {
         })
 }
 
-async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
+async fn assert_case(
+    scenario: Scenario,
+    caller: &AuthenticatedCaller,
+    postgres: Arc<WamnPostgres>,
+) {
     let child_case = match scenario {
         Scenario::InitializationDeadline => Case::StartDeadline,
         Scenario::Deadline => Case::RunDeadline,
         Scenario::Cancellation => Case::Cancellation,
         _ => Case::Success,
     };
-    let fixture = Fixture::build(
+    let fixture = Fixture::build_with_reuse(
         Case::NestedRefusal,
         Some((child_case, scenario == Scenario::FreshOnly)),
         true,
+        None,
+        false,
+        Some(postgres),
     )
     .await;
     let target = fixture.target().await;
@@ -373,27 +406,20 @@ async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
             None => invocation.await,
         };
         match scenario {
-            Scenario::Success => {
+            Scenario::Success | Scenario::FreshOnly => {
                 let emission = result
                     .expect("permitted nested dispatch")
                     .expect("typed emission");
                 assert_eq!(emission.payload, r#"[{"value":37}]"#);
                 assert_eq!(emission.port, None);
             }
-            Scenario::PermissionDenied | Scenario::FreshOnly => {
+            Scenario::PermissionDenied => {
                 let error = result.expect_err("the registered child must be refused");
                 let refusal = error
                     .downcast_ref::<OperationRefusal>()
                     .unwrap_or_else(|| panic!("native dispatch retains typed refusal: {error:#}"));
                 assert_eq!(refusal.operation(), CHILD);
-                assert_eq!(
-                    refusal.kind(),
-                    if scenario == Scenario::FreshOnly {
-                        OperationRefusalKind::FreshCredentialRequired
-                    } else {
-                        OperationRefusalKind::PermissionDenied
-                    }
-                );
+                assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
             }
             Scenario::InitializationDeadline | Scenario::Deadline => {
                 let error =
@@ -407,7 +433,7 @@ async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
     fixture.assert_clean().await;
     let child_ran = matches!(
         scenario,
-        Scenario::Success | Scenario::Deadline | Scenario::Cancellation
+        Scenario::Success | Scenario::FreshOnly | Scenario::Deadline | Scenario::Cancellation
     );
     assert_eq!(child_has_started(&fixture), child_ran);
     let observations = fixture.events.lock().expect("observations lock").clone();
@@ -541,6 +567,7 @@ async fn assert_authenticated(admin_url: &str) -> anyhow::Result<()> {
     let (mut server, route) = authentication_fixture(admin_url).await?;
     let parent_only = authenticated(&route, false).await;
     let permitted = authenticated(&route, true).await;
+    let (postgres, _) = warm_postgres(admin_url, &[]).await?;
     for scenario in SCENARIOS {
         assert_case(
             scenario,
@@ -549,6 +576,7 @@ async fn assert_authenticated(admin_url: &str) -> anyhow::Result<()> {
             } else {
                 &permitted
             },
+            Arc::clone(&postgres),
         )
         .await;
     }
@@ -639,10 +667,9 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             let bob =
                 authenticated_as(&route, true, Some("00000000-0000-4000-8000-0000000000b2")).await;
             assert_ne!(alice.principal_id(), bob.principal_id());
-            let (postgres, credentials) =
-                warm_postgres(database.url(), &[alice.principal_id(), bob.principal_id()])
-                    .await
-                    .expect("guest-generation fixture");
+            let (postgres, credentials) = warm_postgres(database.url(), &[])
+                .await
+                .expect("guest-generation fixture");
             let fixture = Fixture::build_with_reuse(
                 Case::NestedRefusal,
                 Some((Case::Success, false)),
@@ -755,16 +782,10 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             .await;
             let mut request = fresh_only.request(Instant::now() + CLEANUP);
             request.caller = Some(alice.clone());
-            let error = invoke_native(&fresh_only.target().await, request)
+            invoke_native(&fresh_only.target().await, request)
                 .await
-                .expect_err("a session still cannot invoke a fresh-only child");
-            assert_eq!(
-                error
-                    .downcast_ref::<OperationRefusal>()
-                    .expect("typed credential refusal")
-                    .kind(),
-                OperationRefusalKind::FreshCredentialRequired
-            );
+                .expect("session admits the legacy fresh-only child")
+                .expect("emission");
             let pat = pat_caller(
                 database.url(),
                 Arc::clone(&postgres),
@@ -796,21 +817,15 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                     .iter()
                     .filter(|event| event.phase == 0 && &event.scope == root_id)
                     .count(),
-                2,
-                "the two PAT calls reuse the replacement root instance"
+                1,
+                "session and PAT calls reuse the same root instance"
             );
             let mut request = fresh_only.request(Instant::now() + CLEANUP);
             request.caller = Some(alice);
-            let error = invoke_native(&fresh_only.target().await, request)
+            invoke_native(&fresh_only.target().await, request)
                 .await
-                .expect_err("a reused instance cannot inherit the preceding PAT");
-            assert_eq!(
-                error
-                    .downcast_ref::<OperationRefusal>()
-                    .expect("fresh-only refusal after PAT")
-                    .kind(),
-                OperationRefusalKind::FreshCredentialRequired
-            );
+                .expect("session remains authorized after PAT calls")
+                .expect("emission");
             super::warm::close(&fresh_only).await;
             let retired =
                 Fixture::build_with_reuse(Case::Success, None, true, None, true, Some(postgres))
@@ -979,7 +994,7 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
                 .await
                 .expect("database and signed caller");
             let caller = authenticated(&route, true).await;
-            let (postgres, _) = warm_postgres(database.url(), &[caller.principal_id()])
+            let (postgres, _) = warm_postgres(database.url(), &[])
                 .await
                 .expect("tenant guest generation");
             let admin = connect(database.url()).await.expect("admin");

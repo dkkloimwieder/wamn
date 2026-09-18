@@ -196,7 +196,9 @@ pub(crate) fn authorize_registered_operation(
     let caller = caller
         .filter(|caller| caller.permits(operation))
         .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
-    if fresh_only && caller.credential_kind() != CredentialKind::Pat {
+    // Human sessions now receive a current authority check at request admission.
+    // This does not widen the separately admitted queued-service contract.
+    if fresh_only && caller.credential_kind() == CredentialKind::QueuedService {
         return Err(OperationRefusal::new(
             OperationRefusalKind::FreshCredentialRequired,
             operation,

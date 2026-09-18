@@ -744,12 +744,13 @@ pub const REGISTRY_READER_RELATIONS: [&str; 1] = ["event_readers"];
 /// reads `project_roles`; human routes require `project_env_memberships`
 /// (all in `crates/identity/platform/src/lib.rs`).
 /// PostgreSQL checks privileges on every relation a statement references, so all
-/// four are load bearing.
-pub const IDENTITY_READER_RELATIONS: [&str; 4] = [
+/// relations are required, including password login revocation state.
+pub const IDENTITY_READER_RELATIONS: [&str; 5] = [
     "pats",
     "principals",
     "project_env_memberships",
     "project_roles",
+    "password_logins",
 ];
 
 /// Converge one system-plane reader's stable ACL role to exactly `SELECT` on
@@ -1380,7 +1381,8 @@ mod tests {
              GRANT SELECT ON TABLE \"identity\".\"pats\" TO \"wamn_identity_reader\"; \
              GRANT SELECT ON TABLE \"identity\".\"principals\" TO \"wamn_identity_reader\"; \
              GRANT SELECT ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_reader\";"
+             GRANT SELECT ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_reader\"; \
+             GRANT SELECT ON TABLE \"identity\".\"password_logins\" TO \"wamn_identity_reader\";"
         );
     }
 

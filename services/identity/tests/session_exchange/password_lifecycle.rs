@@ -124,6 +124,17 @@ async fn claims(fixture: &Fixture, body: &Value) -> SessionClaims {
     .expect_redacted("signed session")
 }
 
+async fn active(fixture: &Fixture, body: &Value) -> bool {
+    wamn_platform_identity::session_token::session_is_active(
+        &fixture.system.client,
+        &claims(fixture, body).await,
+        "receiving",
+        "dev",
+    )
+    .await
+    .expect_redacted("current session authority")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
@@ -137,6 +148,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     let verified = claims(&fixture, &first).await;
     assert_eq!(verified.sub, person.id().as_str());
     assert_eq!(verified.roles, vec!["receiver"]);
+    assert!(active(&fixture, &first).await);
     let second = body(
         request(&https, &fixture, "/password/renew", &first)
             .send()
@@ -170,8 +182,9 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         "{\"error\":\"unauthorized\"}",
     )
     .await;
-    // Revocation stops renewal, while a previously issued access token still verifies.
-    claims(&fixture, &second).await;
+    // A valid signature cannot bypass a revoked login.
+    assert!(!active(&fixture, &first).await);
+    assert!(!active(&fixture, &second).await);
 
     let active = login(&https, &fixture).await;
     let wrong = post(
@@ -283,7 +296,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    claims(&fixture, &active).await;
+    assert!(!self::active(&fixture, &active).await);
 
     let a = login(&https, &fixture).await;
     let b = login(&https, &fixture).await;
@@ -295,6 +308,8 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         204
     );
+    assert!(!self::active(&fixture, &a).await);
+    assert!(!self::active(&fixture, &b).await);
     assert_eq!(
         request(&https, &fixture, "/password/renew", &b)
             .send()
@@ -334,9 +349,11 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         0
     );
     let disabled = login(&https, &fixture).await;
+    assert!(self::active(&fixture, &disabled).await);
     disable_principal(&fixture.system.client, person.id())
         .await
         .unwrap();
+    assert!(!self::active(&fixture, &disabled).await);
     assert_eq!(
         request(&https, &fixture, "/password/renew", &disabled)
             .send()
@@ -440,6 +457,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     wait_for_blocked_issuer(&fixture.system.client, &fixture.issuer_role).await;
     fixture.system.client.batch_execute("COMMIT").await.unwrap();
     reset.await.unwrap().unwrap();
+    assert!(!active(&fixture, &before_reset).await);
     assert_eq!(reset_racing_renewal.await.unwrap().unwrap().status(), 401);
     assert_failure(
         old_login.await.unwrap().unwrap(),

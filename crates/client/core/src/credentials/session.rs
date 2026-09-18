@@ -57,7 +57,7 @@ impl SessionTarget {
     }
 }
 
-/// An in-memory session with an explicit PAT path for fresh-only operations.
+/// An in-memory exchanged session with a source PAT for renewal.
 ///
 /// The supplied transport must enforce HTTPS and refuse redirects for exchanges.
 /// Only the configured issuer receives the PAT. Failed calls are never replayed.

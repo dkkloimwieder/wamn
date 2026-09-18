@@ -246,7 +246,7 @@ The database enforces email format and uniqueness. A failed statement leaves the
 If a statement fails, run `ROLLBACK` before correcting the input.
 The principal lock serializes this update with password login, enrollment, reset, and renewal.
 Old email secrets and renewal credentials cannot survive a successful correction.
-Issued access tokens retain their existing validity. PATs retain their separate revocation procedure.
+Issued password tokens fail new admission after this transaction commits. PATs retain their separate revocation procedure.
 The correction does not reactivate a disabled account or replace its password.
 
 After commit, ask the person to request normal recovery with the replacement email.

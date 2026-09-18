@@ -235,12 +235,12 @@ pub(super) fn assert_value(
     Ok(())
 }
 
-pub(super) fn assert_fresh_refusal(
+pub(super) fn assert_permission_refusal(
     result: Result<Vec<ItemOutcome>, ClientError>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        matches!(result, Err(ClientError::Operation { literal, detail }) if literal == "fresh-credential-required" && detail == json!({"operation": BASE_RECORD_RECEIPT})),
-        "client must expose the exact late fresh-credential-required refusal"
+        matches!(result, Err(ClientError::Operation { literal, detail }) if literal == "permission-denied" && detail == json!({"operation": BASE_RECORD_RECEIPT})),
+        "client must expose the exact late permission-denied refusal"
     );
     Ok(())
 }
@@ -299,7 +299,7 @@ pub(super) async fn assert_session_client(
     )?;
     anyhow::ensure!(
         transport.calls() == 3 && login.transport.calls.load(Ordering::SeqCst) == 1,
-        "explicit fresh client call must send one PAT request without exchange"
+        "legacy fresh client call must send one session request without exchange"
     );
     assert_kind(
         &test,
@@ -307,7 +307,7 @@ pub(super) async fn assert_session_client(
         "receiving_record_receipt",
         BASE_RECORD_RECEIPT,
         base_digest,
-        "pat",
+        "session",
     )?;
 
     let expired = issue_pat(

@@ -240,6 +240,16 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         &jwks,
     )
     .await;
+    assert!(
+        wamn_platform_identity::session_token::session_is_active(
+            system,
+            &first,
+            "receiving",
+            "dev"
+        )
+        .await
+        .expect_redacted("active exchanged session")
+    );
     let dev_pid = only_reader_pid(system, &fixture.targets[0]).await;
     let second = success(
         https,
@@ -422,6 +432,16 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     revoke_pat(system, alice_pat.record().prefix())
         .await
         .expect_redacted("revoke human PAT");
+    assert!(
+        !wamn_platform_identity::session_token::session_is_active(
+            system,
+            &first,
+            "receiving",
+            "dev"
+        )
+        .await
+        .expect_redacted("revoked exchanged session")
+    );
     refuse(https, alice_pat.token(), aud).await;
     success(
         https,

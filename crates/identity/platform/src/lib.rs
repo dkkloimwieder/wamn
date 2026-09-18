@@ -79,13 +79,13 @@ const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
         to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
 const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
-    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable \
+    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1";
 const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
-    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable \
+    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1 AND CASE p.kind \
@@ -313,9 +313,15 @@ impl Principal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedPrincipal {
     principal: Principal,
+    pat_id: Option<String>,
 }
 
 impl AuthenticatedPrincipal {
+    /// The source PAT identity, present only after PAT authentication.
+    pub fn pat_id(&self) -> Option<&str> {
+        self.pat_id.as_deref()
+    }
+
     /// Return the verified principal record.
     pub fn principal(&self) -> &Principal {
         &self.principal
@@ -661,7 +667,13 @@ fn decide_pat(
     {
         return Ok(None);
     }
-    Ok(Some(AuthenticatedPrincipal { principal }))
+    Ok(Some(AuthenticatedPrincipal {
+        principal,
+        pat_id: Some(
+            row.try_get("pat_id")
+                .map_err(|error| database_error(&error))?,
+        ),
+    }))
 }
 
 /// Revoke a personal access token by its non-secret lookup prefix.

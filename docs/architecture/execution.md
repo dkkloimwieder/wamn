@@ -162,18 +162,22 @@ PAT authentication reads the current principal, credential, organization scope, 
 Authorization reads current operation permissions.
 Service credentials retain their declared scope and cannot mint a human session.
 
-A session token carries the human roles selected at minting.
-The host reads current permissions for those roles on each request.
-It does not reread identity membership for each session request.
-PAT revocation, principal disablement, and removal of membership or roles therefore affect existing sessions through their bounded lifetime.
-Permission changes apply to the next request.
+A session token carries the human roles selected at minting and its revocable authority.
+For each new request, the host reads the current principal, environment membership, and password login or source PAT.
+It intersects signed roles with current assignments and reads current permissions for the active tenant user.
+No active-session result is cached. Missing, revoked, expired, or mismatched authority returns 401.
+An unavailable identity read refuses admission with 503. The read has a five-second timeout.
+Logout, reset, account disablement, membership removal, and PAT revocation therefore affect the next admission.
+Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
 
 The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
 The configured environment supplies its current suffix.
 No historical suffix-uniqueness promise follows from that value.
 
 Session tokens use Ed25519 with `typ=wamn-session+jwt`.
-They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, and `jti`.
+They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
+`authority` is exactly one object: `{"login":"<login UUID>"}` or `{"pat":"<source PAT UUID>"}`.
+The password issuer binds the existing login record. PAT exchange binds the authenticated source PAT.
 The `kid` selects a key only within the configured issuer.
 Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
 Unknown roles grant no implicit authority, and an empty permission set returns 403.
@@ -197,6 +201,18 @@ A local credential refusal occurs before HTTP submission and records a refused o
 Failed renewal or login expiry requires explicit login and submission. Quitting clears local credentials and requests server logout.
 [Terminal login](../operations/development-loop.md#receiving-password-login) describes configuration and prompts.
 External federation and unbuilt identity design remain in the [identity plan](../plan/identity.md).
+
+### Consistent session access
+
+Sessions and PATs use the same operation permission checks, including nested operations.
+The legacy `fresh-only` metadata and client methods no longer require a PAT.
+Every human session receives the same current authority checks without operation-specific password prompts.
+Renewal stays automatic during active use and never extends the absolute login deadline.
+
+Deploy the issuer, host, and client changes together. Reconcile identity-reader grants before restarting hosts.
+The identity reader needs SELECT on `identity.password_logins` in addition to its existing identity tables.
+Session-only hosts also require their scoped `WAMN_SYSTEM_URL` identity reader.
+Existing tokens lack the required authority claim, so hosts reject them after this update. People must sign in again.
 
 ## Password enrollment foundation
 
@@ -272,7 +288,7 @@ It returns HTTP 204, including when the credential is already unusable.
 `POST /password/logout-all` accepts the same fields and requires a currently usable renewal credential.
 It revokes all password login families for that person and returns HTTP 204.
 Neither operation requires continued application access. Neither revokes PATs.
-Previously issued access tokens retain their existing bounded validity.
+Previously issued password tokens fail new admission after logout commits.
 
 `POST /password/recover` accepts `email` and shares the global, source, and account limits.
 The service sends a reset secret only for an active human with an established password.
@@ -427,7 +443,7 @@ A turn beyond the budget retains the existing durable lease for recovery.
 The [enqueue-run command](../operations/queued-automation.md) admits production automation under an active service principal.
 The executor reads that principal and its current application permissions before each delivery.
 The normal operation checks also apply to nested calls.
-Queued automation cannot satisfy an operation that requires a fresh PAT.
+The legacy `fresh-only` restriction still refuses queued service callers. Human session support does not widen queued automation.
 SIGTERM and SIGINT use the same five-second native drain budget during active guest work.
 An aborted call loses its invocation authority, and native teardown releases its store.
 After the lease expires, recovery takes a new lease generation. The old generation cannot complete the run.

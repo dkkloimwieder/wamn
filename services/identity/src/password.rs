@@ -359,10 +359,6 @@ async fn handle(
             {
                 return unavailable();
             }
-            let claims = match session::claims_for_principal(inner, &principal, target).await {
-                Ok(claims) => claims,
-                Err(error) => return authority_failure(&error),
-            };
             let renewal = match password_login::create_login(
                 &tx,
                 principal.principal().id(),
@@ -375,6 +371,14 @@ async fn handle(
                 Ok(None) => return session::unauthorized(),
                 Err(_) => return unavailable(),
             };
+            let authority = wamn_platform_identity::session_token::SessionAuthority::Login(
+                renewal.login.id.clone(),
+            );
+            let claims =
+                match session::claims_for_principal(inner, &principal, target, authority).await {
+                    Ok(claims) => claims,
+                    Err(error) => return authority_failure(&error),
+                };
             finish_session(tx, claims, renewal, started_at).await
         }
         "/password/recover" | "/password/reset" => {
@@ -499,10 +503,6 @@ async fn handle(
             let Some(target) = inner.targets.get(&request.aud) else {
                 return session::unauthorized();
             };
-            let claims = match session::claims_for_principal(inner, &principal, target).await {
-                Ok(claims) => claims,
-                Err(error) => return authority_failure(&error),
-            };
             let renewal =
                 match password_login::rotate_login(&tx, &inner.issuer, &request.aud, &secret).await
                 {
@@ -514,6 +514,14 @@ async fn handle(
                         return session::unauthorized();
                     }
                     Err(_) => return unavailable(),
+                };
+            let authority = wamn_platform_identity::session_token::SessionAuthority::Login(
+                renewal.login.id.clone(),
+            );
+            let claims =
+                match session::claims_for_principal(inner, &principal, target, authority).await {
+                    Ok(claims) => claims,
+                    Err(error) => return authority_failure(&error),
                 };
             finish_session(tx, claims, renewal, started_at).await
         }

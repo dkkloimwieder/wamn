@@ -360,6 +360,8 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             counter(&test, &counter_read).await? == 0,
             "counter must start at zero"
         );
+        let removed = test.project.query("DELETE FROM app_system.permissions WHERE tenant_id=$1 AND permission=$2 RETURNING role_name", &[&TENANT,&BASE_RECORD_RECEIPT]).await?;
+        anyhow::ensure!(!removed.is_empty(), "nested permission fixture requires a grant");
         let (trace, parent) = journey_trace(41);
         let client_items: Vec<Value> = serde_json::from_slice(&test.body)?;
         if let Some(client) = &client {
@@ -370,7 +372,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                     &client_items,
                 )
                 .await;
-            super::session_client::assert_fresh_refusal(result)?;
+            super::session_client::assert_permission_refusal(result)?;
             anyhow::ensure!(
                 client_transport
                     .as_ref()
@@ -394,7 +396,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             .await?;
             let refusal = assert_operation_refusal(
                 &response,
-                "fresh-credential-required",
+                "permission-denied",
                 BASE_RECORD_RECEIPT,
             );
             if refusal.is_err() {
@@ -407,6 +409,10 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             "late session refusal rolled back or repeated the earlier committed effect"
         );
         assert_counter_trace(&test, &trace, &parent_digest, base_digest, "session", false)?;
+        for row in removed {
+            let role: String = row.get(0);
+            test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ($1,$2,$3)", &[&TENANT,&role,&BASE_RECORD_RECEIPT]).await?;
+        }
         let (trace, parent) = journey_trace(42);
         if let Some(client) = &client {
             let result = client
@@ -425,7 +431,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                 client_transport
                     .as_ref()
                     .is_some_and(|transport| transport.calls() == 2),
-                "explicit fresh retry must send exactly one further client request"
+                "explicit retry after permission restoration must send exactly one further client request"
             );
         } else {
             let response = invoke_journey_route(
@@ -449,9 +455,9 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         }
         anyhow::ensure!(
             counter(&test, &counter_read).await? == 2,
-            "explicit PAT must add exactly one further committed effect"
+            "explicit retry must add exactly one further committed effect"
         );
-        assert_counter_trace(&test, &trace, &parent_digest, base_digest, "pat", true)?;
+        assert_counter_trace(&test, &trace, &parent_digest, base_digest, if client.is_some() { "session" } else { "pat" }, true)?;
         Ok::<_, anyhow::Error>(())
     }
     .await;

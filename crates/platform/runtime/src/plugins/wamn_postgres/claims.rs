@@ -38,6 +38,10 @@ const OPERATION_PERMISSIONS_SQL: &str = "SELECT permission \
 const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permission \
     FROM app_system.permissions \
     WHERE tenant_id = $1 AND role_name = ANY($2::text[]) \
+    AND EXISTS (SELECT 1 FROM app_system.users u JOIN app_system.user_roles r \
+    ON r.tenant_id=u.tenant_id AND r.user_id=u.id \
+    WHERE u.tenant_id=$1 AND u.id=$3::text::uuid AND u.status='active' \
+    AND r.role_name=app_system.permissions.role_name) \
     ORDER BY permission";
 
 /// One row of the bound principal, read under the tenant's own guest login.
@@ -1721,13 +1725,13 @@ impl WamnPostgres {
     /// Read the fresh permission union for roles from a verified session.
     ///
     /// This single tenant read uses the existing callable-HTTP authority.
-    /// Unknown roles contribute nothing. Identity and role assignments retain
-    /// the signed snapshot's lifetime; this query never refreshes that snapshot.
+    /// Signed roles contribute only while the active user still holds them.
     pub async fn session_operation_permissions(
         &self,
         project: &str,
         tenant: &str,
         roles: &[String],
+        principal: &wamn_platform_identity::PrincipalId,
     ) -> anyhow::Result<BTreeSet<String>> {
         anyhow::ensure!(
             valid_project(project),
@@ -1749,7 +1753,7 @@ impl WamnPostgres {
             }
         };
         let rows = connection
-            .query(&statement, &[&tenant, &roles])
+            .query(&statement, &[&tenant, &roles, &principal.as_str()])
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read session operation permissions")?;

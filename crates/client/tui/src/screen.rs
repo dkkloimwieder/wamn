@@ -57,7 +57,7 @@ pub struct ScreenSpec {
     pub input_schema: Option<&'static str>,
     pub response: ResponseContract,
     pub route: Option<fn() -> RouteMetadata>,
-    /// Select fresh credentials before the first attempt and every captured retry.
+    /// Legacy operation metadata; admission checks current authority for all sessions.
     pub fresh_only: bool,
     pub record: Option<RecordLink>,
     pub revision: Option<RevisionBinding>,

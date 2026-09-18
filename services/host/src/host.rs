@@ -646,46 +646,47 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // it is known, settle every scoped input before opening the identity, NATS,
     // project-database, or ingress sockets. A release-less or anonymous-only
     // host takes the absent arm and acquires no identity-reader connection.
-    let (route_auth_scope, identity_reader, mut identity_connection) = if pat_routes {
-        let loaded_release = release
-            .as_ref()
-            .expect("a PAT route was found only inside a loaded release");
-        let org = args
-            .org
-            .as_deref()
-            .filter(|org| !org.is_empty())
-            .context("a PAT-protected route requires --org/WAMN_ORG")?;
-        let project = (!args.project.is_empty())
-            .then_some(args.project.as_str())
-            .context("a PAT-protected route requires a nonempty --project/WAMN_PROJECT")?;
-        let system_url = std::env::var("WAMN_SYSTEM_URL")
-            .ok()
-            .filter(|url| !url.is_empty())
-            .context("a PAT-protected route requires WAMN_SYSTEM_URL")?;
-        http_admitter_url
-            .as_deref()
-            .context("a PAT-protected route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-        let subject =
-            route_caller_subject(org, project, &loaded_release.manifest().release.environment)
-                .context("derive the scoped route-caller subject")?;
-        parse_system_reader_url(
-            SystemReader::Identity,
-            &system_url,
-            org,
-            project,
-            &loaded_release.manifest().release.environment,
-        )?;
-        let (client, connection) = tokio_postgres::connect(&system_url, NoTls)
-            .await
-            .context("connect the scoped system identity reader")?;
-        (
-            Some((org.to_owned(), subject)),
-            Some(Arc::new(client)),
-            Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
-        )
-    } else {
-        (None, None, None)
-    };
+    let (route_auth_scope, identity_reader, mut identity_connection) =
+        if pat_routes || session_routes {
+            let loaded_release = release
+                .as_ref()
+                .expect("an authenticated route was found only inside a loaded release");
+            let org = args
+                .org
+                .as_deref()
+                .filter(|org| !org.is_empty())
+                .context("an authenticated route requires --org/WAMN_ORG")?;
+            let project = (!args.project.is_empty())
+                .then_some(args.project.as_str())
+                .context("an authenticated route requires a nonempty --project/WAMN_PROJECT")?;
+            let system_url = std::env::var("WAMN_SYSTEM_URL")
+                .ok()
+                .filter(|url| !url.is_empty())
+                .context("an authenticated route requires WAMN_SYSTEM_URL")?;
+            http_admitter_url
+                .as_deref()
+                .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
+            let subject =
+                route_caller_subject(org, project, &loaded_release.manifest().release.environment)
+                    .context("derive the scoped route-caller subject")?;
+            parse_system_reader_url(
+                SystemReader::Identity,
+                &system_url,
+                org,
+                project,
+                &loaded_release.manifest().release.environment,
+            )?;
+            let (client, connection) = tokio_postgres::connect(&system_url, NoTls)
+                .await
+                .context("connect the scoped system identity reader")?;
+            (
+                Some((org.to_owned(), subject)),
+                Some(Arc::new(client)),
+                Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
+            )
+        } else {
+            (None, None, None)
+        };
     let router_owner = args
         .runner
         .clone()
@@ -920,9 +921,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         _ => unreachable!("route authentication inputs are constructed together"),
     };
     let flow_http = match session_verifier {
-        Some(verifier) => flow_http.with_session_authentication(Arc::new(
-            SessionRouteAuthentication::new(verifier, Arc::clone(&postgres), args.project.clone()),
-        )),
+        Some(verifier) => {
+            flow_http.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
+                verifier,
+                Arc::clone(
+                    identity_reader
+                        .as_ref()
+                        .expect("authenticated routes have an identity reader"),
+                ),
+                Arc::clone(&postgres),
+                args.project.clone(),
+            )))
+        }
         None => flow_http,
     };
 

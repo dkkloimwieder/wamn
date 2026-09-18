@@ -298,6 +298,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
         .expect("writing to a String cannot fail");
     }
     for relation in [
+        "identity.password_logins",
         "identity.pats",
         "identity.principals",
         "identity.project_env_memberships",
@@ -446,6 +447,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::IdentityReader.acl_role()),
         vec![
+            "relation|identity|password_logins|SELECT|false".to_owned(),
             "relation|identity|pats|SELECT|false".to_owned(),
             "relation|identity|principals|SELECT|false".to_owned(),
             "relation|identity|project_env_memberships|SELECT|false".to_owned(),
@@ -453,7 +455,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "schema|identity|identity|USAGE|false".to_owned(),
         ],
         "the stable identity-reader role's aclexplode grants are not exactly \
-         USAGE on identity plus SELECT on the four relations it reads"
+         USAGE on identity plus SELECT on the five relations it reads"
     );
     // The registry reader is untouched by the identity reader's convergence —
     // neither batch may narrow or widen the other.
@@ -472,6 +474,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
              'the probe role is superuser or bypasses RLS — that masks every denial below'; \n"
     );
     for relation in [
+        "identity.password_logins",
         "identity.pats",
         "identity.principals",
         "identity.project_env_memberships",

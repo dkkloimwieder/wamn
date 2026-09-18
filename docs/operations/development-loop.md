@@ -244,8 +244,8 @@ After renewal failure, inactivity expiry, or absolute expiry, exit and log in ag
 The client never replays an application operation automatically.
 Quitting clears local credentials and asks the issuer to revoke the login.
 If logout fails, the terminal reports that server revocation is unconfirmed.
-Issued access tokens retain their existing validity until expiry.
-Fresh-only operations still require a PAT.
+After server logout commits, issued password tokens fail the next request admission.
+All permitted application operations accept the renewable session without another password prompt.
 
 The password terminal test uses owned HTTPS and HTTP fixtures, plus OpenSSL for a disposable certificate:
 

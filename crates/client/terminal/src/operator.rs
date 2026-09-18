@@ -168,7 +168,7 @@ pub async fn run_application_with_client<A: Application>(
                         let login_required = matches!(&response, Err(ClientError::Unauthenticated));
                         app.resolve(index, attempt, response);
                         if login_required {
-                            app.set_message("Authentication required. Exit and log in again. Fresh-only operations require a PAT. Submit the operation explicitly.".into());
+                            app.set_message("Authentication required. Exit and log in again. Submit the operation explicitly.".into());
                         }
                         Action::None
                     },
@@ -401,7 +401,7 @@ pub struct PreparedRequest {
     pub screen: usize,
     pub attempt: Attempt,
     pub route: RouteMetadata,
-    /// Request a fresh credential when the operation declares that requirement.
+    /// Preserve legacy metadata without requiring a different credential.
     pub fresh_only: bool,
     pub parameters: BTreeMap<String, String>,
     pub body: BuiltRequest,
@@ -1475,7 +1475,7 @@ fn state_text(screen: &Screen) -> String {
         } => format!(
             "Outcome unknown: {reason}. {}{}{}",
             if reason.ends_with("; the server reported fresh-credential-required") {
-                "This operation requires a PAT. The request was not retried. "
+                "The server refused this credential. The request was not retried. "
             } else {
                 ""
             },

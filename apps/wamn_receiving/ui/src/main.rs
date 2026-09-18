@@ -179,7 +179,7 @@ async fn main() -> Result<ExitReason, Box<dyn Error>> {
     if let Some(session) = password_session {
         match session.logout().await {
             Ok(()) => eprintln!(
-                "Logged out. Local credentials cleared. Issued tokens retain their validity until expiry."
+                "Logged out. Local credentials cleared. This login can no longer start application requests."
             ),
             Err(error) => eprintln!("{error}"),
         }

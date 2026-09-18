@@ -518,8 +518,9 @@ impl RouteAuthentication {
     }
 }
 
-/// Session authentication with public keys and the tenant permission reader only.
+/// Session authentication with current identity and tenant permission reads.
 pub struct SessionRouteAuthentication {
+    identity_reader: Arc<tokio_postgres::Client>,
     verifier: SessionVerifier,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
     project: Box<str>,
@@ -538,10 +539,12 @@ impl SessionRouteAuthentication {
     /// Bind the configured verifier to the host's existing permission authority.
     pub fn new(
         verifier: SessionVerifier,
+        identity_reader: Arc<tokio_postgres::Client>,
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
         project: impl Into<Box<str>>,
     ) -> Self {
         Self {
+            identity_reader,
             verifier,
             postgres,
             project: project.into(),
@@ -702,7 +705,12 @@ impl FlowHttpRouting {
                 || bearer_token(headers).is_some_and(|token| !token.starts_with(PAT_TOKEN_PREFIX)));
         if session {
             return self
-                .authenticate_session(attachment_id, headers, &manifest.release.tenant_id)
+                .authenticate_session(
+                    attachment_id,
+                    headers,
+                    &manifest.release.tenant_id,
+                    &manifest.release.environment,
+                )
                 .await
                 .map(Some);
         }
@@ -783,6 +791,7 @@ impl FlowHttpRouting {
         attachment_id: &str,
         headers: &[Header],
         tenant: &str,
+        environment: &str,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let token = required_bearer_token(headers)?;
         let authentication = self
@@ -794,15 +803,36 @@ impl FlowHttpRouting {
             .verify(token)
             .await
             .map_err(|_| unauthorized())?;
+        let principal = session.claims().sub.parse().map_err(|_| unauthorized())?;
         let permissions = authentication
             .postgres
-            .session_operation_permissions(&authentication.project, tenant, &session.claims().roles)
+            .session_operation_permissions(
+                &authentication.project,
+                tenant,
+                &session.claims().roles,
+                &principal,
+            )
             .instrument(tracing::info_span!("wamn.auth.permissions"))
             .await
             .map_err(|error| {
                 tracing::warn!(error = %error, "route operation grants unavailable");
                 authentication_unavailable()
             })?;
+        let active = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            wamn_platform_identity::session_token::session_is_active(
+                authentication.identity_reader.as_ref(),
+                session.claims(),
+                &authentication.project,
+                environment,
+            ),
+        )
+        .await
+        .map_err(|_| authentication_unavailable())?
+        .map_err(|_| authentication_unavailable())?;
+        if !active {
+            return Err(unauthorized());
+        }
         // Permission I/O cannot extend the evidence that admitted this request.
         // Once returned, nested work retains this caller without reauthentication.
         session.check_admission().map_err(|_| unauthorized())?;
