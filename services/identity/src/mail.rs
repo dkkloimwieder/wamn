@@ -46,7 +46,7 @@ impl ResendConfig {
 pub(super) struct Mailer {
     config: ResendConfig,
     client: reqwest::Client,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     endpoint: Option<String>,
 }
 
@@ -60,6 +60,24 @@ struct Email<'a> {
 
 impl Mailer {
     pub(super) fn new(config: ResendConfig) -> Result<Self, IdentityServiceError> {
+        #[cfg(feature = "test-util")]
+        if let Some(endpoint) = std::env::var_os("WAMN_TEST_RESEND_ENDPOINT") {
+            let refused = || IdentityServiceError::new("test Resend endpoint refused");
+            let endpoint = endpoint.into_string().map_err(|_| refused())?;
+            let url = reqwest::Url::parse(&endpoint).map_err(|_| refused())?;
+            if url.scheme() != "http"
+                || url.host_str() != Some("127.0.0.1")
+                || url.path() != "/emails"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || config.key.as_str() != "unused-development-fixture"
+            {
+                return Err(refused());
+            }
+            return Ok(Self::fixture(endpoint));
+        }
         let client = reqwest::Client::builder()
             .https_only(true)
             .no_proxy()
@@ -71,12 +89,12 @@ impl Mailer {
         Ok(Self {
             config,
             client,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-util"))]
             endpoint: None,
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     pub(super) fn fixture(endpoint: String) -> Self {
         Self {
             config: ResendConfig::new(
@@ -105,7 +123,7 @@ impl Mailer {
             "You have been invited to WAMN.\n\nPrincipal: {principal}\nInvitation secret: {secret}\n\nEnter this secret in the terminal enrollment prompt. It expires after 24 hours and can be used once. If you did not expect this invitation, ignore this email."
         ));
         let endpoint = "https://api.resend.com/emails";
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-util"))]
         let endpoint = self.endpoint.as_deref().unwrap_or(endpoint);
         self.send(endpoint, email, &text).await
     }

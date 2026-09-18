@@ -253,12 +253,19 @@ It tests the removed and kept runs, the refusals, and the grants of the generati
 
 ### Development identity lifecycle
 
-The development command case tests password login across an application recompile and owned identity shutdown.
-It also drives the real terminal through password login and an authorized Receiving query without creating a PAT.
+The development command case captures an operator invitation through the real Resend request code and a local HTTP fixture.
+The real terminal consumes that emailed secret, establishes the password, signs in, and reads a Receiving purchase order without a PAT.
+It also tests permission and membership refusal, consumed invitations, application rebuilds, unchanged signing keys, and owned process cleanup.
 Build `wamn-receiving` in the same debug target before this case.
-The fixture issues its invitation directly through the identity library. It does not test email delivery.
-For this case, supply `RESEND_API_KEY=unused-development-fixture` and `RESEND_FROM='WAMN <fixture@example.invalid>'` to the test process.
-It creates the invitation through the scoped database authority and sends no email.
+Build the test identity binary with `cargo build --locked --offline -p wamn-identity --features test-util`.
+The `test-util` feature permits only a loopback mail endpoint with a dummy API key. Production builds do not include this path.
+Wrap the existing development test command with the mail capture:
+
+```bash
+python3 apps/wamn_receiving/tests/password_receiving_pty.py --capture-mail <development-test-command>
+```
+
+The wrapper supplies dummy Resend credentials and removes the private captured message at exit. It sends no real email.
 The focused identity case also covers application database recreation:
 
 ```bash

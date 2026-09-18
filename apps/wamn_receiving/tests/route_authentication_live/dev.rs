@@ -388,11 +388,13 @@ pub(super) async fn current_database_acl(
 }
 
 #[tokio::test]
-#[ignore = "requires: RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
+#[ignore = "requires: test-util identity binary, local invitation capture, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
 async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "RESEND_API_KEY",
         "RESEND_FROM",
+        "WAMN_TEST_INVITATION_FILE",
+        "WAMN_TEST_RESEND_ENDPOINT",
         "WAMN_RECEIVING_DEV_BIN",
         "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
         "WAMN_RECEIVING_DEV_HOST_BIN",
@@ -483,13 +485,6 @@ pub(super) async fn assert_dev_command(
         // stop and supervised host reaping have both succeeded.
         verify_dev_command_output(&output)?;
         let login = password::Login::start(&environment, system_url).await?;
-        // Change only the input timestamp so Cargo recompiles the application
-        // without changing authored source or its declared digest.
-        std::fs::File::open(package_root().join("component/src/lib.rs"))?
-            .set_modified(std::time::SystemTime::now())?;
-        let rebuilt = run_dev_product_command(inputs, &config).await?;
-        verify_dev_command_output(&rebuilt)?;
-        login.available().await?;
         let mut watch =
             local_delivery::Watch::start(&inputs.wamn_binary, &repository_root()?, &config)?;
         let terminal = async {
@@ -500,6 +495,14 @@ pub(super) async fn assert_dev_command(
         let stopped = watch.stop().await;
         terminal?;
         stopped?;
+        // Change only the input timestamp so Cargo recompiles the application
+        // without changing authored source or its declared digest.
+        std::fs::File::open(package_root().join("component/src/lib.rs"))?
+            .set_modified(std::time::SystemTime::now())?;
+        let rebuilt = run_dev_product_command(inputs, &config).await?;
+        verify_dev_command_output(&rebuilt)?;
+        login.available().await?;
+        login.refuse_missing_membership(system_url).await?;
         let after: i64 = admin
             .query_one("SELECT count(*) FROM identity.pats", &[])
             .await?
