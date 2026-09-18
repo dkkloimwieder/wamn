@@ -136,6 +136,18 @@ pub(super) async fn mint_for_principal(
     configured: &ConfiguredTarget,
     started_at: i64,
 ) -> Result<IssuedSessionToken, ExchangeFailure> {
+    let claims = claims_for_principal(inner, principal, configured).await?;
+    let mut signing = inner.signing.as_ref().ok_or_else(failed)?.lock().await;
+    sign_session_token(&mut signing.client, claims, started_at)
+        .await
+        .map_err(|_| failed())
+}
+
+pub(super) async fn claims_for_principal(
+    inner: &Inner,
+    principal: &AuthenticatedPrincipal,
+    configured: &ConfiguredTarget,
+) -> Result<SessionClaims, ExchangeFailure> {
     let roles = authorized_roles(inner, principal, configured).await?;
     let principal = principal.principal();
     let target = &configured.binding;
@@ -150,7 +162,7 @@ pub(super) async fn mint_for_principal(
         write!(out, "{byte:02x}").expect("writing to a string is infallible");
         out
     });
-    let claims = SessionClaims {
+    Ok(SessionClaims {
         iss: inner.issuer.clone(),
         sub: principal.id().to_string(),
         org: triple.org.clone(),
@@ -159,11 +171,7 @@ pub(super) async fn mint_for_principal(
         exp: 0,
         iat: 0,
         jti,
-    };
-    let mut signing = inner.signing.as_ref().ok_or_else(failed)?.lock().await;
-    sign_session_token(&mut signing.client, claims, started_at)
-        .await
-        .map_err(|_| failed())
+    })
 }
 
 // Discovery and issuance share the same current authority checks. A discovery

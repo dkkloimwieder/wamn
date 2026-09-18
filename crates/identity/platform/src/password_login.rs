@@ -13,7 +13,9 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Row, Transaction};
 use zeroize::Zeroizing;
 
-use crate::{IdentityError, IdentityErrorKind, PrincipalId};
+use crate::{
+    AuthenticatedPrincipal, IdentityError, IdentityErrorKind, PrincipalId, resolve_principal,
+};
 
 const PREFIX: &str = "wamn_renew_";
 /// Maximum login duration from password authentication, in seconds.
@@ -162,6 +164,40 @@ async fn lookup(
     ).await.map_err(|error| database(&error))?;
     row.map(|row| Ok((decode(&row)?, row.get(4), row.get(5))))
         .transpose()
+}
+
+/// Authenticate a renewal credential and bind its human actor under the principal lock.
+///
+/// Commit a refused result: replay revokes its family. This does not establish
+/// current environment authority; the service checks that before issuing tokens.
+pub async fn authenticate_renewal(
+    tx: &Transaction<'_>,
+    issuer: &str,
+    audience: &str,
+    secret: &str,
+) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
+    let Some(digest) = hash(secret) else {
+        return Ok(None);
+    };
+    let Some((login, consumed, usable)) = lookup(tx, issuer, audience, &digest).await? else {
+        return Ok(None);
+    };
+    tx.execute(
+        "SELECT set_config('app.user_id', $1, true)",
+        &[&login.principal.as_str()],
+    )
+    .await
+    .map_err(|error| database(&error))?;
+    if consumed {
+        revoke_family(tx, &login.id).await?;
+        return Ok(None);
+    }
+    if !usable {
+        return Ok(None);
+    }
+    Ok(resolve_principal(tx, &login.principal)
+        .await?
+        .map(|principal| AuthenticatedPrincipal { principal }))
 }
 
 /// Consume a credential once and create its replacement in the same transaction.

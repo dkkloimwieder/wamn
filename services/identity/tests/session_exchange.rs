@@ -40,6 +40,9 @@ use wamn_platform_identity::{
     issue_pat, revoke_pat, revoke_project_env_membership,
 };
 
+#[path = "session_exchange/password_lifecycle.rs"]
+mod password_lifecycle;
+
 const ISSUER: &str = "https://identity.session-test.internal";
 const PASSWORD: &str = "session-exchange-disposable-fixture-password";
 const TENANT: &str = "session-tenant-a";
@@ -603,10 +606,24 @@ async fn verify_response(
         response.headers()["content-type"] == "application/json",
         "exchange must be JSON"
     );
+    let renewable = response.url().path().starts_with("/password/");
     let bytes = response.bytes().await.expect_redacted("exchange body");
     assert!(!String::from_utf8_lossy(&bytes).contains(PASSWORD));
     let body: Value = serde_json::from_slice(&bytes).expect_redacted("exchange JSON");
-    assert_fields(&body, &["access_token", "expires_at", "token_type"]);
+    if renewable {
+        assert_fields(
+            &body,
+            &[
+                "access_token",
+                "expires_at",
+                "token_type",
+                "renewal_token",
+                "login_expires_at",
+            ],
+        );
+    } else {
+        assert_fields(&body, &["access_token", "expires_at", "token_type"]);
+    }
     assert_eq!(body["token_type"], "Bearer");
     let token = body["access_token"]
         .as_str()

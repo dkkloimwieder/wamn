@@ -190,7 +190,7 @@ The client does not replay that operation or silently replace its credential.
 Authentication deadlines bound new admission and do not cancel work already accepted.
 
 The [session token owner](../../crates/identity/platform/src/session_token.rs) defines the token and time rules.
-The service keeps no session table, denylist, per-session write, or refresh token.
+PAT exchange keeps no login record or renewal credential.
 The current client retains its session token only in memory.
 Password sessions have no PAT fallback or automatic renewal.
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
@@ -205,7 +205,7 @@ The identity service exposes password HTTP endpoints. Receiving supports hidden 
 The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
 
 The [login storage library](../../crates/identity/platform/src/password_login.rs) supplies database primitives for renewal and revocation.
-The HTTP service and terminal do not yet use these primitives.
+The HTTP service uses these primitives. Terminal renewal and server-side logout remain unbuilt.
 Each login binds one human, issuer, and exact environment audience.
 Its authentication time and eight-hour absolute deadline remain fixed.
 Successful renewal extends the inactivity deadline by 30 minutes, capped at the absolute deadline.
@@ -213,15 +213,18 @@ Successful renewal extends the inactivity deadline by 30 minutes, capped at the 
 The database stores only hashes of random, single-use renewal credentials.
 Reusing a consumed credential revokes its login family, the sequence of replacement credentials for one login.
 The caller commits that refusal so revocation persists.
-Successful rotation, current authorization, and access-token signing must commit together.
+Every login and renewal repeats the current membership, environment instance, tenant-user status, and assigned-role checks.
+Credential rotation and access-token signing share one transaction after those checks.
+The service delivers credentials only after that transaction commits.
+Access-token expiry cannot exceed the login's absolute deadline.
 The caller locks the principal before password verification and keeps that lock through login creation.
-Renewal, logout, and reset use the same principal lock.
+Renewal and logout use the same principal lock. Password reset must also use that lock when implemented.
 Principal disablement revokes its families through a database trigger, so reactivation cannot restore them.
 
 The issuer cannot change a login's principal, audience, authentication time, or absolute deadline.
 All writes require an actor, and credential tables have no row-image history.
 Consumed credentials remain until absolute expiry.
-Cleanup removes at most 100 expired families per call, including their credentials.
+Global request admission removes at most 100 expired families per call, including their credentials.
 
 Enrollment accepts an active, unenrolled human principal and a matching, unexpired invitation.
 The library locks that principal, creates its password, and consumes every outstanding invitation in one database transaction.
@@ -256,6 +259,19 @@ The service makes no automatic send retry and reports failed or uncertain sends 
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`.
 It reuses the PAT exchange's membership, current environment, active tenant user, role, and signing checks.
+Its response contains `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
+The two expiry fields contain Unix seconds. `token_type` is `Bearer`.
+
+`POST /password/renew` accepts `renewal_token` and `aud` and returns the same response fields.
+Each successful request replaces the renewal credential. A lost response requires another password login.
+There is no retry grace period or automatic application request replay.
+
+`POST /password/logout` accepts `renewal_token` and `aud` and revokes that login family.
+It returns HTTP 204, including when the credential is already unusable.
+`POST /password/logout-all` accepts the same fields and requires a currently usable renewal credential.
+It revokes all password login families for that person and returns HTTP 204.
+Neither operation requires continued application access. Neither revokes PATs.
+Previously issued access tokens retain their existing bounded validity.
 
 `POST /password/environments` accepts only `email` and `password`.
 After password authentication, it returns the configured environments that pass those same access checks.
@@ -277,7 +293,7 @@ This process ownership does not add an external identity provider or change the 
 
 Unknown accounts and incorrect passwords receive the same unauthorized response.
 These routes are enabled only when the service has a Resend key and sender.
-Session expiry requires another login. Renewal and server-side logout remain unbuilt.
+The terminal still requires another login after session expiry and clears credentials locally on exit.
 Unknown and unenrolled accounts perform the same bounded hashing profile as existing accounts.
 Password buffers erase their owned bytes on drop. Diagnostics redact passwords and invitation secrets.
 

@@ -202,6 +202,9 @@ impl IdentityService {
                     | "/password/enroll"
                     | "/password/session"
                     | "/password/environments"
+                    | "/password/renew"
+                    | "/password/logout"
+                    | "/password/logout-all"
             )
             && let Some(state) = &self.inner.passwords
         {

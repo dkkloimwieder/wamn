@@ -12,11 +12,11 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{ED25519, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
-use tokio_postgres::Client;
+use tokio_postgres::{Client, Transaction};
 
 use crate::{
     IdentityError, IdentityErrorKind, PrincipalId,
-    session_keys::{PublicSessionKey, decode_public_key, sign_message},
+    session_keys::{PublicSessionKey, decode_public_key, key_database_error, sign_message},
 };
 
 /// Owner-approved maximum lifetime, in seconds.
@@ -138,14 +138,41 @@ pub fn validate_session_age(
 /// issuance uses the actual clock and expiry stays anchored to validation.
 pub async fn sign_session_token(
     client: &mut Client,
+    claims: SessionClaims,
+    validation_started_at: i64,
+) -> Result<IssuedSessionToken, IdentityError> {
+    let transaction = client.transaction().await.map_err(key_database_error)?;
+    let token =
+        sign_session_token_in_transaction(&transaction, claims, validation_started_at, None)
+            .await?;
+    transaction.commit().await.map_err(key_database_error)?;
+    if unix_seconds()? >= token.claims.exp {
+        return Err(refused());
+    }
+    Ok(token)
+}
+
+/// Sign within the caller's login transaction and optional absolute deadline.
+///
+/// The caller retains the signing lock through commit and must not deliver a
+/// token before that commit succeeds. Supplied claim times are always replaced.
+pub async fn sign_session_token_in_transaction(
+    transaction: &Transaction<'_>,
     mut claims: SessionClaims,
     validation_started_at: i64,
+    absolute_expiry: Option<i64>,
 ) -> Result<IssuedSessionToken, IdentityError> {
     validate_claim_shape(&claims)?;
     let issuer = claims.iss.clone();
-    let token = sign_message(client, &issuer, |kid| {
+    let token = sign_message(transaction, &issuer, |kid| {
         let now = unix_seconds()?;
         (claims.iat, claims.exp) = minting_times(validation_started_at, now)?;
+        if let Some(deadline) = absolute_expiry {
+            claims.exp = claims.exp.min(deadline);
+            if now >= claims.exp {
+                return Err(refused());
+            }
+        }
         let header = SessionHeader {
             alg: SESSION_ALGORITHM.into(),
             typ: SESSION_TYPE.into(),

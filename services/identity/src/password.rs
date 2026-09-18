@@ -17,6 +17,8 @@ use wamn_platform_identity::{
         Password, PasswordError, PasswordErrorKind, PasswordWork, authenticate_password,
         enroll_password, issue_invitation, password_work,
     },
+    password_login,
+    session_token::{IssuedSessionToken, sign_session_token_in_transaction},
 };
 use zeroize::Zeroizing;
 
@@ -87,6 +89,22 @@ struct LoginRequest {
     aud: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenewalRequest {
+    renewal_token: String,
+    aud: String,
+}
+
+#[derive(Serialize)]
+struct RenewableResponse<'a> {
+    access_token: &'a str,
+    token_type: &'static str,
+    expires_at: i64,
+    renewal_token: &'a str,
+    login_expires_at: i64,
+}
+
 pub(super) async fn respond(
     inner: &Inner,
     state: &State,
@@ -134,7 +152,13 @@ async fn handle(
         IpAddr::V4(_) => source,
     };
     let source_key = format!("source:{source}");
-    match admit(&mut database.client, &[("global", 120), (&source_key, 20)]).await {
+    match admit(
+        &mut database.client,
+        &[("global", 120), (&source_key, 20)],
+        &inner.issuer,
+    )
+    .await
+    {
         Ok(true) => (),
         Ok(false) => return throttled(),
         Err(_) => return unavailable(),
@@ -215,7 +239,7 @@ async fn handle(
                 return invalid();
             };
             let bucket = format!("enroll:{principal}");
-            match admit(&mut database.client, &[(&bucket, 5)]).await {
+            match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
@@ -253,19 +277,32 @@ async fn handle(
             }
             let email = email.trim().to_lowercase();
             let bucket = format!("login:{}", hex::encode(Sha256::digest(email.as_bytes())));
-            match admit(&mut database.client, &[(&bucket, 5)]).await {
+            match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
             }
-            let principal = match authenticate_password(
-                &database.client,
-                &state.work,
-                &email,
-                password,
-            )
-            .await
-            {
+            let Ok(tx) = database.client.transaction().await else {
+                return unavailable();
+            };
+            let Ok(row) = tx
+                .query_opt(
+                    "SELECT id::text FROM identity.principals WHERE email=$1 AND kind='human'",
+                    &[&email],
+                )
+                .await
+            else {
+                return unavailable();
+            };
+            if let Some(row) = row {
+                let Ok(id) = row.get::<_, String>(0).parse::<PrincipalId>() else {
+                    return unavailable();
+                };
+                if password_login::lock_principal(&tx, &id).await.is_err() {
+                    return unavailable();
+                }
+            }
+            let principal = match authenticate_password(&tx, &state.work, &email, password).await {
                 Ok(Some(value)) => value,
                 Ok(None) => return session::unauthorized(),
                 Err(error) => return password_failure(&error),
@@ -299,22 +336,143 @@ async fn handle(
             let Some(target) = inner.targets.get(&audience) else {
                 return session::unauthorized();
             };
-            match session::mint_for_principal(inner, &principal, target, started_at).await {
-                Ok(token) => session::token_response(&token),
-                Err(error) => match error.kind {
-                    session::FailureKind::Unauthorized => session::unauthorized(),
-                    session::FailureKind::Unavailable => unavailable(),
-                },
+            if tx
+                .execute(
+                    "SELECT set_config('app.user_id',$1,true)",
+                    &[&principal.principal().id().as_str()],
+                )
+                .await
+                .is_err()
+            {
+                return unavailable();
             }
+            let claims = match session::claims_for_principal(inner, &principal, target).await {
+                Ok(claims) => claims,
+                Err(error) => return authority_failure(&error),
+            };
+            let renewal = match password_login::create_login(
+                &tx,
+                principal.principal().id(),
+                &inner.issuer,
+                &audience,
+            )
+            .await
+            {
+                Ok(Some(renewal)) => renewal,
+                Ok(None) => return session::unauthorized(),
+                Err(_) => return unavailable(),
+            };
+            finish_session(tx, claims, renewal, started_at).await
+        }
+        "/password/renew" | "/password/logout" | "/password/logout-all" => {
+            let Ok(request) = serde_json::from_slice::<RenewalRequest>(&bytes) else {
+                return invalid();
+            };
+            let secret = Zeroizing::new(request.renewal_token);
+            let Ok(tx) = database.client.transaction().await else {
+                return unavailable();
+            };
+            let Ok(principal) =
+                password_login::authenticate_renewal(&tx, &inner.issuer, &request.aud, &secret)
+                    .await
+            else {
+                return unavailable();
+            };
+            let Some(principal) = principal else {
+                // A replay refusal writes family revocation. Never roll it back.
+                if tx.commit().await.is_err() {
+                    return unavailable();
+                }
+                return if parts.uri.path() == "/password/logout" {
+                    response(StatusCode::NO_CONTENT, "application/json", Vec::new())
+                } else {
+                    session::unauthorized()
+                };
+            };
+            if parts.uri.path() != "/password/renew" {
+                let result = if parts.uri.path() == "/password/logout-all" {
+                    password_login::revoke_all(&tx, principal.principal().id()).await
+                } else {
+                    password_login::revoke_login(&tx, &inner.issuer, &request.aud, &secret).await
+                };
+                if result.is_err() || tx.commit().await.is_err() {
+                    return unavailable();
+                }
+                return response(StatusCode::NO_CONTENT, "application/json", Vec::new());
+            }
+            let Some(target) = inner.targets.get(&request.aud) else {
+                return session::unauthorized();
+            };
+            let claims = match session::claims_for_principal(inner, &principal, target).await {
+                Ok(claims) => claims,
+                Err(error) => return authority_failure(&error),
+            };
+            let renewal =
+                match password_login::rotate_login(&tx, &inner.issuer, &request.aud, &secret).await
+                {
+                    Ok(Some(renewal)) => renewal,
+                    Ok(None) => {
+                        if tx.commit().await.is_err() {
+                            return unavailable();
+                        }
+                        return session::unauthorized();
+                    }
+                    Err(_) => return unavailable(),
+                };
+            finish_session(tx, claims, renewal, started_at).await
         }
         _ => invalid(),
+    }
+}
+
+fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> {
+    match error.kind {
+        session::FailureKind::Unauthorized => session::unauthorized(),
+        session::FailureKind::Unavailable => unavailable(),
+    }
+}
+
+async fn finish_session(
+    tx: tokio_postgres::Transaction<'_>,
+    claims: wamn_platform_identity::session_token::SessionClaims,
+    renewal: password_login::Renewal,
+    started_at: i64,
+) -> Response<Full<Bytes>> {
+    let Ok(token) =
+        sign_session_token_in_transaction(&tx, claims, started_at, Some(renewal.login.expires_at))
+            .await
+    else {
+        return unavailable();
+    };
+    if tx.commit().await.is_err()
+        || session::unix_seconds().is_none_or(|now| now >= token.claims().exp)
+    {
+        return unavailable();
+    }
+    renewable_response(&token, &renewal)
+}
+
+fn renewable_response(
+    token: &IssuedSessionToken,
+    renewal: &password_login::Renewal,
+) -> Response<Full<Bytes>> {
+    match serde_json::to_vec(&RenewableResponse {
+        access_token: token.token(),
+        token_type: "Bearer",
+        expires_at: token.claims().exp,
+        renewal_token: renewal.secret(),
+        login_expires_at: renewal.login.expires_at,
+    }) {
+        Ok(bytes) => response(StatusCode::OK, "application/json", bytes),
+        Err(_) => unavailable(),
     }
 }
 
 async fn admit(
     client: &mut Client,
     buckets: &[(&str, i32)],
-) -> Result<bool, tokio_postgres::Error> {
+    issuer: &str,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let tx = client.transaction().await?;
     // Fixed-window resets do not extend on refused attempts. Global admission
     // bounds source/account row creation; pruning retains at most two minutes.
@@ -327,6 +485,11 @@ async fn admit(
         }
     }
     if buckets.first().is_some_and(|(key, _)| *key == "global") {
+        let actor = PlatformComponent::Provisioning.principal_id().to_string();
+        tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor])
+            .await?;
+        // Cleanup is service-owned and bounded independently of submitted credentials.
+        password_login::prune_expired(&tx, issuer).await?;
         tx.execute("DELETE FROM identity.password_attempts WHERE started_at < clock_timestamp() - interval '120 seconds'", &[]).await?;
     }
     tx.commit().await?;
@@ -550,7 +713,13 @@ mod tests {
             let url = url.to_string();
             jobs.spawn(async move {
                 let mut db = connect_database(&url).await.unwrap();
-                admit(&mut db.client, &[("race-account", 5)]).await.unwrap()
+                admit(
+                    &mut db.client,
+                    &[("race-account", 5)],
+                    "https://fixture.invalid",
+                )
+                .await
+                .unwrap()
             });
         }
         let mut allowed = 0;

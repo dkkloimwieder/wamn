@@ -205,11 +205,10 @@ pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u6
 // Only this module reads private material. The synchronous message builder runs
 // after the shared lock is acquired, so iat is not sampled before a lock wait.
 pub(crate) async fn sign_message(
-    client: &mut Client,
+    transaction: &tokio_postgres::Transaction<'_>,
     issuer: &str,
     message: impl FnOnce(&str) -> Result<String, IdentityError>,
 ) -> Result<String, IdentityError> {
-    let transaction = client.transaction().await.map_err(key_database_error)?;
     let row = transaction.query_opt(
         "SELECT active_kid::text FROM identity.session_signing_state WHERE issuer = $1 FOR SHARE",
         &[&issuer],
@@ -233,7 +232,6 @@ pub(crate) async fn sign_message(
         let signature = pair.sign(message.as_bytes());
         format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref()))
     };
-    transaction.commit().await.map_err(key_database_error)?;
     Ok(token)
 }
 
@@ -283,7 +281,7 @@ fn corrupt_key() -> IdentityError {
     clippy::needless_pass_by_value,
     reason = "map_err consumes the database error; only SQLSTATE leaves this boundary"
 )]
-fn key_database_error(error: tokio_postgres::Error) -> IdentityError {
+pub(crate) fn key_database_error(error: tokio_postgres::Error) -> IdentityError {
     // PostgreSQL DETAIL can contain rejected row values, including private
     // PKCS#8 bytes. Retain only the safe SQLSTATE, never the database message.
     IdentityError::new(
