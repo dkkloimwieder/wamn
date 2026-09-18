@@ -255,7 +255,9 @@ It tests the removed and kept runs, the refusals, and the grants of the generati
 
 The development command case captures an operator invitation through the real Resend request code and a local HTTP fixture.
 The real terminal consumes that emailed secret, establishes the password, signs in, and reads a Receiving purchase order without a PAT.
-It also tests permission and membership refusal, consumed invitations, application rebuilds, unchanged signing keys, and owned process cleanup.
+It also captures reset email and notification, changes the password through the terminal, and requires normal login afterward.
+A renewed session reads Receiving, logout refuses further renewal, and the previous password fails.
+The same case tests permission and membership refusal, consumed invitations, application rebuilds, unchanged signing keys, and owned process cleanup.
 Build `wamn-receiving` in the same debug target before this case.
 Build the test identity binary with `cargo build --locked --offline -p wamn-identity --features test-util`.
 The `test-util` feature permits only a loopback mail endpoint with a dummy API key. Production builds do not include this path.

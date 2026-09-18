@@ -40,8 +40,10 @@ def capture_mail(command):
                     body = json.loads(self.rfile.read(length))
                     login.require(body["to"] == ["managed-development@example.invalid"], "email account binding differs")
                     login.require(body["from"] == "WAMN <fixture@example.invalid>", "email sender differs")
-                    with os.fdopen(os.open(capture, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+                    pending = capture.with_suffix(".pending")
+                    with os.fdopen(os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as output:
                         json.dump(body, output)
+                    os.replace(pending, capture)
                     self.send_response(200)
                     self.send_header("Content-Length", "2")
                     self.end_headers()
@@ -94,7 +96,29 @@ def main():
         login.require(facts["password"].encode() not in session.output,
                       "terminal exposed the password")
         login.require(b"Logged out." in session.output, "local logout was not reported")
-    print("Password login and authorized Receiving query passed without a PAT.")
+    with login.terminal.Session(args.binary, login.ROOT, Application(facts["url"]),
+                                facts["instance"], facts["host"], None, environment) as session:
+        login.answer(session, "Enter L", "r")
+        login.answer(session, "Recovery email:", facts["email"])
+        session.text("Reset secret from your email")
+        mail = json.loads(Path(os.environ["WAMN_TEST_INVITATION_FILE"]).read_text())
+        login.require(mail["subject"] == "Reset your WAMN password", "reset email missing")
+        secret = next(line.removeprefix("Reset secret: ") for line in mail["text"].splitlines() if line.startswith("Reset secret: "))
+        login.answer(session, "Reset secret from your email", secret, True)
+        login.answer(session, "New password", facts["reset_password"], True)
+        login.answer(session, "Confirm new password", facts["reset_password"], True)
+        login.answer(session, "Password changed. Enter L", "l")
+        notification = json.loads(Path(os.environ["WAMN_TEST_INVITATION_FILE"]).read_text())
+        login.require(notification["subject"] == "Your WAMN password changed", "reset notification missing")
+        login.answer(session, "Email:", facts["email"])
+        login.answer(session, "Password (hidden):", facts["reset_password"], True)
+        session.text("PASSWORD-JOURNEY")
+        session.send(b"q")
+        session.finish()
+        for value in (secret, facts["password"], facts["reset_password"]):
+            login.require(value.encode() not in session.output, "terminal exposed a recovery secret")
+        login.require(b"Logged out." in session.output, "server logout failed")
+    print("Real terminal enrollment, recovery, normal login, authorized Receiving query and logout passed.")
 
 
 if __name__ == "__main__":

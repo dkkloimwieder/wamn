@@ -10,6 +10,7 @@ use wamn_platform_identity::{create_human, grant_project_env_membership};
 
 const EMAIL: &str = "managed-development@example.invalid";
 const PASSWORD: &str = "managed-development-disposable-fixture-password";
+const RESET_PASSWORD: &str = "replacement-development-disposable-fixture-password";
 
 pub(super) struct Login {
     http: reqwest::Client,
@@ -155,7 +156,7 @@ impl Login {
         let response = self
             .http
             .post(format!("{}/password/session", self.endpoint))
-            .json(&json!({"email":EMAIL,"password":PASSWORD,"aud":self.audience}))
+            .json(&json!({"email":EMAIL,"password":RESET_PASSWORD,"aud":self.audience}))
             .send()
             .await?;
         ensure!(
@@ -180,6 +181,7 @@ impl Login {
         &self,
         environment: &DevEnvironment,
         served: &super::local_delivery::Served,
+        system: &str,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt as _;
         let (project, task) = connect(&environment.route.database_url).await?;
@@ -207,7 +209,7 @@ impl Login {
             .write_all(&serde_json::to_vec(&json!({
                 "url":served.url,"host":served.host,"instance":served.instance,
                 "issuer":self.endpoint,"audience":self.audience,"ca":self.ca,
-                "email":EMAIL,"password":PASSWORD,"principal":self.human,"invitation":self.invitation,
+                "email":EMAIL,"password":PASSWORD,"reset_password":RESET_PASSWORD,"principal":self.human,"invitation":self.invitation,
             }))?)
             .await?;
         let output = child.wait_with_output().await?;
@@ -215,6 +217,80 @@ impl Login {
             output.status.success(),
             "password terminal journey failed: {}",
             String::from_utf8_lossy(&output.stderr)
+        );
+        // The lifecycle fixture deliberately advances the account admission window.
+        let (admin, admin_task) = connect(system).await?;
+        admin
+            .execute("DELETE FROM identity.password_attempts", &[])
+            .await?;
+        admin_task.abort();
+        let old = self
+            .http
+            .post(format!("{}/password/session", self.endpoint))
+            .json(&json!({"email":EMAIL,"password":PASSWORD,"aud":self.audience}))
+            .send()
+            .await?;
+        ensure!(
+            old.status() == reqwest::StatusCode::UNAUTHORIZED,
+            "old password survived reset"
+        );
+        let login: Value = self
+            .http
+            .post(format!("{}/password/session", self.endpoint))
+            .json(&json!({"email":EMAIL,"password":RESET_PASSWORD,"aud":self.audience}))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let renewed: Value = self
+            .http
+            .post(format!("{}/password/renew", self.endpoint))
+            .json(&json!({"renewal_token":login["renewal_token"],"aud":self.audience}))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        ensure!(
+            renewed["login_expires_at"] == login["login_expires_at"],
+            "renewal moved absolute expiry"
+        );
+        let allowed = reqwest::Client::new()
+            .post(format!("{}/purchase_order/query", served.url))
+            .header("Host", &served.host)
+            .bearer_auth(
+                renewed["access_token"]
+                    .as_str()
+                    .context("renewed access token")?,
+            )
+            .json(&json!([{"request_id":"renewed-reading"}]))
+            .send()
+            .await?;
+        ensure!(
+            allowed.status() == reqwest::StatusCode::OK,
+            "renewed session refused authorized Receiving operation"
+        );
+        let credential = json!({"renewal_token":renewed["renewal_token"],"aud":self.audience});
+        let logout = self
+            .http
+            .post(format!("{}/password/logout", self.endpoint))
+            .json(&credential)
+            .send()
+            .await?;
+        ensure!(
+            logout.status() == reqwest::StatusCode::NO_CONTENT,
+            "logout refused"
+        );
+        let refused = self
+            .http
+            .post(format!("{}/password/renew", self.endpoint))
+            .json(&credential)
+            .send()
+            .await?;
+        ensure!(
+            refused.status() == reqwest::StatusCode::UNAUTHORIZED,
+            "logout allowed renewal"
         );
         let replay = self.http.post(format!("{}/password/enroll", self.endpoint))
             .json(&json!({"principal_id":self.human,"invitation":self.invitation,"password":"a different disposable password"}))
@@ -238,7 +314,7 @@ impl Login {
         let response = self
             .http
             .post(format!("{}/password/session", self.endpoint))
-            .json(&json!({"email":EMAIL,"password":PASSWORD,"aud":self.audience}))
+            .json(&json!({"email":EMAIL,"password":RESET_PASSWORD,"aud":self.audience}))
             .send()
             .await?;
         ensure!(
@@ -282,7 +358,7 @@ impl Login {
         let response = self
             .http
             .post(format!("{}/password/session", self.endpoint))
-            .json(&json!({"email":EMAIL,"password":PASSWORD,"aud":self.audience}))
+            .json(&json!({"email":EMAIL,"password":RESET_PASSWORD,"aud":self.audience}))
             .send()
             .await?;
         ensure!(

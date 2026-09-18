@@ -489,7 +489,7 @@ pub(super) async fn assert_dev_command(
             local_delivery::Watch::start(&inputs.wamn_binary, &repository_root()?, &config)?;
         let terminal = async {
             let served = watch.served().await?;
-            login.terminal(&environment, &served).await
+            login.terminal(&environment, &served, system_url).await
         }
         .await;
         let stopped = watch.stop().await;
