@@ -6,7 +6,7 @@ use super::rust::{
     static_sql_native_bind_fixtures, static_sql_rows, wamn_api,
 };
 use super::validation::resolve_claim;
-use super::wit::{emit_custom_operation_wit, emit_model_update_wit};
+use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, BTreeSet, CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN,
     CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT, CREATE_STATEMENT, CREATE_STATEMENTS,
@@ -39,7 +39,7 @@ pub(super) fn emit_model(
     table: &Table,
 ) -> Result<(), GenerateError> {
     emit_model_contract(files, model_name, model, table)?;
-    emit_model_update_wit(files, manifest, model_name, model, table)?;
+    emit_model_wit(files, manifest, model_name, model, table)?;
 
     let claim = model.operations.get(&CrudAction::Create).map(|operation| {
         resolve_claim(

@@ -5,38 +5,39 @@ use std::fmt::Write as _;
 use super::{
     AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
     CrudAction, CustomOperationDeclaration, GenerateError, GenerateErrorKind, ModelDeclaration,
-    OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, Table, insert_bytes,
-    rust_identifier, rust_type_identifier,
+    OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass, Table,
+    insert_bytes, rust_identifier, rust_type_identifier,
 };
 use crate::manifest::OperationErrorDetailKey;
 
-/// Emit the typed update boundary for a model that declares `update`.
-pub(super) fn emit_model_update_wit(
+/// Emit typed boundaries for every declared model operation.
+pub(super) fn emit_model_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
-    if model_name != "purchase_order" {
+    if model.operations.is_empty() {
         return Ok(());
     }
-    let Some(operation) = model.operations.get(&CrudAction::Update) else {
-        return Ok(());
-    };
     emit_codec_support(files)?;
     let package = manifest.package.id.replace('_', "-");
     let directory = format!("generated/wit/deps/{package}-{}", wit_name(model_name));
     insert_bytes(
         files,
         &format!("{directory}/package.wit"),
-        emit_model_package_wit(manifest, model_name, model, table, operation).into_bytes(),
+        emit_model_package_wit(manifest, model_name, model, table).into_bytes(),
     )?;
-    insert_bytes(
-        files,
-        &format!("generated/wit/{model_name}_update_codec.rs"),
-        emit_update_codec(table, operation).into_bytes(),
-    )
+    for (action, operation) in &model.operations {
+        let codec = emit_crud_codec(*action, table, operation);
+        insert_bytes(
+            files,
+            &format!("generated/wit/{model_name}_{}_codec.rs", action.as_str()),
+            codec.into_bytes(),
+        )?;
+    }
+    Ok(())
 }
 
 fn emit_model_package_wit(
@@ -44,7 +45,6 @@ fn emit_model_package_wit(
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
-    operation: &OperationDeclaration,
 ) -> String {
     let package = manifest.package.id.replace('_', "-");
     let mut source = format!(
@@ -53,18 +53,142 @@ fn emit_model_package_wit(
         manifest.package.version
     );
     for action in model.operations.keys() {
-        if *action == CrudAction::Update {
-            emit_update_interface(&mut source, table, operation);
+        emit_crud_interface(&mut source, *action, table, &model.operations[action]);
+    }
+    source
+}
+
+fn emit_crud_interface(
+    source: &mut String,
+    action: CrudAction,
+    table: &Table,
+    operation: &OperationDeclaration,
+) {
+    if action == CrudAction::Update {
+        emit_update_interface(source, table, operation);
+        return;
+    }
+    let name = action.as_str();
+    writeln!(
+        source,
+        "interface {name} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n"
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(source, "  record {name}-request {{").expect("writing to a String cannot fail");
+    match action {
+        CrudAction::Get | CrudAction::Delete => source.push_str("    id: string,\n"),
+        CrudAction::Create => {
+            source.push_str("    idempotency-key: string,\n");
+            emit_writable_fields(source, table, operation, false);
+        }
+        CrudAction::Query => {
+            for filter in &operation.filters {
+                let column = model_column(table, &filter.field);
+                writeln!(
+                    source,
+                    "    {}: option<list<{}>>,",
+                    wit_name(&filter.field),
+                    wit_type(column.column_type())
+                )
+                .expect("writing to a String cannot fail");
+            }
+            source.push_str("    sort-field: option<string>,\n    sort-direction: option<string>,\n    cursor: option<string>,\n    limit: option<s64>,\n");
+        }
+        CrudAction::Update => unreachable!("update uses its compatibility emitter"),
+    }
+    if action == CrudAction::Delete {
+        let revision = operation
+            .revision_field
+            .as_deref()
+            .expect("validated delete revision exists");
+        writeln!(source, "    expected-{}: s64,", wit_name(revision))
+            .expect("writing to a String cannot fail");
+    }
+    source.push_str("  }\n\n");
+    emit_operation_errors(source, name, operation);
+    writeln!(source, "  record {name}-item {{\n    request-id: string,\n    input: result<{name}-request, invalid-input-detail>,\n  }}\n")
+        .expect("writing to a String cannot fail");
+    emit_crud_result(source, name, action, table, operation.result);
+    writeln!(source, "  record {name}-outcome {{\n    request-id: string,\n    outcome: result<{}{}, {name}-error>,\n  }}\n", if operation.result == super::ResultClass::Page { "" } else { "" }, format!("{name}-result"))
+        .expect("writing to a String cannot fail");
+    writeln!(source, "  run: async func(ctx: node-context, input: list<{name}-item>) -> result<list<{name}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n")
+        .expect("writing to a String cannot fail");
+}
+
+fn emit_writable_fields(
+    source: &mut String,
+    table: &Table,
+    operation: &OperationDeclaration,
+    tri_state: bool,
+) {
+    for field in &operation.writable_fields {
+        let column = model_column(table, field);
+        let mut ty = wit_type(column.column_type());
+        if column.nullable() {
+            ty = format!("option<{ty}>");
+        }
+        if tri_state {
+            ty = format!("option<{ty}>");
+        }
+        writeln!(source, "    {}: {ty},", wit_name(field))
+            .expect("writing to a String cannot fail");
+    }
+}
+
+fn emit_operation_errors(source: &mut String, name: &str, operation: &OperationDeclaration) {
+    for (literal, detail) in &operation.error_details {
+        if !detail.required.is_empty() || !detail.optional.is_empty() {
+            emit_error_detail(source, access_error_literal(*literal), detail);
+        }
+    }
+    writeln!(source, "  variant {name}-error {{").expect("writing to a String cannot fail");
+    for (literal, detail) in &operation.error_details {
+        let literal = access_error_literal(*literal);
+        if detail.required.is_empty() && detail.optional.is_empty() {
+            writeln!(source, "    {},", wit_name(literal))
+                .expect("writing to a String cannot fail");
         } else {
             writeln!(
                 source,
-                "interface {} {{\n  use wamn:node/types@0.1.0.{{json, node-context, emission, node-error}};\n\n  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;\n}}\n",
-                action.as_str()
+                "    {}({}-detail),",
+                wit_name(literal),
+                wit_name(literal)
             )
             .expect("writing to a String cannot fail");
         }
     }
-    source
+    source.push_str("  }\n\n");
+}
+
+fn emit_crud_result(
+    source: &mut String,
+    name: &str,
+    action: CrudAction,
+    table: &Table,
+    class: super::ResultClass,
+) {
+    writeln!(source, "  record {name}-row {{").expect("writing to a String cannot fail");
+    for column in table.columns() {
+        let mut ty = wit_type(column.column_type());
+        if column.nullable() {
+            ty = format!("option<{ty}>");
+        }
+        writeln!(source, "    {}: {ty},", wit_name(column.name()))
+            .expect("writing to a String cannot fail");
+    }
+    source.push_str("  }\n\n");
+    let carrier = match class {
+        super::ResultClass::One => format!("{name}-row"),
+        super::ResultClass::OptionalOne => format!("option<{name}-row>"),
+        super::ResultClass::BoundedList => format!("list<{name}-row>"),
+        super::ResultClass::Page => format!("list<{name}-row>"),
+    };
+    writeln!(source, "  record {name}-result {{\n    value: {carrier},")
+        .expect("writing to a String cannot fail");
+    if action == CrudAction::Query && class == super::ResultClass::Page {
+        source.push_str("    next-cursor: option<string>,\n");
+    }
+    source.push_str("  }\n\n");
 }
 
 fn emit_update_interface(source: &mut String, table: &Table, operation: &OperationDeclaration) {
@@ -79,7 +203,14 @@ fn emit_update_interface(source: &mut String, table: &Table, operation: &Operati
         )
         .expect("writing to a String cannot fail");
     }
-    source.push_str("  }\n\n  record update-request {\n    id: string,\n    expected-row-version: s64,\n    change: update-change,\n  }\n\n");
+    let revision = operation
+        .revision_field
+        .as_deref()
+        .expect("validated update revision exists");
+    source.push_str("  }\n\n  record update-request {\n    id: string,\n");
+    writeln!(source, "    expected-{}: s64,", wit_name(revision))
+        .expect("writing to a String cannot fail");
+    source.push_str("    change: update-change,\n  }\n\n");
     for (literal, detail) in &operation.error_details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
             emit_error_detail(source, access_error_literal(*literal), detail);
@@ -180,7 +311,39 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
         );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
+    source.push_str(&emit_handler("Update"));
     source
+}
+
+fn emit_crud_codec(action: CrudAction, table: &Table, operation: &OperationDeclaration) -> String {
+    if action == CrudAction::Update {
+        return emit_update_codec(table, operation);
+    }
+    let type_name = rust_type_identifier(action.as_str());
+    let mut source = codec_prelude(&format!("{type_name}Item"), 1, 100);
+    source.push_str(&emit_handler(&type_name));
+    source
+}
+
+fn emit_handler(type_name: &str) -> String {
+    format!(
+        r#"
+pub(crate) async fn run<S, F>(input: Vec<contract::{type_name}Item>, state: &mut S, mut handler: F) -> Vec<contract::{type_name}Outcome>
+where
+    F: AsyncFnMut(&mut S, contract::{type_name}Request) -> Result<contract::{type_name}Result, contract::{type_name}Error>,
+{{
+    let mut output = Vec::with_capacity(input.len());
+    for item in input {{
+        let outcome = match item.input {{
+            Ok(request) => handler(state, request).await,
+            Err(error) => Err(contract::{type_name}Error::InvalidInput(error)),
+        }};
+        output.push(contract::{type_name}Outcome {{ request_id: item.request_id, outcome }});
+    }}
+    output
+}}
+"#
+    )
 }
 
 fn emit_codec_support(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), GenerateError> {
@@ -357,55 +520,85 @@ const UPDATE_CODEC_FOOTER: &str = r#"    };
 }
 "#;
 
-/// Emit the first typed component boundary for the receipt pilot.
-///
-/// The manifest remains the source of every field, value domain, and error detail. Other
-/// operations keep their current interface until the pilot establishes the complete pattern.
+/// Emit a typed component boundary for a declared custom operation.
 pub(super) fn emit_custom_operation_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    if operation_name != "receiving.record_receipt" {
-        return Ok(());
-    }
-
     emit_codec_support(files)?;
+    let (group, local_name) = operation_name.split_once('.').ok_or_else(|| {
+        GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            "custom operation needs a group and local name",
+        )
+    })?;
     let package = manifest.package.id.replace('_', "-");
     let version = &manifest.package.version;
-    let directory = format!("generated/wit/deps/{package}-receiving");
+    let directory = format!("generated/wit/deps/{package}-{}", wit_name(group));
     let source = if let Some((_, dependency)) =
         manifest.base_dependencies.iter().find(|(_, item)| {
             item.operations
                 .iter()
                 .any(|candidate| candidate == operation_name)
         }) {
-        emit_forwarding_interface(&package, version, dependency)
+        emit_forwarding_interface(&package, version, group, local_name, dependency)
     } else {
-        emit_owned_interface(&package, version, manifest, operation)?
+        emit_owned_group(&package, version, group, manifest)?
     };
     insert_bytes(
         files,
         &format!("{directory}/package.wit"),
         source.into_bytes(),
     )?;
-    let codec = emit_receipt_codec(operation)?;
+    let codec = emit_custom_codec(local_name, operation)?;
     insert_bytes(
         files,
-        "generated/wit/receiving_record_receipt_codec.rs",
+        &format!(
+            "generated/wit/{}_{}_codec.rs",
+            rust_identifier(group).expect("validated custom group has a Rust name"),
+            rust_identifier(local_name).expect("validated custom operation has a Rust name")
+        ),
         codec.into_bytes(),
     )
+}
+
+fn emit_owned_group(
+    package: &str,
+    version: &str,
+    group: &str,
+    manifest: &PackageManifest,
+) -> Result<String, GenerateError> {
+    let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
+    for (operation_name, operation) in &manifest.custom_operations {
+        let Some(local_name) = operation_name.strip_prefix(&format!("{group}.")) else {
+            continue;
+        };
+        let emitted =
+            emit_owned_interface(package, version, group, local_name, manifest, operation)?;
+        let marker = format!("interface {} {{", wit_name(local_name));
+        let start = emitted
+            .rfind(&marker)
+            .expect("owned interface emitter includes its operation");
+        source.push_str(&emitted[start..]);
+    }
+    Ok(source)
 }
 
 fn emit_forwarding_interface(
     package: &str,
     version: &str,
+    group: &str,
+    local_name: &str,
     dependency: &crate::manifest::BaseDependencyRequirement,
 ) -> String {
     let dependency_package = dependency.package.replace('_', "-");
+    let interface = wit_name(local_name);
     format!(
-        "package {package}:receiving@{version};\n\ninterface record-receipt {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n  use {dependency_package}:receiving/record-receipt@{}.{{record-receipt-item, record-receipt-outcome}};\n\n  run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n",
+        "package {package}:{}@{version};\n\ninterface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n  use {dependency_package}:{}/{interface}@{}.{{{interface}-item, {interface}-outcome}};\n\n  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n",
+        wit_name(group),
+        wit_name(group),
         dependency.version
     )
 }
@@ -413,43 +606,87 @@ fn emit_forwarding_interface(
 fn emit_owned_interface(
     package: &str,
     version: &str,
+    group: &str,
+    local_name: &str,
     manifest: &PackageManifest,
     operation: &CustomOperationDeclaration,
 ) -> Result<String, GenerateError> {
-    let result = operation.result.as_ref().ok_or_else(|| {
-        GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            "receiving.record_receipt needs a result for its typed WIT contract",
-        )
-    })?;
-    let mut source = format!("package {package}:receiving@{version};\n\n");
+    let result = operation.result.as_ref();
+    let interface = wit_name(local_name);
+    let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
     for operation_name in manifest.custom_operations.keys() {
-        let Some(local_name) = operation_name.strip_prefix("receiving.") else {
+        let Some(other_name) = operation_name.strip_prefix(&format!("{group}.")) else {
             continue;
         };
-        if operation_name == "receiving.record_receipt" {
+        if other_name == local_name {
             continue;
         }
         writeln!(
             source,
             "interface {} {{\n  use wamn:node/types@0.1.0.{{json, node-context, emission, node-error}};\n\n  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;\n}}\n",
-            wit_name(local_name)
+            wit_name(other_name)
         )
         .expect("writing to a String cannot fail");
     }
-    source.push_str("interface record-receipt {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n\n");
-    source.push_str("  record record-receipt-line {\n");
-    emit_record_fields(&mut source, &operation.input.fields, "value.line[].", false);
-    source.push_str("  }\n\n  record record-receipt-request {\n");
+    writeln!(source, "interface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n").expect("writing to a String cannot fail");
+    if operation.input.envelope.is_none() && result.is_none() {
+        let nested = operation
+            .input
+            .fields
+            .iter()
+            .filter_map(|field| field.path.split_once('.').map(|(parent, _)| parent))
+            .collect::<std::collections::BTreeSet<_>>();
+        for parent in &nested {
+            writeln!(source, "  record {interface}-{} {{", wit_name(parent))
+                .expect("writing to a String cannot fail");
+            emit_record_fields(
+                &mut source,
+                &operation.input.fields,
+                &format!("{parent}."),
+                false,
+            );
+            source.push_str("  }\n\n");
+        }
+        writeln!(source, "  record {interface}-request {{")
+            .expect("writing to a String cannot fail");
+        emit_record_fields(&mut source, &operation.input.fields, "", false);
+        for parent in nested {
+            writeln!(
+                source,
+                "    {}: {interface}-{},",
+                wit_name(parent),
+                wit_name(parent)
+            )
+            .expect("writing to a String cannot fail");
+        }
+        writeln!(source, "  }}\n\n  run: async func(ctx: node-context, input: {interface}-request) -> result<{interface}-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n")
+            .expect("writing to a String cannot fail");
+        return Ok(source);
+    }
+    let has_lines = operation
+        .input
+        .fields
+        .iter()
+        .any(|field| field.path.starts_with("value.line[]."));
+    if has_lines {
+        writeln!(source, "  record {interface}-line {{").expect("writing to a String cannot fail");
+        emit_record_fields(&mut source, &operation.input.fields, "value.line[].", false);
+        source.push_str("  }\n\n");
+    }
+    writeln!(source, "  record {interface}-request {{").expect("writing to a String cannot fail");
     emit_record_fields(&mut source, &operation.input.fields, "value.", true);
-    source.push_str("    line: list<record-receipt-line>,\n  }\n\n");
+    if has_lines {
+        writeln!(source, "    line: list<{interface}-line>,")
+            .expect("writing to a String cannot fail");
+    }
+    source.push_str("  }\n\n");
 
     for (literal, detail) in &operation.error_details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
             emit_error_detail(&mut source, literal, detail);
         }
     }
-    source.push_str("  variant record-receipt-error {\n");
+    writeln!(source, "  variant {interface}-error {{").expect("writing to a String cannot fail");
     for literal in &operation.errors {
         let detail = operation
             .error_details
@@ -468,11 +705,29 @@ fn emit_owned_interface(
             .expect("writing to a String cannot fail");
         }
     }
-    source.push_str("  }\n\n  record record-receipt-item {\n    request-id: string,\n    input: result<record-receipt-request, invalid-input-detail>,\n  }\n\n");
-    source.push_str("  record record-receipt-result {\n");
-    emit_record_fields(&mut source, &result.fields, "", false);
-    source.push_str("  }\n\n  record record-receipt-outcome {\n    request-id: string,\n    outcome: result<record-receipt-result, record-receipt-error>,\n  }\n\n");
-    source.push_str("  run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}\n");
+    writeln!(source, "  }}\n\n  record {interface}-item {{\n    request-id: string,\n    input: result<{interface}-request, invalid-input-detail>,\n  }}\n").expect("writing to a String cannot fail");
+    if result.is_some_and(|result| result.class == ResultClass::BoundedList) {
+        writeln!(source, "  record {interface}-row {{").expect("writing to a String cannot fail");
+        emit_record_fields(
+            &mut source,
+            &result.expect("bounded list result exists").fields,
+            "",
+            false,
+        );
+        writeln!(
+            source,
+            "  }}\n\n  record {interface}-result {{\n    value: list<{interface}-row>,"
+        )
+        .expect("writing to a String cannot fail");
+    } else {
+        writeln!(source, "  record {interface}-result {{")
+            .expect("writing to a String cannot fail");
+        if let Some(result) = result {
+            emit_record_fields(&mut source, &result.fields, "", false);
+        }
+    }
+    writeln!(source, "  }}\n\n  record {interface}-outcome {{\n    request-id: string,\n    outcome: result<{interface}-result, {interface}-error>,\n  }}\n").expect("writing to a String cannot fail");
+    writeln!(source, "  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n").expect("writing to a String cannot fail");
     Ok(source)
 }
 
@@ -564,36 +819,49 @@ fn wit_name(value: &str) -> String {
     value.replace('_', "-")
 }
 
-fn emit_receipt_codec(operation: &CustomOperationDeclaration) -> Result<String, GenerateError> {
-    let result = operation.result.as_ref().ok_or_else(|| {
-        GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            "receiving.record_receipt needs a result for its typed codec",
-        )
-    })?;
+fn emit_custom_codec(
+    local_name: &str,
+    operation: &CustomOperationDeclaration,
+) -> Result<String, GenerateError> {
+    let Some(result) = operation.result.as_ref() else {
+        let type_name = rust_type_identifier(local_name);
+        return Ok(format!(
+            "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError {{ pub(crate) const fn context(&self) -> &'static str {{ self.0 }} }}\nimpl std::fmt::Display for CodecError {{ fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ formatter.write_str(self.0) }} }}\nimpl std::error::Error for CodecError {{}}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonInput {{ event: String, new: JsonNew }}\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew {{ id: String }}\n\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let value: JsonInput = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{ event: value.event, new: contract::{type_name}New {{ id: value.new.id }} }})\n}}\n\npub(crate) fn encode(value: &contract::{type_name}Request) -> String {{\n    serde_json::json!({{\"event\": value.event, \"new\": {{\"id\": value.new.id}}}}).to_string()\n}}\n"
+        ));
+    };
     let value_fields = codec_fields(&operation.input.fields, "value.");
     let line_fields = codec_fields(&operation.input.fields, "value.line[].");
-    let envelope = operation.input.envelope.as_ref().ok_or_else(|| {
-        GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            "receiving.record_receipt needs envelope bounds for its JSON codec",
-        )
-    })?;
-    let mut source = codec_prelude("RecordReceiptItem", envelope.minimum, envelope.maximum);
-    source.push_str(RECEIPT_CODEC_HEADER);
-
-    emit_json_struct(&mut source, "JsonValue", &value_fields);
-    source.push_str("    line: Vec<JsonLine>,\n}\n\n");
-    source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
-    emit_json_struct(&mut source, "JsonLine", &line_fields);
-    source.push_str("}\n");
-    source.push_str(RECEIPT_CODEC_DECODE_PREFIX);
-    emit_codec_field_assignments(&mut source, &value_fields, "request.value", 16);
-    source.push_str(
-        "                line: request.value.line.into_iter().map(|line| contract::RecordReceiptLine {\n",
-    );
-    emit_codec_field_assignments(&mut source, &line_fields, "line", 20);
-    source.push_str(RECEIPT_CODEC_ENCODE_PREFIX);
+    let (minimum, maximum) = operation
+        .input
+        .envelope
+        .as_ref()
+        .map_or((1, 1), |limit| (limit.minimum, limit.maximum));
+    let type_name = rust_type_identifier(local_name);
+    let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum);
+    if value_fields.is_empty() && line_fields.is_empty() {
+        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {\n        let input = serde_json::from_value::<JsonRequest>(body).map(|_| contract::RecordReceiptRequest {}).map_err(|_| contract::InvalidInputDetail { field: \"input\".to_owned(), minimum: None, maximum: None, observed: None });\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
+    } else {
+        source.push_str(RECEIPT_CODEC_HEADER);
+        emit_json_struct(&mut source, "JsonValue", &value_fields);
+        if !line_fields.is_empty() {
+            source.push_str("    line: Vec<JsonLine>,\n");
+        }
+        source.push_str("}\n\n");
+        if !line_fields.is_empty() {
+            source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
+            emit_json_struct(&mut source, "JsonLine", &line_fields);
+            source.push_str("}\n");
+        }
+        source.push_str(RECEIPT_CODEC_DECODE_PREFIX);
+        emit_codec_field_assignments(&mut source, &value_fields, "request.value", 16);
+        if !line_fields.is_empty() {
+            source.push_str("                line: request.value.line.into_iter().map(|line| contract::RecordReceiptLine {\n");
+            emit_codec_field_assignments(&mut source, &line_fields, "line", 20);
+            source.push_str("                }).collect(),\n");
+        }
+        source.push_str("            }),\n            Err(_) => Err(contract::InvalidInputDetail {\n                field: \"input\".to_owned(), minimum: None, maximum: None, observed: None,\n            }),\n        };\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
+    }
+    source.push_str("pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": {\n");
     for field in &result.fields {
         if field.path.contains("[]") || field.path.contains('.') {
             continue;
@@ -610,6 +878,8 @@ fn emit_receipt_codec(operation: &CustomOperationDeclaration) -> Result<String, 
         );
     }
     source.push_str(RECEIPT_CODEC_FOOTER);
+    source = source.replace("RecordReceipt", &type_name);
+    source.push_str(&emit_handler(&type_name));
     Ok(source)
 }
 
@@ -736,24 +1006,6 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, Co
             Ok(request) => Ok(contract::RecordReceiptRequest {
 ";
 
-const RECEIPT_CODEC_ENCODE_PREFIX: &str = r#"                }).collect(),
-            }),
-            Err(_) => Err(contract::InvalidInputDetail {
-                field: "input".to_owned(), minimum: None, maximum: None, observed: None,
-            }),
-        };
-        Ok(contract::RecordReceiptItem { request_id, input })
-    }).collect()
-}
-
-pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {
-    let values = output.iter().map(|item| {
-        match &item.outcome {
-            Ok(value) => json!({
-                "request_id": item.request_id,
-                "value": {
-"#;
-
 const RECEIPT_CODEC_ERROR_PREFIX: &str = r#"                }
             }),
             Err(error) => json!({
@@ -821,8 +1073,11 @@ mod tests {
         manifest["custom_operations"]["receiving.record_receipt"]["input"]["envelope"]["maximum"] =
             serde_json::json!(7);
         let manifest: PackageManifest = serde_json::from_value(manifest).unwrap();
-        let codec =
-            emit_receipt_codec(&manifest.custom_operations["receiving.record_receipt"]).unwrap();
+        let codec = emit_custom_codec(
+            "record_receipt",
+            &manifest.custom_operations["receiving.record_receipt"],
+        )
+        .unwrap();
         assert!(codec.contains("const MINIMUM: usize = 2;"));
         assert!(codec.contains("const MAXIMUM: usize = 7;"));
         assert!(codec.contains("item count must be 2..=7"));

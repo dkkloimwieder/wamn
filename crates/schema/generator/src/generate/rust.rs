@@ -35,7 +35,7 @@ pub(super) fn static_sql_rows(
         .iter()
         .map(|(name, statement)| RustRow {
             name: format!("{}Row", rust_type_identifier(name)),
-            visibility: RustVisibility::Crate,
+            visibility: RustVisibility::Public,
             fields: statement
                 .row
                 .iter()
