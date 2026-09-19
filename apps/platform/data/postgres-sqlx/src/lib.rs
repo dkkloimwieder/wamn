@@ -1,4 +1,4 @@
-//! SQLx 0.9 driver over the synchronous `wamn:postgres` capability.
+//! SQLx 0.9 driver over the asynchronous `wamn:postgres` capability.
 
 #[expect(
     clippy::same_length_and_capacity,
@@ -833,16 +833,32 @@ fn database_error(error: wire::PgError) -> Error {
 }
 
 trait TransactionCapability: Send {
-    fn query(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<wire::RowSet, wire::PgError>;
-    fn execute(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<u64, wire::PgError>;
-    fn commit(&mut self) -> Result<(), wire::PgError>;
-    fn rollback(&mut self) -> Result<(), wire::PgError>;
+    fn query<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<wire::RowSet, wire::PgError>>;
+    fn execute<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<u64, wire::PgError>>;
+    fn commit(&mut self) -> BoxFuture<'_, Result<(), wire::PgError>>;
+    fn rollback(&mut self) -> BoxFuture<'_, Result<(), wire::PgError>>;
 }
 
 trait Capability: Send {
-    fn query(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<wire::RowSet, wire::PgError>;
-    fn execute(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<u64, wire::PgError>;
-    fn begin(&mut self) -> Result<Box<dyn TransactionCapability>, wire::PgError>;
+    fn query<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<wire::RowSet, wire::PgError>>;
+    fn execute<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<u64, wire::PgError>>;
+    fn begin(&mut self) -> BoxFuture<'_, Result<Box<dyn TransactionCapability>, wire::PgError>>;
 }
 
 #[derive(Debug)]
@@ -851,58 +867,97 @@ struct HostCapability;
 struct HostTransaction(host::Transaction);
 
 impl Capability for HostCapability {
-    fn query(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<wire::RowSet, wire::PgError> {
-        host::query(
-            sql,
-            &params
-                .into_iter()
-                .map(WamnValue::into_wire)
-                .collect::<Vec<_>>(),
-        )
+    fn query<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<wire::RowSet, wire::PgError>> {
+        async move {
+            host::query(
+                sql.to_owned(),
+                params
+                    .into_iter()
+                    .map(WamnValue::into_wire)
+                    .collect::<Vec<_>>(),
+            )
+            .await
+        }
+        .boxed()
     }
 
-    fn execute(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<u64, wire::PgError> {
-        host::execute(
-            sql,
-            &params
-                .into_iter()
-                .map(WamnValue::into_wire)
-                .collect::<Vec<_>>(),
-        )
+    fn execute<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<u64, wire::PgError>> {
+        async move {
+            host::execute(
+                sql.to_owned(),
+                params
+                    .into_iter()
+                    .map(WamnValue::into_wire)
+                    .collect::<Vec<_>>(),
+            )
+            .await
+        }
+        .boxed()
     }
 
-    fn begin(&mut self) -> Result<Box<dyn TransactionCapability>, wire::PgError> {
-        host::begin().map(|transaction| Box::new(HostTransaction(transaction)) as _)
+    fn begin(&mut self) -> BoxFuture<'_, Result<Box<dyn TransactionCapability>, wire::PgError>> {
+        async {
+            host::begin()
+                .await
+                .map(|transaction| Box::new(HostTransaction(transaction)) as _)
+        }
+        .boxed()
     }
 }
 
 impl TransactionCapability for HostTransaction {
-    fn query(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<wire::RowSet, wire::PgError> {
-        self.0.query(
-            sql,
-            &params
-                .into_iter()
-                .map(WamnValue::into_wire)
-                .collect::<Vec<_>>(),
-        )
+    fn query<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<wire::RowSet, wire::PgError>> {
+        async move {
+            self.0
+                .query(
+                    sql.to_owned(),
+                    params
+                        .into_iter()
+                        .map(WamnValue::into_wire)
+                        .collect::<Vec<_>>(),
+                )
+                .await
+        }
+        .boxed()
     }
 
-    fn execute(&mut self, sql: &str, params: Vec<WamnValue>) -> Result<u64, wire::PgError> {
-        self.0.execute(
-            sql,
-            &params
-                .into_iter()
-                .map(WamnValue::into_wire)
-                .collect::<Vec<_>>(),
-        )
+    fn execute<'a>(
+        &'a mut self,
+        sql: &'a str,
+        params: Vec<WamnValue>,
+    ) -> BoxFuture<'a, Result<u64, wire::PgError>> {
+        async move {
+            self.0
+                .execute(
+                    sql.to_owned(),
+                    params
+                        .into_iter()
+                        .map(WamnValue::into_wire)
+                        .collect::<Vec<_>>(),
+                )
+                .await
+        }
+        .boxed()
     }
 
-    fn commit(&mut self) -> Result<(), wire::PgError> {
-        self.0.commit()
+    fn commit(&mut self) -> BoxFuture<'_, Result<(), wire::PgError>> {
+        self.0.commit().boxed()
     }
 
-    fn rollback(&mut self) -> Result<(), wire::PgError> {
-        self.0.rollback()
+    fn rollback(&mut self) -> BoxFuture<'_, Result<(), wire::PgError>> {
+        self.0.rollback().boxed()
     }
 }
 
@@ -936,16 +991,17 @@ impl WamnConnection {
         }
     }
 
-    fn query(&mut self, sql: &str, arguments: WamnArguments) -> Result<Vec<WamnRow>, Error> {
+    async fn query(&mut self, sql: &str, arguments: WamnArguments) -> Result<Vec<WamnRow>, Error> {
         let result = match self.transaction.as_mut() {
             Some(transaction) => transaction.query(sql, arguments.values),
             None => self.capability.query(sql, arguments.values),
         }
+        .await
         .map_err(database_error)?;
         rows_from_wire(result)
     }
 
-    fn execute_statement(
+    async fn execute_statement(
         &mut self,
         sql: &str,
         arguments: WamnArguments,
@@ -954,6 +1010,7 @@ impl WamnConnection {
             Some(transaction) => transaction.execute(sql, arguments.values),
             None => self.capability.execute(sql, arguments.values),
         }
+        .await
         .map_err(database_error)?;
         Ok(WamnQueryResult { rows_affected })
     }
@@ -1051,54 +1108,58 @@ impl TransactionManager for WamnTransactionManager {
         connection: &mut WamnConnection,
         statement: Option<SqlStr>,
     ) -> impl Future<Output = Result<(), Error>> + Send + '_ {
-        let result = if statement.is_some() {
-            Err(Error::InvalidArgument(
-                "custom transaction statements are unsupported".to_owned(),
-            ))
-        } else if connection.transaction.is_some() {
-            Err(Error::InvalidArgument(
-                "nested transactions and savepoints are unsupported".to_owned(),
-            ))
-        } else {
-            connection
-                .capability
-                .begin()
-                .map(|transaction| connection.transaction = Some(transaction))
-                .map_err(database_error)
-        };
-        std::future::ready(result)
+        async move {
+            if statement.is_some() {
+                Err(Error::InvalidArgument(
+                    "custom transaction statements are unsupported".to_owned(),
+                ))
+            } else if connection.transaction.is_some() {
+                Err(Error::InvalidArgument(
+                    "nested transactions and savepoints are unsupported".to_owned(),
+                ))
+            } else {
+                connection
+                    .capability
+                    .begin()
+                    .await
+                    .map(|transaction| connection.transaction = Some(transaction))
+                    .map_err(database_error)
+            }
+        }
     }
 
     fn commit(
         connection: &mut WamnConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send + '_ {
-        let result = if let Some(mut transaction) = connection.transaction.take() {
-            transaction.commit().map_err(database_error)
-        } else {
-            Err(Error::InvalidArgument(
-                "no transaction to commit".to_owned(),
-            ))
-        };
-        std::future::ready(result)
+        async move {
+            if let Some(mut transaction) = connection.transaction.take() {
+                transaction.commit().await.map_err(database_error)
+            } else {
+                Err(Error::InvalidArgument(
+                    "no transaction to commit".to_owned(),
+                ))
+            }
+        }
     }
 
     fn rollback(
         connection: &mut WamnConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send + '_ {
-        let result = if let Some(mut transaction) = connection.transaction.take() {
-            transaction.rollback().map_err(database_error)
-        } else {
-            Err(Error::InvalidArgument(
-                "no transaction to roll back".to_owned(),
-            ))
-        };
-        std::future::ready(result)
+        async move {
+            if let Some(mut transaction) = connection.transaction.take() {
+                transaction.rollback().await.map_err(database_error)
+            } else {
+                Err(Error::InvalidArgument(
+                    "no transaction to roll back".to_owned(),
+                ))
+            }
+        }
     }
 
     fn start_rollback(connection: &mut WamnConnection) {
-        if let Some(mut transaction) = connection.transaction.take() {
-            let _ = transaction.rollback();
-        }
+        // Dropping the WIT transaction resource invokes the host destructor,
+        // which destroys its checked-out connection and lets PostgreSQL abort.
+        drop(connection.transaction.take());
     }
 
     fn get_transaction_depth(connection: &WamnConnection) -> usize {
@@ -1116,7 +1177,7 @@ impl<'c> Executor<'c> for &'c mut WamnConnection {
     {
         let arguments = take_arguments(&mut query);
         let sql = query.sql();
-        async move { self.execute_statement(sql.as_str(), arguments?) }.boxed()
+        async move { self.execute_statement(sql.as_str(), arguments?).await }.boxed()
     }
 
     fn fetch_many<'e, 'q: 'e, E>(
@@ -1129,10 +1190,15 @@ impl<'c> Executor<'c> for &'c mut WamnConnection {
     {
         let arguments = take_arguments(&mut query);
         let sql = query.sql();
-        match arguments.and_then(|arguments| self.query(sql.as_str(), arguments)) {
-            Ok(rows) => stream::iter(rows.into_iter().map(|row| Ok(Either::Right(row)))).boxed(),
-            Err(error) => stream::once(async { Err(error) }).boxed(),
-        }
+        stream::once(async move { self.query(sql.as_str(), arguments?).await })
+            .map(|result| match result {
+                Ok(rows) => {
+                    stream::iter(rows.into_iter().map(|row| Ok(Either::Right(row)))).boxed()
+                }
+                Err(error) => stream::once(async { Err(error) }).boxed(),
+            })
+            .flatten()
+            .boxed()
     }
 
     fn fetch_optional<'e, 'q: 'e, E>(
@@ -1146,7 +1212,7 @@ impl<'c> Executor<'c> for &'c mut WamnConnection {
         let arguments = take_arguments(&mut query);
         let sql = query.sql();
         async move {
-            let mut rows = self.query(sql.as_str(), arguments?)?;
+            let mut rows = self.query(sql.as_str(), arguments?).await?;
             Ok(if rows.is_empty() {
                 None
             } else {
@@ -1273,63 +1339,94 @@ mod tests {
     struct MockTransaction(Arc<Mutex<Calls>>);
 
     impl Capability for MockCapability {
-        fn query(
-            &mut self,
-            _sql: &str,
+        fn query<'a>(
+            &'a mut self,
+            _sql: &'a str,
             params: Vec<WamnValue>,
-        ) -> Result<wire::RowSet, wire::PgError> {
-            let mut calls = self.0.lock().expect("mock calls lock");
-            calls.query += 1;
-            calls.params.push(params);
-            calls.query_results.pop_front().expect("mock query result")
+        ) -> BoxFuture<'a, Result<wire::RowSet, wire::PgError>> {
+            async move {
+                let mut calls = self.0.lock().expect("mock calls lock");
+                calls.query += 1;
+                calls.params.push(params);
+                calls.query_results.pop_front().expect("mock query result")
+            }
+            .boxed()
         }
 
-        fn execute(&mut self, _sql: &str, params: Vec<WamnValue>) -> Result<u64, wire::PgError> {
-            let mut calls = self.0.lock().expect("mock calls lock");
-            calls.execute += 1;
-            calls.params.push(params);
-            calls
-                .execute_results
-                .pop_front()
-                .expect("mock execute result")
+        fn execute<'a>(
+            &'a mut self,
+            _sql: &'a str,
+            params: Vec<WamnValue>,
+        ) -> BoxFuture<'a, Result<u64, wire::PgError>> {
+            async move {
+                let mut calls = self.0.lock().expect("mock calls lock");
+                calls.execute += 1;
+                calls.params.push(params);
+                calls
+                    .execute_results
+                    .pop_front()
+                    .expect("mock execute result")
+            }
+            .boxed()
         }
 
-        fn begin(&mut self) -> Result<Box<dyn TransactionCapability>, wire::PgError> {
-            self.0.lock().expect("mock calls lock").begin += 1;
-            Ok(Box::new(MockTransaction(Arc::clone(&self.0))))
+        fn begin(
+            &mut self,
+        ) -> BoxFuture<'_, Result<Box<dyn TransactionCapability>, wire::PgError>> {
+            async {
+                self.0.lock().expect("mock calls lock").begin += 1;
+                Ok(Box::new(MockTransaction(Arc::clone(&self.0))) as _)
+            }
+            .boxed()
         }
     }
 
     impl TransactionCapability for MockTransaction {
-        fn query(
-            &mut self,
-            _sql: &str,
+        fn query<'a>(
+            &'a mut self,
+            _sql: &'a str,
             params: Vec<WamnValue>,
-        ) -> Result<wire::RowSet, wire::PgError> {
-            let mut calls = self.0.lock().expect("mock calls lock");
-            calls.query += 1;
-            calls.params.push(params);
-            calls.query_results.pop_front().expect("mock query result")
+        ) -> BoxFuture<'a, Result<wire::RowSet, wire::PgError>> {
+            async move {
+                let mut calls = self.0.lock().expect("mock calls lock");
+                calls.query += 1;
+                calls.params.push(params);
+                calls.query_results.pop_front().expect("mock query result")
+            }
+            .boxed()
         }
 
-        fn execute(&mut self, _sql: &str, params: Vec<WamnValue>) -> Result<u64, wire::PgError> {
-            let mut calls = self.0.lock().expect("mock calls lock");
-            calls.execute += 1;
-            calls.params.push(params);
-            calls
-                .execute_results
-                .pop_front()
-                .expect("mock execute result")
+        fn execute<'a>(
+            &'a mut self,
+            _sql: &'a str,
+            params: Vec<WamnValue>,
+        ) -> BoxFuture<'a, Result<u64, wire::PgError>> {
+            async move {
+                let mut calls = self.0.lock().expect("mock calls lock");
+                calls.execute += 1;
+                calls.params.push(params);
+                calls
+                    .execute_results
+                    .pop_front()
+                    .expect("mock execute result")
+            }
+            .boxed()
         }
 
-        fn commit(&mut self) -> Result<(), wire::PgError> {
-            self.0.lock().expect("mock calls lock").commit += 1;
-            Ok(())
+        fn commit(&mut self) -> BoxFuture<'_, Result<(), wire::PgError>> {
+            async {
+                self.0.lock().expect("mock calls lock").commit += 1;
+                Ok(())
+            }
+            .boxed()
         }
 
-        fn rollback(&mut self) -> Result<(), wire::PgError> {
-            self.0.lock().expect("mock calls lock").rollback += 1;
-            Ok(())
+        fn rollback(&mut self) -> BoxFuture<'_, Result<(), wire::PgError>> {
+            async {
+                self.0.lock().expect("mock calls lock").rollback += 1;
+                Ok(())
+            }
+            .boxed()
         }
     }
 

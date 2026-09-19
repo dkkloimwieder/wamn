@@ -511,17 +511,24 @@ async fn begin_statement_transaction(
     })
 }
 
-impl client::Host for ActiveCtx<'_> {
+impl client::Host for ActiveCtx<'_> {}
+
+impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
     async fn query(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let span = db_span(&plugin, &component_id, "query");
                 let project = plugin.project_for(&component_id);
                 let t0 = std::time::Instant::now();
@@ -540,15 +547,20 @@ impl client::Host for ActiveCtx<'_> {
     }
 
     async fn execute(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let span = db_span(&plugin, &component_id, "execute");
                 let project = plugin.project_for(&component_id);
                 let t0 = std::time::Instant::now();
@@ -569,13 +581,18 @@ impl client::Host for ActiveCtx<'_> {
     }
 
     async fn begin(
-        &mut self,
+        accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransaction>, PgError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let project = plugin.project_for(&component_id);
                 let span = db_span(&plugin, &component_id, "begin");
                 let t0 = std::time::Instant::now();
@@ -590,25 +607,35 @@ impl client::Host for ActiveCtx<'_> {
                     Ok(opened) => opened,
                     Err(e) => return Ok(Err(e)),
                 };
-                Ok(Ok(self.table.push(txn)?))
+                accessor.with(|mut access| access.get().table.push(txn).map(Ok).map_err(Into::into))
             })
             .await
     }
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {
+impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {}
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWithStore<T>
+    for SharedCtx
+{
     async fn query(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let project = id.project().to_string();
                 let span = db_span_for_project(&plugin, &component_id, &project, "query");
                 let t0 = std::time::Instant::now();
@@ -627,16 +654,21 @@ impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {
     }
 
     async fn execute(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let project = id.project().to_string();
                 let span = db_span_for_project(&plugin, &component_id, &project, "execute");
                 let t0 = std::time::Instant::now();
@@ -657,14 +689,19 @@ impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {
     }
 
     async fn begin(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransaction>, PgError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let project = id.project().to_string();
                 let span = db_span_for_project(&plugin, &component_id, &project, "begin");
                 let t0 = std::time::Instant::now();
@@ -673,7 +710,9 @@ impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {
                     .await;
                 record_query_ms("begin", &project, t0.elapsed());
                 match opened {
-                    Ok(txn) => Ok(Ok(self.table.push(txn)?)),
+                    Ok(txn) => accessor.with(|mut access| {
+                        access.get().table.push(txn).map(Ok).map_err(Into::into)
+                    }),
                     Err(e) => Ok(Err(e)),
                 }
             })
@@ -681,22 +720,29 @@ impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {
     }
 }
 
-async fn txn_query(
-    ctx: &mut ActiveCtx<'_>,
+async fn txn_query<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
     project: &str,
     rep: Resource<PgTransaction>,
     sql: String,
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    let (plugin, component_id, trace, state, destroyed, row_limit) =
+        accessor.with(|mut access| {
+            let ctx = access.get();
+            let txn = ctx.table.get(&rep)?;
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                Arc::clone(&txn.state),
+                Arc::clone(&txn.destroyed),
+                txn.row_limit,
+            ))
+        })?;
     trace
         .run(async move {
-            let plugin = plugin_of(ctx)?;
-            let component_id = ctx.component_id.to_string();
             let span = db_span_for_project(&plugin, &component_id, project, "txn.query");
-            let txn = ctx.table.get(&rep)?;
-            let row_limit = txn.row_limit;
-            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
             let t0 = std::time::Instant::now();
             let out = with_txn_conn(&state, &destroyed, |conn| async move {
                 // `run_query` maps errors already, so nothing reaching
@@ -713,21 +759,27 @@ async fn txn_query(
         .await
 }
 
-async fn txn_execute(
-    ctx: &mut ActiveCtx<'_>,
+async fn txn_execute<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
     project: &str,
     rep: Resource<PgTransaction>,
     sql: String,
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    let (plugin, component_id, trace, state, destroyed) = accessor.with(|mut access| {
+        let ctx = access.get();
+        let txn = ctx.table.get(&rep)?;
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin_of(&ctx)?,
+            ctx.component_id.to_string(),
+            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            Arc::clone(&txn.state),
+            Arc::clone(&txn.destroyed),
+        ))
+    })?;
     trace
         .run(async move {
-            let plugin = plugin_of(ctx)?;
-            let component_id = ctx.component_id.to_string();
             let span = db_span_for_project(&plugin, &component_id, project, "txn.execute");
-            let txn = ctx.table.get(&rep)?;
-            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
             let t0 = std::time::Instant::now();
             let out = with_txn_conn(&state, &destroyed, |conn| async move {
                 // `run_execute` maps errors already, so nothing reaching
@@ -744,14 +796,29 @@ async fn txn_execute(
         .await
 }
 
-async fn txn_open_cursor(
-    ctx: &mut ActiveCtx<'_>,
+async fn txn_open_cursor<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
     project: &str,
     rep: Resource<PgTransaction>,
     sql: String,
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
-    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    let (plugin, component_id, trace, state, destroyed, name) = accessor.with(|mut access| {
+        let ctx = access.get();
+        let plugin = plugin_of(&ctx)?;
+        let component_id = ctx.component_id.to_string();
+        let trace = crate::plugins::invocation_trace::invocation_trace(&ctx);
+        let txn = ctx.table.get_mut(&rep)?;
+        txn.cursor_seq += 1;
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin,
+            component_id,
+            trace,
+            Arc::clone(&txn.state),
+            Arc::clone(&txn.destroyed),
+            format!("wamn_c{}", txn.cursor_seq),
+        ))
+    })?;
     trace
         .run(async move {
             // A cursor over `SELECT set_config('app.tenant', …)` would execute the
@@ -759,13 +826,7 @@ async fn txn_open_cursor(
             if let Err(e) = reject_claim_mutation(&sql) {
                 return Ok(Err(e));
             }
-            let plugin = plugin_of(ctx)?;
-            let component_id = ctx.component_id.to_string();
             let span = db_span_for_project(&plugin, &component_id, project, "txn.open_cursor");
-            let txn = ctx.table.get_mut(&rep)?;
-            txn.cursor_seq += 1;
-            let name = format!("wamn_c{}", txn.cursor_seq);
-            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
             let declare = format!("DECLARE {name} CURSOR FOR {sql}");
             let t0 = std::time::Instant::now();
             let result = with_txn_conn(&state, &destroyed, |conn| async move {
@@ -782,36 +843,49 @@ async fn txn_open_cursor(
             .await;
             record_query_ms("txn.open_cursor", project, t0.elapsed());
             Ok(match result {
-                Ok(_) => Ok(ctx.table.push(PgCursor {
-                    state,
-                    destroyed,
-                    name,
-                })?),
+                Ok(_) => accessor.with(|mut access| {
+                    access
+                        .get()
+                        .table
+                        .push(PgCursor {
+                            state,
+                            destroyed,
+                            name,
+                        })
+                        .map(Ok)
+                        .map_err(wash_runtime::wasmtime::Error::from)
+                })?,
                 Err(e) => Err(e),
             })
         })
         .await
 }
 
-async fn txn_finish(
-    ctx: &mut ActiveCtx<'_>,
+async fn txn_finish<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
     project: &str,
     rep: Resource<PgTransaction>,
     verb: &'static str,
 ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    let (plugin, component_id, trace, state, destroyed) = accessor.with(|mut access| {
+        let ctx = access.get();
+        let txn = ctx.table.get(&rep)?;
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin_of(&ctx)?,
+            ctx.component_id.to_string(),
+            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            Arc::clone(&txn.state),
+            Arc::clone(&txn.destroyed),
+        ))
+    })?;
     trace
         .run(async move {
-            let plugin = plugin_of(ctx)?;
-            let component_id = ctx.component_id.to_string();
             let op = match verb {
                 "COMMIT" => "txn.commit",
                 "ROLLBACK" => "txn.rollback",
                 _ => unreachable!("transaction finish verb is fixed"),
             };
             let span = db_span_for_project(&plugin, &component_id, project, op);
-            let txn = ctx.table.get(&rep)?;
-            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
             let t0 = std::time::Instant::now();
             let result = finish_txn(&state, &destroyed, verb).instrument(span).await;
             record_query_ms(op, project, t0.elapsed());
@@ -839,24 +913,27 @@ async fn txn_drop(
     Ok(())
 }
 
-async fn cursor_fetch(
-    ctx: &mut ActiveCtx<'_>,
+async fn cursor_fetch<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
     project: &str,
     rep: Resource<PgCursor>,
     max_rows: u32,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    let (plugin, component_id, trace, state, destroyed, name) = accessor.with(|mut access| {
+        let ctx = access.get();
+        let cursor = ctx.table.get(&rep)?;
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin_of(&ctx)?,
+            ctx.component_id.to_string(),
+            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            Arc::clone(&cursor.state),
+            Arc::clone(&cursor.destroyed),
+            cursor.name.clone(),
+        ))
+    })?;
     trace
         .run(async move {
-            let plugin = plugin_of(ctx)?;
-            let component_id = ctx.component_id.to_string();
             let span = db_span_for_project(&plugin, &component_id, project, "cursor.fetch");
-            let cursor = ctx.table.get(&rep)?;
-            let (state, destroyed, name) = (
-                cursor.state.clone(),
-                cursor.destroyed.clone(),
-                cursor.name.clone(),
-            );
             let t0 = std::time::Instant::now();
             let fetched = with_txn_conn(&state, &destroyed, |conn| async move {
                 let r = async {
@@ -890,59 +967,53 @@ fn cursor_drop(
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl bindings::named_imports::wamn::postgres::client::HostTransaction for ActiveCtx<'_> {
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostTransactionWithStore<T>
+    for SharedCtx
+{
     async fn query(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         rep: Resource<PgTransaction>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        txn_query(self, id.project(), rep, sql, params).await
+        txn_query(accessor, id.project(), rep, sql, params).await
     }
 
     async fn execute(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         rep: Resource<PgTransaction>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-        txn_execute(self, id.project(), rep, sql, params).await
+        txn_execute(accessor, id.project(), rep, sql, params).await
     }
 
     async fn open_cursor(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         rep: Resource<PgTransaction>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
-        txn_open_cursor(self, id.project(), rep, sql, params).await
+        txn_open_cursor(accessor, id.project(), rep, sql, params).await
     }
 
     async fn commit(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         rep: Resource<PgTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-        txn_finish(self, id.project(), rep, "COMMIT").await
+        txn_finish(accessor, id.project(), rep, "COMMIT").await
     }
 
     async fn rollback(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         rep: Resource<PgTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-        txn_finish(self, id.project(), rep, "ROLLBACK").await
-    }
-
-    async fn drop(
-        &mut self,
-        _id: super::NamedProject,
-        rep: Resource<PgTransaction>,
-    ) -> wash_runtime::wasmtime::Result<()> {
-        txn_drop(self, rep).await
+        txn_finish(accessor, id.project(), rep, "ROLLBACK").await
     }
 }
 
@@ -952,84 +1023,89 @@ impl bindings::named_imports::wamn::postgres::client::HostTransaction for Active
     reason = "`HostCursor` is generated by wit-bindgen and declares `async fn`; closing a cursor \
               awaits nothing but still has to match it"
 )]
-impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'_> {
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostCursorWithStore<T>
+    for SharedCtx
+{
     async fn fetch(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         id: super::NamedProject,
         rep: Resource<PgCursor>,
         max_rows: u32,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        cursor_fetch(self, id.project(), rep, max_rows).await
-    }
-
-    async fn drop(
-        &mut self,
-        _id: super::NamedProject,
-        rep: Resource<PgCursor>,
-    ) -> wash_runtime::wasmtime::Result<()> {
-        cursor_drop(self, rep)
+        cursor_fetch(accessor, id.project(), rep, max_rows).await
     }
 }
 
-impl client::HostTransaction for ActiveCtx<'_> {
+impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
     async fn query(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgTransaction>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        txn_query(self, &project, rep, sql, params).await
+        let project = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>(
+                plugin_of(&ctx)?.project_for(&ctx.component_id.to_string()),
+            )
+        })?;
+        txn_query(accessor, &project, rep, sql, params).await
     }
 
     async fn execute(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgTransaction>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        txn_execute(self, &project, rep, sql, params).await
+        let project = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>(
+                plugin_of(&ctx)?.project_for(&ctx.component_id.to_string()),
+            )
+        })?;
+        txn_execute(accessor, &project, rep, sql, params).await
     }
 
     async fn open_cursor(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgTransaction>,
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        txn_open_cursor(self, &project, rep, sql, params).await
+        let project = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>(
+                plugin_of(&ctx)?.project_for(&ctx.component_id.to_string()),
+            )
+        })?;
+        txn_open_cursor(accessor, &project, rep, sql, params).await
     }
 
     async fn commit(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        txn_finish(self, &project, rep, "COMMIT").await
+        let project = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>(
+                plugin_of(&ctx)?.project_for(&ctx.component_id.to_string()),
+            )
+        })?;
+        txn_finish(accessor, &project, rep, "COMMIT").await
     }
 
     async fn rollback(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        txn_finish(self, &project, rep, "ROLLBACK").await
-    }
-
-    async fn drop(&mut self, rep: Resource<PgTransaction>) -> wash_runtime::wasmtime::Result<()> {
-        txn_drop(self, rep).await
+        let project = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>(
+                plugin_of(&ctx)?.project_for(&ctx.component_id.to_string()),
+            )
+        })?;
+        txn_finish(accessor, &project, rep, "ROLLBACK").await
     }
 }
 
@@ -1064,19 +1140,52 @@ async fn finish_txn(
     reason = "`client::HostCursor` is generated by wit-bindgen and declares `async fn`; closing \
               a cursor awaits nothing but still has to match it"
 )]
-impl client::HostCursor for ActiveCtx<'_> {
+impl<T: 'static + Send> client::HostCursorWithStore<T> for SharedCtx {
     async fn fetch(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgCursor>,
         max_rows: u32,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        cursor_fetch(self, &project, rep, max_rows).await
+        let project = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>(
+                plugin_of(&ctx)?.project_for(&ctx.component_id.to_string()),
+            )
+        })?;
+        cursor_fetch(accessor, &project, rep, max_rows).await
     }
+}
 
+impl client::HostTransaction for ActiveCtx<'_> {
+    async fn drop(&mut self, rep: Resource<PgTransaction>) -> wash_runtime::wasmtime::Result<()> {
+        txn_drop(self, rep).await
+    }
+}
+
+impl client::HostCursor for ActiveCtx<'_> {
     async fn drop(&mut self, rep: Resource<PgCursor>) -> wash_runtime::wasmtime::Result<()> {
+        cursor_drop(self, rep)
+    }
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl bindings::named_imports::wamn::postgres::client::HostTransaction for ActiveCtx<'_> {
+    async fn drop(
+        &mut self,
+        _id: super::NamedProject,
+        rep: Resource<PgTransaction>,
+    ) -> wash_runtime::wasmtime::Result<()> {
+        txn_drop(self, rep).await
+    }
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'_> {
+    async fn drop(
+        &mut self,
+        _id: super::NamedProject,
+        rep: Resource<PgCursor>,
+    ) -> wash_runtime::wasmtime::Result<()> {
         cursor_drop(self, rep)
     }
 }
