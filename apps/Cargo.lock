@@ -921,9 +921,9 @@ dependencies = [
 name = "sqlx-command"
 version = "0.1.0"
 dependencies = [
- "futures-executor",
  "sqlx",
  "wamn-postgres-sqlx",
+ "wit-bindgen",
 ]
 
 [[package]]

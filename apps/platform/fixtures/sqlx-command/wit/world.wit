@@ -1,0 +1,5 @@
+package wamn:sqlx-command@0.1.0;
+
+world sqlx-command {
+  export wasi:cli/run@0.3.0;
+}

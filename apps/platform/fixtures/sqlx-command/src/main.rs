@@ -1,5 +1,17 @@
 //! Exercises SQLx queries and explicit transactions over `wamn:postgres`.
 
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "sqlx-command",
+        path: "wit",
+        generate_all,
+    });
+}
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -84,6 +96,13 @@ async fn exercise() {
     );
 }
 
-fn main() {
-    futures_executor::block_on(exercise());
+struct Component;
+
+impl bindings::exports::wasi::cli::run::Guest for Component {
+    async fn run() -> Result<(), ()> {
+        exercise().await;
+        Ok(())
+    }
 }
+
+bindings::export!(Component with_types_in bindings);
