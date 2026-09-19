@@ -145,5 +145,49 @@ mod tests {
         .unwrap();
         let error = rejected[0].input.as_ref().unwrap_err();
         assert_eq!(error.field, "input");
+
+        let mut input = rejected;
+        input.push(contract::UpdateItem {
+            request_id: "null".to_owned(),
+            input: Ok(decode(r#"{"acme_quality_status":null}"#, "1")),
+        });
+        let mut call = std::pin::pin!(super::run(input));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let std::task::Poll::Ready(Ok(mut output)) =
+            std::future::Future::poll(call.as_mut(), &mut context)
+        else {
+            panic!("invalid changes must refuse before database work");
+        };
+        output.push(contract::UpdateOutcome {
+            request_id: "updated".to_owned(),
+            outcome: Ok(contract::UpdateResult {
+                id: "order-1".to_owned(),
+                purchase_order_number: "PO-1".to_owned(),
+                supplier_id: "supplier-1".to_owned(),
+                status: "open".to_owned(),
+                row_version: i64::MAX,
+                created_at: "2026-09-19T12:00:00Z".to_owned(),
+                created_by: "creator".to_owned(),
+                updated_at: "2026-09-19T12:01:00Z".to_owned(),
+                updated_by: "editor".to_owned(),
+                acme_inspection_required: true,
+                acme_quality_status: "pending".to_owned(),
+            }),
+        });
+        let encoded: serde_json::Value = serde_json::from_str(&codec::encode(&output)).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!([
+                {"request_id":"wrong-owner","error":{"code":"invalid_input","detail":{"field":"input"}}},
+                {"request_id":"null","error":{"code":"invalid_input","detail":{"field":"change.acme_quality_status"}}},
+                {"request_id":"updated","value":{
+                    "id":"order-1","purchase_order_number":"PO-1","supplier_id":"supplier-1",
+                    "status":"open","row_version":"9223372036854775807",
+                    "created_at":"2026-09-19T12:00:00Z","created_by":"creator",
+                    "updated_at":"2026-09-19T12:01:00Z","updated_by":"editor",
+                    "acme_inspection_required":true,"acme_quality_status":"pending"
+                }}
+            ])
+        );
     }
 }

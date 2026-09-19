@@ -1,0 +1,77 @@
+package client-acme-receiving:purchase-order@3.0.0;
+
+interface get {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface update {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record update-change {
+    acme-inspection-required: option<option<bool>>,
+    acme-quality-status: option<option<string>>,
+  }
+
+  record update-request {
+    id: string,
+    expected-row-version: s64,
+    change: update-change,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: string,
+    observed-row-version: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant update-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    concurrency-conflict(concurrency-conflict-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record update-item {
+    request-id: string,
+    input: result<update-request, invalid-input-detail>,
+  }
+
+  record update-result {
+    acme-inspection-required: bool,
+    acme-quality-status: string,
+    created-at: string,
+    created-by: string,
+    id: string,
+    purchase-order-number: string,
+    row-version: s64,
+    status: string,
+    supplier-id: string,
+    updated-at: string,
+    updated-by: string,
+  }
+
+  record update-outcome {
+    request-id: string,
+    outcome: result<update-result, update-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<update-item>) -> result<list<update-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

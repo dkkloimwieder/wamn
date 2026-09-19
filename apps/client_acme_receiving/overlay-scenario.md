@@ -13,6 +13,8 @@ The quality status is non-null text with exactly `not_required`, `pending`, and 
 A reject operation and `rejected` state are absent.
 
 Acme's purchase-order update exposes only those two client fields.
+The shared generator derives its package-scoped typed WIT contract from the Acme declarations.
+The component calls Acme's existing SQL accessor directly and keeps JSON conversion at the HTTP and dynamic routing boundaries.
 It cannot update the base supplier, status, or received quantities.
 It cannot create or delete base purchase-order rows.
 Its [first migration](migrations/0001_add_inspection_required.sql) and manifest carry that declared surface.

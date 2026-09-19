@@ -424,17 +424,17 @@ fn purchase_order_update_value(
                 Some(acme_inspection_required),
                 Some(acme_quality_status),
             ) => Ok(PurchaseOrderRow {
-                id,
-                purchase_order_number,
-                supplier_id,
-                status,
-                row_version,
-                created_at,
-                created_by,
-                updated_at,
-                updated_by,
                 acme_inspection_required,
                 acme_quality_status,
+                created_at,
+                created_by,
+                id,
+                purchase_order_number,
+                row_version,
+                status,
+                supplier_id,
+                updated_at,
+                updated_by,
             }),
             _ => Err(AccessError::internal(
                 "purchase_order update returned an incomplete row",
@@ -536,10 +536,6 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
 }
 
 /// Execute one typed `purchase_order.update` against generated Acme SQL.
-#[expect(
-    clippy::option_option,
-    reason = "WIT update fields distinguish absent, explicit null, and value"
-)]
 pub async fn purchase_order_update(
     connection: &mut Connection,
     id: &str,
