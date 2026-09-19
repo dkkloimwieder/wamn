@@ -2,6 +2,7 @@
 
 use std::fmt::Write as _;
 
+use super::wit_adapters::{emit_error_mapper, emit_row_adapter};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
     CrudAction, CustomOperationDeclaration, GenerateError, GenerateErrorKind, ModelDeclaration,
@@ -312,6 +313,19 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
     }
     source.push_str(UPDATE_CODEC_FOOTER);
     source.push_str(&emit_handler("Update"));
+    source.push_str(&emit_row_adapter(
+        table
+            .columns()
+            .iter()
+            .map(|column| (column.name(), column.column_type(), column.nullable())),
+    ));
+    source.push_str(&emit_error_mapper(
+        "UpdateError",
+        operation
+            .error_details
+            .iter()
+            .map(|(literal, detail)| (access_error_literal(*literal), detail)),
+    ));
     source
 }
 
@@ -322,6 +336,19 @@ fn emit_crud_codec(action: CrudAction, table: &Table, operation: &OperationDecla
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(&format!("{type_name}Item"), 1, 100);
     source.push_str(&emit_handler(&type_name));
+    source.push_str(&emit_row_adapter(
+        table
+            .columns()
+            .iter()
+            .map(|column| (column.name(), column.column_type(), column.nullable())),
+    ));
+    source.push_str(&emit_error_mapper(
+        &format!("{type_name}Error"),
+        operation
+            .error_details
+            .iter()
+            .map(|(literal, detail)| (access_error_literal(*literal), detail)),
+    ));
     source
 }
 
@@ -547,11 +574,10 @@ pub(super) fn emit_custom_operation_wit(
     } else {
         emit_owned_group(&package, version, group, manifest)?
     };
-    insert_bytes(
-        files,
-        &format!("{directory}/package.wit"),
-        source.into_bytes(),
-    )?;
+    let package_path = format!("{directory}/package.wit");
+    if !files.contains_key(&package_path) {
+        insert_bytes(files, &package_path, source.into_bytes())?;
+    }
     let codec = emit_custom_codec(local_name, operation)?;
     insert_bytes(
         files,
@@ -674,7 +700,17 @@ fn emit_owned_interface(
         source.push_str("  }\n\n");
     }
     writeln!(source, "  record {interface}-request {{").expect("writing to a String cannot fail");
-    emit_record_fields(&mut source, &operation.input.fields, "value.", true);
+    let request_prefix = if operation
+        .input
+        .fields
+        .iter()
+        .any(|field| field.path.starts_with("value."))
+    {
+        "value."
+    } else {
+        ""
+    };
+    emit_record_fields(&mut source, &operation.input.fields, request_prefix, true);
     if has_lines {
         writeln!(source, "    line: list<{interface}-line>,")
             .expect("writing to a String cannot fail");
@@ -741,7 +777,11 @@ fn emit_record_fields(
         let Some(path) = field.path.strip_prefix(prefix) else {
             continue;
         };
-        if path.contains("[]") || path.contains('.') || (omit_lines && path == "line") {
+        if path == "request_id"
+            || path.contains("[]")
+            || path.contains('.')
+            || (omit_lines && path == "line")
+        {
             continue;
         }
         let mut ty = wit_type(field.ty);
@@ -831,6 +871,15 @@ fn emit_custom_codec(
     };
     let value_fields = codec_fields(&operation.input.fields, "value.");
     let line_fields = codec_fields(&operation.input.fields, "value.line[].");
+    let flat_fields = operation
+        .input
+        .fields
+        .iter()
+        .filter_map(|field| {
+            (!field.path.contains('.') && field.path != "request_id")
+                .then_some((field, field.path.as_str()))
+        })
+        .collect::<Vec<_>>();
     let (minimum, maximum) = operation
         .input
         .envelope
@@ -839,7 +888,11 @@ fn emit_custom_codec(
     let type_name = rust_type_identifier(local_name);
     let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum);
     if value_fields.is_empty() && line_fields.is_empty() {
-        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {\n        let input = serde_json::from_value::<JsonRequest>(body).map(|_| contract::RecordReceiptRequest {}).map_err(|_| contract::InvalidInputDetail { field: \"input\".to_owned(), minimum: None, maximum: None, observed: None });\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
+        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
+        emit_json_struct(&mut source, "JsonRequest", &flat_fields);
+        source.push_str("}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| contract::RecordReceiptRequest {\n");
+        emit_codec_field_assignments(&mut source, &flat_fields, "request", 12);
+        source.push_str("        }).map_err(|_| invalid(\"input\"));\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
     } else {
         source.push_str(RECEIPT_CODEC_HEADER);
         emit_json_struct(&mut source, "JsonValue", &value_fields);
@@ -859,15 +912,27 @@ fn emit_custom_codec(
             emit_codec_field_assignments(&mut source, &line_fields, "line", 20);
             source.push_str("                }).collect(),\n");
         }
-        source.push_str("            }),\n            Err(_) => Err(contract::InvalidInputDetail {\n                field: \"input\".to_owned(), minimum: None, maximum: None, observed: None,\n            }),\n        };\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
+        source.push_str("            }),\n            Err(_) => Err(invalid(\"input\")),\n        };\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
     }
-    source.push_str("pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": {\n");
-    for field in &result.fields {
-        if field.path.contains("[]") || field.path.contains('.') {
-            continue;
+    emit_invalid_detail(&mut source, operation);
+    source.push_str("pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": ");
+    if result.class == ResultClass::BoundedList {
+        source.push_str("value.value.iter().map(|row| json!({\n");
+        for field in &result.fields {
+            emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
         }
-        emit_codec_result_field(&mut source, &field.path, field.ty, field.nullable);
+        source.push_str("                })).collect::<Vec<_>>()\n");
+    } else {
+        source.push_str("{\n");
+        for field in &result.fields {
+            if field.path.contains("[]") || field.path.contains('.') {
+                continue;
+            }
+            emit_codec_result_field(&mut source, &field.path, field.ty, field.nullable);
+        }
+        source.push_str("                }\n");
     }
+    source.push_str("            }),\n");
     source.push_str(RECEIPT_CODEC_ERROR_PREFIX);
     for literal in &operation.errors {
         emit_codec_error_arm(
@@ -880,6 +945,19 @@ fn emit_custom_codec(
     source.push_str(RECEIPT_CODEC_FOOTER);
     source = source.replace("RecordReceipt", &type_name);
     source.push_str(&emit_handler(&type_name));
+    source.push_str(&emit_row_adapter(
+        result
+            .fields
+            .iter()
+            .map(|field| (field.path.as_str(), field.ty, field.nullable)),
+    ));
+    source.push_str(&emit_error_mapper(
+        &format!("{type_name}Error"),
+        operation
+            .errors
+            .iter()
+            .map(|literal| (literal.as_str(), &operation.error_details[literal])),
+    ));
     Ok(source)
 }
 
@@ -939,6 +1017,27 @@ fn emit_codec_field_assignments(
     }
 }
 
+fn emit_invalid_detail(source: &mut String, operation: &CustomOperationDeclaration) {
+    let detail = &operation.error_details["invalid_input"];
+    source.push_str("fn invalid(field: &str) -> contract::InvalidInputDetail {\n    contract::InvalidInputDetail {\n");
+    for key in &detail.required {
+        let name = detail_name(*key).replace('-', "_");
+        if *key == OperationErrorDetailKey::Field {
+            writeln!(source, "        {name}: field.to_owned(),")
+                .expect("writing to a String cannot fail");
+        }
+    }
+    for key in &detail.optional {
+        writeln!(
+            source,
+            "        {}: None,",
+            detail_name(*key).replace('-', "_")
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source.push_str("    }\n}\n\n");
+}
+
 fn emit_codec_error_arm(
     source: &mut String,
     error_type: &str,
@@ -978,6 +1077,16 @@ fn emit_codec_error_arm(
 }
 
 fn emit_codec_result_field(source: &mut String, field: &str, ty: ColumnType, nullable: bool) {
+    emit_codec_result_field_for(source, field, ty, nullable, "value");
+}
+
+fn emit_codec_result_field_for(
+    source: &mut String,
+    field: &str,
+    ty: ColumnType,
+    nullable: bool,
+    carrier: &str,
+) {
     let name = rust_identifier(field).expect("validated result field has a Rust name");
     let conversion = match (ty, nullable) {
         (ColumnType::Int64, true) => ".map(|value| value.to_string())",
@@ -986,7 +1095,7 @@ fn emit_codec_result_field(source: &mut String, field: &str, ty: ColumnType, nul
     };
     writeln!(
         source,
-        "                    {field:?}: value.{name}{conversion},"
+        "                    {field:?}: {carrier}.{name}{conversion},"
     )
     .expect("writing to a String cannot fail");
 }

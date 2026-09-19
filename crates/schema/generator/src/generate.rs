@@ -2,6 +2,7 @@ mod contracts;
 mod rust;
 mod validation;
 mod wit;
+mod wit_adapters;
 
 use contracts::{
     emit_cursor_contract, emit_custom_operation, emit_model, required_schema_contract,
