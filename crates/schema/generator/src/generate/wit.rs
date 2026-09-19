@@ -1096,7 +1096,34 @@ fn wit_type(ty: ColumnType) -> String {
 }
 
 fn wit_name(value: &str) -> String {
-    value.replace('_', "-")
+    let name = value.replace('_', "-");
+    if matches!(
+        name.as_str(),
+        "as" | "async"
+            | "constructor"
+            | "enum"
+            | "flags"
+            | "func"
+            | "include"
+            | "interface"
+            | "list"
+            | "option"
+            | "package"
+            | "record"
+            | "resource"
+            | "result"
+            | "static"
+            | "tuple"
+            | "type"
+            | "use"
+            | "variant"
+            | "with"
+            | "world"
+    ) {
+        format!("%{name}")
+    } else {
+        name
+    }
 }
 
 fn artifact_name(value: &str) -> String {
