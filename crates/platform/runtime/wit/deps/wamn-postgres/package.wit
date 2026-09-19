@@ -92,28 +92,28 @@ interface client {
   /// Single statement in an implicit transaction (claims injected,
   /// committed on success). Parameterized ONLY -- there is no string
   /// interpolation path; $1..$n binding is the sole way to pass data.
-  query: func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
+  query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
 
   /// Like query, for statements where only the affected count matters.
-  execute: func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
+  execute: async func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
 
   /// Explicit transaction. Dropping the resource without commit()
   /// rolls back (host-side guarantee -- guest crash included).
   resource transaction {
-    query: func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
-    execute: func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
+    query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
+    execute: async func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
     /// Open a server-side cursor for large result sets; rows stream in
     /// bounded batches instead of one row-set allocation.
-    open-cursor: func(sql: string, params: list<sql-value>) -> result<cursor, pg-error>;
-    commit: func() -> result<_, pg-error>;
-    rollback: func() -> result<_, pg-error>;
+    open-cursor: async func(sql: string, params: list<sql-value>) -> result<cursor, pg-error>;
+    commit: async func() -> result<_, pg-error>;
+    rollback: async func() -> result<_, pg-error>;
   }
 
-  begin: func() -> result<transaction, pg-error>;
+  begin: async func() -> result<transaction, pg-error>;
 
   /// Bounded fetch over a server-side cursor. Empty batch = exhausted.
   resource cursor {
-    fetch: func(max-rows: u32) -> result<row-set, pg-error>;
+    fetch: async func(max-rows: u32) -> result<row-set, pg-error>;
   }
 }
 
