@@ -314,6 +314,7 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
         );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
+    source.push_str(&emit_update_normalizer(table, operation));
     source.push_str(&emit_handler("Update"));
     source.push_str(&emit_row_adapter(
         table
@@ -339,6 +340,7 @@ fn emit_crud_codec(action: CrudAction, table: &Table, operation: &OperationDecla
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(&format!("{type_name}Item"), 1, 100);
     source.push_str(&emit_crud_json_codec(action, table, operation));
+    source.push_str(&emit_crud_normalizer(action, table, operation));
     source.push_str(&emit_handler(&type_name));
     source.push_str(&emit_row_adapter(
         table
@@ -388,7 +390,12 @@ fn emit_crud_json_codec(
         CrudAction::Query => emit_query_json_types(&mut source, table, operation),
         CrudAction::Update => unreachable!("update owns its compatibility JSON codec"),
     }
-    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| contract::{type_name}Request {{")
+    let request = if action == CrudAction::Query && !operation.filters.is_empty() {
+        "mut request"
+    } else {
+        "request"
+    };
+    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|{request}| contract::{type_name}Request {{")
         .expect("writing to a String cannot fail");
     emit_crud_request_assignments(&mut source, action, table, operation);
     writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
@@ -396,6 +403,112 @@ fn emit_crud_json_codec(
     emit_crud_invalid_detail(&mut source, operation);
     emit_crud_encoder(&mut source, action, table, operation);
     source
+}
+
+fn emit_update_normalizer(table: &Table, operation: &OperationDeclaration) -> String {
+    let mut source = String::from(
+        "fn normalize(request: &mut contract::UpdateRequest) -> Result<(), contract::InvalidInputDetail> {\n",
+    );
+    emit_scalar_validation(
+        &mut source,
+        "request.id",
+        "id",
+        ColumnType::Uuid,
+        &[],
+        false,
+    );
+    for field in &operation.writable_fields {
+        let column = model_column(table, field);
+        let name = rust_identifier(field).expect("validated update field has a Rust name");
+        if column.column_type() == ColumnType::Uuid {
+            writeln!(source, "    if let Some(Some(value)) = &mut request.change.{name} {{ if !canonical_uuid(value) {{ return Err(invalid({:?})); }} }}", format!("change.{field}"))
+                .expect("writing to a String cannot fail");
+        }
+    }
+    source.push_str("    Ok(())\n}\n\n");
+    source
+}
+
+fn emit_crud_normalizer(
+    action: CrudAction,
+    table: &Table,
+    operation: &OperationDeclaration,
+) -> String {
+    let type_name = rust_type_identifier(action.as_str());
+    let mut source = format!(
+        "fn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
+    );
+    if matches!(action, CrudAction::Get | CrudAction::Delete) {
+        emit_scalar_validation(
+            &mut source,
+            "request.id",
+            "id",
+            ColumnType::Uuid,
+            &[],
+            false,
+        );
+    }
+    if action == CrudAction::Create {
+        for field in &operation.writable_fields {
+            let column = model_column(table, field);
+            let name = rust_identifier(field).expect("validated create field has a Rust name");
+            emit_scalar_validation(
+                &mut source,
+                &format!("request.{name}"),
+                field,
+                column.column_type(),
+                &[],
+                column.nullable(),
+            );
+        }
+    }
+    if action == CrudAction::Query {
+        for filter in &operation.filters {
+            let column = model_column(table, &filter.field);
+            let name = rust_identifier(&filter.field).expect("validated filter has a Rust name");
+            if column.column_type() == ColumnType::Uuid {
+                writeln!(source, "    if let Some(values) = &mut request.{name} {{ for value in values {{ if !canonical_uuid(value) {{ return Err(invalid({:?})); }} }} }}", format!("filter.{}", filter.field))
+                    .expect("writing to a String cannot fail");
+            }
+        }
+    }
+    source.push_str("    Ok(())\n}\n\n");
+    source
+}
+
+fn emit_scalar_validation(
+    source: &mut String,
+    access: &str,
+    path: &str,
+    ty: ColumnType,
+    values: &[String],
+    optional: bool,
+) {
+    let value = if optional {
+        writeln!(source, "    if let Some(value) = &mut {access} {{")
+            .expect("writing to a String cannot fail");
+        "value"
+    } else {
+        &format!("&mut {access}")
+    };
+    if ty == ColumnType::Uuid {
+        writeln!(
+            source,
+            "        if !canonical_uuid({value}) {{ return Err(invalid({path:?})); }}"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    if !values.is_empty() {
+        writeln!(
+            source,
+            "        if !{:?}.contains(&{value}.as_str()) {{ return Err(invalid({path:?})); }}",
+            values
+        )
+        .expect("writing to a String cannot fail");
+    }
+    if optional {
+        source.push_str("    }\n");
+    }
 }
 
 fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
@@ -412,7 +525,7 @@ fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
 }
 
 fn emit_query_json_types(source: &mut String, table: &Table, operation: &OperationDeclaration) {
-    source.push_str("struct JsonRequest { #[serde(default)] filter: Option<JsonFilter>, #[serde(default)] sort: Option<JsonSort>, #[serde(default)] cursor: Option<String>, #[serde(default)] limit: Option<JsonInt64> }\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFilter {\n");
+    source.push_str("struct JsonRequest { #[serde(default)] filter: Option<JsonFilter>, #[serde(default)] sort: Option<JsonSort>, #[serde(default)] cursor: Option<String>, #[serde(default)] limit: Option<i64> }\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFilter {\n");
     for filter in &operation.filters {
         let column = model_column(table, &filter.field);
         writeln!(
@@ -470,7 +583,7 @@ fn emit_crud_request_assignments(
                 writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()),")
                     .expect("writing to a String cannot fail");
             }
-            source.push_str("            sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),\n            sort_direction: request.sort.map(|sort| sort.direction),\n            cursor: request.cursor,\n            limit: request.limit.map(|value| value.0),\n");
+            source.push_str("            sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),\n            sort_direction: request.sort.map(|sort| sort.direction),\n            cursor: request.cursor,\n            limit: request.limit,\n");
         }
         CrudAction::Update => unreachable!("update has a separate codec"),
     }
@@ -562,7 +675,10 @@ where
     let mut output = Vec::with_capacity(input.len());
     for item in input {{
         let outcome = match item.input {{
-            Ok(request) => handler(state, request).await,
+            Ok(mut request) => match normalize(&mut request) {{
+                Ok(()) => handler(state, request).await,
+                Err(error) => Err(contract::{type_name}Error::InvalidInput(error)),
+            }},
             Err(error) => Err(contract::{type_name}Error::InvalidInput(error)),
         }};
         output.push(contract::{type_name}Outcome {{ request_id: item.request_id, outcome }});
@@ -632,6 +748,12 @@ const CODEC_HEADER: &str = r"// @generated from wamn.json and schema IR; do not 
 use serde::Deserialize;
 #[allow(unused_imports)]
 use serde_json::{Map, Value, json};
+
+fn canonical_uuid(value: &mut String) -> bool {
+    let Ok(parsed) = uuid::Uuid::parse_str(value) else { return false; };
+    *value = parsed.hyphenated().to_string();
+    true
+}
 
 #[allow(dead_code)]
 struct JsonInt64(i64);
@@ -1226,6 +1348,7 @@ fn emit_custom_codec(
     }
     source.push_str(RECEIPT_CODEC_FOOTER);
     source = source.replace("RecordReceipt", &type_name);
+    source.push_str(&emit_custom_normalizer(&type_name, operation));
     source.push_str(&emit_handler(&type_name));
     source.push_str(&emit_row_adapter(
         result
@@ -1242,6 +1365,96 @@ fn emit_custom_codec(
     ));
     source.push_str(&emit_export_adapter(&type_name, false));
     Ok(source)
+}
+
+fn emit_custom_normalizer(type_name: &str, operation: &CustomOperationDeclaration) -> String {
+    let tree = input_fields_of(
+        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
+    );
+    let value = tree.iter().find(|field| field.path == "value");
+    let fields = value.map_or_else(
+        || {
+            tree.iter()
+                .filter(|field| field.path != "request_id")
+                .cloned()
+                .collect::<Vec<_>>()
+        },
+        |value| value.children.clone(),
+    );
+    let mut source = format!(
+        "fn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
+    );
+    emit_tree_validation(&mut source, &fields, "request", 4);
+    source.push_str("    Ok(())\n}\n\n");
+    source
+}
+
+fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, indentation: usize) {
+    let indent = " ".repeat(indentation);
+    for field in fields {
+        let member = rust_identifier(
+            field
+                .path
+                .rsplit('.')
+                .next()
+                .expect("declared field has a member")
+                .trim_end_matches("[]"),
+        )
+        .expect("validated field has a Rust name");
+        let field_access = format!("{access}.{member}");
+        if !field.children.is_empty() {
+            if field.type_name == "array" || field.path.ends_with("[]") {
+                if let Some(minimum) = field.minimum {
+                    writeln!(source, "{indent}if {field_access}.len() < {minimum} {{ return Err(invalid({:?})); }}", field.path)
+                        .expect("writing to a String cannot fail");
+                }
+                if let Some(maximum) = field.maximum {
+                    writeln!(source, "{indent}if {field_access}.len() > {maximum} {{ return Err(invalid({:?})); }}", field.path)
+                        .expect("writing to a String cannot fail");
+                }
+                writeln!(source, "{indent}for value in &mut {field_access} {{")
+                    .expect("writing to a String cannot fail");
+                emit_tree_validation(source, &field.children, "value", indentation + 4);
+                writeln!(source, "{indent}}}").expect("writing to a String cannot fail");
+            } else {
+                emit_tree_validation(source, &field.children, &field_access, indentation);
+            }
+            continue;
+        }
+        let mut body = String::new();
+        if field.type_name == "uuid" {
+            write!(
+                body,
+                "if !canonical_uuid(value) {{ return Err(invalid({:?})); }}",
+                field.path
+            )
+            .expect("writing to a String cannot fail");
+        }
+        if !field.values.is_empty() {
+            write!(
+                body,
+                "if !{:?}.contains(&value.as_str()) {{ return Err(invalid({:?})); }}",
+                field.values, field.path
+            )
+            .expect("writing to a String cannot fail");
+        }
+        if body.is_empty() {
+            continue;
+        }
+        if field.nullable {
+            writeln!(
+                source,
+                "{indent}if let Some(value) = &mut {field_access} {{ {body} }}"
+            )
+            .expect("writing to a String cannot fail");
+        } else {
+            writeln!(
+                source,
+                "{indent}{{ let value = &mut {field_access}; {body} }}"
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
 }
 
 fn codec_fields<'a>(
