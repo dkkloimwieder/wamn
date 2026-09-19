@@ -261,6 +261,10 @@ pub trait BodyReader {
 ///
 /// Routing returns definitions, authentication applies the selected policy,
 /// and delivery crosses the single host-owned router bridge.
+#[expect(
+    async_fn_in_trait,
+    reason = "the guest backend runs on the single-threaded component executor"
+)]
 pub trait Backend {
     type RoutePermit;
     type AuthenticatedCaller;
@@ -281,7 +285,10 @@ pub trait Backend {
         attachment_id: &str,
     ) -> Result<Option<Self::RoutePermit>, ProviderError>;
     fn new_delivery_id(&mut self) -> String;
-    fn deliver(&mut self, request: DeliveryRequest<Self::AuthenticatedCaller>) -> DeliveryReport;
+    async fn deliver(
+        &mut self,
+        request: DeliveryRequest<Self::AuthenticatedCaller>,
+    ) -> DeliveryReport;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -363,13 +370,15 @@ async fn try_handle(
     };
     let trace = trace_context(&head.headers);
     let delivery_id = backend.new_delivery_id();
-    let report = backend.deliver(DeliveryRequest {
-        attachment_id,
-        delivery_id,
-        payload,
-        caller,
-        trace,
-    });
+    let report = backend
+        .deliver(DeliveryRequest {
+            attachment_id,
+            delivery_id,
+            payload,
+            caller,
+            trace,
+        })
+        .await;
     let mut response = match report.outcome {
         Ok(outcome) => delivery_response(outcome),
         Err(error) => delivery_error_response(error),

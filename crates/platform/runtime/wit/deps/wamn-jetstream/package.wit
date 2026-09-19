@@ -22,7 +22,7 @@ interface registration {
   }
 
   /// Create the admitted registration consumer or refuse configuration drift.
-  prepare: func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;
+  prepare: async func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;
 }
 
 interface doorbell {
@@ -31,5 +31,5 @@ interface doorbell {
   /// Ring the caller's tenant doorbell with one run id (the enqueued run),
   /// strictly AFTER the enqueue transaction committed — a hint for uncommitted
   /// work would wake a runner into an empty claim.
-  ring: func(run-id: string) -> result<_, js-error>;
+  ring: async func(run-id: string) -> result<_, js-error>;
 }

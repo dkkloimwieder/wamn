@@ -124,7 +124,10 @@ impl Backend for FakeBackend {
         format!("{id:032x}")
     }
 
-    fn deliver(&mut self, request: DeliveryRequest<Self::AuthenticatedCaller>) -> DeliveryReport {
+    async fn deliver(
+        &mut self,
+        request: DeliveryRequest<Self::AuthenticatedCaller>,
+    ) -> DeliveryReport {
         self.deliveries.push(request);
         DeliveryReport {
             actor_labels: self.actor_labels.clone(),

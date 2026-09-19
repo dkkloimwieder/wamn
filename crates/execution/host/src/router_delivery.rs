@@ -19,6 +19,7 @@ use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wasmtime::component::Accessor;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::router_driver::{
@@ -505,17 +506,23 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<RouterDe
     ctx.try_get_plugin::<RouterDeliveryBridge>(ROUTER_DELIVERY_ID)
 }
 
-impl delivery::Host for ActiveCtx<'_> {
+impl delivery::Host for ActiveCtx<'_> {}
+
+impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
     async fn deliver(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         mut request: DeliveryRequest,
     ) -> wash_runtime::wasmtime::Result<DeliveryReport> {
-        let plugin = plugin_of(self)?;
-        let caller = request
-            .caller
-            .take()
-            .map(|caller| self.table.delete(caller))
-            .transpose()?;
+        let (plugin, caller) = accessor.with(|mut access| {
+            let ctx = access.get();
+            let plugin = plugin_of(&ctx)?;
+            let caller = request
+                .caller
+                .take()
+                .map(|caller| ctx.table.delete(caller))
+                .transpose()?;
+            Ok::<_, wash_runtime::wasmtime::Error>((plugin, caller))
+        })?;
         Ok(plugin.deliver_report(request, caller).await)
     }
 }

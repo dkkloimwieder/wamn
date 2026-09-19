@@ -9,7 +9,11 @@ mod bindings {
         world: "flow-http",
         path: "wit",
         generate_all,
-        async: ["export:wasi:http/handler@0.3.0#handle"],
+        async: [
+            "export:wasi:http/handler@0.3.0#handle",
+            "wamn:flow-http-routing/routing@0.1.0#authenticate",
+            "wamn:router-delivery/delivery@0.1.0#deliver",
+        ],
     });
 }
 
@@ -64,7 +68,7 @@ impl Backend for GuestBackend {
         routes.into_iter().map(route_definition).collect()
     }
 
-    fn authenticate(
+    async fn authenticate(
         &mut self,
         attachment_id: &str,
         headers: &[Header],
@@ -78,12 +82,12 @@ impl Backend for GuestBackend {
                 },
             )
             .collect::<Vec<_>>();
-        bindings::wamn::flow_http_routing::routing::authenticate(attachment_id, &headers).map_err(
-            |rejection| AuthRejection {
+        bindings::wamn::flow_http_routing::routing::authenticate(attachment_id, &headers)
+            .await
+            .map_err(|rejection| AuthRejection {
                 status: rejection.status,
                 code: rejection.code,
-            },
-        )
+            })
     }
 
     fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid> {
@@ -106,7 +110,10 @@ impl Backend for GuestBackend {
         ))
     }
 
-    fn deliver(&mut self, request: DeliveryRequest<Self::AuthenticatedCaller>) -> DeliveryReport {
+    async fn deliver(
+        &mut self,
+        request: DeliveryRequest<Self::AuthenticatedCaller>,
+    ) -> DeliveryReport {
         use bindings::wamn::router_delivery::delivery;
 
         let request = delivery::DeliveryRequest {
@@ -120,7 +127,7 @@ impl Backend for GuestBackend {
             }),
             parent_causation: None,
         };
-        let report = delivery::deliver(request);
+        let report = delivery::deliver(request).await;
         DeliveryReport {
             actor_labels: report.actor_labels,
             outcome: report

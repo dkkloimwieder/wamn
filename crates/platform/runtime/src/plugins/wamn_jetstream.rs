@@ -40,7 +40,7 @@ use wamn_run_state::redaction::{OUTPUT_CAPTURE_CEILING_BYTES, scrub};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wasmtime::component::Linker;
+use wash_runtime::wasmtime::component::{Accessor, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::plugins::effect_span::{
@@ -1417,15 +1417,19 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<std::sync::A
     ctx.try_get_plugin::<WamnJetstream>(WAMN_JETSTREAM_ID)
 }
 
-impl registration::Host for ActiveCtx<'_> {
+impl registration::Host for ActiveCtx<'_> {}
+
+impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
     async fn prepare(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         package_id: String,
         registration_id: String,
         config: registration::ConsumerConfig,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
+        let (plugin, component_id) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((plugin_of(&ctx)?, ctx.component_id.to_string()))
+        })?;
         let claim = plugin.claim_for(&component_id);
         let span = js_span(&claim, &component_id, "prepare-registration", None);
         let started = std::time::Instant::now();
@@ -1443,13 +1447,17 @@ impl registration::Host for ActiveCtx<'_> {
     }
 }
 
-impl doorbell::Host for ActiveCtx<'_> {
+impl doorbell::Host for ActiveCtx<'_> {}
+
+impl<T: 'static + Send> doorbell::HostWithStore<T> for SharedCtx {
     async fn ring(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         run_id: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
+        let (plugin, component_id) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((plugin_of(&ctx)?, ctx.component_id.to_string()))
+        })?;
         // The target comes from the workload's bind-time MVP placement adapter.
         // A component with no registered target gets a refusal, not a default.
         let Some(execution_target_id) = plugin.execution_target_for(&component_id) else {
