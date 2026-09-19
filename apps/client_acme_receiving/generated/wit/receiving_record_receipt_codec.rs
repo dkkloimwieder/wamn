@@ -51,16 +51,20 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, Co
                         })
                         .collect(),
                 }),
-                Err(_) => Err(contract::InvalidInputDetail {
-                    field: "input".to_owned(),
-                    minimum: None,
-                    maximum: None,
-                    observed: None,
-                }),
+                Err(_) => Err(invalid("input")),
             };
             Ok(contract::RecordReceiptItem { request_id, input })
         })
         .collect()
+}
+
+fn invalid(field: &str) -> contract::InvalidInputDetail {
+    contract::InvalidInputDetail {
+        field: field.to_owned(),
+        minimum: None,
+        maximum: None,
+        observed: None,
+    }
 }
 
 pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {
@@ -156,3 +160,249 @@ fn error_value(error: &contract::RecordReceiptError) -> Value {
     };
     json!({"code": code, "detail": detail})
 }
+#[allow(clippy::unnecessary_wraps)]
+fn normalize(
+    request: &mut contract::RecordReceiptRequest,
+) -> Result<(), contract::InvalidInputDetail> {
+    let _ = &request;
+    if request.line.is_empty() {
+        return Err(invalid("value.line[]"));
+    }
+    if request.line.len() > 100 {
+        return Err(invalid("value.line[]"));
+    }
+    for value in &mut request.line {
+        {
+            let value = &mut value.location_id;
+            if !canonical_uuid(value) {
+                return Err(invalid("value.line[].location_id"));
+            }
+        }
+        {
+            let value = &mut value.purchase_order_line_id;
+            if !canonical_uuid(value) {
+                return Err(invalid("value.line[].purchase_order_line_id"));
+            }
+        }
+    }
+    {
+        let value = &mut request.purchase_order_id;
+        if !canonical_uuid(value) {
+            return Err(invalid("value.purchase_order_id"));
+        }
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub(crate) async fn run<S, F>(
+    input: Vec<contract::RecordReceiptItem>,
+    state: &mut S,
+    mut handler: F,
+) -> Vec<contract::RecordReceiptOutcome>
+where
+    F: AsyncFnMut(
+        &mut S,
+        contract::RecordReceiptRequest,
+    ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError>,
+{
+    let mut output = Vec::with_capacity(input.len());
+    for item in input {
+        let outcome = match item.input {
+            Ok(mut request) => match normalize(&mut request) {
+                Ok(()) => handler(state, request).await,
+                Err(error) => Err(contract::RecordReceiptError::InvalidInput(error)),
+            },
+            Err(error) => Err(contract::RecordReceiptError::InvalidInput(error)),
+        };
+        output.push(contract::RecordReceiptOutcome {
+            request_id: item.request_id,
+            outcome,
+        });
+    }
+    output
+}
+
+#[allow(unused_macros)]
+macro_rules! row {
+    ($row:expr, $target:path) => {{
+        let row = $row;
+        $target {
+            receipt_id: row.receipt_id.0,
+            purchase_order_id: row.purchase_order_id.0,
+            purchase_order_status: row.purchase_order_status,
+            row_version: row.row_version,
+        }
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use row;
+
+#[allow(dead_code)]
+pub(crate) fn map_error(
+    code: &str,
+    mut detail: impl FnMut(&str) -> Option<String>,
+) -> contract::RecordReceiptError {
+    match code {
+        "invalid_input" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            let Ok(minimum) = detail("minimum")
+                .map(|value| value.parse::<i64>())
+                .transpose()
+            else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            let Ok(maximum) = detail("maximum")
+                .map(|value| value.parse::<i64>())
+                .transpose()
+            else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            let Ok(observed) = detail("observed")
+                .map(|value| value.parse::<i64>())
+                .transpose()
+            else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::InvalidInput(contract::InvalidInputDetail {
+                field,
+                minimum,
+                maximum,
+                observed,
+            })
+        }
+        "purchase_order_not_found" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::PurchaseOrderNotFound(
+                contract::PurchaseOrderNotFoundDetail { field },
+            )
+        }
+        "purchase_order_not_open" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::PurchaseOrderNotOpen(
+                contract::PurchaseOrderNotOpenDetail { field },
+            )
+        }
+        "purchase_order_line_not_found" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            let Some(id) = detail("id") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::PurchaseOrderLineNotFound(
+                contract::PurchaseOrderLineNotFoundDetail { field, id },
+            )
+        }
+        "purchase_order_line_mismatch" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            let Some(id) = detail("id") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::PurchaseOrderLineMismatch(
+                contract::PurchaseOrderLineMismatchDetail { field, id },
+            )
+        }
+        "location_not_found" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            let Some(id) = detail("id") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::LocationNotFound(contract::LocationNotFoundDetail {
+                field,
+                id,
+            })
+        }
+        "quantity_exceeds_remaining" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            let Some(id) = detail("id") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::QuantityExceedsRemaining(
+                contract::QuantityExceedsRemainingDetail { field, id },
+            )
+        }
+        "receipt_reference_conflict" => {
+            let Some(constraint) = detail("constraint") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::ReceiptReferenceConflict(
+                contract::ReceiptReferenceConflictDetail { constraint },
+            )
+        }
+        "idempotency_conflict" => {
+            let Some(field) = detail("field") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::IdempotencyConflict(contract::IdempotencyConflictDetail {
+                field,
+            })
+        }
+        "retry" => contract::RecordReceiptError::Retry,
+        "timeout" => contract::RecordReceiptError::Timeout,
+        "permission_denied" => {
+            let Some(operation) = detail("operation") else {
+                return contract::RecordReceiptError::InternalError;
+            };
+            contract::RecordReceiptError::PermissionDenied(contract::PermissionDeniedDetail {
+                operation,
+            })
+        }
+        _ => contract::RecordReceiptError::InternalError,
+    }
+}
+
+#[allow(unused_macros)]
+macro_rules! export_operation {
+    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {
+        const _: () = {
+            use $codec as __codec;
+            use $contract as __contract;
+            use $node as __node;
+
+            fn invalid(error: __codec::CodecError) -> __node::NodeError {
+                __node::NodeError::InvalidInput(__node::ErrorDetail {
+                    message: error.context().to_owned(),
+                    code: Some("invalid_input".to_owned()),
+                })
+            }
+
+            impl __contract::Guest for $component {
+                async fn run(
+                    _context: __node::NodeContext,
+                    input: Vec<__contract::RecordReceiptItem>,
+                ) -> Result<Vec<__contract::RecordReceiptOutcome>, __node::NodeError> {
+                    let mut state = $state;
+                    __codec::validate(&input).map_err(invalid)?;
+                    Ok(__codec::run(input, &mut state, $handler).await)
+                }
+
+                async fn run_json(
+                    context: __node::NodeContext,
+                    input: String,
+                ) -> Result<__node::Emission, __node::NodeError> {
+                    let input = __codec::decode(&input).map_err(invalid)?;
+                    let output = <Self as __contract::Guest>::run(context, input).await?;
+                    Ok(__node::Emission {
+                        payload: __codec::encode(&output),
+                        port: None,
+                    })
+                }
+            }
+        };
+    };
+}
+#[allow(unused_imports)]
+pub(crate) use export_operation;

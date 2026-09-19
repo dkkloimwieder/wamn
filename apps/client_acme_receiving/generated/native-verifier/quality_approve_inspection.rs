@@ -1,7 +1,7 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct ApproveInspectionRow {
+pub struct ApproveInspectionRow {
     pub outcome: Option<String>,
     pub observed_row_version: Option<i64>,
     pub receipt_id: Option<uuid::Uuid>,

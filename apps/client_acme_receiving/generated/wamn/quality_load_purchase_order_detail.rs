@@ -3,7 +3,7 @@
 use wamn_postgres_statements::Transaction;
 
 #[derive(Debug)]
-pub(crate) struct LoadPurchaseOrderDetailRow {
+pub struct LoadPurchaseOrderDetailRow {
     pub id: wamn_postgres_statements::Uuid,
     pub purchase_order_number: String,
     pub supplier_id: wamn_postgres_statements::Uuid,

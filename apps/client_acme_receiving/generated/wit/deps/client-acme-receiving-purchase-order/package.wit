@@ -1,9 +1,64 @@
 package client-acme-receiving:purchase-order@3.0.0;
 
 interface get {
-  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
-  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;
+  record get-request {
+    id: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant get-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record get-item {
+    request-id: string,
+    input: result<get-request, invalid-input-detail>,
+  }
+
+  record get-row {
+    acme-inspection-required: bool,
+    acme-quality-status: string,
+    created-at: string,
+    created-by: string,
+    id: string,
+    purchase-order-number: string,
+    row-version: s64,
+    status: string,
+    supplier-id: string,
+    updated-at: string,
+    updated-by: string,
+  }
+
+  record get-result {
+    value: get-row,
+  }
+
+  record get-outcome {
+    request-id: string,
+    outcome: result<get-result, get-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<get-item>) -> result<list<get-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
 
 interface update {

@@ -3,12 +3,12 @@
 use wamn_postgres_statements::Transaction;
 
 #[derive(Debug)]
-pub(crate) struct InsertInspectionRow {
+pub struct InsertInspectionRow {
     pub receipt_id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct LoadInspectionRow {
+pub struct LoadInspectionRow {
     pub receipt_id: wamn_postgres_statements::Uuid,
 }
 

@@ -5,17 +5,26 @@
 
 //! One package-grain component for executable Acme Receiving overlay operations.
 
-use exports::client_acme_receiving::purchase_order::get::Guest as PurchaseOrderGet;
-use exports::client_acme_receiving::purchase_order::update::Guest as PurchaseOrderUpdate;
-use exports::client_acme_receiving::quality::approve_inspection::Guest as ApproveInspection;
-use exports::client_acme_receiving::quality::create_inspection::Guest as CreateInspection;
-use exports::client_acme_receiving::quality::load_purchase_order_detail::Guest as LoadPurchaseOrderDetail;
 use exports::client_acme_receiving::receiving::record_receipt::Guest as RecordReceipt;
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
-use wamn_client_acme_receiving_data_access::operation::InvocationError;
 use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorKind};
 
+mod get;
+mod quality;
 mod update;
+
+use get::codec as get_codec;
+use quality::{approve_codec, detail_codec};
+use update::codec as update_codec;
+
+mod create_codec {
+    use super::exports::client_acme_receiving::quality::create_inspection as contract;
+
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../generated/wit/quality_create_inspection_codec.rs"
+    ));
+}
 
 wit_bindgen::generate!({
     world: "client-acme-receiving:component/client-acme-receiving@3.0.0",
@@ -38,7 +47,7 @@ wit_bindgen::generate!({
         "../../wamn_receiving/data/wit/deps/wamn-node",
         "../../wamn_receiving/data/wit/deps/wamn-postgres",
         "../generated/wit/deps/client-acme-receiving-purchase-order",
-        "wit/deps/client-acme-receiving-quality",
+        "../generated/wit/deps/client-acme-receiving-quality",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
         "../generated/wit/deps/client-acme-receiving-receiving",
     ],
@@ -48,33 +57,52 @@ wit_bindgen::generate!({
 
 struct Component;
 
+get::codec::export_operation!(
+    Component,
+    exports::client_acme_receiving::purchase_order::get,
+    wamn::node::types,
+    wamn_postgres_statements::Connection::new(),
+    get::handle,
+    get_codec
+);
+update::codec::export_operation!(
+    Component,
+    exports::client_acme_receiving::purchase_order::update,
+    wamn::node::types,
+    wamn_postgres_statements::Connection::new(),
+    update::handle,
+    update_codec
+);
+quality::detail_codec::export_operation!(
+    Component,
+    exports::client_acme_receiving::quality::load_purchase_order_detail,
+    wamn::node::types,
+    wamn_postgres_statements::Connection::new(),
+    quality::handle_detail,
+    detail_codec
+);
+quality::approve_codec::export_operation!(
+    Component,
+    exports::client_acme_receiving::quality::approve_inspection,
+    wamn::node::types,
+    wamn_postgres_statements::Connection::new(),
+    quality::handle_approve,
+    approve_codec
+);
+create_codec::export_operation!(
+    Component,
+    exports::client_acme_receiving::quality::create_inspection,
+    wamn::node::types,
+    (),
+    quality::handle_create,
+    create_codec
+);
+
 fn emission(payload: String) -> Emission {
     Emission {
         payload,
         port: None,
     }
-}
-
-async fn invoke_public<F>(operation: F) -> Result<Emission, NodeError>
-where
-    F: Future<Output = Result<String, InvocationError>>,
-{
-    operation.await.map(emission).map_err(|error| {
-        NodeError::InvalidInput(ErrorDetail {
-            message: error.context().to_owned(),
-            code: Some(error.code().to_owned()),
-        })
-    })
-}
-
-async fn invoke_private<F>(operation: F) -> Result<Emission, NodeError>
-where
-    F: Future<Output = Result<String, AccessError>>,
-{
-    operation
-        .await
-        .map(emission)
-        .map_err(|error| private_node_error(&error))
 }
 
 fn private_node_error(error: &AccessError) -> NodeError {
@@ -104,60 +132,27 @@ fn private_node_error(error: &AccessError) -> NodeError {
     }
 }
 
-impl PurchaseOrderGet for Component {
-    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_public(wamn_client_acme_receiving_data_access::operation::purchase_order_get(&input))
-            .await
-    }
-}
-
-impl PurchaseOrderUpdate for Component {
-    async fn run(
-        _context: NodeContext,
-        input: Vec<exports::client_acme_receiving::purchase_order::update::UpdateItem>,
-    ) -> Result<Vec<exports::client_acme_receiving::purchase_order::update::UpdateOutcome>, NodeError>
-    {
-        update::run(input).await
-    }
-
-    async fn run_json(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = update::codec::decode(&input).map_err(|error| {
-            NodeError::InvalidInput(ErrorDetail {
-                message: error.context().to_owned(),
-                code: Some("invalid_input".to_owned()),
-            })
-        })?;
-        let output = update::run(input).await?;
-        Ok(emission(update::codec::encode(&output)))
-    }
-}
-
-impl LoadPurchaseOrderDetail for Component {
-    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_public(
-            wamn_client_acme_receiving_data_access::operation::quality_load_purchase_order_detail(
-                &input,
-            ),
-        )
-        .await
-    }
-}
-
-impl ApproveInspection for Component {
-    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_public(
-            wamn_client_acme_receiving_data_access::operation::quality_approve_inspection(&input),
-        )
-        .await
-    }
-}
-
-impl CreateInspection for Component {
-    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_private(
-            wamn_client_acme_receiving_data_access::operation::quality_create_inspection(&input),
-        )
-        .await
+fn access_detail(
+    error: &AccessError,
+    key: &str,
+    operation: &str,
+    not_found: Option<(&str, &str)>,
+    expected_row_version: Option<i64>,
+) -> Option<String> {
+    match key {
+        "field" => error.field().map(str::to_owned).or_else(|| {
+            not_found
+                .filter(|_| error.kind() == AccessErrorKind::NotFound)
+                .map(|(field, _)| field.to_owned())
+        }),
+        "id" => not_found
+            .filter(|_| error.kind() == AccessErrorKind::NotFound)
+            .map(|(_, id)| id.to_owned()),
+        "expected_row_version" => expected_row_version.map(|value| value.to_string()),
+        "observed_row_version" => error.observed_row_version().map(|value| value.to_string()),
+        "constraint" => error.constraint().map(str::to_owned),
+        "operation" => Some(operation.to_owned()),
+        _ => None,
     }
 }
 

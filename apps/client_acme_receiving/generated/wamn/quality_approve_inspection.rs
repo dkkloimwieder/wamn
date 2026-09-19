@@ -3,7 +3,7 @@
 use wamn_postgres_statements::Transaction;
 
 #[derive(Debug)]
-pub(crate) struct ApproveInspectionRow {
+pub struct ApproveInspectionRow {
     pub outcome: Option<String>,
     pub observed_row_version: Option<i64>,
     pub receipt_id: Option<wamn_postgres_statements::Uuid>,

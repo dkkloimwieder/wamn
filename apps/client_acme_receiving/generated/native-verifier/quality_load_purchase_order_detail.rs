@@ -1,7 +1,7 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct LoadPurchaseOrderDetailRow {
+pub struct LoadPurchaseOrderDetailRow {
     pub id: uuid::Uuid,
     pub purchase_order_number: String,
     pub supplier_id: uuid::Uuid,

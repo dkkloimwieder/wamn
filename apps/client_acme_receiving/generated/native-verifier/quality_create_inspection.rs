@@ -1,12 +1,12 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct InsertInspectionRow {
+pub struct InsertInspectionRow {
     pub receipt_id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct LoadInspectionRow {
+pub struct LoadInspectionRow {
     pub receipt_id: uuid::Uuid,
 }
 

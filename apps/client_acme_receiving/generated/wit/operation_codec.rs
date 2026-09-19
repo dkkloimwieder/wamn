@@ -1,7 +1,27 @@
 // @generated from wamn.json and schema IR; do not edit.
 
 use serde::Deserialize;
+#[allow(unused_imports)]
 use serde_json::{Map, Value, json};
+
+#[allow(dead_code)]
+fn canonical_uuid(value: &mut String) -> bool {
+    let Ok(parsed) = uuid::Uuid::parse_str(value) else {
+        return false;
+    };
+    *value = parsed.hyphenated().to_string();
+    true
+}
+
+#[allow(dead_code)]
+struct JsonInt64(i64);
+
+impl<'de> Deserialize<'de> for JsonInt64 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map(Self).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct CodecError(&'static str);
@@ -27,6 +47,7 @@ fn validate_count(count: usize) -> Result<(), CodecError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
     validate_count(input.len())?;
     if input.iter().any(|item| item.request_id.is_empty()) {
@@ -37,6 +58,7 @@ pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
     let Value::Array(values) = serde_json::from_str(input)
         .map_err(|_| CodecError("operation input must be a JSON array"))?

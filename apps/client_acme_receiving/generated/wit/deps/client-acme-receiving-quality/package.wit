@@ -1,0 +1,129 @@
+package client-acme-receiving:quality@3.0.0;
+
+interface approve-inspection {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record approve-inspection-request {
+    expected-row-version: s64,
+    receipt-id: string,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: string,
+    observed-row-version: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant approve-inspection-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    concurrency-conflict(concurrency-conflict-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record approve-inspection-item {
+    request-id: string,
+    input: result<approve-inspection-request, invalid-input-detail>,
+  }
+
+  record approve-inspection-result {
+    receipt-id: string,
+    status: string,
+    row-version: s64,
+    purchase-order-id: string,
+    purchase-order-row-version: s64,
+  }
+
+  record approve-inspection-outcome {
+    request-id: string,
+    outcome: result<approve-inspection-result, approve-inspection-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<approve-inspection-item>) -> result<list<approve-inspection-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface create-inspection {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record create-inspection-new {
+    id: string,
+  }
+
+  record create-inspection-request {
+    event: string,
+    new: create-inspection-new,
+  }
+
+  run: async func(ctx: node-context, input: create-inspection-request) -> result<create-inspection-request, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface load-purchase-order-detail {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record load-purchase-order-detail-request {
+    purchase-order-id: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant load-purchase-order-detail-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record load-purchase-order-detail-item {
+    request-id: string,
+    input: result<load-purchase-order-detail-request, invalid-input-detail>,
+  }
+
+  record load-purchase-order-detail-result {
+    id: string,
+    purchase-order-number: string,
+    supplier-id: string,
+    status: string,
+    row-version: s64,
+    acme-inspection-required: bool,
+    acme-quality-status: string,
+  }
+
+  record load-purchase-order-detail-outcome {
+    request-id: string,
+    outcome: result<load-purchase-order-detail-result, load-purchase-order-detail-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<load-purchase-order-detail-item>) -> result<list<load-purchase-order-detail-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
