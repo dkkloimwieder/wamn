@@ -48,8 +48,8 @@ mod tests {
         "wamn-receiving:receiving/load-receipt-screen@1.0.0",
         "wamn-receiving:receiving/record-receipt@1.0.0",
     ];
-    const HANDLER_RUN_SHAPE: &str = concat!(
-        "run(ctx:record{wiring-id:string,wiring-version:u32,node-id:string,",
+    const HANDLER_PARAMETERS_AND_RESULTS: &str = concat!(
+        "(ctx:record{wiring-id:string,wiring-version:u32,node-id:string,",
         "delivery-id:string,input-port:option<string>,occurrence:u32,",
         "traceparent:option<string>,tracestate:option<string>,",
         "deadline-ms:option<u64>,config:string},input:string)->(",
@@ -168,50 +168,93 @@ mod tests {
         }
     }
 
-    fn run_shape(
+    fn function_shape(
+        function: &wash_runtime::wasmtime::component::types::ComponentFunc,
+    ) -> String {
+        let params = function
+            .params()
+            .map(|(name, ty)| format!("{name}:{}", type_shape(&ty)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let results = function
+            .results()
+            .map(|ty| type_shape(&ty))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({params})->({results})")
+    }
+
+    fn operation_shape(
         engine: &wash_runtime::wasmtime::Engine,
         instance: &ComponentInstance,
         operation: &str,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<Vec<(String, bool, String)>> {
         let exports = instance.exports(engine).collect::<Vec<_>>();
         let export_names = exports
             .iter()
             .map(|(name, _)| *name)
             .collect::<BTreeSet<_>>();
         ensure!(
-            export_names
-                == BTreeSet::from(["emission", "json", "node-context", "node-error", "run"]),
-            "Receiving operation {operation:?} exports {export_names:?}, not the pinned handler members"
+            export_names.contains("run") && export_names.contains("run-json"),
+            "Receiving operation {operation:?} exports {export_names:?}, without both generated entry points"
         );
-        let (_, item) = exports
+        let mut functions = exports
             .into_iter()
-            .find(|(name, _)| *name == "run")
-            .expect("the exact export-name check found run");
-        let ComponentItem::ComponentFunc(run) = &item.ty else {
-            anyhow::bail!("Receiving operation {operation:?} run is not a component function");
-        };
+            .filter_map(|(name, item)| match &item.ty {
+                ComponentItem::ComponentFunc(function) => {
+                    Some((name.to_owned(), function.async_(), function_shape(function)))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        functions.sort_by(|left, right| left.0.cmp(&right.0));
         ensure!(
-            !run.async_(),
-            "Receiving operation {operation:?} run unexpectedly uses the async ABI"
+            functions
+                .iter()
+                .map(|entry| entry.0.as_str())
+                .collect::<BTreeSet<_>>()
+                == BTreeSet::from(["run", "run-json"]),
+            "Receiving operation {operation:?} function exports are not exactly run and run-json: {functions:?}"
         );
-        let params = run
-            .params()
-            .map(|(name, ty)| format!("{name}:{}", type_shape(&ty)))
-            .collect::<Vec<_>>()
-            .join(",");
-        let results = run
-            .results()
-            .map(|ty| type_shape(&ty))
-            .collect::<Vec<_>>()
-            .join(",");
-        Ok(format!("run({params})->({results})"))
+        ensure!(
+            functions.iter().all(|entry| entry.1),
+            "Receiving operation {operation:?} has a synchronous generated entry point: {functions:?}"
+        );
+        let run_json = functions
+            .iter()
+            .find(|entry| entry.0 == "run-json")
+            .expect("the exact function-name check found run-json");
+        ensure!(
+            run_json.2 == HANDLER_PARAMETERS_AND_RESULTS,
+            "Receiving operation {operation:?} run-json shape is {:?}, not {:?}",
+            run_json.2,
+            HANDLER_PARAMETERS_AND_RESULTS
+        );
+        let run = functions
+            .iter()
+            .find(|entry| entry.0 == "run")
+            .expect("the exact function-name check found run");
+        ensure!(
+            run.2
+                .starts_with("(ctx:record{wiring-id:string,wiring-version:u32,node-id:string,")
+                && run
+                    .2
+                    .contains(",input:list<record{request-id:string,input:result<")
+                && run
+                    .2
+                    .contains(")->(result<list<record{request-id:string,outcome:result<")
+                && run.2.ends_with(",cancelled}>)"),
+            "Receiving operation {operation:?} run does not carry typed request and outcome lists: {:?}",
+            run.2
+        );
+        Ok(functions)
     }
 
     fn operation_exports(
         engine: &wash_runtime::engine::Engine,
         component_bytes: &[u8],
         label: &str,
-    ) -> anyhow::Result<BTreeSet<String>> {
+    ) -> anyhow::Result<std::collections::BTreeMap<String, Vec<(String, bool, String)>>> {
         let component = Component::new(engine.inner(), component_bytes)
             .map_err(|error| anyhow::anyhow!("compile {label}: {error}"))?;
         component
@@ -221,12 +264,10 @@ mod tests {
                 let ComponentItem::ComponentInstance(instance) = item.ty else {
                     anyhow::bail!("{label} export {name:?} is not an interface instance");
                 };
-                let shape = run_shape(component.engine(), &instance, name)?;
-                ensure!(
-                    shape == HANDLER_RUN_SHAPE,
-                    "{label} export {name:?} has run shape {shape:?}, not the pinned handler shape {HANDLER_RUN_SHAPE:?}"
-                );
-                Ok(name.to_owned())
+                Ok((
+                    name.to_owned(),
+                    operation_shape(component.engine(), &instance, name)?,
+                ))
             })
             .collect()
     }
@@ -286,6 +327,41 @@ mod tests {
             "virtualized std probe imports {probe_packages:?}, not its exact four-package profile"
         );
 
+        let probe = Component::new(engine.inner(), &probe_bytes)
+            .map_err(|error| anyhow::anyhow!("compile virtualized std probe: {error}"))?;
+        let probe_exports = probe
+            .component_type()
+            .exports(probe.engine())
+            .collect::<Vec<_>>();
+        ensure!(
+            probe_exports.len() == 1 && probe_exports[0].0 == "wamn:node/async-handler@0.1.0",
+            "virtualized std probe exports are not exactly the async node handler"
+        );
+        let ComponentItem::ComponentInstance(probe_handler) = &probe_exports[0].1.ty else {
+            anyhow::bail!("virtualized std probe handler export is not an interface instance");
+        };
+        let probe_members = probe_handler.exports(probe.engine()).collect::<Vec<_>>();
+        let probe_member_names = probe_members
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<BTreeSet<_>>();
+        ensure!(
+            probe_member_names
+                == BTreeSet::from(["emission", "json", "node-context", "node-error", "run"]),
+            "virtualized std probe handler members are {probe_member_names:?}"
+        );
+        let (_, probe_run) = probe_members
+            .into_iter()
+            .find(|(name, _)| *name == "run")
+            .expect("the exact probe member check found run");
+        let ComponentItem::ComponentFunc(probe_run) = &probe_run.ty else {
+            anyhow::bail!("virtualized std probe run is not a component function");
+        };
+        ensure!(
+            probe_run.async_() && function_shape(probe_run) == HANDLER_PARAMETERS_AND_RESULTS,
+            "virtualized std probe run is not the pinned async handler"
+        );
+
         let expected_receiving = BTreeSet::from([
             "wamn:node".to_owned(),
             "wamn:postgres".to_owned(),
@@ -300,11 +376,12 @@ mod tests {
             packages == expected_receiving,
             "virtualized Receiving artifact imports {packages:?}, not its exact four-package profile"
         );
-        let exports = operation_exports(&engine, &bytes, "receiving")?;
+        let exports = operation_exports(&engine, &bytes, "virtualized receiving")?;
         let expected_exports = RECEIVING_EXPORTS.map(str::to_owned).into_iter().collect();
         ensure!(
-            exports == expected_exports,
-            "virtualized Receiving artifact exports {exports:?}, not {expected_exports:?}"
+            exports.keys().cloned().collect::<BTreeSet<_>>() == expected_exports,
+            "virtualized Receiving artifact exports {:?}, not {expected_exports:?}",
+            exports.keys().collect::<BTreeSet<_>>()
         );
         println!(
             "receiving-component-bytes={} digest={}",
