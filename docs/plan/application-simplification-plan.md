@@ -23,7 +23,9 @@ Convert one actual **Acme → Receiving → `wamn:postgres/statements`** path, i
 
 Generate typed WIT request/result/error contracts and Rust bindings from the existing application model for known Acme/Receiving calls. Known component calls carry typed values, not serialized JSON through `run(string)`. Update caller, callee, and dispatch integration together. Generate the pilot contracts once, then extend that emitter in step 2. Do not first improve a wrapper around the old JSON contract. Keep JSON at HTTP and genuinely dynamic boundaries. Preserve per-item correlation, exact numbers, absent/null/value updates, authorization, deadlines, and public JSON behavior. Generic palettes need not change. No streaming rewrite or concurrency increase.
 
-**Fix confirmation in the same path:** return base receipt results unchanged; delete `receiving_record_receipt_result` enrichment and unused helpers. Update the declared result, clients and UI together. Read details separately; failure/denial leaves “Receipt posted; additional details unavailable.” Never repost or widen permissions. Preserve per-item refusals and uncertainty when posting itself is unconfirmed.
+Return base receipt results unchanged. Delete `receiving_record_receipt_result` enrichment and unused helpers. Update the declared result and generated clients with the server contract. Preserve per-item refusals and uncertainty when posting itself is unconfirmed.
+
+Owner direction: defer UI changes until simplification steps 1–4 are complete. Then reassess receipt confirmation against the settled contracts. Read details separately. Failure or denial leaves “Receipt posted; additional details unavailable.” Never repost or widen permissions. UI design does not block simplification.
 
 Update build/admission consumers with the real native-call and PostgreSQL path. Working async calls and removed adapters establish completion—not WIT spelling or an assumed speedup. Report concrete API blockers; do not add another executor.
 
@@ -55,7 +57,7 @@ Delete replaced parsers, error mirrors and conversions after callers move—not 
 | **Process/deployment boundary lands** | Run the relevant startup/shutdown and HTTP/queue cases, plus a packaged smoke test against the changed topology. |
 | **Integrated refactor lands** | Run affected suites and one real Receiving/Acme client-to-database journey on the integrated artifacts. Reuse this result; do not repeat it for every subchange. |
 
-Check that failed/denied confirmation preserves posting success without reposting. Resolve failures introduced by the change; report unrelated baseline failures without requiring a repository-wide repair. Skipped, unexecuted or zero-case runs are not passes.
+When deferred UI work starts, test that failed or denied detail reads preserve posting success without reposting. Resolve failures introduced by the change; report unrelated baseline failures without requiring a repository-wide repair. Skipped, unexecuted or zero-case runs are not passes.
 
 After client interfaces settle, move ordinary screen checks into existing reducers/event handlers and Ratatui `TestBackend`/`Buffer`. Assert requests and displayed state. Delete equivalent PTY cases; retain process tests for password echo, terminal restoration and shutdown. Do not rewrite Python solely for uniformity.
 
