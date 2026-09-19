@@ -1,100 +1,66 @@
 //! Typed purchase-order update boundary over the existing application operation.
 
 use super::exports::wamn_receiving::purchase_order::update as contract;
+#[cfg(test)]
 use super::{NodeError, invalid_input};
-use wamn_receiving_data_access::{AccessError, AccessErrorKind, purchase_order};
+use wamn_receiving_data_access::purchase_order;
 
 pub(super) mod codec {
     use super::contract;
     include!("../../generated/wit/purchase_order_update_codec.rs");
 }
 
+#[cfg(test)]
 pub(super) async fn run(
     input: Vec<contract::UpdateItem>,
 ) -> Result<Vec<contract::UpdateOutcome>, NodeError> {
     codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
-    let mut connection = wamn_postgres_statements::Connection::new();
-    let mut output = Vec::with_capacity(input.len());
-    for item in input {
-        let outcome = match item.input {
-            Err(error) => Err(contract::UpdateError::InvalidInput(error)),
-            Ok(request) => {
-                let supplier_id = match request.change.supplier_id {
-                    None => purchase_order::SupplierIdUpdate::Omitted,
-                    Some(None) => purchase_order::SupplierIdUpdate::Null,
-                    Some(Some(value)) => purchase_order::SupplierIdUpdate::Value(value.into()),
-                };
-                purchase_order::update(
-                    &mut connection,
-                    &request.id,
-                    request.expected_row_version,
-                    supplier_id,
-                )
-                .await
-                .map(result)
-                .map_err(|error| access_error(&error, &request.id, request.expected_row_version))
-            }
-        };
-        output.push(contract::UpdateOutcome {
-            request_id: item.request_id,
-            outcome,
-        });
-    }
-    Ok(output)
+    Ok(codec::run(
+        input,
+        &mut wamn_postgres_statements::Connection::new(),
+        execute,
+    )
+    .await)
 }
 
-fn result(row: purchase_order::PurchaseOrderRow) -> contract::UpdateResult {
-    contract::UpdateResult {
-        id: row.id.0,
-        purchase_order_number: row.purchase_order_number,
-        supplier_id: row.supplier_id.0,
-        status: row.status,
-        row_version: row.row_version,
-        created_at: row.created_at.0,
-        created_by: row.created_by.0,
-        updated_at: row.updated_at.0,
-        updated_by: row.updated_by.0,
-    }
+pub(super) async fn execute(
+    connection: &mut wamn_postgres_statements::Connection,
+    request: contract::UpdateRequest,
+) -> Result<contract::UpdateResult, contract::UpdateError> {
+    let supplier_id = match request.change.supplier_id {
+        None => purchase_order::SupplierIdUpdate::Omitted,
+        Some(None) => purchase_order::SupplierIdUpdate::Null,
+        Some(Some(value)) => purchase_order::SupplierIdUpdate::Value(value.into()),
+    };
+    purchase_order::update(
+        connection,
+        &request.id,
+        request.expected_row_version,
+        supplier_id,
+    )
+    .await
+    .map(|row| codec::row!(row, contract::UpdateResult))
+    .map_err(|error| {
+        codec::map_error(error.kind().literal(), |key| {
+            super::reads::error_detail(
+                &error,
+                key,
+                "purchase_order.update",
+                Some(("id", &request.id)),
+                Some(request.expected_row_version),
+            )
+        })
+    })
 }
 
-fn access_error(error: &AccessError, id: &str, expected: i64) -> contract::UpdateError {
-    use contract::UpdateError;
-    match error.kind() {
-        AccessErrorKind::InvalidInput => {
-            error.field().map_or(UpdateError::InternalError, |field| {
-                UpdateError::InvalidInput(contract::InvalidInputDetail {
-                    field: field.to_owned(),
-                })
-            })
-        }
-        AccessErrorKind::NotFound => UpdateError::NotFound(contract::NotFoundDetail {
-            field: "id".to_owned(),
-            id: id.to_owned(),
-        }),
-        AccessErrorKind::ConcurrencyConflict => {
-            error
-                .observed_row_version()
-                .map_or(UpdateError::InternalError, |observed| {
-                    UpdateError::ConcurrencyConflict(contract::ConcurrencyConflictDetail {
-                        expected_row_version: expected.to_string(),
-                        observed_row_version: observed.to_string(),
-                    })
-                })
-        }
-        AccessErrorKind::PermissionDenied => {
-            UpdateError::PermissionDenied(contract::PermissionDeniedDetail {
-                operation: "purchase_order.update".to_owned(),
-            })
-        }
-        AccessErrorKind::Retry => UpdateError::Retry,
-        AccessErrorKind::Timeout => UpdateError::Timeout,
-        AccessErrorKind::UniqueViolation
-        | AccessErrorKind::ForeignKeyViolation
-        | AccessErrorKind::CheckViolation
-        | AccessErrorKind::ExclusionViolation
-        | AccessErrorKind::InternalError => UpdateError::InternalError,
-    }
-}
+codec::export_operation!(
+    super::Component,
+    super::exports::wamn_receiving::purchase_order::update,
+    super::wamn::node::types,
+    wamn_postgres_statements::Connection::new(),
+    execute,
+    codec
+);
 
 #[cfg(test)]
 mod tests {

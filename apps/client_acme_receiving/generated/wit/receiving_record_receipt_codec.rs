@@ -8,51 +8,50 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct JsonRequest {
-    value: JsonValue,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JsonValue {
-    idempotency_key: String,
-    purchase_order_id: String,
-    receipt_reference: String,
-    occurred_at: String,
-    line: Vec<JsonLine>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct JsonLine {
+    location_id: String,
     purchase_order_line_id: String,
     quantity: String,
-    location_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonRequest {
+    value: JsonRoot,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonRoot {
+    idempotency_key: String,
+    line: Vec<JsonLine>,
+    occurred_at: String,
+    purchase_order_id: String,
+    receipt_reference: String,
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {
     decode_envelope(input)?
         .into_iter()
         .map(|(request_id, body)| {
-            let input = match serde_json::from_value::<JsonRequest>(body) {
-                Ok(request) => Ok(contract::RecordReceiptRequest {
+            let input = serde_json::from_value::<JsonRequest>(body)
+                .map(|request| contract::RecordReceiptRequest {
                     idempotency_key: request.value.idempotency_key,
-                    purchase_order_id: request.value.purchase_order_id,
-                    receipt_reference: request.value.receipt_reference,
-                    occurred_at: request.value.occurred_at,
                     line: request
                         .value
                         .line
                         .into_iter()
-                        .map(|line| contract::RecordReceiptLine {
-                            purchase_order_line_id: line.purchase_order_line_id,
-                            quantity: line.quantity,
-                            location_id: line.location_id,
+                        .map(|value| contract::RecordReceiptLine {
+                            location_id: value.location_id,
+                            purchase_order_line_id: value.purchase_order_line_id,
+                            quantity: value.quantity,
                         })
                         .collect(),
-                }),
-                Err(_) => Err(invalid("input")),
-            };
+                    occurred_at: request.value.occurred_at,
+                    purchase_order_id: request.value.purchase_order_id,
+                    receipt_reference: request.value.receipt_reference,
+                })
+                .map_err(|_| invalid("input"));
             Ok(contract::RecordReceiptItem { request_id, input })
         })
         .collect()

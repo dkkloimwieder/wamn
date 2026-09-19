@@ -1,26 +1,33 @@
 // @generated from operation declarations; do not edit.
 
 include!("operation_codec.rs");
-type Item = contract::AggregateItem;
+type Item = contract::LoadPurchaseOrderHistoryItem;
 const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct JsonRequest {}
+struct JsonRequest {
+    after_position: JsonInt64,
+    id: String,
+    limit: JsonInt64,
+}
 
-pub(crate) fn decode(input: &str) -> Result<Vec<contract::AggregateItem>, CodecError> {
+pub(crate) fn decode(
+    input: &str,
+) -> Result<Vec<contract::LoadPurchaseOrderHistoryItem>, CodecError> {
     decode_envelope(input)?
         .into_iter()
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
-                .map(|request| {
-                    let _ = request;
-                    contract::AggregateRequest::Request
+                .map(|request| contract::LoadPurchaseOrderHistoryRequest {
+                    after_position: request.after_position.0,
+                    id: request.id,
+                    limit: request.limit.0,
                 })
                 .map_err(|_| invalid("input"));
-            Ok(contract::AggregateItem { request_id, input })
+            Ok(contract::LoadPurchaseOrderHistoryItem { request_id, input })
         })
         .collect()
 }
@@ -31,18 +38,23 @@ fn invalid(field: &str) -> contract::InvalidInputDetail {
     }
 }
 
-pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
+pub(crate) fn encode(output: &[contract::LoadPurchaseOrderHistoryOutcome]) -> String {
     let values = output
         .iter()
         .map(|item| match &item.outcome {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": { "rows": value.rows.iter().map(|row| json!({
-                    "product_id": row.product_id,
-                    "location_id": row.location_id,
-                    "status": row.status,
-                    "quantity": row.quantity,
-                    "pallet_count": row.pallet_count.to_string(),
+                    "position": row.position.to_string(),
+                    "kind": row.kind,
+                    "operation": row.operation,
+                    "changed_by": row.changed_by,
+                    "changed_at": row.changed_at,
+                    "transaction_id": row.transaction_id.to_string(),
+                    "before": row.before,
+                    "after": row.after,
+                    "current": row.current,
+                    "head_position": row.head_position.to_string(),
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
@@ -54,52 +66,63 @@ pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
     serde_json::to_string(&values).expect("typed receipt outcomes always serialize")
 }
 
-fn error_value(error: &contract::AggregateError) -> Value {
+fn error_value(error: &contract::LoadPurchaseOrderHistoryError) -> Value {
     let (code, detail) = match error {
-        contract::AggregateError::InvalidInput(value) => {
+        contract::LoadPurchaseOrderHistoryError::InvalidInput(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             ("invalid_input", detail)
         }
-        contract::AggregateError::Retry => ("retry", Map::new()),
-        contract::AggregateError::Timeout => ("timeout", Map::new()),
-        contract::AggregateError::PermissionDenied(value) => {
+        contract::LoadPurchaseOrderHistoryError::Retry => ("retry", Map::new()),
+        contract::LoadPurchaseOrderHistoryError::Timeout => ("timeout", Map::new()),
+        contract::LoadPurchaseOrderHistoryError::PermissionDenied(value) => {
             let mut detail = Map::new();
             detail.insert("operation".to_owned(), json!(value.operation));
             ("permission_denied", detail)
         }
-        contract::AggregateError::InternalError => ("internal_error", Map::new()),
+        contract::LoadPurchaseOrderHistoryError::InternalError => ("internal_error", Map::new()),
     };
     json!({"code": code, "detail": detail})
 }
 #[allow(clippy::unnecessary_wraps)]
-fn normalize(request: &mut contract::AggregateRequest) -> Result<(), contract::InvalidInputDetail> {
+fn normalize(
+    request: &mut contract::LoadPurchaseOrderHistoryRequest,
+) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
+    {
+        let value = &mut request.id;
+        if !canonical_uuid(value) {
+            return Err(invalid("id"));
+        }
+    }
     Ok(())
 }
 
 #[allow(dead_code)]
 pub(crate) async fn run<S, F>(
-    input: Vec<contract::AggregateItem>,
+    input: Vec<contract::LoadPurchaseOrderHistoryItem>,
     state: &mut S,
     mut handler: F,
-) -> Vec<contract::AggregateOutcome>
+) -> Vec<contract::LoadPurchaseOrderHistoryOutcome>
 where
     F: AsyncFnMut(
         &mut S,
-        contract::AggregateRequest,
-    ) -> Result<contract::AggregateResult, contract::AggregateError>,
+        contract::LoadPurchaseOrderHistoryRequest,
+    ) -> Result<
+        contract::LoadPurchaseOrderHistoryResult,
+        contract::LoadPurchaseOrderHistoryError,
+    >,
 {
     let mut output = Vec::with_capacity(input.len());
     for item in input {
         let outcome = match item.input {
             Ok(mut request) => match normalize(&mut request) {
                 Ok(()) => handler(state, request).await,
-                Err(error) => Err(contract::AggregateError::InvalidInput(error)),
+                Err(error) => Err(contract::LoadPurchaseOrderHistoryError::InvalidInput(error)),
             },
-            Err(error) => Err(contract::AggregateError::InvalidInput(error)),
+            Err(error) => Err(contract::LoadPurchaseOrderHistoryError::InvalidInput(error)),
         };
-        output.push(contract::AggregateOutcome {
+        output.push(contract::LoadPurchaseOrderHistoryOutcome {
             request_id: item.request_id,
             outcome,
         });
@@ -112,11 +135,16 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            product_id: row.product_id.0,
-            location_id: row.location_id.0,
-            status: row.status,
-            quantity: row.quantity.0,
-            pallet_count: row.pallet_count,
+            position: row.position,
+            kind: row.kind,
+            operation: row.operation,
+            changed_by: row.changed_by.0,
+            changed_at: row.changed_at.0,
+            transaction_id: row.transaction_id,
+            before: row.before,
+            after: row.after,
+            current: row.current,
+            head_position: row.head_position,
         }
     }};
 }
@@ -127,25 +155,27 @@ pub(crate) use row;
 pub(crate) fn map_error(
     code: &str,
     mut detail: impl FnMut(&str) -> Option<String>,
-) -> contract::AggregateError {
+) -> contract::LoadPurchaseOrderHistoryError {
     match code {
         "invalid_input" => {
             let Some(field) = detail("field") else {
-                return contract::AggregateError::InternalError;
+                return contract::LoadPurchaseOrderHistoryError::InternalError;
             };
-            contract::AggregateError::InvalidInput(contract::InvalidInputDetail { field })
-        }
-        "retry" => contract::AggregateError::Retry,
-        "timeout" => contract::AggregateError::Timeout,
-        "permission_denied" => {
-            let Some(operation) = detail("operation") else {
-                return contract::AggregateError::InternalError;
-            };
-            contract::AggregateError::PermissionDenied(contract::PermissionDeniedDetail {
-                operation,
+            contract::LoadPurchaseOrderHistoryError::InvalidInput(contract::InvalidInputDetail {
+                field,
             })
         }
-        _ => contract::AggregateError::InternalError,
+        "retry" => contract::LoadPurchaseOrderHistoryError::Retry,
+        "timeout" => contract::LoadPurchaseOrderHistoryError::Timeout,
+        "permission_denied" => {
+            let Some(operation) = detail("operation") else {
+                return contract::LoadPurchaseOrderHistoryError::InternalError;
+            };
+            contract::LoadPurchaseOrderHistoryError::PermissionDenied(
+                contract::PermissionDeniedDetail { operation },
+            )
+        }
+        _ => contract::LoadPurchaseOrderHistoryError::InternalError,
     }
 }
 
@@ -167,8 +197,9 @@ macro_rules! export_operation {
             impl __contract::Guest for $component {
                 async fn run(
                     _context: __node::NodeContext,
-                    input: Vec<__contract::AggregateItem>,
-                ) -> Result<Vec<__contract::AggregateOutcome>, __node::NodeError> {
+                    input: Vec<__contract::LoadPurchaseOrderHistoryItem>,
+                ) -> Result<Vec<__contract::LoadPurchaseOrderHistoryOutcome>, __node::NodeError>
+                {
                     let mut state = $state;
                     __codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, $handler).await)

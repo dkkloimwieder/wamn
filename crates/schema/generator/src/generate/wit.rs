@@ -1020,9 +1020,9 @@ pub(super) fn emit_custom_operation_wit(
                 .map(|name| format!("interface {} {{", wit_name(name)))
         })
         .expect("current custom operation belongs to its group");
-    let group_is_emitted = files.get(&package_path).is_some_and(|existing| {
-        String::from_utf8_lossy(existing).contains(&group_marker)
-    });
+    let group_is_emitted = files
+        .get(&package_path)
+        .is_some_and(|existing| String::from_utf8_lossy(existing).contains(&group_marker));
     if !group_is_emitted {
         let source = emit_custom_group(&package, version, group, manifest);
         if let Some(existing) = files.get_mut(&package_path) {

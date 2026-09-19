@@ -1,7 +1,7 @@
 // @generated from operation declarations; do not edit.
 
 include!("operation_codec.rs");
-type Item = contract::ApproveInspectionItem;
+type Item = contract::LoadReceiptScreenItem;
 const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
@@ -9,21 +9,19 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
-    expected_row_version: JsonInt64,
-    receipt_id: String,
+    purchase_order_id: String,
 }
 
-pub(crate) fn decode(input: &str) -> Result<Vec<contract::ApproveInspectionItem>, CodecError> {
+pub(crate) fn decode(input: &str) -> Result<Vec<contract::LoadReceiptScreenItem>, CodecError> {
     decode_envelope(input)?
         .into_iter()
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
-                .map(|request| contract::ApproveInspectionRequest {
-                    expected_row_version: request.expected_row_version.0,
-                    receipt_id: request.receipt_id,
+                .map(|request| contract::LoadReceiptScreenRequest {
+                    purchase_order_id: request.purchase_order_id,
                 })
                 .map_err(|_| invalid("input"));
-            Ok(contract::ApproveInspectionItem { request_id, input })
+            Ok(contract::LoadReceiptScreenItem { request_id, input })
         })
         .collect()
 }
@@ -34,19 +32,26 @@ fn invalid(field: &str) -> contract::InvalidInputDetail {
     }
 }
 
-pub(crate) fn encode(output: &[contract::ApproveInspectionOutcome]) -> String {
+pub(crate) fn encode(output: &[contract::LoadReceiptScreenOutcome]) -> String {
     let values = output
         .iter()
         .map(|item| match &item.outcome {
             Ok(value) => json!({
                 "request_id": item.request_id,
-                "value": {
-                    "receipt_id": value.receipt_id,
-                    "status": value.status,
-                    "row_version": value.row_version.to_string(),
-                    "purchase_order_id": value.purchase_order_id,
-                    "purchase_order_row_version": value.purchase_order_row_version.to_string(),
-                }
+                "value": { "rows": value.rows.iter().map(|row| json!({
+                    "purchase_order_id": row.purchase_order_id,
+                    "purchase_order_number": row.purchase_order_number,
+                    "purchase_order_status": row.purchase_order_status,
+                    "supplier_id": row.supplier_id,
+                    "row_version": row.row_version.to_string(),
+                    "line_id": row.line_id,
+                    "line_number": row.line_number,
+                    "item_id": row.item_id,
+                    "item_number": row.item_number,
+                    "ordered_quantity": row.ordered_quantity,
+                    "received_quantity": row.received_quantity,
+                    "remaining_quantity": row.remaining_quantity,
+                })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
                 "request_id": item.request_id,
@@ -57,51 +62,39 @@ pub(crate) fn encode(output: &[contract::ApproveInspectionOutcome]) -> String {
     serde_json::to_string(&values).expect("typed receipt outcomes always serialize")
 }
 
-fn error_value(error: &contract::ApproveInspectionError) -> Value {
+fn error_value(error: &contract::LoadReceiptScreenError) -> Value {
     let (code, detail) = match error {
-        contract::ApproveInspectionError::InvalidInput(value) => {
+        contract::LoadReceiptScreenError::InvalidInput(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             ("invalid_input", detail)
         }
-        contract::ApproveInspectionError::NotFound(value) => {
+        contract::LoadReceiptScreenError::NotFound(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             detail.insert("id".to_owned(), json!(value.id));
             ("not_found", detail)
         }
-        contract::ApproveInspectionError::ConcurrencyConflict(value) => {
-            let mut detail = Map::new();
-            detail.insert(
-                "expected_row_version".to_owned(),
-                json!(value.expected_row_version),
-            );
-            detail.insert(
-                "observed_row_version".to_owned(),
-                json!(value.observed_row_version),
-            );
-            ("concurrency_conflict", detail)
-        }
-        contract::ApproveInspectionError::Retry => ("retry", Map::new()),
-        contract::ApproveInspectionError::Timeout => ("timeout", Map::new()),
-        contract::ApproveInspectionError::PermissionDenied(value) => {
+        contract::LoadReceiptScreenError::Retry => ("retry", Map::new()),
+        contract::LoadReceiptScreenError::Timeout => ("timeout", Map::new()),
+        contract::LoadReceiptScreenError::PermissionDenied(value) => {
             let mut detail = Map::new();
             detail.insert("operation".to_owned(), json!(value.operation));
             ("permission_denied", detail)
         }
-        contract::ApproveInspectionError::InternalError => ("internal_error", Map::new()),
+        contract::LoadReceiptScreenError::InternalError => ("internal_error", Map::new()),
     };
     json!({"code": code, "detail": detail})
 }
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(
-    request: &mut contract::ApproveInspectionRequest,
+    request: &mut contract::LoadReceiptScreenRequest,
 ) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     {
-        let value = &mut request.receipt_id;
+        let value = &mut request.purchase_order_id;
         if !canonical_uuid(value) {
-            return Err(invalid("receipt_id"));
+            return Err(invalid("purchase_order_id"));
         }
     }
     Ok(())
@@ -109,27 +102,27 @@ fn normalize(
 
 #[allow(dead_code)]
 pub(crate) async fn run<S, F>(
-    input: Vec<contract::ApproveInspectionItem>,
+    input: Vec<contract::LoadReceiptScreenItem>,
     state: &mut S,
     mut handler: F,
-) -> Vec<contract::ApproveInspectionOutcome>
+) -> Vec<contract::LoadReceiptScreenOutcome>
 where
     F: AsyncFnMut(
         &mut S,
-        contract::ApproveInspectionRequest,
+        contract::LoadReceiptScreenRequest,
     )
-        -> Result<contract::ApproveInspectionResult, contract::ApproveInspectionError>,
+        -> Result<contract::LoadReceiptScreenResult, contract::LoadReceiptScreenError>,
 {
     let mut output = Vec::with_capacity(input.len());
     for item in input {
         let outcome = match item.input {
             Ok(mut request) => match normalize(&mut request) {
                 Ok(()) => handler(state, request).await,
-                Err(error) => Err(contract::ApproveInspectionError::InvalidInput(error)),
+                Err(error) => Err(contract::LoadReceiptScreenError::InvalidInput(error)),
             },
-            Err(error) => Err(contract::ApproveInspectionError::InvalidInput(error)),
+            Err(error) => Err(contract::LoadReceiptScreenError::InvalidInput(error)),
         };
-        output.push(contract::ApproveInspectionOutcome {
+        output.push(contract::LoadReceiptScreenOutcome {
             request_id: item.request_id,
             outcome,
         });
@@ -142,11 +135,18 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            receipt_id: row.receipt_id.0,
-            status: row.status,
-            row_version: row.row_version,
             purchase_order_id: row.purchase_order_id.0,
-            purchase_order_row_version: row.purchase_order_row_version,
+            purchase_order_number: row.purchase_order_number,
+            purchase_order_status: row.purchase_order_status,
+            supplier_id: row.supplier_id.0,
+            row_version: row.row_version,
+            line_id: row.line_id.map(|value| value.0),
+            line_number: row.line_number,
+            item_id: row.item_id.map(|value| value.0),
+            item_number: row.item_number,
+            ordered_quantity: row.ordered_quantity.map(|value| value.0),
+            received_quantity: row.received_quantity.map(|value| value.0),
+            remaining_quantity: row.remaining_quantity.map(|value| value.0),
         }
     }};
 }
@@ -157,48 +157,34 @@ pub(crate) use row;
 pub(crate) fn map_error(
     code: &str,
     mut detail: impl FnMut(&str) -> Option<String>,
-) -> contract::ApproveInspectionError {
+) -> contract::LoadReceiptScreenError {
     match code {
         "invalid_input" => {
             let Some(field) = detail("field") else {
-                return contract::ApproveInspectionError::InternalError;
+                return contract::LoadReceiptScreenError::InternalError;
             };
-            contract::ApproveInspectionError::InvalidInput(contract::InvalidInputDetail { field })
+            contract::LoadReceiptScreenError::InvalidInput(contract::InvalidInputDetail { field })
         }
         "not_found" => {
             let Some(field) = detail("field") else {
-                return contract::ApproveInspectionError::InternalError;
+                return contract::LoadReceiptScreenError::InternalError;
             };
             let Some(id) = detail("id") else {
-                return contract::ApproveInspectionError::InternalError;
+                return contract::LoadReceiptScreenError::InternalError;
             };
-            contract::ApproveInspectionError::NotFound(contract::NotFoundDetail { field, id })
+            contract::LoadReceiptScreenError::NotFound(contract::NotFoundDetail { field, id })
         }
-        "concurrency_conflict" => {
-            let Some(expected_row_version) = detail("expected_row_version") else {
-                return contract::ApproveInspectionError::InternalError;
-            };
-            let Some(observed_row_version) = detail("observed_row_version") else {
-                return contract::ApproveInspectionError::InternalError;
-            };
-            contract::ApproveInspectionError::ConcurrencyConflict(
-                contract::ConcurrencyConflictDetail {
-                    expected_row_version,
-                    observed_row_version,
-                },
-            )
-        }
-        "retry" => contract::ApproveInspectionError::Retry,
-        "timeout" => contract::ApproveInspectionError::Timeout,
+        "retry" => contract::LoadReceiptScreenError::Retry,
+        "timeout" => contract::LoadReceiptScreenError::Timeout,
         "permission_denied" => {
             let Some(operation) = detail("operation") else {
-                return contract::ApproveInspectionError::InternalError;
+                return contract::LoadReceiptScreenError::InternalError;
             };
-            contract::ApproveInspectionError::PermissionDenied(contract::PermissionDeniedDetail {
+            contract::LoadReceiptScreenError::PermissionDenied(contract::PermissionDeniedDetail {
                 operation,
             })
         }
-        _ => contract::ApproveInspectionError::InternalError,
+        _ => contract::LoadReceiptScreenError::InternalError,
     }
 }
 
@@ -220,8 +206,8 @@ macro_rules! export_operation {
             impl __contract::Guest for $component {
                 async fn run(
                     _context: __node::NodeContext,
-                    input: Vec<__contract::ApproveInspectionItem>,
-                ) -> Result<Vec<__contract::ApproveInspectionOutcome>, __node::NodeError> {
+                    input: Vec<__contract::LoadReceiptScreenItem>,
+                ) -> Result<Vec<__contract::LoadReceiptScreenOutcome>, __node::NodeError> {
                     let mut state = $state;
                     __codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, $handler).await)

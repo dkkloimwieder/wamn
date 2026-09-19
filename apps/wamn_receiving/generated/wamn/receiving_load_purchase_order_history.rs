@@ -3,7 +3,7 @@
 use wamn_postgres_statements::Transaction;
 
 #[derive(Debug)]
-pub(crate) struct LoadPurchaseOrderHistoryRow {
+pub struct LoadPurchaseOrderHistoryRow {
     pub position: i64,
     pub kind: String,
     pub operation: String,

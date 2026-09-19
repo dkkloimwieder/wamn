@@ -9,41 +9,40 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
-    value: JsonValue,
+    value: JsonRoot,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct JsonValue {
-    idempotency_key: String,
-    source_pallet_id: String,
-    product_id: String,
-    status: String,
-    quantity: String,
-    new_pallet_code: String,
-    to_location_id: String,
+struct JsonRoot {
     expected_row_version: JsonInt64,
+    idempotency_key: String,
+    new_pallet_code: String,
     occurred_at: String,
+    product_id: String,
+    quantity: String,
+    source_pallet_id: String,
+    status: String,
+    to_location_id: String,
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::SplitItem>, CodecError> {
     decode_envelope(input)?
         .into_iter()
         .map(|(request_id, body)| {
-            let input = match serde_json::from_value::<JsonRequest>(body) {
-                Ok(request) => Ok(contract::SplitRequest {
-                    idempotency_key: request.value.idempotency_key,
-                    source_pallet_id: request.value.source_pallet_id,
-                    product_id: request.value.product_id,
-                    status: request.value.status,
-                    quantity: request.value.quantity,
-                    new_pallet_code: request.value.new_pallet_code,
-                    to_location_id: request.value.to_location_id,
+            let input = serde_json::from_value::<JsonRequest>(body)
+                .map(|request| contract::SplitRequest {
                     expected_row_version: request.value.expected_row_version.0,
+                    idempotency_key: request.value.idempotency_key,
+                    new_pallet_code: request.value.new_pallet_code,
                     occurred_at: request.value.occurred_at,
-                }),
-                Err(_) => Err(invalid("input")),
-            };
+                    product_id: request.value.product_id,
+                    quantity: request.value.quantity,
+                    source_pallet_id: request.value.source_pallet_id,
+                    status: request.value.status,
+                    to_location_id: request.value.to_location_id,
+                })
+                .map_err(|_| invalid("input"));
             Ok(contract::SplitItem { request_id, input })
         })
         .collect()

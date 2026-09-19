@@ -23,35 +23,6 @@ struct JsonUpdateChange {
     acme_quality_status: JsonChange<String>,
 }
 
-#[derive(Default)]
-enum JsonChange<T> {
-    #[default]
-    Absent,
-    Null,
-    Value(T),
-}
-
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonChange<T> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Option::<T>::deserialize(deserializer).map(|value| match value {
-            Some(value) => Self::Value(value),
-            None => Self::Null,
-        })
-    }
-}
-
-#[expect(
-    clippy::option_option,
-    reason = "WIT update fields distinguish absent, null, and value"
-)]
-fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
-    match value {
-        JsonChange::Absent => None,
-        JsonChange::Null => Some(None),
-        JsonChange::Value(value) => Some(Some(value)),
-    }
-}
-
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
     decode_envelope(input)?
         .into_iter()
@@ -155,6 +126,17 @@ fn error_value(error: &contract::UpdateError) -> Value {
 fn normalize(request: &mut contract::UpdateRequest) -> Result<(), contract::InvalidInputDetail> {
     if !canonical_uuid(&mut request.id) {
         return Err(invalid("id"));
+    }
+    if matches!(request.change.acme_inspection_required, Some(None)) {
+        return Err(invalid("change.acme_inspection_required"));
+    }
+    if matches!(request.change.acme_quality_status, Some(None)) {
+        return Err(invalid("change.acme_quality_status"));
+    }
+    if let Some(Some(value)) = &mut request.change.acme_quality_status
+        && (!["not_required", "pending", "approved"].contains(&value.as_str()))
+    {
+        return Err(invalid("change.acme_quality_status"));
     }
     Ok(())
 }

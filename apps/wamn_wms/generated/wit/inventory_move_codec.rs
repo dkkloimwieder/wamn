@@ -9,33 +9,32 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
-    value: JsonValue,
+    value: JsonRoot,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct JsonValue {
+struct JsonRoot {
+    expected_row_version: JsonInt64,
     idempotency_key: String,
+    occurred_at: String,
     pallet_id: String,
     to_location_id: String,
-    expected_row_version: JsonInt64,
-    occurred_at: String,
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::MoveItem>, CodecError> {
     decode_envelope(input)?
         .into_iter()
         .map(|(request_id, body)| {
-            let input = match serde_json::from_value::<JsonRequest>(body) {
-                Ok(request) => Ok(contract::MoveRequest {
+            let input = serde_json::from_value::<JsonRequest>(body)
+                .map(|request| contract::MoveRequest {
+                    expected_row_version: request.value.expected_row_version.0,
                     idempotency_key: request.value.idempotency_key,
+                    occurred_at: request.value.occurred_at,
                     pallet_id: request.value.pallet_id,
                     to_location_id: request.value.to_location_id,
-                    expected_row_version: request.value.expected_row_version.0,
-                    occurred_at: request.value.occurred_at,
-                }),
-                Err(_) => Err(invalid("input")),
-            };
+                })
+                .map_err(|_| invalid("input"));
             Ok(contract::MoveItem { request_id, input })
         })
         .collect()

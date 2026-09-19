@@ -13,19 +13,10 @@ use wamn_postgres_statements::{Connection, Json, StatementError, TimestampTz, Uu
 use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
 use crate::generated::wamn::receiving_record_receipt as generated;
 
-/// Maximum number of independently transacted items in one operation envelope.
-pub const MAX_RECORD_RECEIPT_ITEMS: usize = 100;
 /// Maximum number of receipt facts in one command item.
 pub const MAX_RECORD_RECEIPT_LINES: usize = 100;
 /// Raw request ceiling enforced by ingress before JSON parsing.
 pub const MAX_RECORD_RECEIPT_BODY_BYTES: usize = 1_048_576;
-
-/// One array-envelope input item.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecordReceiptInput {
-    pub request_id: Box<str>,
-    pub value: RecordReceiptValue,
-}
 
 /// Authoritative receipt command payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,19 +70,6 @@ impl PurchaseOrderStatus {
             )),
         }
     }
-}
-
-/// One independently committed or refused envelope item.
-#[derive(Debug)]
-pub enum RecordReceiptItemOutcome {
-    Succeeded {
-        request_id: Box<str>,
-        value: RecordReceiptResult,
-    },
-    Refused {
-        request_id: Box<str>,
-        error: RecordReceiptError,
-    },
 }
 
 /// Stable command-level refusal class.
@@ -360,40 +338,10 @@ impl From<StatementError> for RecordReceiptError {
     }
 }
 
-/// Execute each array item independently after enforcing the outer count bound.
-pub async fn record_receipt(
-    connection: &mut Connection,
-    input: &[RecordReceiptInput],
-) -> Result<Box<[RecordReceiptItemOutcome]>, RecordReceiptError> {
-    validate_count(
-        "record_receipt item",
-        "input",
-        input.len(),
-        MAX_RECORD_RECEIPT_ITEMS,
-    )?;
-    let mut output = Vec::with_capacity(input.len());
-    for item in input {
-        let result = record_receipt_item(connection, item).await;
-        output.push(with_request_id(&item.request_id, result));
-    }
-    Ok(output.into_boxed_slice())
-}
-
-fn with_request_id(
-    request_id: &str,
-    result: Result<RecordReceiptResult, RecordReceiptError>,
-) -> RecordReceiptItemOutcome {
-    let request_id = request_id.into();
-    match result {
-        Ok(value) => RecordReceiptItemOutcome::Succeeded { request_id, value },
-        Err(error) => RecordReceiptItemOutcome::Refused { request_id, error },
-    }
-}
-
 /// Execute one item in exactly one transaction with no automatic retry.
-async fn record_receipt_item(
+pub async fn execute(
     connection: &mut Connection,
-    command: &RecordReceiptInput,
+    command: &RecordReceiptValue,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
     let prepared = prepare(command)?;
     let transaction = connection.begin().await?;
@@ -411,14 +359,14 @@ struct PreparedCommand {
     line_count: usize,
 }
 
-fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceiptError> {
-    if command.value.idempotency_key.is_empty() {
+fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceiptError> {
+    if command.idempotency_key.is_empty() {
         return Err(RecordReceiptError::invalid(
             "idempotency_key must not be empty",
             "value.idempotency_key",
         ));
     }
-    if command.value.receipt_reference.is_empty() {
+    if command.receipt_reference.is_empty() {
         return Err(RecordReceiptError::invalid(
             "receipt_reference must not be empty",
             "value.receipt_reference",
@@ -427,16 +375,15 @@ fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceip
     validate_count(
         "record_receipt line",
         "value.line",
-        command.value.line.len(),
+        command.line.len(),
         MAX_RECORD_RECEIPT_LINES,
     )?;
-    let purchase_order_id =
-        canonical_uuid(&command.value.purchase_order_id, "value.purchase_order_id")?;
-    let occurred_at = canonical_timestamp(&command.value.occurred_at)?;
+    let purchase_order_id = canonical_uuid(&command.purchase_order_id, "value.purchase_order_id")?;
+    let occurred_at = canonical_timestamp(&command.occurred_at)?;
 
     let mut seen = BTreeSet::new();
-    let mut lines = Vec::with_capacity(command.value.line.len());
-    for line in &command.value.line {
+    let mut lines = Vec::with_capacity(command.line.len());
+    for line in &command.line {
         let purchase_order_line_id = canonical_uuid(
             &line.purchase_order_line_id,
             "value.line[].purchase_order_line_id",
@@ -465,20 +412,20 @@ fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceip
     let line_value = Value::Array(line);
     let canonical_value = json!({
         "purchase_order_id": purchase_order_id.hyphenated().to_string(),
-        "receipt_reference": command.value.receipt_reference,
+        "receipt_reference": command.receipt_reference,
         "occurred_at": occurred_at,
         "line": line_value,
     });
     let line_json = String::from_utf8(canonical_json_bytes(&canonical_value["line"]))
         .expect("canonical JSON is UTF-8");
     Ok(PreparedCommand {
-        idempotency_key: command.value.idempotency_key.to_string(),
+        idempotency_key: command.idempotency_key.to_string(),
         purchase_order_id: purchase_order_id.hyphenated().to_string(),
-        receipt_reference: command.value.receipt_reference.to_string(),
+        receipt_reference: command.receipt_reference.to_string(),
         occurred_at,
         canonical_command: canonical_json_bytes(&canonical_value),
         line_json,
-        line_count: command.value.line.len(),
+        line_count: command.line.len(),
     })
 }
 
@@ -819,22 +766,18 @@ fn canonical_positive_numeric(value: &str) -> Result<String, RecordReceiptError>
 mod tests {
     use super::*;
 
-    const REQUEST_ID: &str = "00000000-0000-0000-0000-000000000001";
     const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000002";
     const FIRST_LINE_ID: &str = "00000000-0000-0000-0000-000000000003";
     const SECOND_LINE_ID: &str = "00000000-0000-0000-0000-000000000004";
     const LOCATION_ID: &str = "00000000-0000-0000-0000-000000000005";
 
-    fn command(lines: Vec<RecordReceiptLine>) -> RecordReceiptInput {
-        RecordReceiptInput {
-            request_id: REQUEST_ID.into(),
-            value: RecordReceiptValue {
-                idempotency_key: "key-1".into(),
-                purchase_order_id: PURCHASE_ORDER_ID.into(),
-                receipt_reference: "receipt-1".into(),
-                occurred_at: "2026-08-29T12:34:56.000000Z".into(),
-                line: lines.into_boxed_slice(),
-            },
+    fn command(lines: Vec<RecordReceiptLine>) -> RecordReceiptValue {
+        RecordReceiptValue {
+            idempotency_key: "key-1".into(),
+            purchase_order_id: PURCHASE_ORDER_ID.into(),
+            receipt_reference: "receipt-1".into(),
+            occurred_at: "2026-08-29T12:34:56.000000Z".into(),
+            line: lines.into_boxed_slice(),
         }
     }
 
@@ -892,12 +835,12 @@ mod tests {
     #[test]
     fn a_noncanonical_timestamp_is_respelled_rather_than_refused() {
         let mut input = command(vec![line(FIRST_LINE_ID, "1.0")]);
-        input.value.occurred_at = "2026-08-29T14:34:56+02:00".into();
+        input.occurred_at = "2026-08-29T14:34:56+02:00".into();
         assert_eq!(
             prepare(&input).unwrap().occurred_at,
             "2026-08-29T12:34:56.000000Z"
         );
-        input.value.occurred_at = "yesterday".into();
+        input.occurred_at = "yesterday".into();
         assert_eq!(
             prepare(&input).unwrap_err().kind(),
             RecordReceiptErrorKind::InvalidInput
@@ -908,7 +851,7 @@ mod tests {
     fn two_spellings_of_one_instant_make_one_command() {
         let canonical = prepare(&command(vec![line(FIRST_LINE_ID, "1.0")])).unwrap();
         let mut respelled = command(vec![line(FIRST_LINE_ID, "1.0")]);
-        respelled.value.occurred_at = "2026-08-29T14:34:56+02:00".into();
+        respelled.occurred_at = "2026-08-29T14:34:56+02:00".into();
         let respelled = prepare(&respelled).unwrap();
         assert_eq!(canonical.canonical_command, respelled.canonical_command);
     }
@@ -918,43 +861,13 @@ mod tests {
         const LOWER: &str = "0123456a-89ab-cdef-0123-456789abcdef";
         const UPPER: &str = "0123456A-89AB-CDEF-0123-456789ABCDEF";
         let mut lower = command(vec![line(LOWER, "1.0")]);
-        lower.value.purchase_order_id = LOWER.into();
+        lower.purchase_order_id = LOWER.into();
         let mut upper = command(vec![line(UPPER, "1.0")]);
-        upper.value.purchase_order_id = UPPER.into();
+        upper.purchase_order_id = UPPER.into();
         assert_eq!(
             prepare(&lower).unwrap().canonical_command,
             prepare(&upper).unwrap().canonical_command
         );
-    }
-
-    #[test]
-    fn arbitrary_request_id_is_preserved_in_each_outcome() {
-        const REQUEST_ID: &str = "submit receipt / café 🧾";
-        let mut input = command(vec![line(FIRST_LINE_ID, "1.0")]);
-        input.request_id = REQUEST_ID.into();
-        let prepared = prepare(&input).unwrap();
-        let result = RecordReceiptResult {
-            receipt_id: "00000000-0000-0000-0000-000000000006".into(),
-            purchase_order_id: prepared.purchase_order_id.into_boxed_str(),
-            purchase_order_status: PurchaseOrderStatus::Open,
-            row_version: 1,
-        };
-
-        match with_request_id(&input.request_id, Ok(result)) {
-            RecordReceiptItemOutcome::Succeeded { request_id, .. } => {
-                assert_eq!(request_id.as_ref(), REQUEST_ID);
-            }
-            RecordReceiptItemOutcome::Refused { .. } => panic!("expected success"),
-        }
-        match with_request_id(
-            &input.request_id,
-            Err(RecordReceiptError::invalid("refused for test", "input")),
-        ) {
-            RecordReceiptItemOutcome::Refused { request_id, .. } => {
-                assert_eq!(request_id.as_ref(), REQUEST_ID);
-            }
-            RecordReceiptItemOutcome::Succeeded { .. } => panic!("expected refusal"),
-        }
     }
 
     #[test]
@@ -971,19 +884,6 @@ mod tests {
 
     #[test]
     fn malformed_shapes_refuse_with_invalid_input() {
-        for actual in [0, MAX_RECORD_RECEIPT_ITEMS + 1] {
-            assert_eq!(
-                validate_count(
-                    "record_receipt item",
-                    "input",
-                    actual,
-                    MAX_RECORD_RECEIPT_ITEMS,
-                )
-                .unwrap_err()
-                .kind(),
-                RecordReceiptErrorKind::InvalidInput
-            );
-        }
         for actual in [0, MAX_RECORD_RECEIPT_LINES + 1] {
             assert_eq!(
                 validate_count(

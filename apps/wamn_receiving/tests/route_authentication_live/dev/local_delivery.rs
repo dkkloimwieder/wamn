@@ -18,15 +18,14 @@ use super::super::{
 };
 use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
 
-const CODE: &str = "apps/wamn_receiving/component/src/lib.rs";
+const CODE: &str = "apps/wamn_receiving/component/src/reads.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
 const MANIFEST: &str = "apps/wamn_receiving/wamn.json";
 const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
 const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
 const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
-const CODE_BEFORE: &str =
-    "invoke_operation(wamn_receiving_data_access::operation::location_list(&input))";
-const CODE_AFTER: &str = "invoke_operation(wamn_receiving_data_access::operation::location_list(&input.replace(\"timing-original\", \"timing-edited\")))";
+const CODE_BEFORE: &str = "read::location_list(connection)";
+const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, wamn_receiving_data_access::error::AccessError>(rows) }";
 const MANIFEST_BEFORE: &str = "\"table\": \"location\",\n      \"owner\": \"wamn_receiving\",\n      \"server_owned_fields\": [\n        \"id\"\n      ],";
 const MANIFEST_AFTER: &str = "\"table\": \"location\",\n      \"owner\": \"wamn_receiving\",\n      \"server_owned_fields\": [\n        \"id\",\n        \"note\"\n      ],";
 const OWNER_BEFORE: &str = "\"id\",\n        \"note\"\n      ],";
@@ -149,20 +148,20 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
         let code = watch.served().await?;
         code.retained(&first, &["migrate", "introspect", "generate", "acl"])?;
-        code.locations(token, "timing-edited", &["DOCK-1", "DOCK-2"]).await?;
+        code.locations(token, "timing-original", &["DOCK-1-edited", "DOCK-2-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(SQL, "location.location_code ASC", "location.location_code DESC")?;
         let sql = watch.served().await?;
         sql.retained(&code, &["migrate", "introspect"])?;
         ensure!(!sql.skipped.contains("generate"), "a named SQL edit cannot skip generation");
-        sql.locations(token, "timing-edited", &["DOCK-2", "DOCK-1"]).await?;
+        sql.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         let valid_sql = fs::read(repository.join(SQL))?;
         fs::write(repository.join(SQL), b"SELECT invalid_delivery_sql FROM receiving.location;\n")?;
         watch.refused_generation().await?;
-        sql.locations(token, "timing-edited", &["DOCK-2", "DOCK-1"]).await?;
+        sql.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
         fs::write(repository.join(SQL), valid_sql)?;
         let repaired = watch.served().await?;
@@ -173,19 +172,19 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         appended.retained(&repaired, &[])?;
         ensure!(!appended.skipped.contains("migrate"), "an appended migration must reach the kept target");
         ensure!(location_note(&environment.route.database_url).await?, "the kept target lacks the appended column");
-        appended.locations(token, "timing-edited", &["DOCK-2", "DOCK-1"]).await?;
+        appended.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(MANIFEST, MANIFEST_BEFORE, MANIFEST_AFTER)?;
         let declared = watch.served().await?;
         declared.retained(&appended, &[])?;
-        declared.locations(token, "timing-edited", &["DOCK-2", "DOCK-1"]).await?;
+        declared.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(MANIFEST, OWNER_BEFORE, OWNER_AFTER)?;
         let reset = watch.served().await?;
         ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a declared definition owner must create a new target instance");
-        reset.locations(token, "timing-edited", &[]).await?;
+        reset.locations(token, "timing-original", &[]).await?;
         ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
         ensure!(current_database_acl(admin.as_ref()).await? == system_acl, "the local loop changed the system database ACL");

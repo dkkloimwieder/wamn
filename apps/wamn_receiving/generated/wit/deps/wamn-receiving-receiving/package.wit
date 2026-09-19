@@ -1,32 +1,138 @@
 package wamn-receiving:receiving@1.0.0;
 
 interface load-purchase-order-history {
-  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
-  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;
+  record load-purchase-order-history-request {
+    after-position: s64,
+    id: string,
+    limit: s64,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant load-purchase-order-history-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record load-purchase-order-history-item {
+    request-id: string,
+    input: result<load-purchase-order-history-request, invalid-input-detail>,
+  }
+
+  record load-purchase-order-history-row {
+    position: s64,
+    kind: string,
+    operation: string,
+    changed-by: string,
+    changed-at: string,
+    transaction-id: s64,
+    before: string,
+    after: string,
+    current: string,
+    head-position: s64,
+  }
+
+  record load-purchase-order-history-result {
+    rows: list<load-purchase-order-history-row>,
+  }
+
+  record load-purchase-order-history-outcome {
+    request-id: string,
+    outcome: result<load-purchase-order-history-result, load-purchase-order-history-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<load-purchase-order-history-item>) -> result<list<load-purchase-order-history-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
 
 interface load-receipt-screen {
-  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
-  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;
+  record load-receipt-screen-request {
+    purchase-order-id: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant load-receipt-screen-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record load-receipt-screen-item {
+    request-id: string,
+    input: result<load-receipt-screen-request, invalid-input-detail>,
+  }
+
+  record load-receipt-screen-row {
+    purchase-order-id: string,
+    purchase-order-number: string,
+    purchase-order-status: string,
+    supplier-id: string,
+    row-version: s64,
+    line-id: option<string>,
+    line-number: option<s32>,
+    item-id: option<string>,
+    item-number: option<string>,
+    ordered-quantity: option<string>,
+    received-quantity: option<string>,
+    remaining-quantity: option<string>,
+  }
+
+  record load-receipt-screen-result {
+    rows: list<load-receipt-screen-row>,
+  }
+
+  record load-receipt-screen-outcome {
+    request-id: string,
+    outcome: result<load-receipt-screen-result, load-receipt-screen-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<load-receipt-screen-item>) -> result<list<load-receipt-screen-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
 
 interface record-receipt {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record record-receipt-line {
+    location-id: string,
     purchase-order-line-id: string,
     quantity: string,
-    location-id: string,
   }
 
   record record-receipt-request {
     idempotency-key: string,
+    line: list<record-receipt-line>,
+    occurred-at: string,
     purchase-order-id: string,
     receipt-reference: string,
-    occurred-at: string,
-    line: list<record-receipt-line>,
   }
 
   record idempotency-conflict-detail {

@@ -1,18 +1,18 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug)]
-pub(crate) struct ClaimCommandRow {
+pub struct ClaimCommandRow {
     pub receipt_id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct FinalizeCommandRow {
+pub struct FinalizeCommandRow {
     pub purchase_order_status: Option<String>,
     pub row_version: Option<i64>,
 }
 
 #[derive(Debug)]
-pub(crate) struct FindReplayRow {
+pub struct FindReplayRow {
     pub canonical_command: Vec<u8>,
     pub receipt_id: wamn_postgres_statements::Uuid,
     pub purchase_order_id: wamn_postgres_statements::Uuid,
@@ -21,33 +21,33 @@ pub(crate) struct FindReplayRow {
 }
 
 #[derive(Debug)]
-pub(crate) struct FinishPurchaseOrderRow {
+pub struct FinishPurchaseOrderRow {
     pub status: String,
     pub row_version: i64,
 }
 
 #[derive(Debug)]
-pub(crate) struct InsertReceiptRow {
+pub struct InsertReceiptRow {
     pub id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct InsertReceiptLineRow {
+pub struct InsertReceiptLineRow {
     pub id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct LockPurchaseOrderRow {
+pub struct LockPurchaseOrderRow {
     pub status: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct UpdatePurchaseOrderLineRow {
+pub struct UpdatePurchaseOrderLineRow {
     pub id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct ValidateReceiptLineRow {
+pub struct ValidateReceiptLineRow {
     pub outcome: Option<String>,
     pub id: Option<wamn_postgres_statements::Uuid>,
 }

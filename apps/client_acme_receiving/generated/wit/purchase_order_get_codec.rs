@@ -81,6 +81,7 @@ fn error_value(error: &contract::GetError) -> Value {
 }
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::GetRequest) -> Result<(), contract::InvalidInputDetail> {
+    let _ = &request;
     if !canonical_uuid(&mut request.id) {
         return Err(invalid("id"));
     }

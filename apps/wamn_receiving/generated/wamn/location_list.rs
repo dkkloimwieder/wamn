@@ -3,7 +3,7 @@
 use wamn_postgres_statements::Transaction;
 
 #[derive(Debug)]
-pub(crate) struct ListLocationsRow {
+pub struct ListLocationsRow {
     pub id: wamn_postgres_statements::Uuid,
     pub location_code: String,
 }

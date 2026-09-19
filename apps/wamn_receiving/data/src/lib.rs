@@ -7,8 +7,8 @@
 mod cursor;
 mod error;
 mod generated;
-pub mod operation;
 pub mod purchase_order;
+pub mod read;
 pub mod receipt;
 pub mod record_receipt;
 

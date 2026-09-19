@@ -17,37 +17,34 @@ impl std::fmt::Display for CodecError {
 impl std::error::Error for CodecError {}
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JsonInput {
-    event: String,
-    new: JsonNew,
-}
-#[derive(Deserialize)]
 struct JsonNew {
     id: String,
 }
 
-#[allow(dead_code)]
-pub(crate) fn decode(input: &str) -> Result<contract::CreateInspectionRequest, CodecError> {
-    let value: JsonInput = serde_json::from_str(input)
-        .map_err(|_| CodecError("operation input does not match its declared object"))?;
-    Ok(contract::CreateInspectionRequest {
-        event: value.event,
-        new: contract::CreateInspectionNew { id: value.new.id },
-    })
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonRequest {
+    event: String,
+    new: JsonNew,
 }
 
 #[allow(dead_code)]
-pub(crate) fn encode(value: &contract::CreateInspectionRequest) -> String {
-    serde_json::json!({"event": value.event, "new": {"id": value.new.id}}).to_string()
+pub(crate) fn decode(input: &str) -> Result<contract::CreateInspectionRequest, CodecError> {
+    let request: JsonRequest = serde_json::from_str(input)
+        .map_err(|_| CodecError("operation input does not match its declared object"))?;
+    Ok(contract::CreateInspectionRequest {
+        event: request.event,
+        new: contract::CreateInspectionNew { id: request.new.id },
+    })
 }
-pub(crate) fn normalize(value: &mut contract::CreateInspectionRequest) -> Result<(), CodecError> {
-    if value.event != "insert" {
+
+pub(crate) fn normalize(request: &mut contract::CreateInspectionRequest) -> Result<(), CodecError> {
+    if !["insert"].contains(&request.event.as_str()) {
         return Err(CodecError("event is outside its declared value domain"));
     }
     let parsed =
-        uuid::Uuid::parse_str(&value.new.id).map_err(|_| CodecError("new.id is not a UUID"))?;
-    value.new.id = parsed.hyphenated().to_string();
+        uuid::Uuid::parse_str(&request.new.id).map_err(|_| CodecError("new.id is not a UUID"))?;
+    request.new.id = parsed.hyphenated().to_string();
     Ok(())
 }
 

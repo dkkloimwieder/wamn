@@ -556,4 +556,26 @@ mod tests {
             );
         }
     }
+    // The existing exclusion fixture supplies actual PostgreSQL diagnostics.
+    #[test]
+    #[ignore = "requires: WAMN_EXCLUSION_DIAGNOSTICS"]
+    fn generated_update_exclusion_from_postgres() {
+        let path = std::env::var_os("WAMN_EXCLUSION_DIAGNOSTICS")
+            .expect("WAMN_EXCLUSION_DIAGNOSTICS must name the disposable PostgreSQL diagnostics");
+        let diagnostics: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let diagnostic = &diagnostics["receiving"];
+        assert_eq!(diagnostic["sqlstate"], "23P01");
+        let constraint = diagnostic["constraint"]
+            .as_str()
+            .expect("server constraint name");
+        let error = super::AccessError::from_statement_parts(
+            "update purchase_order",
+            StatementErrorKind::ExclusionViolation,
+            Some(constraint),
+            crate::purchase_order::UPDATE_CONSTRAINTS,
+        );
+        assert_eq!(error.kind(), AccessErrorKind::ExclusionViolation);
+        assert_eq!(error.constraint(), Some("purchase_order_supplier_id_excl"));
+    }
 }

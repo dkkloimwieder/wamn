@@ -86,3 +86,33 @@ fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
         })
         .collect()
 }
+#[allow(dead_code)]
+#[derive(Default)]
+enum JsonChange<T> {
+    #[default]
+    Absent,
+    Null,
+    Value(T),
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonChange<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<T>::deserialize(deserializer).map(|value| match value {
+            Some(value) => Self::Value(value),
+            None => Self::Null,
+        })
+    }
+}
+
+#[allow(dead_code)]
+#[expect(
+    clippy::option_option,
+    reason = "WIT mutation fields distinguish absent, null, and value"
+)]
+fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
+    match value {
+        JsonChange::Absent => None,
+        JsonChange::Null => Some(None),
+        JsonChange::Value(value) => Some(Some(value)),
+    }
+}

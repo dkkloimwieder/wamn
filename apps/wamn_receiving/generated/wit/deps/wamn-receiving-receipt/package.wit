@@ -1,4 +1,4 @@
-package wamn-receiving:purchase-order@1.0.0;
+package wamn-receiving:receipt@1.0.0;
 
 interface get {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
@@ -38,12 +38,10 @@ interface get {
     created-at: string,
     created-by: string,
     id: string,
-    purchase-order-number: string,
-    row-version: s64,
-    status: string,
-    supplier-id: string,
-    updated-at: string,
-    updated-by: string,
+    idempotency-key: string,
+    occurred-at: string,
+    purchase-order-id: string,
+    receipt-reference: string,
   }
 
   record get-result {
@@ -63,10 +61,6 @@ interface query {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record query-request {
-    supplier-id: option<list<string>>,
-    status: option<list<string>>,
-    sort-field: option<string>,
-    sort-direction: option<string>,
     cursor: option<string>,
     limit: option<s64>,
   }
@@ -99,12 +93,10 @@ interface query {
     created-at: string,
     created-by: string,
     id: string,
-    purchase-order-number: string,
-    row-version: s64,
-    status: string,
-    supplier-id: string,
-    updated-at: string,
-    updated-by: string,
+    idempotency-key: string,
+    occurred-at: string,
+    purchase-order-id: string,
+    receipt-reference: string,
   }
 
   record query-result {
@@ -121,69 +113,3 @@ interface query {
   run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
 
-interface update {
-  use wamn:node/types@0.1.0.{emission, node-context, node-error};
-
-  record update-change {
-    supplier-id: option<option<string>>,
-  }
-
-  record update-request {
-    id: string,
-    expected-row-version: s64,
-    change: update-change,
-  }
-
-  record invalid-input-detail {
-    field: string,
-  }
-
-  record not-found-detail {
-    field: string,
-    id: string,
-  }
-
-  record concurrency-conflict-detail {
-    expected-row-version: string,
-    observed-row-version: string,
-  }
-
-  record permission-denied-detail {
-    operation: string,
-  }
-
-  variant update-error {
-    invalid-input(invalid-input-detail),
-    not-found(not-found-detail),
-    concurrency-conflict(concurrency-conflict-detail),
-    retry,
-    timeout,
-    permission-denied(permission-denied-detail),
-    internal-error,
-  }
-
-  record update-item {
-    request-id: string,
-    input: result<update-request, invalid-input-detail>,
-  }
-
-  record update-result {
-    created-at: string,
-    created-by: string,
-    id: string,
-    purchase-order-number: string,
-    row-version: s64,
-    status: string,
-    supplier-id: string,
-    updated-at: string,
-    updated-by: string,
-  }
-
-  record update-outcome {
-    request-id: string,
-    outcome: result<update-result, update-error>,
-  }
-
-  run: async func(ctx: node-context, input: list<update-item>) -> result<list<update-outcome>, node-error>;
-  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
-}

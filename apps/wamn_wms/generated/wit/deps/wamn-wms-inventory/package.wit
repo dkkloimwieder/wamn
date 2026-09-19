@@ -360,4 +360,3 @@ interface split {
   run: async func(ctx: node-context, input: list<split-item>) -> result<list<split-outcome>, node-error>;
   run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
-

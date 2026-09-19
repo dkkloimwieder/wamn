@@ -1,7 +1,7 @@
 // @generated from operation declarations; do not edit.
 
 include!("operation_codec.rs");
-type Item = contract::AggregateItem;
+type Item = contract::ListItem;
 const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
@@ -10,17 +10,17 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 #[serde(deny_unknown_fields)]
 struct JsonRequest {}
 
-pub(crate) fn decode(input: &str) -> Result<Vec<contract::AggregateItem>, CodecError> {
+pub(crate) fn decode(input: &str) -> Result<Vec<contract::ListItem>, CodecError> {
     decode_envelope(input)?
         .into_iter()
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| {
                     let _ = request;
-                    contract::AggregateRequest::Request
+                    contract::ListRequest::Request
                 })
                 .map_err(|_| invalid("input"));
-            Ok(contract::AggregateItem { request_id, input })
+            Ok(contract::ListItem { request_id, input })
         })
         .collect()
 }
@@ -31,18 +31,15 @@ fn invalid(field: &str) -> contract::InvalidInputDetail {
     }
 }
 
-pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
+pub(crate) fn encode(output: &[contract::ListOutcome]) -> String {
     let values = output
         .iter()
         .map(|item| match &item.outcome {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": { "rows": value.rows.iter().map(|row| json!({
-                    "product_id": row.product_id,
-                    "location_id": row.location_id,
-                    "status": row.status,
-                    "quantity": row.quantity,
-                    "pallet_count": row.pallet_count.to_string(),
+                    "id": row.id,
+                    "location_code": row.location_code,
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
@@ -54,52 +51,52 @@ pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
     serde_json::to_string(&values).expect("typed receipt outcomes always serialize")
 }
 
-fn error_value(error: &contract::AggregateError) -> Value {
+fn error_value(error: &contract::ListError) -> Value {
     let (code, detail) = match error {
-        contract::AggregateError::InvalidInput(value) => {
+        contract::ListError::InvalidInput(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             ("invalid_input", detail)
         }
-        contract::AggregateError::Retry => ("retry", Map::new()),
-        contract::AggregateError::Timeout => ("timeout", Map::new()),
-        contract::AggregateError::PermissionDenied(value) => {
+        contract::ListError::Retry => ("retry", Map::new()),
+        contract::ListError::Timeout => ("timeout", Map::new()),
+        contract::ListError::PermissionDenied(value) => {
             let mut detail = Map::new();
             detail.insert("operation".to_owned(), json!(value.operation));
             ("permission_denied", detail)
         }
-        contract::AggregateError::InternalError => ("internal_error", Map::new()),
+        contract::ListError::InternalError => ("internal_error", Map::new()),
     };
     json!({"code": code, "detail": detail})
 }
 #[allow(clippy::unnecessary_wraps)]
-fn normalize(request: &mut contract::AggregateRequest) -> Result<(), contract::InvalidInputDetail> {
+fn normalize(request: &mut contract::ListRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     Ok(())
 }
 
 #[allow(dead_code)]
 pub(crate) async fn run<S, F>(
-    input: Vec<contract::AggregateItem>,
+    input: Vec<contract::ListItem>,
     state: &mut S,
     mut handler: F,
-) -> Vec<contract::AggregateOutcome>
+) -> Vec<contract::ListOutcome>
 where
     F: AsyncFnMut(
         &mut S,
-        contract::AggregateRequest,
-    ) -> Result<contract::AggregateResult, contract::AggregateError>,
+        contract::ListRequest,
+    ) -> Result<contract::ListResult, contract::ListError>,
 {
     let mut output = Vec::with_capacity(input.len());
     for item in input {
         let outcome = match item.input {
             Ok(mut request) => match normalize(&mut request) {
                 Ok(()) => handler(state, request).await,
-                Err(error) => Err(contract::AggregateError::InvalidInput(error)),
+                Err(error) => Err(contract::ListError::InvalidInput(error)),
             },
-            Err(error) => Err(contract::AggregateError::InvalidInput(error)),
+            Err(error) => Err(contract::ListError::InvalidInput(error)),
         };
-        output.push(contract::AggregateOutcome {
+        output.push(contract::ListOutcome {
             request_id: item.request_id,
             outcome,
         });
@@ -112,11 +109,8 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            product_id: row.product_id.0,
-            location_id: row.location_id.0,
-            status: row.status,
-            quantity: row.quantity.0,
-            pallet_count: row.pallet_count,
+            id: row.id.0,
+            location_code: row.location_code,
         }
     }};
 }
@@ -127,25 +121,23 @@ pub(crate) use row;
 pub(crate) fn map_error(
     code: &str,
     mut detail: impl FnMut(&str) -> Option<String>,
-) -> contract::AggregateError {
+) -> contract::ListError {
     match code {
         "invalid_input" => {
             let Some(field) = detail("field") else {
-                return contract::AggregateError::InternalError;
+                return contract::ListError::InternalError;
             };
-            contract::AggregateError::InvalidInput(contract::InvalidInputDetail { field })
+            contract::ListError::InvalidInput(contract::InvalidInputDetail { field })
         }
-        "retry" => contract::AggregateError::Retry,
-        "timeout" => contract::AggregateError::Timeout,
+        "retry" => contract::ListError::Retry,
+        "timeout" => contract::ListError::Timeout,
         "permission_denied" => {
             let Some(operation) = detail("operation") else {
-                return contract::AggregateError::InternalError;
+                return contract::ListError::InternalError;
             };
-            contract::AggregateError::PermissionDenied(contract::PermissionDeniedDetail {
-                operation,
-            })
+            contract::ListError::PermissionDenied(contract::PermissionDeniedDetail { operation })
         }
-        _ => contract::AggregateError::InternalError,
+        _ => contract::ListError::InternalError,
     }
 }
 
@@ -167,8 +159,8 @@ macro_rules! export_operation {
             impl __contract::Guest for $component {
                 async fn run(
                     _context: __node::NodeContext,
-                    input: Vec<__contract::AggregateItem>,
-                ) -> Result<Vec<__contract::AggregateOutcome>, __node::NodeError> {
+                    input: Vec<__contract::ListItem>,
+                ) -> Result<Vec<__contract::ListOutcome>, __node::NodeError> {
                     let mut state = $state;
                     __codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, $handler).await)

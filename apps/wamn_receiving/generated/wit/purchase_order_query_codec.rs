@@ -23,11 +23,9 @@ struct JsonRequest {
 #[serde(deny_unknown_fields)]
 struct JsonFilter {
     #[serde(default)]
+    supplier_id: Option<Vec<String>>,
+    #[serde(default)]
     status: Option<Vec<String>>,
-    #[serde(default)]
-    location_id: Option<Vec<String>>,
-    #[serde(default)]
-    pallet_code: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -43,18 +41,14 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::QueryItem>, CodecError
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|mut request| contract::QueryRequest {
+                    supplier_id: request
+                        .filter
+                        .as_mut()
+                        .and_then(|filter| filter.supplier_id.take()),
                     status: request
                         .filter
                         .as_mut()
                         .and_then(|filter| filter.status.take()),
-                    location_id: request
-                        .filter
-                        .as_mut()
-                        .and_then(|filter| filter.location_id.take()),
-                    pallet_code: request
-                        .filter
-                        .as_mut()
-                        .and_then(|filter| filter.pallet_code.take()),
                     sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),
                     sort_direction: request.sort.map(|sort| sort.direction),
                     cursor: request.cursor,
@@ -84,10 +78,10 @@ pub(crate) fn encode(output: &[contract::QueryOutcome]) -> String {
                                 "created_at": row.created_at,
                                 "created_by": row.created_by,
                                 "id": row.id,
-                                "location_id": row.location_id,
-                                "pallet_code": row.pallet_code,
+                                "purchase_order_number": row.purchase_order_number,
                                 "row_version": row.row_version.to_string(),
                                 "status": row.status,
+                                "supplier_id": row.supplier_id,
                                 "updated_at": row.updated_at,
                                 "updated_by": row.updated_by,
                         })).collect::<Vec<_>>(), "next_cursor": value.next_cursor }
@@ -128,10 +122,10 @@ fn error_value(error: &contract::QueryError) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::QueryRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
-    if let Some(values) = &mut request.location_id {
+    if let Some(values) = &mut request.supplier_id {
         for value in values {
             if !canonical_uuid(value) {
-                return Err(invalid("filter.location_id"));
+                return Err(invalid("filter.supplier_id"));
             }
         }
     }
@@ -175,10 +169,10 @@ macro_rules! row {
             created_at: row.created_at.0,
             created_by: row.created_by.0,
             id: row.id.0,
-            location_id: row.location_id.0,
-            pallet_code: row.pallet_code,
+            purchase_order_number: row.purchase_order_number,
             row_version: row.row_version,
             status: row.status,
+            supplier_id: row.supplier_id.0,
             updated_at: row.updated_at.0,
             updated_by: row.updated_by.0,
         }

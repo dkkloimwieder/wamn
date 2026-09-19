@@ -126,4 +126,3 @@ interface load-purchase-order-detail {
   run: async func(ctx: node-context, input: list<load-purchase-order-detail-item>) -> result<list<load-purchase-order-detail-outcome>, node-error>;
   run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
-

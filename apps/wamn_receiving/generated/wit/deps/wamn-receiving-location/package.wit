@@ -1,0 +1,45 @@
+package wamn-receiving:location@1.0.0;
+
+interface %list {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  enum %list-request { request }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant %list-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record %list-item {
+    request-id: string,
+    input: result<%list-request, invalid-input-detail>,
+  }
+
+  record %list-row {
+    id: string,
+    location-code: string,
+  }
+
+  record %list-result {
+    rows: list<%list-row>,
+  }
+
+  record %list-outcome {
+    request-id: string,
+    outcome: result<%list-result, %list-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<%list-item>) -> result<list<%list-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

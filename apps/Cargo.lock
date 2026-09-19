@@ -96,6 +96,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "uuid",
  "wamn-client-acme-receiving-data-access",
  "wamn-postgres-statements",
  "wit-bindgen",
@@ -747,6 +748,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "uuid",
  "wamn-postgres-statements",
  "wamn-receiving-data-access",
  "wit-bindgen",
@@ -1427,6 +1429,10 @@ dependencies = [
 name = "wms"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wamn-postgres-statements",
  "wamn-wms-data-access",
  "wit-bindgen",
 ]

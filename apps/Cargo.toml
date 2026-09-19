@@ -84,6 +84,7 @@ license = "Apache-2.0"
 # Inherited by the four relocated guest-consumed rlibs, pinned exactly as the
 # root workspace pins them so a crate resolves identically from either side.
 chrono = { version = "0.4", default-features = false }
+uuid = "1"
 jmespath = "0.3"
 schemars = "0.8"
 sha2 = "0.11"

@@ -1,7 +1,7 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct LoadReceiptScreenRow {
+pub struct LoadReceiptScreenRow {
     pub purchase_order_id: uuid::Uuid,
     pub purchase_order_number: String,
     pub purchase_order_status: String,
