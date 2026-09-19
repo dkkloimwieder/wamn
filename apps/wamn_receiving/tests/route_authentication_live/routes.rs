@@ -144,6 +144,13 @@ async fn receiving_release_journey(
     );
 
     provision_journey_control(&system_url, admin.as_ref()).await?;
+    admin
+        .execute(
+            "UPDATE registry.meta SET platform_domain = $1",
+            &[&PLATFORM_DOMAIN],
+        )
+        .await
+        .context("set the disposable journey platform domain")?;
     let management_secret = root.join("management-author-pat.json");
     let route =
         provision_route(&system_url, admin.as_ref(), root, Some(&management_secret)).await?;
