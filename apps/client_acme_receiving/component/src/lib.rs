@@ -15,6 +15,8 @@ use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
 use wamn_client_acme_receiving_data_access::operation::InvocationError;
 use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorKind};
 
+mod update;
+
 wit_bindgen::generate!({
     world: "client-acme-receiving:component/client-acme-receiving@3.0.0",
     inline: r#"
@@ -35,7 +37,7 @@ wit_bindgen::generate!({
     path: [
         "../../wamn_receiving/data/wit/deps/wamn-node",
         "../../wamn_receiving/data/wit/deps/wamn-postgres",
-        "wit/deps/client-acme-receiving-purchase-order",
+        "../generated/wit/deps/client-acme-receiving-purchase-order",
         "wit/deps/client-acme-receiving-quality",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
         "../generated/wit/deps/client-acme-receiving-receiving",
@@ -110,11 +112,23 @@ impl PurchaseOrderGet for Component {
 }
 
 impl PurchaseOrderUpdate for Component {
-    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_public(
-            wamn_client_acme_receiving_data_access::operation::purchase_order_update(&input),
-        )
-        .await
+    async fn run(
+        _context: NodeContext,
+        input: Vec<exports::client_acme_receiving::purchase_order::update::UpdateItem>,
+    ) -> Result<Vec<exports::client_acme_receiving::purchase_order::update::UpdateOutcome>, NodeError>
+    {
+        update::run(input).await
+    }
+
+    async fn run_json(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        let input = update::codec::decode(&input).map_err(|error| {
+            NodeError::InvalidInput(ErrorDetail {
+                message: error.context().to_owned(),
+                code: Some("invalid_input".to_owned()),
+            })
+        })?;
+        let output = update::run(input).await?;
+        Ok(emission(update::codec::encode(&output)))
     }
 }
 

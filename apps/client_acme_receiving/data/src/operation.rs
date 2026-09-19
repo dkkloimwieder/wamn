@@ -1,7 +1,7 @@
 //! Wire adapters for Acme Receiving operations backed by generated SQL.
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wamn_postgres_statements::{Connection, Uuid as WamnUuid};
 
@@ -10,6 +10,8 @@ use crate::generated::{
     purchase_order as purchase_order_sql, quality_approve_inspection as approve_sql,
     quality_create_inspection as create_sql, quality_load_purchase_order_detail as detail_sql,
 };
+
+pub use crate::generated::purchase_order::PurchaseOrderRow;
 
 const MAX_ENVELOPE_ITEMS: usize = 100;
 const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints {
@@ -89,23 +91,6 @@ struct GetInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PurchaseOrderUpdateInput {
-    id: Box<str>,
-    expected_row_version: Box<str>,
-    change: PurchaseOrderChangeInput,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PurchaseOrderChangeInput {
-    #[serde(default, deserialize_with = "deserialize_nullable")]
-    acme_inspection_required: Nullable<bool>,
-    #[serde(default, deserialize_with = "deserialize_nullable")]
-    acme_quality_status: Nullable<Box<str>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LoadPurchaseOrderDetailInput {
     purchase_order_id: Box<str>,
 }
@@ -133,25 +118,6 @@ enum InsertEvent {
 #[derive(Debug, Deserialize)]
 struct NewReceipt {
     id: Box<str>,
-}
-
-#[derive(Debug, Default)]
-enum Nullable<T> {
-    #[default]
-    Omitted,
-    Null,
-    Value(T),
-}
-
-fn deserialize_nullable<'de, D, T>(deserializer: D) -> Result<Nullable<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(|value| match value {
-        Some(value) => Nullable::Value(value),
-        None => Nullable::Null,
-    })
 }
 
 #[derive(Debug, Serialize)]
@@ -308,23 +274,27 @@ fn parse_int64(value: &str, field: &'static str) -> Result<i64, AccessError> {
         .map_err(|_| AccessError::invalid("input is not an int64", field))
 }
 
-fn nullable_value<T>(
-    value: Nullable<T>,
+#[expect(
+    clippy::option_option,
+    reason = "WIT update fields distinguish absent, explicit null, and value"
+)]
+fn update_value<T>(
+    value: Option<Option<T>>,
     field: &'static str,
 ) -> Result<(bool, Option<T>), AccessError> {
     match value {
-        Nullable::Omitted => Ok((false, None)),
-        Nullable::Null => Err(AccessError::invalid(
+        None => Ok((false, None)),
+        Some(None) => Err(AccessError::invalid(
             "non-null field does not accept explicit null",
             field,
         )),
-        Nullable::Value(value) => Ok((true, Some(value))),
+        Some(Some(value)) => Ok((true, Some(value))),
     }
 }
 
-fn quality_status(value: Box<str>) -> Result<String, AccessError> {
-    if matches!(value.as_ref(), "not_required" | "pending" | "approved") {
-        Ok(value.into())
+fn quality_status(value: String) -> Result<String, AccessError> {
+    if matches!(value.as_str(), "not_required" | "pending" | "approved") {
+        Ok(value)
     } else {
         Err(AccessError::invalid(
             "acme_quality_status is outside the closed vocabulary",
@@ -410,7 +380,7 @@ fn serialized<T: Serialize>(output: &[ItemResult<T>]) -> String {
 fn purchase_order_update_value(
     row: purchase_order_sql::PurchaseOrderUpdateRow,
     expected_row_version: i64,
-) -> Result<PurchaseOrderValue, AccessError> {
+) -> Result<PurchaseOrderRow, AccessError> {
     match row.outcome.as_deref() {
         Some("not_found") => Err(AccessError::not_found("purchase_order does not exist")),
         Some("concurrency_conflict") => row.observed_row_version.map_or_else(
@@ -453,18 +423,18 @@ fn purchase_order_update_value(
                 Some(updated_by),
                 Some(acme_inspection_required),
                 Some(acme_quality_status),
-            ) => Ok(PurchaseOrderValue {
-                id: id.0.into_boxed_str(),
-                purchase_order_number: purchase_order_number.into_boxed_str(),
-                supplier_id: supplier_id.0.into_boxed_str(),
-                status: status.into_boxed_str(),
-                row_version: row_version.to_string().into_boxed_str(),
-                created_at: created_at.0.into_boxed_str(),
-                created_by: created_by.0.into_boxed_str(),
-                updated_at: updated_at.0.into_boxed_str(),
-                updated_by: updated_by.0.into_boxed_str(),
+            ) => Ok(PurchaseOrderRow {
+                id,
+                purchase_order_number,
+                supplier_id,
+                status,
+                row_version,
+                created_at,
+                created_by,
+                updated_at,
+                updated_by,
                 acme_inspection_required,
-                acme_quality_status: acme_quality_status.into_boxed_str(),
+                acme_quality_status,
             }),
             _ => Err(AccessError::internal(
                 "purchase_order update returned an incomplete row",
@@ -565,71 +535,42 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
     Ok(serialized(&output))
 }
 
-/// Execute `purchase_order.update` against generated Acme SQL.
-pub async fn purchase_order_update(input: &str) -> Result<String, InvocationError> {
-    let items = prepare_envelope(input)?;
-    let mut connection = Connection::new();
-    let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
-    for item in items.into_vec() {
-        let parsed = match parse_item::<PurchaseOrderUpdateInput>(&item) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                output.push(refused(item.request_id, error));
-                continue;
-            }
-        };
-        let expected_row_version =
-            parse_int64(&parsed.expected_row_version, "expected_row_version");
-        let result = async {
-            let id = parse_uuid(&parsed.id, "id")?;
-            let expected_row_version = expected_row_version?;
-            let (inspection_present, inspection_value) = nullable_value(
-                parsed.change.acme_inspection_required,
-                "change.acme_inspection_required",
-            )?;
-            let (quality_present, quality_value) = nullable_value(
-                parsed.change.acme_quality_status,
-                "change.acme_quality_status",
-            )?;
-            let quality_value = quality_value.map(quality_status).transpose()?;
-            let row = purchase_order_sql::update(
-                &mut connection,
-                id,
-                expected_row_version,
-                inspection_present,
-                inspection_value,
-                quality_present,
-                quality_value,
-            )
-            .await
-            .map_err(|source| {
-                AccessError::from_statement_with_constraints(
-                    "update purchase_order",
-                    &source,
-                    UPDATE_CONSTRAINTS,
-                )
-            })?;
-            purchase_order_update_value(row, expected_row_version)
-        }
-        .await;
-        let expected = parse_int64(&parsed.expected_row_version, "expected_row_version").ok();
-        output.push(match result {
-            Ok(value) => ItemResult::Succeeded {
-                request_id: item.request_id,
-                value,
-            },
-            Err(error) => refused(
-                item.request_id,
-                access_error(
-                    &error,
-                    "purchase_order.update",
-                    Some(("id", &parsed.id)),
-                    expected,
-                ),
-            ),
-        });
-    }
-    Ok(serialized(&output))
+/// Execute one typed `purchase_order.update` against generated Acme SQL.
+#[expect(
+    clippy::option_option,
+    reason = "WIT update fields distinguish absent, explicit null, and value"
+)]
+pub async fn purchase_order_update(
+    connection: &mut Connection,
+    id: &str,
+    expected_row_version: i64,
+    acme_inspection_required: Option<Option<bool>>,
+    acme_quality_status: Option<Option<String>>,
+) -> Result<PurchaseOrderRow, AccessError> {
+    let id = parse_uuid(id, "id")?;
+    let (inspection_present, inspection_value) =
+        update_value(acme_inspection_required, "change.acme_inspection_required")?;
+    let (quality_present, quality_value) =
+        update_value(acme_quality_status, "change.acme_quality_status")?;
+    let quality_value = quality_value.map(quality_status).transpose()?;
+    let row = purchase_order_sql::update(
+        connection,
+        id,
+        expected_row_version,
+        inspection_present,
+        inspection_value,
+        quality_present,
+        quality_value,
+    )
+    .await
+    .map_err(|source| {
+        AccessError::from_statement_with_constraints(
+            "update purchase_order",
+            &source,
+            UPDATE_CONSTRAINTS,
+        )
+    })?;
+    purchase_order_update_value(row, expected_row_version)
 }
 
 /// Execute `quality.load_purchase_order_detail` against its verified projection.
@@ -847,31 +788,6 @@ mod tests {
             error.context(),
             "every operation item must carry a nonempty string request_id"
         );
-    }
-
-    #[test]
-    fn update_preserves_omitted_null_and_value_states() {
-        let omitted: PurchaseOrderUpdateInput = serde_json::from_value(serde_json::json!({
-            "id": ID,
-            "expected_row_version": "1",
-            "change": {}
-        }))
-        .unwrap();
-        assert!(matches!(
-            omitted.change.acme_inspection_required,
-            Nullable::Omitted
-        ));
-
-        let explicit_null: PurchaseOrderUpdateInput = serde_json::from_value(serde_json::json!({
-            "id": ID,
-            "expected_row_version": "1",
-            "change": {"acme_quality_status": null}
-        }))
-        .unwrap();
-        assert!(matches!(
-            explicit_null.change.acme_quality_status,
-            Nullable::Null
-        ));
     }
 
     #[test]
