@@ -115,3 +115,67 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
         OperationErrorDetailKey::Operation => "operation",
     }
 }
+
+/// Emit component exports around an application's typed handler.
+pub(super) fn emit_export_adapter(type_name: &str, direct: bool) -> String {
+    let input_type = if direct {
+        format!("__contract::{type_name}Request")
+    } else {
+        format!("Vec<__contract::{type_name}Item>")
+    };
+    let output_type = if direct {
+        input_type.clone()
+    } else {
+        format!("Vec<__contract::{type_name}Outcome>")
+    };
+    let run = if direct {
+        "$handler(&mut state, input).await".to_owned()
+    } else {
+        "__codec::validate(&input).map_err(invalid)?;
+                    Ok(__codec::run(input, &mut state, $handler).await)"
+            .to_owned()
+    };
+    format!(
+        r#"
+macro_rules! export_operation {{
+    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {{
+        const _: () = {{
+            use $contract as __contract;
+            use $node as __node;
+            use $codec as __codec;
+
+            fn invalid(error: __codec::CodecError) -> __node::NodeError {{
+                __node::NodeError::InvalidInput(__node::ErrorDetail {{
+                    message: error.context().to_owned(),
+                    code: Some("invalid_input".to_owned()),
+                }})
+            }}
+
+            impl __contract::Guest for $component {{
+                async fn run(
+                    _context: __node::NodeContext,
+                    input: {input_type},
+                ) -> Result<{output_type}, __node::NodeError> {{
+                    let mut state = $state;
+                    {run}
+                }}
+
+                async fn run_json(
+                    context: __node::NodeContext,
+                    input: String,
+                ) -> Result<__node::Emission, __node::NodeError> {{
+                    let input = __codec::decode(&input).map_err(invalid)?;
+                    let output = <Self as __contract::Guest>::run(context, input).await?;
+                    Ok(__node::Emission {{
+                        payload: __codec::encode(&output),
+                        port: None,
+                    }})
+                }}
+            }}
+        }};
+    }};
+}}
+pub(crate) use export_operation;
+"#
+    )
+}

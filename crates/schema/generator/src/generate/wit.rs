@@ -2,13 +2,15 @@
 
 use std::fmt::Write as _;
 
-use super::wit_adapters::{emit_error_mapper, emit_row_adapter};
+use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
     CrudAction, CustomOperationDeclaration, GenerateError, GenerateErrorKind, ModelDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass, Table,
     insert_bytes, rust_identifier, rust_type_identifier,
 };
+use crate::client_fields::input_fields_of;
+use crate::client_ir::FieldIr;
 use crate::manifest::OperationErrorDetailKey;
 
 /// Emit typed boundaries for every declared model operation.
@@ -326,6 +328,7 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
     ));
+    source.push_str(&emit_export_adapter("Update", false));
     source
 }
 
@@ -349,6 +352,7 @@ fn emit_crud_codec(action: CrudAction, table: &Table, operation: &OperationDecla
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
     ));
+    source.push_str(&emit_export_adapter(&type_name, false));
     source
 }
 
@@ -647,6 +651,9 @@ fn emit_owned_interface(
     operation: &CustomOperationDeclaration,
 ) -> Result<String, GenerateError> {
     let result = operation.result.as_ref();
+    let input_tree = input_fields_of(
+        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
+    );
     let interface = wit_name(local_name);
     let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
     for operation_name in manifest.custom_operations.keys() {
@@ -665,65 +672,34 @@ fn emit_owned_interface(
     }
     writeln!(source, "interface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n").expect("writing to a String cannot fail");
     if operation.input.envelope.is_none() && result.is_none() {
-        let nested = operation
-            .input
-            .fields
+        let request_fields = input_tree
             .iter()
-            .filter_map(|field| field.path.split_once('.').map(|(parent, _)| parent))
-            .collect::<std::collections::BTreeSet<_>>();
-        for parent in &nested {
-            writeln!(source, "  record {interface}-{} {{", wit_name(parent))
-                .expect("writing to a String cannot fail");
-            emit_record_fields(
-                &mut source,
-                &operation.input.fields,
-                &format!("{parent}."),
-                false,
-            );
-            source.push_str("  }\n\n");
-        }
+            .filter(|field| field.path != "request_id")
+            .cloned()
+            .collect::<Vec<_>>();
+        emit_nested_wit_records(&mut source, &interface, &request_fields, "");
         writeln!(source, "  record {interface}-request {{")
             .expect("writing to a String cannot fail");
-        emit_record_fields(&mut source, &operation.input.fields, "", false);
-        for parent in nested {
-            writeln!(
-                source,
-                "    {}: {interface}-{},",
-                wit_name(parent),
-                wit_name(parent)
-            )
-            .expect("writing to a String cannot fail");
-        }
+        emit_wit_tree_fields(&mut source, &interface, &request_fields, "");
         writeln!(source, "  }}\n\n  run: async func(ctx: node-context, input: {interface}-request) -> result<{interface}-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n")
             .expect("writing to a String cannot fail");
         return Ok(source);
     }
-    let has_lines = operation
-        .input
-        .fields
-        .iter()
-        .any(|field| field.path.starts_with("value.line[]."));
-    if has_lines {
-        writeln!(source, "  record {interface}-line {{").expect("writing to a String cannot fail");
-        emit_record_fields(&mut source, &operation.input.fields, "value.line[].", false);
-        source.push_str("  }\n\n");
-    }
+    let value = input_tree.iter().find(|field| field.path == "value");
+    let request_fields = value.map_or_else(
+        || {
+            input_tree
+                .iter()
+                .filter(|field| field.path != "request_id")
+                .cloned()
+                .collect::<Vec<_>>()
+        },
+        |value| value.children.clone(),
+    );
+    let root = if value.is_some() { "value." } else { "" };
+    emit_nested_wit_records(&mut source, &interface, &request_fields, root);
     writeln!(source, "  record {interface}-request {{").expect("writing to a String cannot fail");
-    let request_prefix = if operation
-        .input
-        .fields
-        .iter()
-        .any(|field| field.path.starts_with("value."))
-    {
-        "value."
-    } else {
-        ""
-    };
-    emit_record_fields(&mut source, &operation.input.fields, request_prefix, true);
-    if has_lines {
-        writeln!(source, "    line: list<{interface}-line>,")
-            .expect("writing to a String cannot fail");
-    }
+    emit_wit_tree_fields(&mut source, &interface, &request_fields, root);
     source.push_str("  }\n\n");
 
     for (literal, detail) in &operation.error_details {
@@ -799,6 +775,63 @@ fn emit_record_fields(
         }
         writeln!(source, "    {}: {ty},", wit_name(path)).expect("writing to a String cannot fail");
     }
+}
+
+fn emit_nested_wit_records(source: &mut String, interface: &str, fields: &[FieldIr], root: &str) {
+    for field in fields.iter().filter(|field| !field.children.is_empty()) {
+        emit_nested_wit_records(source, interface, &field.children, root);
+        let suffix = field_type_suffix(&field.path, root);
+        writeln!(source, "  record {interface}-{suffix} {{")
+            .expect("writing to a String cannot fail");
+        emit_wit_tree_fields(source, interface, &field.children, root);
+        source.push_str("  }\n\n");
+    }
+}
+
+fn emit_wit_tree_fields(source: &mut String, interface: &str, fields: &[FieldIr], root: &str) {
+    for field in fields {
+        let local = field
+            .path
+            .trim_start_matches(root)
+            .rsplit('.')
+            .next()
+            .expect("declared field path has a member");
+        let name = local.trim_end_matches("[]");
+        let mut ty = if field.children.is_empty() {
+            wit_field_type(&field.type_name)
+        } else {
+            format!("{interface}-{}", field_type_suffix(&field.path, root))
+        };
+        if field.type_name == "array" || local.ends_with("[]") {
+            ty = format!("list<{ty}>");
+        }
+        if field.nullable {
+            ty = format!("option<{ty}>");
+        }
+        writeln!(source, "    {}: {ty},", wit_name(name)).expect("writing to a String cannot fail");
+    }
+}
+
+fn field_type_suffix(path: &str, root: &str) -> String {
+    wit_name(
+        path.trim_start_matches(root)
+            .trim_end_matches("[]")
+            .replace("[]", "")
+            .replace('.', "-")
+            .as_str(),
+    )
+}
+
+fn wit_field_type(type_name: &str) -> String {
+    match type_name {
+        "boolean" => "bool",
+        "int32" => "s32",
+        "int64" => "s64",
+        "float64" => "f64",
+        "bytes" => "list<u8>",
+        _ => "string",
+    }
+    .to_owned()
 }
 
 fn emit_error_detail(source: &mut String, literal: &str, detail: &OperationErrorDetailDeclaration) {
@@ -881,9 +914,11 @@ fn emit_custom_codec(
 ) -> Result<String, GenerateError> {
     let Some(result) = operation.result.as_ref() else {
         let type_name = rust_type_identifier(local_name);
-        return Ok(format!(
+        let mut source = format!(
             "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError {{ pub(crate) const fn context(&self) -> &'static str {{ self.0 }} }}\nimpl std::fmt::Display for CodecError {{ fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ formatter.write_str(self.0) }} }}\nimpl std::error::Error for CodecError {{}}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonInput {{ event: String, new: JsonNew }}\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew {{ id: String }}\n\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let value: JsonInput = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{ event: value.event, new: contract::{type_name}New {{ id: value.new.id }} }})\n}}\n\npub(crate) fn encode(value: &contract::{type_name}Request) -> String {{\n    serde_json::json!({{\"event\": value.event, \"new\": {{\"id\": value.new.id}}}}).to_string()\n}}\n"
-        ));
+        );
+        source.push_str(&emit_export_adapter(&type_name, true));
+        return Ok(source);
     };
     let value_fields = codec_fields(&operation.input.fields, "value.");
     let line_fields = codec_fields(&operation.input.fields, "value.line[].");
@@ -974,6 +1009,7 @@ fn emit_custom_codec(
             .iter()
             .map(|literal| (literal.as_str(), &operation.error_details[literal])),
     ));
+    source.push_str(&emit_export_adapter(&type_name, false));
     Ok(source)
 }
 
