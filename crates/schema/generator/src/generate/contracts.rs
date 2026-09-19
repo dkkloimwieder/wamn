@@ -39,7 +39,6 @@ pub(super) fn emit_model(
     table: &Table,
 ) -> Result<(), GenerateError> {
     emit_model_contract(files, model_name, model, table)?;
-    emit_model_wit(files, manifest, model_name, model, table)?;
 
     let claim = model.operations.get(&CrudAction::Create).map(|operation| {
         resolve_claim(
@@ -94,6 +93,7 @@ pub(super) fn emit_model(
             &wamn_api,
         )?;
     }
+    emit_model_wit(files, manifest, model_name, model, table)?;
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
     emit_parity(files, model_name, table, &wamn_api)?;
     emit_projection(

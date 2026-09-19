@@ -5,9 +5,9 @@ use std::fmt::Write as _;
 use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
-    CrudAction, CustomOperationDeclaration, GenerateError, GenerateErrorKind, ModelDeclaration,
-    OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass, Table,
-    insert_bytes, rust_identifier, rust_type_identifier,
+    CrudAction, CustomOperationDeclaration, CustomOperationResultDeclaration, GenerateError,
+    GenerateErrorKind, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
+    PackageManifest, ResultClass, Table, insert_bytes, rust_identifier, rust_type_identifier,
 };
 use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
@@ -24,16 +24,33 @@ pub(super) fn emit_model_wit(
     if model.operations.is_empty() {
         return Ok(());
     }
+    let results: BTreeMap<_, CustomOperationResultDeclaration> = model
+        .operations
+        .keys()
+        .map(|action| {
+            let path = format!(
+                "generated/contracts/{model_name}/{}.result.json",
+                action.as_str()
+            );
+            let result = serde_json::from_slice(
+                files
+                    .get(&path)
+                    .expect("model result contract is emitted first"),
+            )
+            .expect("emitted result follows the declaration schema");
+            (*action, result)
+        })
+        .collect();
     emit_codec_support(files)?;
     let package = manifest.package.id.replace('_', "-");
     let directory = format!("generated/wit/deps/{package}-{}", wit_name(model_name));
     insert_bytes(
         files,
         &format!("{directory}/package.wit"),
-        emit_model_package_wit(manifest, model_name, model, table).into_bytes(),
+        emit_model_package_wit(manifest, model_name, model, table, &results).into_bytes(),
     )?;
     for (action, operation) in &model.operations {
-        let codec = emit_crud_codec(*action, table, operation);
+        let codec = emit_crud_codec(*action, table, operation, &results[action].fields);
         insert_bytes(
             files,
             &format!("generated/wit/{model_name}_{}_codec.rs", action.as_str()),
@@ -48,6 +65,7 @@ fn emit_model_package_wit(
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
+    results: &BTreeMap<CrudAction, CustomOperationResultDeclaration>,
 ) -> String {
     let package = manifest.package.id.replace('_', "-");
     let mut source = format!(
@@ -56,7 +74,13 @@ fn emit_model_package_wit(
         manifest.package.version
     );
     for action in model.operations.keys() {
-        emit_crud_interface(&mut source, *action, table, &model.operations[action]);
+        emit_crud_interface(
+            &mut source,
+            *action,
+            table,
+            &model.operations[action],
+            &results[action].fields,
+        );
     }
     source
 }
@@ -66,6 +90,7 @@ fn emit_crud_interface(
     action: CrudAction,
     table: &Table,
     operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
 ) {
     if action == CrudAction::Update {
         emit_update_interface(source, table, operation);
@@ -82,7 +107,7 @@ fn emit_crud_interface(
         CrudAction::Get | CrudAction::Delete => source.push_str("    id: string,\n"),
         CrudAction::Create => {
             source.push_str("    idempotency-key: string,\n");
-            emit_writable_fields(source, table, operation, true);
+            emit_writable_fields(source, table, operation);
         }
         CrudAction::Query => {
             for filter in &operation.filters {
@@ -121,30 +146,23 @@ fn emit_crud_interface(
     emit_operation_errors(source, name, operation);
     writeln!(source, "  record {name}-item {{\n    request-id: string,\n    input: result<{name}-request, invalid-input-detail>,\n  }}\n")
         .expect("writing to a String cannot fail");
-    emit_crud_result(source, name, action, table, operation.result);
-    writeln!(source, "  record {name}-outcome {{\n    request-id: string,\n    outcome: result<{}{}, {name}-error>,\n  }}\n", if operation.result == super::ResultClass::Page { "" } else { "" }, format!("{name}-result"))
+    emit_crud_result(source, name, action, fields, operation.result);
+    writeln!(source, "  record {name}-outcome {{\n    request-id: string,\n    outcome: result<{name}-result, {name}-error>,\n  }}\n")
         .expect("writing to a String cannot fail");
     writeln!(source, "  run: async func(ctx: node-context, input: list<{name}-item>) -> result<list<{name}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n")
         .expect("writing to a String cannot fail");
 }
 
-fn emit_writable_fields(
-    source: &mut String,
-    table: &Table,
-    operation: &OperationDeclaration,
-    tri_state: bool,
-) {
+fn emit_writable_fields(source: &mut String, table: &Table, operation: &OperationDeclaration) {
     for field in &operation.writable_fields {
         let column = model_column(table, field);
-        let mut ty = wit_type(column.column_type());
-        if column.nullable() {
-            ty = format!("option<{ty}>");
-        }
-        if tri_state {
-            ty = format!("option<{ty}>");
-        }
-        writeln!(source, "    {}: {ty},", wit_name(field))
-            .expect("writing to a String cannot fail");
+        writeln!(
+            source,
+            "    {}: option<option<{}>>,",
+            wit_name(field),
+            wit_type(column.column_type())
+        )
+        .expect("writing to a String cannot fail");
     }
 }
 
@@ -177,24 +195,23 @@ fn emit_crud_result(
     source: &mut String,
     name: &str,
     action: CrudAction,
-    table: &Table,
+    fields: &[ContractFieldDeclaration],
     class: super::ResultClass,
 ) {
     writeln!(source, "  record {name}-row {{").expect("writing to a String cannot fail");
-    for column in table.columns() {
-        let mut ty = wit_type(column.column_type());
-        if column.nullable() {
+    for column in fields {
+        let mut ty = wit_type(column.ty);
+        if column.nullable {
             ty = format!("option<{ty}>");
         }
-        writeln!(source, "    {}: {ty},", wit_name(column.name()))
+        writeln!(source, "    {}: {ty},", wit_name(&column.path))
             .expect("writing to a String cannot fail");
     }
     source.push_str("  }\n\n");
     let carrier = match class {
         super::ResultClass::One => format!("{name}-row"),
         super::ResultClass::OptionalOne => format!("option<{name}-row>"),
-        super::ResultClass::BoundedList => format!("list<{name}-row>"),
-        super::ResultClass::Page => format!("list<{name}-row>"),
+        super::ResultClass::BoundedList | super::ResultClass::Page => format!("list<{name}-row>"),
     };
     writeln!(source, "  record {name}-result {{\n    value: {carrier},")
         .expect("writing to a String cannot fail");
@@ -206,16 +223,7 @@ fn emit_crud_result(
 
 fn emit_update_interface(source: &mut String, table: &Table, operation: &OperationDeclaration) {
     source.push_str("interface update {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n\n  record update-change {\n");
-    for field in &operation.writable_fields {
-        let column = model_column(table, field);
-        writeln!(
-            source,
-            "    {}: option<option<{}>>,",
-            wit_name(field),
-            wit_type(column.column_type())
-        )
-        .expect("writing to a String cannot fail");
-    }
+    emit_writable_fields(source, table, operation);
     let revision = operation
         .revision_field
         .as_deref()
@@ -282,7 +290,11 @@ fn access_error_literal(literal: AccessOperationErrorLiteral) -> &'static str {
     }
 }
 
-fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String {
+fn emit_update_codec(
+    table: &Table,
+    operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
+) -> String {
     let mut source = codec_prelude("UpdateItem", 1, 100);
     source.push_str(UPDATE_CODEC_HEADER);
     for field in &operation.writable_fields {
@@ -300,7 +312,11 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
         let name = rust_identifier(field).expect("validated update field has a Rust name");
         writeln!(
             source,
-            "                        {name}: change(request.change.{name}),"
+            "                        {name}: {},",
+            mutation_value(
+                model_column(table, field),
+                &format!("request.change.{name}")
+            )
         )
         .expect("writing to a String cannot fail");
     }
@@ -324,7 +340,7 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
         );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
-    source.push_str(&emit_update_normalizer(table, operation));
+    source.push_str(&emit_update_normalizer(table, operation, fields));
     source.push_str(&emit_handler("Update"));
     source.push_str(&emit_row_adapter(
         table
@@ -343,20 +359,24 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
     source
 }
 
-fn emit_crud_codec(action: CrudAction, table: &Table, operation: &OperationDeclaration) -> String {
+fn emit_crud_codec(
+    action: CrudAction,
+    table: &Table,
+    operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
+) -> String {
     if action == CrudAction::Update {
-        return emit_update_codec(table, operation);
+        return emit_update_codec(table, operation, fields);
     }
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(&format!("{type_name}Item"), 1, 100);
-    source.push_str(&emit_crud_json_codec(action, table, operation));
-    source.push_str(&emit_crud_normalizer(action, table, operation));
+    source.push_str(&emit_crud_json_codec(action, table, operation, fields));
+    source.push_str(&emit_crud_normalizer(action, table, operation, fields));
     source.push_str(&emit_handler(&type_name));
     source.push_str(&emit_row_adapter(
-        table
-            .columns()
+        fields
             .iter()
-            .map(|column| (column.name(), column.column_type(), column.nullable())),
+            .map(|field| (field.path.as_str(), field.ty, field.nullable)),
     ));
     source.push_str(&emit_error_mapper(
         &format!("{type_name}Error"),
@@ -373,6 +393,7 @@ fn emit_crud_json_codec(
     action: CrudAction,
     table: &Table,
     operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
 ) -> String {
     let type_name = rust_type_identifier(action.as_str());
     let mut source = String::from("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
@@ -411,11 +432,65 @@ fn emit_crud_json_codec(
     writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
         .expect("writing to a String cannot fail");
     emit_crud_invalid_detail(&mut source, operation);
-    emit_crud_encoder(&mut source, action, table, operation);
+    emit_crud_encoder(&mut source, action, fields, operation);
     source
 }
 
-fn emit_update_normalizer(table: &Table, operation: &OperationDeclaration) -> String {
+fn mutation_value(column: &Column, access: &str) -> String {
+    let value = format!("change({access})");
+    if column.column_type() == ColumnType::Int64 {
+        format!("{value}.map(|value| value.map(|value| value.0))")
+    } else {
+        value
+    }
+}
+
+fn emit_mutation_validation(
+    source: &mut String,
+    table: &Table,
+    operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
+    prefix: &str,
+) {
+    for field in &operation.writable_fields {
+        let column = model_column(table, field);
+        let name = rust_identifier(field).expect("validated mutation field has a Rust name");
+        let path = format!("{prefix}{field}");
+        let access = format!("request.{prefix}{name}");
+        if !column.nullable() {
+            writeln!(
+                source,
+                "    if matches!({access}, Some(None)) {{ return Err(invalid({path:?})); }}"
+            )
+            .expect("writing to a String cannot fail");
+        }
+        let values = fields
+            .iter()
+            .find(|item| item.path == *field)
+            .map_or(&[][..], |item| item.values.as_slice());
+        if column.column_type() == ColumnType::Uuid || !values.is_empty() {
+            writeln!(source, "    if let Some(Some(value)) = &mut {access} {{")
+                .expect("writing to a String cannot fail");
+            if column.column_type() == ColumnType::Uuid {
+                writeln!(
+                    source,
+                    "        if !canonical_uuid(value) {{ return Err(invalid({path:?})); }}"
+                )
+                .expect("writing to a String cannot fail");
+            }
+            if !values.is_empty() {
+                writeln!(source, "        if !{values:?}.contains(&value.as_str()) {{ return Err(invalid({path:?})); }}").expect("writing to a String cannot fail");
+            }
+            source.push_str("    }\n");
+        }
+    }
+}
+
+fn emit_update_normalizer(
+    table: &Table,
+    operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
+) -> String {
     let mut source = String::from(
         "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::UpdateRequest) -> Result<(), contract::InvalidInputDetail> {\n",
     );
@@ -427,14 +502,7 @@ fn emit_update_normalizer(table: &Table, operation: &OperationDeclaration) -> St
         &[],
         false,
     );
-    for field in &operation.writable_fields {
-        let column = model_column(table, field);
-        let name = rust_identifier(field).expect("validated update field has a Rust name");
-        if column.column_type() == ColumnType::Uuid {
-            writeln!(source, "    if let Some(Some(value)) = &mut request.change.{name} {{ if !canonical_uuid(value) {{ return Err(invalid({:?})); }} }}", format!("change.{field}"))
-                .expect("writing to a String cannot fail");
-        }
-    }
+    emit_mutation_validation(&mut source, table, operation, fields, "change.");
     source.push_str("    Ok(())\n}\n\n");
     source
 }
@@ -443,6 +511,7 @@ fn emit_crud_normalizer(
     action: CrudAction,
     table: &Table,
     operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
 ) -> String {
     let type_name = rust_type_identifier(action.as_str());
     let mut source = format!(
@@ -459,18 +528,7 @@ fn emit_crud_normalizer(
         );
     }
     if action == CrudAction::Create {
-        for field in &operation.writable_fields {
-            let column = model_column(table, field);
-            let name = rust_identifier(field).expect("validated create field has a Rust name");
-            emit_scalar_validation(
-                &mut source,
-                &format!("request.{name}"),
-                field,
-                column.column_type(),
-                &[],
-                column.nullable(),
-            );
-        }
+        emit_mutation_validation(&mut source, table, operation, fields, "");
     }
     if action == CrudAction::Query {
         for filter in &operation.filters {
@@ -511,8 +569,7 @@ fn emit_scalar_validation(
     if !values.is_empty() {
         writeln!(
             source,
-            "        if !{:?}.contains(&{value}.as_str()) {{ return Err(invalid({path:?})); }}",
-            values
+            "        if !{values:?}.contains(&{value}.as_str()) {{ return Err(invalid({path:?})); }}"
         )
         .expect("writing to a String cannot fail");
     }
@@ -526,9 +583,9 @@ fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
         let column = model_column(table, field);
         writeln!(
             source,
-            "    {}: {},",
+            "    #[serde(default)]\n    {}: JsonChange<{}>,",
             rust_identifier(field).expect("validated field has a Rust name"),
-            codec_rust_type(column.column_type(), column.nullable())
+            codec_rust_type(column.column_type(), false)
         )
         .expect("writing to a String cannot fail");
     }
@@ -599,14 +656,13 @@ fn emit_crud_request_assignments(
             source.push_str("            idempotency_key: request.idempotency_key,\n");
             for field in &operation.writable_fields {
                 let column = model_column(table, field);
-                let field = rust_identifier(field).expect("validated field has a Rust name");
-                let conversion = match (column.column_type(), column.nullable()) {
-                    (ColumnType::Int64, true) => ".map(|value| value.0)",
-                    (ColumnType::Int64, false) => ".0",
-                    _ => "",
-                };
-                writeln!(source, "            {field}: request.{field}{conversion},")
-                    .expect("writing to a String cannot fail");
+                let name = rust_identifier(field).expect("validated field has a Rust name");
+                writeln!(
+                    source,
+                    "            {name}: {},",
+                    mutation_value(column, &format!("request.{name}"))
+                )
+                .expect("writing to a String cannot fail");
             }
         }
         CrudAction::Query => {
@@ -648,27 +704,27 @@ fn emit_crud_invalid_detail(source: &mut String, operation: &OperationDeclaratio
 fn emit_crud_encoder(
     source: &mut String,
     action: CrudAction,
-    table: &Table,
+    fields: &[ContractFieldDeclaration],
     operation: &OperationDeclaration,
 ) {
     let type_name = rust_type_identifier(action.as_str());
     writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ \"request_id\": item.request_id, \"value\":")
         .expect("writing to a String cannot fail");
     match operation.result {
-        ResultClass::One => emit_json_row(source, table, "value.value", 12),
+        ResultClass::One => emit_json_row(source, fields, "value.value", 12),
         ResultClass::OptionalOne => {
             source.push_str("value.value.as_ref().map(|row| json!({\n");
-            emit_json_row_fields(source, table, "row");
+            emit_json_row_fields(source, fields, "row");
             source.push_str("            }))\n");
         }
         ResultClass::BoundedList => {
             source.push_str("value.value.iter().map(|row| json!({\n");
-            emit_json_row_fields(source, table, "row");
+            emit_json_row_fields(source, fields, "row");
             source.push_str("            })).collect::<Vec<_>>()\n");
         }
         ResultClass::Page => {
             source.push_str("{ \"item\": value.value.iter().map(|row| json!({\n");
-            emit_json_row_fields(source, table, "row");
+            emit_json_row_fields(source, fields, "row");
             source.push_str(
                 "            })).collect::<Vec<_>>(), \"next_cursor\": value.next_cursor }\n",
             );
@@ -688,27 +744,26 @@ fn emit_crud_encoder(
     source.push_str("    };\n    json!({\"code\": code, \"detail\": detail})\n}\n");
 }
 
-fn emit_json_row(source: &mut String, table: &Table, carrier: &str, indentation: usize) {
+fn emit_json_row(
+    source: &mut String,
+    fields: &[ContractFieldDeclaration],
+    carrier: &str,
+    indentation: usize,
+) {
     writeln!(source, "json!({{").expect("writing to a String cannot fail");
-    emit_json_row_fields(source, table, carrier);
+    emit_json_row_fields(source, fields, carrier);
     writeln!(source, "{}}})", " ".repeat(indentation)).expect("writing to a String cannot fail");
 }
 
-fn emit_json_row_fields(source: &mut String, table: &Table, carrier: &str) {
-    for column in table.columns() {
-        emit_codec_result_field_for(
-            source,
-            column.name(),
-            column.column_type(),
-            column.nullable(),
-            carrier,
-        );
+fn emit_json_row_fields(source: &mut String, fields: &[ContractFieldDeclaration], carrier: &str) {
+    for column in fields {
+        emit_codec_result_field_for(source, &column.path, column.ty, column.nullable, carrier);
     }
 }
 
 fn emit_handler(type_name: &str) -> String {
     format!(
-        r#"
+        r"
 #[allow(dead_code)]
 pub(crate) async fn run<S, F>(input: Vec<contract::{type_name}Item>, state: &mut S, mut handler: F) -> Vec<contract::{type_name}Outcome>
 where
@@ -727,7 +782,7 @@ where
     }}
     output
 }}
-"#
+"
     )
 }
 
@@ -737,7 +792,7 @@ fn emit_codec_support(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), Gener
         insert_bytes(
             files,
             path,
-            format!("{CODEC_HEADER}{CODEC_ENVELOPE}").into_bytes(),
+            format!("{CODEC_HEADER}{CODEC_ENVELOPE}{CODEC_CHANGE}").into_bytes(),
         )?;
     }
     Ok(())
@@ -827,21 +882,7 @@ impl std::error::Error for CodecError {}
 
 ";
 
-const UPDATE_CODEC_HEADER: &str = r"#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JsonRequest {
-    id: String,
-    expected_row_version: String,
-    change: JsonUpdateChange,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JsonUpdateChange {
-";
-
-const UPDATE_CODEC_DECODE_PREFIX: &str = r#"}
-
+const CODEC_CHANGE: &str = r#"#[allow(dead_code)]
 #[derive(Default)]
 enum JsonChange<T> {
     #[default]
@@ -859,7 +900,8 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonChange<T> {
     }
 }
 
-#[expect(clippy::option_option, reason = "WIT update fields distinguish absent, null, and value")]
+#[allow(dead_code)]
+#[expect(clippy::option_option, reason = "WIT mutation fields distinguish absent, null, and value")]
 fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
     match value {
         JsonChange::Absent => None,
@@ -867,6 +909,23 @@ fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
         JsonChange::Value(value) => Some(Some(value)),
     }
 }
+
+"#;
+
+const UPDATE_CODEC_HEADER: &str = r"#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonRequest {
+    id: String,
+    expected_row_version: String,
+    change: JsonUpdateChange,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonUpdateChange {
+";
+
+const UPDATE_CODEC_DECODE_PREFIX: &str = r"}
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
     decode_envelope(input)?.into_iter().map(|(request_id, body)| {
@@ -877,7 +936,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecErro
                         id: request.id,
                         expected_row_version,
                         change: contract::UpdateChange {
-"#;
+";
 
 const UPDATE_CODEC_VALIDATE_PREFIX: &str = r#"                        },
                     };
