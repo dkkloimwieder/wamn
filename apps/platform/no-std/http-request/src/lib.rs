@@ -12,19 +12,23 @@ use alloc::vec::Vec;
 #[path = "../../guest_runtime.rs"]
 mod guest_runtime;
 
-use bindings::exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
+use bindings::exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
 use bindings::wamn::connection::http::{ConnectionError, Header, Request, Response};
 use bindings::wamn::node::types::{ErrorDetail, RateLimitDetail};
 
 #[allow(
     clippy::same_length_and_capacity,
-    reason = "wit-bindgen 0.44 emits Vec::from_raw_parts with equal length and capacity"
+    reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
 )]
 mod bindings {
     wit_bindgen::generate!({
         world: "http-request",
         path: "wit",
         generate_all,
+        async: [
+            "import:wamn:connection/http@0.1.0#send",
+            "export:wamn:node/async-handler@0.1.0#run",
+        ],
         std_feature,
     });
 }
@@ -32,7 +36,7 @@ mod bindings {
 struct Component;
 
 impl Guest for Component {
-    fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
         serde_json::from_str::<serde_json::Value>(&input)
             .map_err(|error| invalid_input(format!("input is not JSON: {error}")))?;
         let config = serde_json::from_str::<serde_json::Value>(&context.config)
@@ -66,7 +70,7 @@ impl Guest for Component {
                 context.delivery_id, context.node_id, context.occurrence
             )),
         };
-        match bindings::wamn::connection::http::send(&request) {
+        match bindings::wamn::connection::http::send(request).await {
             Ok(response) => classify_response(response),
             Err(error) => Err(classify_connection_error(error)),
         }

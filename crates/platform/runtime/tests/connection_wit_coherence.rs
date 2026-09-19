@@ -92,7 +92,7 @@ fn frozen_http_surface_is_relative_typed_and_extension_free() {
         "requirement: string,",
         "path-and-query: string,",
         "idempotency-key: option<string>,",
-        "send: func(request: request) -> result<response, connection-error>;",
+        "send: async func(request: request) -> result<response, connection-error>;",
         "authority-denied,",
         "attestation-invalid,",
         "credential-unavailable,",

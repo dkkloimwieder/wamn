@@ -84,6 +84,10 @@ mod bindings {
         world: "connection-http-standard",
         path: "wit",
         generate_all,
+        async: [
+            "import:wamn:connection/http@0.1.0#send",
+            "export:wamn:connection-http-standard-fixture/node@0.1.0#run",
+        ],
         std_feature,
     });
 }
@@ -91,7 +95,7 @@ mod bindings {
 struct Component;
 
 impl bindings::exports::wamn::connection_http_standard_fixture::node::Guest for Component {
-    fn run(_input: u32) -> u32 {
+    async fn run(_input: u32) -> u32 {
         let request = bindings::wamn::connection::http::Request {
             requirement: "standard-erp".to_string(),
             method: "POST".to_string(),
@@ -101,7 +105,7 @@ impl bindings::exports::wamn::connection_http_standard_fixture::node::Guest for 
             // Frozen 0.1 ABI field: authored keys are not accepted.
             idempotency_key: None,
         };
-        match bindings::wamn::connection::http::send(&request) {
+        match bindings::wamn::connection::http::send(request).await {
             Ok(response) => u32::from(response.status),
             Err(_) => 0,
         }

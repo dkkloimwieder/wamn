@@ -19,7 +19,7 @@ use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
-use wash_runtime::wasmtime::component::Linker;
+use wash_runtime::wasmtime::component::{Accessor, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
@@ -998,27 +998,32 @@ fn http_outcome(result: &Result<Response, ConnectionError>) -> EffectOutcome {
     }
 }
 
-impl http::Host for ActiveCtx<'_> {
+impl http::Host for ActiveCtx<'_> {}
+
+impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
     async fn send(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         request: Request,
     ) -> wash_runtime::wasmtime::Result<Result<Response, ConnectionError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let span = http_span(&plugin, self.component_id.as_ref());
+                let span = http_span(&plugin, &component_id);
                 // Declared before the effect so it outlives the instrumented future. A
                 // send dropped mid-flight records `cancelled` through this guard.
                 let evidence = plugin
-                    .invocation(self.component_id.as_ref())
+                    .invocation(&component_id)
                     .and_then(|invocation| invocation.effects);
                 let mut observed = EffectOutcomeGuard::new(&span, evidence);
                 let started = std::time::Instant::now();
-                let result = plugin
-                    .send(self.component_id.as_ref(), &request)
-                    .instrument(span)
-                    .await;
+                let result = plugin.send(&component_id, &request).instrument(span).await;
                 record_effect_ms(
                     &HTTP_EFFECT_DURATION_MS,
                     EFFECT_OPERATION,
@@ -1029,7 +1034,7 @@ impl http::Host for ActiveCtx<'_> {
                 let outcome = http_outcome(&result);
                 observed.settle(outcome, result.is_err());
                 if let Err(error) = &result {
-                    let invocation = plugin.invocation(self.component_id.as_ref());
+                    let invocation = plugin.invocation(&component_id);
                     tracing::warn!(
                         error = ?error,
                         effect.outcome = outcome.label(),

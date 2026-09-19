@@ -1,7 +1,7 @@
 package wamn:connection-http-standard-fixture@0.1.0;
 
 interface node {
-  run: func(input: u32) -> u32;
+  run: async func(input: u32) -> u32;
 }
 
 world connection-http-standard {

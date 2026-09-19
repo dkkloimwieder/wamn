@@ -5,7 +5,7 @@
 
 //! Standard-library guest that tests build-time WASI virtualization behavior.
 
-use exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
+use exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
 use wamn::connection::http::Request;
 use wamn::node::types::ErrorDetail;
 
@@ -13,6 +13,10 @@ wit_bindgen::generate!({
     world: "http-request",
     path: "../../no-std/http-request/wit",
     generate_all,
+    async: [
+        "import:wamn:connection/http@0.1.0#send",
+        "export:wamn:node/async-handler@0.1.0#run",
+    ],
 });
 
 /// A sentinel deliberately present in the native test process. The virtualized
@@ -22,13 +26,13 @@ const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
 struct Component;
 
 impl Guest for Component {
-    fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
         let input: serde_json::Value = serde_json::from_str(&input).map_err(|error| {
             invalid_input("invalid-json", format!("input is not JSON: {error}"))
         })?;
         match input.get("test").and_then(serde_json::Value::as_str) {
             Some("environment") => Ok(environment_probe()),
-            Some("connection") => connection_probe(&context),
+            Some("connection") => connection_probe(&context).await,
             Some("panic") => {
                 panic!("the std virtualization trap test requested a deliberate guest panic");
             }
@@ -51,13 +55,13 @@ fn environment_probe() -> Emission {
     }
 }
 
-fn connection_probe(context: &NodeContext) -> Result<Emission, NodeError> {
+async fn connection_probe(context: &NodeContext) -> Result<Emission, NodeError> {
     let config: serde_json::Value = serde_json::from_str(&context.config)
         .map_err(|error| invalid_input("invalid-config", format!("config is not JSON: {error}")))?;
     let requirement = required_config(&config, "requirement")?;
     let method = required_config(&config, "method")?;
     let path_and_query = required_config(&config, "path-and-query")?;
-    let response = wamn::connection::http::send(&Request {
+    let response = wamn::connection::http::send(Request {
         requirement,
         method,
         path_and_query,
@@ -65,6 +69,7 @@ fn connection_probe(context: &NodeContext) -> Result<Emission, NodeError> {
         body: None,
         idempotency_key: None,
     })
+    .await
     .map_err(|error| {
         NodeError::Terminal(ErrorDetail {
             message: format!("connection test failed: {error:?}"),

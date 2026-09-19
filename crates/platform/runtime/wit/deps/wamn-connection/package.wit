@@ -33,5 +33,5 @@ interface http {
     transport(string),
   }
 
-  send: func(request: request) -> result<response, connection-error>;
+  send: async func(request: request) -> result<response, connection-error>;
 }
