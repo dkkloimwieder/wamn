@@ -1472,8 +1472,17 @@ fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, i
         if !field.children.is_empty() {
             if field.type_name == "array" || field.path.ends_with("[]") {
                 if let Some(minimum) = field.minimum {
-                    writeln!(source, "{indent}if {field_access}.len() < {minimum} {{ return Err(invalid({:?})); }}", field.path)
+                    if minimum == 1 {
+                        writeln!(
+                            source,
+                            "{indent}if {field_access}.is_empty() {{ return Err(invalid({:?})); }}",
+                            field.path
+                        )
                         .expect("writing to a String cannot fail");
+                    } else {
+                        writeln!(source, "{indent}if {field_access}.len() < {minimum} {{ return Err(invalid({:?})); }}", field.path)
+                            .expect("writing to a String cannot fail");
+                    }
                 }
                 if let Some(maximum) = field.maximum {
                     writeln!(source, "{indent}if {field_access}.len() > {maximum} {{ return Err(invalid({:?})); }}", field.path)
