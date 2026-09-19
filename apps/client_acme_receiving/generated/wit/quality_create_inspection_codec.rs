@@ -1,20 +1,48 @@
-// @generated from operation declarations; do not edit.
+// @generated from wamn.json and schema IR; do not edit.
 
 use serde::Deserialize;
+#[allow(unused_imports)]
+use serde_json::{Map, Value, json};
+
+#[allow(dead_code)]
+fn canonical_uuid(value: &mut String) -> bool {
+    let Ok(parsed) = uuid::Uuid::parse_str(value) else {
+        return false;
+    };
+    *value = parsed.hyphenated().to_string();
+    true
+}
+
+#[allow(dead_code)]
+struct JsonInt64(i64);
+
+impl<'de> Deserialize<'de> for JsonInt64 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map(Self).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct CodecError(&'static str);
+
 impl CodecError {
     pub(crate) const fn context(&self) -> &'static str {
         self.0
     }
 }
+
 impl std::fmt::Display for CodecError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.0)
     }
 }
+
 impl std::error::Error for CodecError {}
+
+fn invalid(field: &'static str) -> CodecError {
+    CodecError(field)
+}
 
 #[derive(Deserialize)]
 struct JsonNew {
@@ -39,12 +67,18 @@ pub(crate) fn decode(input: &str) -> Result<contract::CreateInspectionRequest, C
 }
 
 pub(crate) fn normalize(request: &mut contract::CreateInspectionRequest) -> Result<(), CodecError> {
-    if !["insert"].contains(&request.event.as_str()) {
-        return Err(CodecError("event is outside its declared value domain"));
+    {
+        let value = &mut request.event;
+        if !["insert"].contains(&value.as_str()) {
+            return Err(invalid("event"));
+        }
     }
-    let parsed =
-        uuid::Uuid::parse_str(&request.new.id).map_err(|_| CodecError("new.id is not a UUID"))?;
-    request.new.id = parsed.hyphenated().to_string();
+    {
+        let value = &mut request.new.id;
+        if !canonical_uuid(value) {
+            return Err(invalid("new.id"));
+        }
+    }
     Ok(())
 }
 
