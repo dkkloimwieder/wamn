@@ -468,20 +468,17 @@ fn emit_mutation_validation(
             .iter()
             .find(|item| item.path == *field)
             .map_or(&[][..], |item| item.values.as_slice());
-        if column.column_type() == ColumnType::Uuid || !values.is_empty() {
-            writeln!(source, "    if let Some(Some(value)) = &mut {access} {{")
+        let mut checks = Vec::new();
+        if column.column_type() == ColumnType::Uuid {
+            checks.push("!canonical_uuid(value)".to_owned());
+        }
+        if !values.is_empty() {
+            checks.push(format!("!{values:?}.contains(&value.as_str())"));
+        }
+        if !checks.is_empty() {
+            let condition = checks.join(" || ");
+            writeln!(source, "    if let Some(Some(value)) = &mut {access} && ({condition}) {{ return Err(invalid({path:?})); }}")
                 .expect("writing to a String cannot fail");
-            if column.column_type() == ColumnType::Uuid {
-                writeln!(
-                    source,
-                    "        if !canonical_uuid(value) {{ return Err(invalid({path:?})); }}"
-                )
-                .expect("writing to a String cannot fail");
-            }
-            if !values.is_empty() {
-                writeln!(source, "        if !{values:?}.contains(&value.as_str()) {{ return Err(invalid({path:?})); }}").expect("writing to a String cannot fail");
-            }
-            source.push_str("    }\n");
         }
     }
 }
@@ -517,6 +514,7 @@ fn emit_crud_normalizer(
     let mut source = format!(
         "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
     );
+    source.push_str("    let _ = &request;\n");
     if matches!(action, CrudAction::Get | CrudAction::Delete) {
         emit_scalar_validation(
             &mut source,
@@ -1560,8 +1558,11 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
     writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| {{")
         .expect("writing to a String cannot fail");
     if fields.is_empty() {
-        writeln!(source, "            contract::{type_name}Request::Request")
-            .expect("writing to a String cannot fail");
+        writeln!(
+            source,
+            "            let _ = request;\n            contract::{type_name}Request::Request"
+        )
+        .expect("writing to a String cannot fail");
     } else {
         let access = if value.is_some() {
             "request.value"

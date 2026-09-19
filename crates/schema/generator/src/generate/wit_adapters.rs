@@ -25,7 +25,7 @@ pub(super) fn emit_row_adapter<'a>(
             | ColumnType::Text
             | ColumnType::Bytes => "value",
         };
-        let value = if nullable {
+        let value = if nullable && value != "value" {
             format!("row.{field}.map(|value| {value})")
         } else {
             value.replace("value", &format!("row.{field}"))
