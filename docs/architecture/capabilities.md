@@ -140,7 +140,8 @@ The host carries the declared stream replica count and duplicate window into act
 No runtime default substitutes for a missing declaration.
 The [native declaration owner](../../crates/control/provision/src/events.rs) supplies the configurations used by provisioning and activation.
 
-A materializer pulls bounded batches with explicit acknowledgements.
+A materializer awaits bounded fetches, router delivery, and explicit acknowledgements.
+Registration preparation and idle clock waits also yield through native async imports.
 The declared acknowledgement wait and delivery limit govern broker redelivery.
 The current consumer allows 64 pending acknowledgements, 64 messages per pull, four MiB per pull, and one waiting pull.
 Successful settlement acknowledges delivery. Permanent rejection terminates it.

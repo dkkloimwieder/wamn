@@ -12,6 +12,7 @@ package wamn:materializer@0.1.0;
 /// The event-plane NATS connection, database credential, release manifest,
 /// wiring coordinates, router, and component pools remain host-owned.
 world materializer {
+  import wasi:clocks/monotonic-clock@0.3.0;
   import wamn:postgres/types@0.1.0;
   import wamn:postgres/client@0.1.0;
   import wamn:jetstream/types@0.1.0;

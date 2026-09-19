@@ -82,7 +82,7 @@ impl Backend for GuestBackend {
                 },
             )
             .collect::<Vec<_>>();
-        bindings::wamn::flow_http_routing::routing::authenticate(attachment_id, &headers)
+        bindings::wamn::flow_http_routing::routing::authenticate(attachment_id.to_owned(), headers)
             .await
             .map_err(|rejection| AuthRejection {
                 status: rejection.status,

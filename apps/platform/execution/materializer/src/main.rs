@@ -33,19 +33,12 @@ use bindings::wamn::router_delivery::delivery::{
     self, DeliveryError, DeliveryOutcome, DeliveryRequest, ParentCausation, Source,
 };
 use bindings::wasmcloud::nats::types::HeaderEntry as Header;
-use wit_bindgen::block_on;
 
 struct Component;
 
-// The generated wasi:cli/run Guest trait declares `run` async; this guest's work
-// is synchronous, and the impl cannot change the signature the trait fixes.
-#[expect(
-    clippy::unused_async_trait_impl,
-    reason = "the generated wasi:cli/run Guest trait fixes this signature"
-)]
 impl bindings::exports::wasi::cli::run::Guest for Component {
     async fn run() -> Result<(), ()> {
-        main();
+        run_service().await;
         Ok(())
     }
 }
@@ -224,8 +217,9 @@ fn nats_message_ids(headers: &[Header]) -> Vec<&str> {
         .collect()
 }
 
-fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String> {
-    let package_rows = client::query(&select_known_package_ids_sql(), &[])
+async fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String> {
+    let package_rows = client::query(select_known_package_ids_sql(), Vec::new())
+        .await
         .map_err(|error| pg_name(&error))?
         .rows;
     let mut known_packages = BTreeSet::new();
@@ -235,7 +229,8 @@ fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String> {
         };
         known_packages.insert(package_id.clone());
     }
-    let rows = client::query(&select_registrations_sql(), &[])
+    let rows = client::query(select_registrations_sql(), Vec::new())
+        .await
         .map_err(|error| pg_name(&error))?
         .rows;
     let mut servings = Vec::with_capacity(rows.len());
@@ -546,7 +541,7 @@ fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> Deli
     }
 }
 
-fn deliver(
+async fn deliver(
     registration_identity: &str,
     delivery_id: String,
     payload: &Value,
@@ -564,6 +559,7 @@ fn deliver(
             depth: parent.depth,
         }),
     })
+    .await
     .outcome
 }
 
@@ -613,8 +609,8 @@ fn common_root_parent_causation<'a>(
     Some(deepest)
 }
 
-fn acknowledge(message: &Message, counters: &mut Counters) {
-    match block_on(message.ack_sync()) {
+async fn acknowledge(message: &Message, counters: &mut Counters) {
+    match message.ack_sync().await {
         Ok(()) => counters.acked += 1,
         Err(error) => {
             counters.retry += 1;
@@ -623,15 +619,15 @@ fn acknowledge(message: &Message, counters: &mut Counters) {
     }
 }
 
-fn nack(message: &Message, config: &Config, counters: &mut Counters) {
+async fn nack(message: &Message, config: &Config, counters: &mut Counters) {
     counters.retry += 1;
-    if let Err(error) = block_on(message.nak(Some(config.nack_delay_ms))) {
+    if let Err(error) = message.nak(Some(config.nack_delay_ms)).await {
         eprintln!("wamn::materializer nack failed ({error:?}); ack-wait redelivery remains armed");
     }
 }
 
-fn terminate(message: &Message, reason: &'static str, counters: &mut Counters) {
-    match block_on(message.term()) {
+async fn terminate(message: &Message, reason: &'static str, counters: &mut Counters) {
+    match message.term().await {
         Ok(()) => counters.terminated += 1,
         Err(error) => {
             counters.termination_retry += 1;
@@ -642,7 +638,7 @@ fn terminate(message: &Message, reason: &'static str, counters: &mut Counters) {
     }
 }
 
-fn settle_delivery(
+async fn settle_delivery(
     result: &Result<DeliveryOutcome, DeliveryError>,
     messages: &[&Message],
     config: &Config,
@@ -652,24 +648,24 @@ fn settle_delivery(
         DeliveryDisposition::Ack => {
             counters.deliveries += 1;
             for message in messages {
-                acknowledge(message, counters);
+                acknowledge(message, counters).await;
             }
         }
         DeliveryDisposition::Retry => {
             eprintln!("wamn::materializer router delivery did not settle: {result:?}");
             for message in messages {
-                nack(message, config, counters);
+                nack(message, config, counters).await;
             }
         }
         DeliveryDisposition::Terminate(reason) => {
             for message in messages {
-                terminate(message, reason, counters);
+                terminate(message, reason, counters).await;
             }
         }
     }
 }
 
-fn serve(
+async fn serve(
     config: &Config,
     serving: &Serving,
     known_packages: &BTreeSet<String>,
@@ -685,9 +681,9 @@ fn serve(
         wamn_event_wire::subject_token(registration.entity.as_str())
     );
     let provisioned = registration::prepare(
-        &registration.package_id,
-        &registration.registration_id,
-        &ConsumerConfig {
+        registration.package_id.clone(),
+        registration.registration_id.clone(),
+        ConsumerConfig {
             stream_name: config.stream.clone(),
             durable: durable_name(
                 &config.tenant,
@@ -698,7 +694,8 @@ fn serve(
             ack_wait_ms: config.ack_wait_ms,
             max_deliver: config.max_deliver,
         },
-    );
+    )
+    .await;
     if let Err(error) = provisioned {
         eprintln!(
             "wamn::materializer registration preparation failed for {}: {error:?}",
@@ -706,14 +703,16 @@ fn serve(
         );
         return;
     }
-    let consumer = match block_on(bindings::events::open_pull_consumer(
+    let consumer = match bindings::events::open_pull_consumer(
         config.stream.clone(),
         durable_name(
             &config.tenant,
             &registration.package_id,
             &registration.registration_id,
         ),
-    )) {
+    )
+    .await
+    {
         Ok(consumer) => consumer,
         Err(error) => {
             eprintln!(
@@ -723,7 +722,7 @@ fn serve(
             return;
         }
     };
-    let messages = match block_on(consumer.fetch(config.batch, config.fetch_ms)) {
+    let messages = match consumer.fetch(config.batch, config.fetch_ms).await {
         Ok(batch) => batch.messages,
         Err(bindings::wasmcloud::nats::types::NatsError::NoMessages) => return,
         Err(error) => {
@@ -749,9 +748,9 @@ fn serve(
                 source_event_id,
                 parent_causation,
             }),
-            Preparation::Ack => acknowledge(&message, counters),
-            Preparation::Nack => nack(&message, config, counters),
-            Preparation::Terminate(reason) => terminate(&message, reason, counters),
+            Preparation::Ack => acknowledge(&message, counters).await,
+            Preparation::Nack => nack(&message, config, counters).await,
+            Preparation::Terminate(reason) => terminate(&message, reason, counters).await,
         }
     }
     match registration.input {
@@ -767,8 +766,9 @@ fn serve(
                     delivery_id,
                     &prepared.payload,
                     prepared.parent_causation.as_ref(),
-                );
-                settle_delivery(&result, &[&prepared.message], config, counters);
+                )
+                .await;
+                settle_delivery(&result, &[&prepared.message], config, counters).await;
             }
         }
         RegistrationInput::Batch if !prepared.is_empty() => {
@@ -780,12 +780,13 @@ fn serve(
                 delivery_id,
                 &payload,
                 batch_parent_causation(&prepared),
-            );
+            )
+            .await;
             let messages = prepared
                 .iter()
                 .map(|prepared| &prepared.message)
                 .collect::<Vec<_>>();
-            settle_delivery(&result, &messages, config, counters);
+            settle_delivery(&result, &messages, config, counters).await;
         }
         RegistrationInput::Batch => {}
     }
@@ -799,7 +800,7 @@ fn write_report(config: &Config, counters: &Counters) {
     }
 }
 
-fn main() {
+async fn run_service() {
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
@@ -822,13 +823,16 @@ fn main() {
     let mut counters = Counters::default();
     loop {
         counters.sweeps += 1;
-        match load_servings(&mut counters) {
+        match load_servings(&mut counters).await {
             Ok(loaded) if loaded.servings.is_empty() => {
-                std::thread::sleep(std::time::Duration::from_millis(config.sweep_ms));
+                bindings::wasi::clocks::monotonic_clock::wait_for(
+                    config.sweep_ms.saturating_mul(1_000_000),
+                )
+                .await;
             }
             Ok(loaded) => {
                 for serving in &loaded.servings {
-                    serve(&config, serving, &loaded.known_packages, &mut counters);
+                    serve(&config, serving, &loaded.known_packages, &mut counters).await;
                 }
             }
             Err(error) => {
@@ -836,7 +840,10 @@ fn main() {
                     "wamn::materializer sweep failed ({error}); retrying after {}ms",
                     config.sweep_ms
                 );
-                std::thread::sleep(std::time::Duration::from_millis(config.sweep_ms));
+                bindings::wasi::clocks::monotonic_clock::wait_for(
+                    config.sweep_ms.saturating_mul(1_000_000),
+                )
+                .await;
             }
         }
         write_report(&config, &counters);

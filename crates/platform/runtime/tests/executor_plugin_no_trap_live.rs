@@ -172,7 +172,10 @@ async fn drive_guest(
     let drive = instance
         .get_typed_func::<(), ()>(&mut store, "drive")
         .expect("guest exports drive");
-    let outcome = drive.call_async(&mut store, ()).await;
+    let outcome = store
+        .run_concurrent(async |accessor| drive.call_concurrent(accessor, ()).await)
+        .await
+        .and_then(std::convert::identity);
     let trail = trail.lock().expect("verdict trail lock").clone();
     (outcome, trail)
 }
@@ -402,7 +405,7 @@ fn postgres_guest() -> String {
   (import "wamn:postgres/client@0.1.0" (instance $client
     (export "sql-value" (type (eq $sql-value)))
     (export "pg-error" (type (eq $pg-error)))
-    (export "execute" (func
+    (export "execute" (func async
       (param "sql" string)
       (param "params" (list $sql-value))
       (result (result u64 (error $pg-error)))))))
@@ -414,11 +417,14 @@ fn postgres_guest() -> String {
       (realloc (func $libc "realloc"))))
   (core func $verdict-lowered (canon lower (func $verdict)))
 
+  (core func $task-return (canon task.return))
   (core module $main
     (import "libc" "memory" (memory 1))
+    (import "host" "task-return" (func $task-return))
     (import "host" "execute" (func $execute (param i32 i32 i32 i32 i32)))
     (import "host" "verdict" (func $verdict (param i32)))
-    (func (export "drive")
+    (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
+    (func (export "drive") (result i32)
       i32.const {enter}
       call $verdict
       i32.const 256
@@ -433,13 +439,16 @@ fn postgres_guest() -> String {
       call $verdict
       i32.const {err_case}
       i32.load8_u
-      call $verdict))
+      call $verdict
+      call $task-return
+      i32.const 0))
   (core instance $main (instantiate $main
     (with "libc" (instance $libc))
     (with "host" (instance
+      (export "task-return" (func $task-return))
       (export "execute" (func $execute-lowered))
       (export "verdict" (func $verdict-lowered))))))
-  (func (export "drive") (canon lift (core func $main "drive")))
+  (func (export "drive") async (canon lift (core func $main "drive") async (callback (func $main "callback"))))
 )
 "#,
         libc = libc_module("SELECT 1"),
@@ -520,7 +529,7 @@ fn connection_http_guest() -> String {
       (case "timeout")
       (case "transport" string)))
     (export "connection-error" (type $connection-error (eq $connection-error')))
-    (export "send" (func
+    (export "send" (func async
       (param "request" $request)
       (result (result $response (error $connection-error)))))))
   (import "verdict" (func $verdict (param "code" u32)))
@@ -531,12 +540,15 @@ fn connection_http_guest() -> String {
       (realloc (func $libc "realloc"))))
   (core func $verdict-lowered (canon lower (func $verdict)))
 
+  (core func $task-return (canon task.return))
   (core module $main
     (import "libc" "memory" (memory 1))
+    (import "host" "task-return" (func $task-return))
     (import "host" "send" (func $send
       (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "verdict" (func $verdict (param i32)))
-    (func (export "drive")
+    (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
+    (func (export "drive") (result i32)
       i32.const {enter}
       call $verdict
       ;; requirement, method, path-and-query, headers
@@ -563,13 +575,16 @@ fn connection_http_guest() -> String {
       call $verdict
       i32.const {err_case}
       i32.load8_u
-      call $verdict))
+      call $verdict
+      call $task-return
+      i32.const 0))
   (core instance $main (instantiate $main
     (with "libc" (instance $libc))
     (with "host" (instance
+      (export "task-return" (func $task-return))
       (export "send" (func $send-lowered))
       (export "verdict" (func $verdict-lowered))))))
-  (func (export "drive") (canon lift (core func $main "drive")))
+  (func (export "drive") async (canon lift (core func $main "drive") async (callback (func $main "callback"))))
 )
 "#,
         libc = libc_module(""),
