@@ -329,10 +329,8 @@ mod tests {
 
         let probe = Component::new(engine.inner(), &probe_bytes)
             .map_err(|error| anyhow::anyhow!("compile virtualized std probe: {error}"))?;
-        let probe_exports = probe
-            .component_type()
-            .exports(probe.engine())
-            .collect::<Vec<_>>();
+        let probe_type = probe.component_type();
+        let probe_exports = probe_type.exports(probe.engine()).collect::<Vec<_>>();
         ensure!(
             probe_exports.len() == 1 && probe_exports[0].0 == "wamn:node/async-handler@0.1.0",
             "virtualized std probe exports are not exactly the async node handler"
