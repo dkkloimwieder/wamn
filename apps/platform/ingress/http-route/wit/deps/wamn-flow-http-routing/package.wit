@@ -55,7 +55,7 @@ interface routing {
 
   /// Authenticate after route selection. The host re-derives policy from the
   /// loaded attachment; none is an explicitly anonymous policy.
-  authenticate: func(attachment-id: string, headers: list<header>) -> result<option<authenticated-caller>, auth-rejection>;
+  authenticate: async func(attachment-id: string, headers: list<header>) -> result<option<authenticated-caller>, auth-rejection>;
 
   /// Validate the adapter's mapped JSON against the selected attachment's
   /// process-cached input schema.

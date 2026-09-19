@@ -270,7 +270,7 @@ pub trait Backend {
         method: &str,
         authority: &str,
     ) -> Result<Vec<RouteDefinition>, ProviderError>;
-    fn authenticate(
+    async fn authenticate(
         &mut self,
         attachment_id: &str,
         headers: &[Header],
@@ -324,6 +324,7 @@ async fn try_handle(
         .map_err(|code| error_response(404, code))?;
     let caller = backend
         .authenticate(&matched.definition.attachment_id, &head.headers)
+        .await
         .map_err(|rejection| rejection_response(&rejection))?;
 
     let body_limit = matched.definition.body_limit.min(limits.body_bytes);

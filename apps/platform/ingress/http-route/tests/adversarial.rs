@@ -84,7 +84,7 @@ impl Backend for FakeBackend {
             .ok_or(ProviderError)
     }
 
-    fn authenticate(
+    async fn authenticate(
         &mut self,
         attachment_id: &str,
         _headers: &[Header],
