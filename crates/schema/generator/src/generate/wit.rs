@@ -82,7 +82,7 @@ fn emit_crud_interface(
         CrudAction::Get | CrudAction::Delete => source.push_str("    id: string,\n"),
         CrudAction::Create => {
             source.push_str("    idempotency-key: string,\n");
-            emit_writable_fields(source, table, operation, false);
+            emit_writable_fields(source, table, operation, true);
         }
         CrudAction::Query => {
             for filter in &operation.filters {
@@ -95,7 +95,17 @@ fn emit_crud_interface(
                 )
                 .expect("writing to a String cannot fail");
             }
-            source.push_str("    sort-field: option<string>,\n    sort-direction: option<string>,\n    cursor: option<string>,\n    limit: option<s64>,\n");
+            if operation.sort.is_some() {
+                source.push_str(
+                    "    sort-field: option<string>,\n    sort-direction: option<string>,\n",
+                );
+            }
+            if operation.pagination.is_some() {
+                source.push_str("    cursor: option<string>,\n");
+            }
+            if operation.limit.is_some() {
+                source.push_str("    limit: option<s64>,\n");
+            }
         }
         CrudAction::Update => unreachable!("update uses its compatibility emitter"),
     }
@@ -407,7 +417,7 @@ fn emit_crud_json_codec(
 
 fn emit_update_normalizer(table: &Table, operation: &OperationDeclaration) -> String {
     let mut source = String::from(
-        "fn normalize(request: &mut contract::UpdateRequest) -> Result<(), contract::InvalidInputDetail> {\n",
+        "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::UpdateRequest) -> Result<(), contract::InvalidInputDetail> {\n",
     );
     emit_scalar_validation(
         &mut source,
@@ -436,7 +446,7 @@ fn emit_crud_normalizer(
 ) -> String {
     let type_name = rust_type_identifier(action.as_str());
     let mut source = format!(
-        "fn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
+        "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
     );
     if matches!(action, CrudAction::Get | CrudAction::Delete) {
         emit_scalar_validation(
@@ -525,7 +535,25 @@ fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
 }
 
 fn emit_query_json_types(source: &mut String, table: &Table, operation: &OperationDeclaration) {
-    source.push_str("struct JsonRequest { #[serde(default)] filter: Option<JsonFilter>, #[serde(default)] sort: Option<JsonSort>, #[serde(default)] cursor: Option<String>, #[serde(default)] limit: Option<i64> }\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFilter {\n");
+    source.push_str("struct JsonRequest {\n");
+    if !operation.filters.is_empty() {
+        source.push_str("    #[serde(default)] filter: Option<JsonFilter>,\n");
+    }
+    if operation.sort.is_some() {
+        source.push_str("    #[serde(default)] sort: Option<JsonSort>,\n");
+    }
+    if operation.pagination.is_some() {
+        source.push_str("    #[serde(default)] cursor: Option<String>,\n");
+    }
+    if operation.limit.is_some() {
+        source.push_str("    #[serde(default)] limit: Option<i64>,\n");
+    }
+    source.push_str("}\n\n");
+    if !operation.filters.is_empty() {
+        source.push_str(
+            "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFilter {\n",
+        );
+    }
     for filter in &operation.filters {
         let column = model_column(table, &filter.field);
         writeln!(
@@ -536,7 +564,12 @@ fn emit_query_json_types(source: &mut String, table: &Table, operation: &Operati
         )
         .expect("writing to a String cannot fail");
     }
-    source.push_str("}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonSort { field: String, direction: String }\n\n");
+    if !operation.filters.is_empty() {
+        source.push_str("}\n\n");
+    }
+    if operation.sort.is_some() {
+        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonSort { field: String, direction: String }\n\n");
+    }
 }
 
 fn emit_crud_request_assignments(
@@ -583,7 +616,15 @@ fn emit_crud_request_assignments(
                 writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()),")
                     .expect("writing to a String cannot fail");
             }
-            source.push_str("            sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),\n            sort_direction: request.sort.map(|sort| sort.direction),\n            cursor: request.cursor,\n            limit: request.limit,\n");
+            if operation.sort.is_some() {
+                source.push_str("            sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),\n            sort_direction: request.sort.map(|sort| sort.direction),\n");
+            }
+            if operation.pagination.is_some() {
+                source.push_str("            cursor: request.cursor,\n");
+            }
+            if operation.limit.is_some() {
+                source.push_str("            limit: request.limit,\n");
+            }
         }
         CrudAction::Update => unreachable!("update has a separate codec"),
     }
@@ -668,6 +709,7 @@ fn emit_json_row_fields(source: &mut String, table: &Table, carrier: &str) {
 fn emit_handler(type_name: &str) -> String {
     format!(
         r#"
+#[allow(dead_code)]
 pub(crate) async fn run<S, F>(input: Vec<contract::{type_name}Item>, state: &mut S, mut handler: F) -> Vec<contract::{type_name}Outcome>
 where
     F: AsyncFnMut(&mut S, contract::{type_name}Request) -> Result<contract::{type_name}Result, contract::{type_name}Error>,
@@ -715,6 +757,7 @@ fn validate_count(count: usize) -> Result<(), CodecError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
     validate_count(input.len())?;
     if input.iter().any(|item| item.request_id.is_empty()) {
@@ -723,6 +766,7 @@ pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
     let Value::Array(values) = serde_json::from_str(input)
         .map_err(|_| CodecError("operation input must be a JSON array"))?
@@ -749,6 +793,7 @@ use serde::Deserialize;
 #[allow(unused_imports)]
 use serde_json::{Map, Value, json};
 
+#[allow(dead_code)]
 fn canonical_uuid(value: &mut String) -> bool {
     let Ok(parsed) = uuid::Uuid::parse_str(value) else { return false; };
     *value = parsed.hyphenated().to_string();
@@ -1262,7 +1307,7 @@ fn emit_custom_codec(
     let Some(result) = operation.result.as_ref() else {
         let type_name = rust_type_identifier(local_name);
         let mut source = format!(
-            "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError {{ pub(crate) const fn context(&self) -> &'static str {{ self.0 }} }}\nimpl std::fmt::Display for CodecError {{ fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ formatter.write_str(self.0) }} }}\nimpl std::error::Error for CodecError {{}}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonInput {{ event: String, new: JsonNew }}\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew {{ id: String }}\n\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let value: JsonInput = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{ event: value.event, new: contract::{type_name}New {{ id: value.new.id }} }})\n}}\n\npub(crate) fn encode(value: &contract::{type_name}Request) -> String {{\n    serde_json::json!({{\"event\": value.event, \"new\": {{\"id\": value.new.id}}}}).to_string()\n}}\n"
+            "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError {{ pub(crate) const fn context(&self) -> &'static str {{ self.0 }} }}\nimpl std::fmt::Display for CodecError {{ fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ formatter.write_str(self.0) }} }}\nimpl std::error::Error for CodecError {{}}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonInput {{ event: String, new: JsonNew }}\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew {{ id: String }}\n\n#[allow(dead_code)]\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let value: JsonInput = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{ event: value.event, new: contract::{type_name}New {{ id: value.new.id }} }})\n}}\n\n#[allow(dead_code)]\npub(crate) fn encode(value: &contract::{type_name}Request) -> String {{\n    serde_json::json!({{\"event\": value.event, \"new\": {{\"id\": value.new.id}}}}).to_string()\n}}\n"
         );
         source = source.replace(
             "new: JsonNew }\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew",
@@ -1389,8 +1434,9 @@ fn emit_custom_normalizer(type_name: &str, operation: &CustomOperationDeclaratio
         |value| value.children.clone(),
     );
     let mut source = format!(
-        "fn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
+        "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
     );
+    source.push_str("    let _ = &request;\n");
     emit_tree_validation(&mut source, &fields, "request", 4);
     source.push_str("    Ok(())\n}\n\n");
     source
@@ -1672,7 +1718,7 @@ mod tests {
                 std::str::from_utf8(&files["generated/wit/receiving_record_receipt_codec.rs"])
                     .unwrap();
             assert!(codec.contains("row_version.to_string()"));
-            assert!(codec.contains("Err(contract::InvalidInputDetail"));
+            assert!(codec.contains("Err(invalid(\"input\"))"));
             assert!(codec.contains("RecordReceiptError::QuantityExceedsRemaining"));
         }
     }
@@ -1696,5 +1742,51 @@ mod tests {
         assert!(codec.contains("const MINIMUM: usize = 2;"));
         assert!(codec.contains("const MAXIMUM: usize = 7;"));
         assert!(codec.contains("item count must be 2..=7"));
+    }
+
+    #[test]
+    fn custom_shapes_and_names_do_not_select_generator_branches() {
+        let manifest: PackageManifest =
+            serde_json::from_slice(include_bytes!("../../../../../apps/wamn_wms/wamn.json"))
+                .unwrap();
+        let mut files = BTreeMap::new();
+        for (name, operation) in &manifest.custom_operations {
+            emit_custom_operation_wit(&mut files, &manifest, name, operation).unwrap();
+        }
+        assert!(files.contains_key("generated/wit/inventory_move_codec.rs"));
+        let wit = std::str::from_utf8(&files["generated/wit/deps/wamn-wms-inventory/package.wit"])
+            .unwrap();
+        for interface in ["adjust", "aggregate", "merge", "move", "split"] {
+            assert!(wit.contains(&format!("interface {interface}")));
+        }
+
+        let mut renamed: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../../../apps/wamn_receiving/wamn.json"
+        ))
+        .unwrap();
+        for field in renamed["custom_operations"]["receiving.record_receipt"]["input"]["fields"]
+            .as_array_mut()
+            .unwrap()
+        {
+            let path = field["path"]
+                .as_str()
+                .unwrap()
+                .replace("line[]", "entries[]");
+            field["path"] = serde_json::json!(path);
+        }
+        let renamed: PackageManifest = serde_json::from_value(renamed).unwrap();
+        let operation = &renamed.custom_operations["receiving.record_receipt"];
+        let source = emit_owned_interface(
+            "wamn-receiving",
+            "0.1.0",
+            "receiving",
+            "record_receipt",
+            &renamed,
+            operation,
+        )
+        .unwrap();
+        assert!(source.contains("record record-receipt-entries"));
+        assert!(source.contains("entries: list<record-receipt-entries>"));
+        assert!(!source.contains("record record-receipt-line"));
     }
 }

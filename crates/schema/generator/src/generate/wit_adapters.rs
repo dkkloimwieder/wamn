@@ -42,9 +42,12 @@ pub(super) fn emit_error_mapper<'a>(
     cases: impl IntoIterator<Item = (&'a str, &'a OperationErrorDetailDeclaration)>,
 ) -> String {
     let mut source = format!(
-        "\npub(crate) fn map_error(code: &str, mut detail: impl FnMut(&str) -> Option<String>) -> contract::{error_type} {{\n    match code {{\n"
+        "\n#[allow(dead_code)]\npub(crate) fn map_error(code: &str, mut detail: impl FnMut(&str) -> Option<String>) -> contract::{error_type} {{\n    match code {{\n"
     );
     for (literal, declaration) in cases {
+        if literal == "internal_error" {
+            continue;
+        }
         let variant = rust_type_identifier(literal);
         writeln!(source, "        {literal:?} => {{").expect("writing to a String cannot fail");
         for (key, required) in declaration
@@ -147,6 +150,7 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool) -> String {
     };
     format!(
         r#"
+#[allow(unused_macros)]
 macro_rules! export_operation {{
     ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {{
         const _: () = {{
@@ -180,6 +184,7 @@ macro_rules! export_operation {{
         }};
     }};
 }}
+#[allow(unused_imports)]
 pub(crate) use export_operation;
 "#
     )
