@@ -1146,6 +1146,23 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                         },
                         "result": "one"
                     },
+                    "update": {
+                        "permission": "inventory_item.update",
+                        "error_details": {
+                            "invalid_input": {"required": ["field"]},
+                            "not_found": {"required": ["field", "id"]},
+                            "concurrency_conflict": {
+                                "required": ["expected_row_version", "observed_row_version"]
+                            },
+                            "retry": {},
+                            "timeout": {},
+                            "permission_denied": {"required": ["operation"]},
+                            "internal_error": {}
+                        },
+                        "writable_fields": ["priority"],
+                        "revision_field": "sequence_number",
+                        "result": "one"
+                    },
                     "delete": {
                         "permission": "inventory_item.delete",
                         "error_details": {
@@ -1224,6 +1241,22 @@ fn typed_crud_contracts_follow_a_non_receiving_model_declaration() {
             "if matches!(request.sku, Some(None)) {\n        return Err(invalid(\"sku\"));\n    }"
         ),
         "{create_codec}"
+    );
+
+    let update_codec = std::str::from_utf8(
+        package
+            .file("generated/wit/inventory_item_update_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(
+        update_codec.contains("expected_sequence_number: String"),
+        "{update_codec}"
+    );
+    assert!(
+        update_codec.contains("request.expected_sequence_number.parse::<i64>()"),
+        "{update_codec}"
     );
 
     let delete = artifact_json(
