@@ -86,14 +86,12 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, Co
                         })
                         .collect(),
                 }),
-                Err(_) => Err(contract::RecordReceiptError::InvalidInput(
-                    contract::InvalidInputDetail {
-                        field: "input".to_owned(),
-                        minimum: None,
-                        maximum: None,
-                        observed: None,
-                    },
-                )),
+                Err(_) => Err(contract::InvalidInputDetail {
+                    field: "input".to_owned(),
+                    minimum: None,
+                    maximum: None,
+                    observed: None,
+                }),
             };
             Ok(contract::RecordReceiptItem { request_id, input })
         })

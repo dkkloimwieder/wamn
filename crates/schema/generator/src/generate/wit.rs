@@ -119,7 +119,7 @@ fn emit_owned_interface(
             .expect("writing to a String cannot fail");
         }
     }
-    source.push_str("  }\n\n  record record-receipt-item {\n    request-id: string,\n    input: result<record-receipt-request, record-receipt-error>,\n  }\n\n");
+    source.push_str("  }\n\n  record record-receipt-item {\n    request-id: string,\n    input: result<record-receipt-request, invalid-input-detail>,\n  }\n\n");
     source.push_str("  record record-receipt-result {\n");
     emit_record_fields(&mut source, &result.fields, "", false);
     source.push_str("  }\n\n  record record-receipt-outcome {\n    request-id: string,\n    outcome: result<record-receipt-result, record-receipt-error>,\n  }\n\n");
@@ -427,11 +427,9 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, Co
 
 const RECEIPT_CODEC_ENCODE_PREFIX: &str = r#"                }).collect(),
             }),
-            Err(_) => Err(contract::RecordReceiptError::InvalidInput(
-                contract::InvalidInputDetail {
-                    field: "input".to_owned(), minimum: None, maximum: None, observed: None,
-                },
-            )),
+            Err(_) => Err(contract::InvalidInputDetail {
+                field: "input".to_owned(), minimum: None, maximum: None, observed: None,
+            }),
         };
         Ok(contract::RecordReceiptItem { request_id, input })
     }).collect()
@@ -487,10 +485,16 @@ mod tests {
             .unwrap();
             assert!(wit.contains("run: async func"));
             assert!(wit.contains("run-json: async func"));
+            if manifest.base_dependencies.is_empty() {
+                assert!(
+                    wit.contains("input: result<record-receipt-request, invalid-input-detail>")
+                );
+            }
             let codec =
                 std::str::from_utf8(&files["generated/wit/receiving_record_receipt_codec.rs"])
                     .unwrap();
             assert!(codec.contains("row_version.to_string()"));
+            assert!(codec.contains("Err(contract::InvalidInputDetail"));
             assert!(codec.contains("RecordReceiptError::QuantityExceedsRemaining"));
         }
     }

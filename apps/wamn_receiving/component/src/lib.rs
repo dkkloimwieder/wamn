@@ -179,7 +179,7 @@ async fn record_receipt(
             Err(error) => {
                 output.push(contract::RecordReceiptOutcome {
                     request_id,
-                    outcome: Err(error),
+                    outcome: Err(contract::RecordReceiptError::InvalidInput(error)),
                 });
                 continue;
             }
@@ -359,7 +359,12 @@ mod tests {
         .unwrap();
         input.push(contract::RecordReceiptItem {
             request_id: String::new(),
-            input: Err(contract::RecordReceiptError::InternalError),
+            input: Err(contract::InvalidInputDetail {
+                field: "input".to_owned(),
+                minimum: None,
+                maximum: None,
+                observed: None,
+            }),
         });
         let mut call = std::pin::pin!(super::record_receipt(input));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -391,10 +396,7 @@ mod tests {
         let request = decoded[0].input.as_ref().expect("the valid item decodes");
         assert_eq!(request.line[0].quantity, "12.3400");
         assert_eq!(decoded[1].request_id, "bad");
-        assert!(matches!(
-            decoded[1].input,
-            Err(contract::RecordReceiptError::InvalidInput(_))
-        ));
+        assert_eq!(decoded[1].input.as_ref().unwrap_err().field, "input");
     }
 
     #[test]
@@ -412,10 +414,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["unknown", "null", "missing"]
         );
-        assert!(decoded.iter().all(|item| matches!(
-            item.input,
-            Err(contract::RecordReceiptError::InvalidInput(_))
-        )));
+        assert!(decoded.iter().all(|item| {
+            item.input
+                .as_ref()
+                .is_err_and(|detail| detail.field == "input")
+        }));
     }
 
     #[test]

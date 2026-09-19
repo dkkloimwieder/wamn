@@ -94,7 +94,7 @@ interface record-receipt {
 
   record record-receipt-item {
     request-id: string,
-    input: result<record-receipt-request, record-receipt-error>,
+    input: result<record-receipt-request, invalid-input-detail>,
   }
 
   record record-receipt-result {
