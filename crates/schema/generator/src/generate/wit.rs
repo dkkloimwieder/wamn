@@ -1063,9 +1063,15 @@ fn emit_owned_interface(
     );
     let root = if value.is_some() { "value." } else { "" };
     emit_nested_wit_records(&mut source, &interface, &request_fields, root);
-    writeln!(source, "  record {interface}-request {{").expect("writing to a String cannot fail");
-    emit_wit_tree_fields(&mut source, &interface, &request_fields, root);
-    source.push_str("  }\n\n");
+    if request_fields.is_empty() {
+        writeln!(source, "  enum {interface}-request {{ request }}\n")
+            .expect("writing to a String cannot fail");
+    } else {
+        writeln!(source, "  record {interface}-request {{")
+            .expect("writing to a String cannot fail");
+        emit_wit_tree_fields(&mut source, &interface, &request_fields, root);
+        source.push_str("  }\n\n");
+    }
 
     for (literal, detail) in &operation.error_details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
@@ -1345,10 +1351,18 @@ fn emit_custom_codec(
         } else {
             "request"
         };
-        write!(source, "}}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|{request}| contract::RecordReceiptRequest {{\n")
+        let constructor = if flat_fields.is_empty() {
+            "contract::RecordReceiptRequest::Request".to_owned()
+        } else {
+            format!("contract::RecordReceiptRequest {{\n")
+        };
+        write!(source, "}}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|{request}| {constructor}")
             .expect("writing to a String cannot fail");
-        emit_codec_field_assignments(&mut source, &flat_fields, "request", 12);
-        source.push_str("        }).map_err(|_| invalid(\"input\"));\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
+        if !flat_fields.is_empty() {
+            emit_codec_field_assignments(&mut source, &flat_fields, "request", 12);
+            source.push_str("        }");
+        }
+        source.push_str(").map_err(|_| invalid(\"input\"));\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
     } else {
         source.push_str(RECEIPT_CODEC_HEADER);
         emit_json_struct(&mut source, "JsonValue", &value_fields);
