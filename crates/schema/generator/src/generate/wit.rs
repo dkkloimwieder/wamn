@@ -1009,13 +1009,13 @@ pub(super) fn emit_custom_operation_wit(
         }) {
         emit_forwarding_interface(&package, version, group, local_name, dependency)
     } else {
-        emit_owned_group(&package, version, group, manifest)?
+        emit_owned_group(&package, version, group, manifest)
     };
     let package_path = format!("{directory}/package.wit");
     if !files.contains_key(&package_path) {
         insert_bytes(files, &package_path, source.into_bytes())?;
     }
-    let codec = emit_custom_codec(local_name, operation)?;
+    let codec = emit_custom_codec(local_name, operation);
     insert_bytes(
         files,
         &format!(
@@ -1032,21 +1032,21 @@ fn emit_owned_group(
     version: &str,
     group: &str,
     manifest: &PackageManifest,
-) -> Result<String, GenerateError> {
+) -> String {
     let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
     for (operation_name, operation) in &manifest.custom_operations {
         let Some(local_name) = operation_name.strip_prefix(&format!("{group}.")) else {
             continue;
         };
         let emitted =
-            emit_owned_interface(package, version, group, local_name, manifest, operation)?;
+            emit_owned_interface(package, version, group, local_name, manifest, operation);
         let marker = format!("interface {} {{", wit_name(local_name));
         let start = emitted
             .rfind(&marker)
             .expect("owned interface emitter includes its operation");
         source.push_str(&emitted[start..]);
     }
-    Ok(source)
+    source
 }
 
 fn emit_forwarding_interface(
@@ -1073,7 +1073,7 @@ fn emit_owned_interface(
     local_name: &str,
     manifest: &PackageManifest,
     operation: &CustomOperationDeclaration,
-) -> Result<String, GenerateError> {
+) -> String {
     let result = operation.result.as_ref();
     let input_tree = input_fields_of(
         &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
@@ -1107,7 +1107,7 @@ fn emit_owned_interface(
         emit_wit_tree_fields(&mut source, &interface, &request_fields, "");
         writeln!(source, "  }}\n\n  run: async func(ctx: node-context, input: {interface}-request) -> result<{interface}-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n")
             .expect("writing to a String cannot fail");
-        return Ok(source);
+        return source;
     }
     let value = input_tree.iter().find(|field| field.path == "value");
     let request_fields = value.map_or_else(
@@ -1189,7 +1189,7 @@ fn emit_owned_interface(
     }
     writeln!(source, "  }}\n\n  record {interface}-outcome {{\n    request-id: string,\n    outcome: result<{interface}-result, {interface}-error>,\n  }}\n").expect("writing to a String cannot fail");
     writeln!(source, "  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n").expect("writing to a String cannot fail");
-    Ok(source)
+    source
 }
 
 fn emit_record_fields(
@@ -1375,24 +1375,12 @@ fn artifact_name(value: &str) -> String {
         .to_owned()
 }
 
-fn emit_custom_codec(
-    local_name: &str,
-    operation: &CustomOperationDeclaration,
-) -> Result<String, GenerateError> {
+fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -> String {
     let Some(result) = operation.result.as_ref() else {
         let type_name = rust_type_identifier(local_name);
-        let mut source = format!(
-            "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError {{ pub(crate) const fn context(&self) -> &'static str {{ self.0 }} }}\nimpl std::fmt::Display for CodecError {{ fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ formatter.write_str(self.0) }} }}\nimpl std::error::Error for CodecError {{}}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonInput {{ event: String, new: JsonNew }}\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew {{ id: String }}\n\n#[allow(dead_code)]\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let value: JsonInput = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{ event: value.event, new: contract::{type_name}New {{ id: value.new.id }} }})\n}}\n\n#[allow(dead_code)]\npub(crate) fn encode(value: &contract::{type_name}Request) -> String {{\n    serde_json::json!({{\"event\": value.event, \"new\": {{\"id\": value.new.id}}}}).to_string()\n}}\n"
-        );
-        source = source.replace(
-            "new: JsonNew }\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew",
-            "new: JsonNew }\n#[derive(Deserialize)]\nstruct JsonNew",
-        );
-        source.push_str(&format!(
-            "pub(crate) fn normalize(value: &mut contract::{type_name}Request) -> Result<(), CodecError> {{\n    if value.event != \"insert\" {{ return Err(CodecError(\"event is outside its declared value domain\")); }}\n    let parsed = uuid::Uuid::parse_str(&value.new.id).map_err(|_| CodecError(\"new.id is not a UUID\"))?;\n    value.new.id = parsed.hyphenated().to_string();\n    Ok(())\n}}\n"
-        ));
+        let mut source = emit_direct_custom_codec(&type_name, operation);
         source.push_str(&emit_export_adapter(&type_name, true));
-        return Ok(source);
+        return source;
     };
     let (minimum, maximum) = operation
         .input
@@ -1454,7 +1442,88 @@ fn emit_custom_codec(
             .map(|literal| (literal.as_str(), &operation.error_details[literal])),
     ));
     source.push_str(&emit_export_adapter(&type_name, false));
-    Ok(source)
+    source
+}
+
+fn emit_direct_custom_codec(type_name: &str, operation: &CustomOperationDeclaration) -> String {
+    let tree = input_fields_of(
+        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
+    );
+    let fields = tree
+        .into_iter()
+        .filter(|field| field.path != "request_id")
+        .collect::<Vec<_>>();
+    let mut source = String::from(
+        "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError { pub(crate) const fn context(&self) -> &'static str { self.0 } }\nimpl std::fmt::Display for CodecError { fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str(self.0) } }\nimpl std::error::Error for CodecError {}\n\n",
+    );
+    emit_direct_json_tree_records(&mut source, &fields, "");
+    source
+        .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {\n");
+    emit_json_tree_fields(&mut source, &fields, "");
+    source.push_str("}\n\n");
+    writeln!(source, "#[allow(dead_code)]\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let request: JsonRequest = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{")
+        .expect("writing to a String cannot fail");
+    emit_contract_tree_assignments(&mut source, type_name, &fields, "request", "", 8);
+    source.push_str("    })\n}\n\n");
+    writeln!(source, "pub(crate) fn normalize(request: &mut contract::{type_name}Request) -> Result<(), CodecError> {{")
+        .expect("writing to a String cannot fail");
+    emit_direct_tree_validation(&mut source, &fields, "request", 4);
+    source.push_str("    Ok(())\n}\n");
+    source
+}
+
+fn emit_direct_json_tree_records(source: &mut String, fields: &[FieldIr], root: &str) {
+    for field in fields.iter().filter(|field| !field.children.is_empty()) {
+        emit_direct_json_tree_records(source, &field.children, root);
+        writeln!(
+            source,
+            "#[derive(Deserialize)]\nstruct Json{} {{",
+            rust_type_identifier(&field_type_suffix(&field.path, root))
+        )
+        .expect("writing to a String cannot fail");
+        emit_json_tree_fields(source, &field.children, root);
+        source.push_str("}\n\n");
+    }
+}
+
+fn emit_direct_tree_validation(
+    source: &mut String,
+    fields: &[FieldIr],
+    access: &str,
+    indentation: usize,
+) {
+    let indent = " ".repeat(indentation);
+    for field in fields {
+        let member = rust_identifier(
+            field
+                .path
+                .rsplit('.')
+                .next()
+                .unwrap()
+                .trim_end_matches("[]"),
+        )
+        .expect("validated field has a Rust name");
+        let field_access = format!("{access}.{member}");
+        if !field.children.is_empty() {
+            if field.type_name == "array" || field.path.ends_with("[]") {
+                writeln!(source, "{indent}for value in &mut {field_access} {{")
+                    .expect("writing to a String cannot fail");
+                emit_direct_tree_validation(source, &field.children, "value", indentation + 4);
+                writeln!(source, "{indent}}}").expect("writing to a String cannot fail");
+            } else {
+                emit_direct_tree_validation(source, &field.children, &field_access, indentation);
+            }
+            continue;
+        }
+        if field.type_name == "uuid" {
+            writeln!(source, "{indent}let parsed = uuid::Uuid::parse_str(&{field_access}).map_err(|_| CodecError({:?}))?;\n{indent}{field_access} = parsed.hyphenated().to_string();", format!("{} is not a UUID", field.path))
+                .expect("writing to a String cannot fail");
+        }
+        if !field.values.is_empty() {
+            writeln!(source, "{indent}if !{:?}.contains(&{field_access}.as_str()) {{ return Err(CodecError({:?})); }}", field.values, format!("{} is outside its declared value domain", field.path))
+                .expect("writing to a String cannot fail");
+        }
+    }
 }
 
 fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) -> String {
@@ -1891,8 +1960,7 @@ mod tests {
         let codec = emit_custom_codec(
             "record_receipt",
             &manifest.custom_operations["receiving.record_receipt"],
-        )
-        .unwrap();
+        );
         assert!(codec.contains("const MINIMUM: usize = 2;"));
         assert!(codec.contains("const MAXIMUM: usize = 7;"));
         assert!(codec.contains("item count must be 2..=7"));
@@ -1937,14 +2005,31 @@ mod tests {
             "record_receipt",
             &renamed,
             operation,
-        )
-        .unwrap();
+        );
         assert!(source.contains("record record-receipt-entries"));
         assert!(source.contains("entries: list<record-receipt-entries>"));
         assert!(!source.contains("record record-receipt-line"));
-        let codec = emit_custom_codec("record_receipt", operation).unwrap();
+        let codec = emit_custom_codec("record_receipt", operation);
         assert!(codec.contains("struct JsonEntries"));
         assert!(codec.contains("contract::RecordReceiptEntries"));
         assert!(!codec.contains("JsonLine"));
+
+        let mut direct: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../../../apps/client_acme_receiving/wamn.json"
+        ))
+        .unwrap();
+        let operation = &mut direct["custom_operations"]["quality.create_inspection"];
+        operation["input"]["fields"][0]["path"] = serde_json::json!("action");
+        operation["input"]["fields"][0]["values"] = serde_json::json!(["created"]);
+        operation["input"]["fields"][1]["path"] = serde_json::json!("payload.key");
+        let direct: PackageManifest = serde_json::from_value(direct).unwrap();
+        let codec = emit_custom_codec(
+            "create_inspection",
+            &direct.custom_operations["quality.create_inspection"],
+        );
+        assert!(codec.contains("struct JsonPayload"));
+        assert!(codec.contains("request.action.as_str()"));
+        assert!(codec.contains("request.payload.key"));
+        assert!(!codec.contains("value.event"));
     }
 }
