@@ -11,8 +11,8 @@ use deadpool_postgres::Object;
 use futures_util::TryStreamExt as _;
 use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
-use wash_runtime::engine::ctx::ActiveCtx;
-use wash_runtime::wasmtime::component::Resource;
+use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
+use wash_runtime::wasmtime::component::{Accessor, Resource};
 
 use crate::plugins::effect_span::{
     EffectIdentity, EffectRun, EffectWiring, effect_span, record_effect_ms, record_wiring,
@@ -1081,17 +1081,24 @@ impl client::HostCursor for ActiveCtx<'_> {
     }
 }
 
-impl statement_wit::Host for ActiveCtx<'_> {
+impl statement_wit::Host for ActiveCtx<'_> {}
+
+impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
     async fn run(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         statement_digest: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let active = plugin.active_statement_set(&component_id);
                 let statement =
                     match resolve_statement(active.as_deref(), &statement_digest, &binds) {
@@ -1112,14 +1119,19 @@ impl statement_wit::Host for ActiveCtx<'_> {
     }
 
     async fn begin(
-        &mut self,
+        accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
     {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ))
+        })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let project = plugin.project_for(&component_id);
                 let statements = plugin.active_statement_set(&component_id);
                 let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
@@ -1129,10 +1141,17 @@ impl statement_wit::Host for ActiveCtx<'_> {
                     .await;
                 record_query_ms("statement.begin", &project, started.elapsed());
                 match opened {
-                    Ok(transaction) => Ok(Ok(self.table.push(PgStatementTransaction {
-                        transaction,
-                        statements,
-                    })?)),
+                    Ok(transaction) => accessor.with(|mut access| {
+                        access
+                            .get()
+                            .table
+                            .push(PgStatementTransaction {
+                                transaction,
+                                statements,
+                            })
+                            .map(Ok)
+                            .map_err(Into::into)
+                    }),
                     Err(error) => Ok(Err(StatementError::Postgres(error))),
                 }
             })
@@ -1140,33 +1159,40 @@ impl statement_wit::Host for ActiveCtx<'_> {
     }
 }
 
-impl statement_wit::HostTransaction for ActiveCtx<'_> {
+impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
     async fn run(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
         statement_digest: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        let (plugin, component_id, trace, state, destroyed, row_limit, statements) = accessor
+            .with(|mut access| {
+                let ctx = access.get();
+                let transaction = ctx.table.get(&rep)?;
+                Ok::<_, wash_runtime::wasmtime::Error>((
+                    plugin_of(&ctx)?,
+                    ctx.component_id.to_string(),
+                    crate::plugins::invocation_trace::invocation_trace(&ctx),
+                    Arc::clone(&transaction.transaction.state),
+                    Arc::clone(&transaction.transaction.destroyed),
+                    transaction.transaction.row_limit,
+                    transaction.statements.clone(),
+                ))
+            })?;
         trace
             .run(async move {
-                let plugin = plugin_of(self)?;
-                let component_id = self.component_id.to_string();
                 let project = plugin.project_for(&component_id);
-                let transaction = self.table.get(&rep)?;
                 let statement = match admit_transaction_statement(
                     &plugin,
                     &component_id,
-                    transaction.statements.as_deref(),
+                    statements.as_deref(),
                     &statement_digest,
                     &binds,
                 ) {
                     Ok(statement) => statement,
                     Err(error) => return Ok(Err(error)),
                 };
-                let state = Arc::clone(&transaction.transaction.state);
-                let destroyed = Arc::clone(&transaction.transaction.destroyed);
-                let row_limit = transaction.transaction.row_limit;
                 let connection = match take_conn(&state) {
                     Ok(connection) => {
                         StatementConnectionGuard::new(connection, Arc::clone(&destroyed))
@@ -1201,19 +1227,21 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
     }
 
     async fn commit(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        statement_txn_finish(self, rep, "COMMIT").await
+        statement_txn_finish(accessor, rep, "COMMIT").await
     }
 
     async fn rollback(
-        &mut self,
+        accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        statement_txn_finish(self, rep, "ROLLBACK").await
+        statement_txn_finish(accessor, rep, "ROLLBACK").await
     }
+}
 
+impl statement_wit::HostTransaction for ActiveCtx<'_> {
     async fn drop(
         &mut self,
         rep: Resource<PgStatementTransaction>,
@@ -1249,16 +1277,24 @@ pub(super) fn admit_transaction_statement(
     Ok(statement)
 }
 
-async fn statement_txn_finish(
-    ctx: &mut ActiveCtx<'_>,
+async fn statement_txn_finish<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
     rep: Resource<PgStatementTransaction>,
     verb: &'static str,
 ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    let (plugin, component_id, trace, state, destroyed) = accessor.with(|mut access| {
+        let ctx = access.get();
+        let transaction = ctx.table.get(&rep)?;
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin_of(&ctx)?,
+            ctx.component_id.to_string(),
+            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            Arc::clone(&transaction.transaction.state),
+            Arc::clone(&transaction.transaction.destroyed),
+        ))
+    })?;
     trace
         .run(async move {
-            let plugin = plugin_of(ctx)?;
-            let component_id = ctx.component_id.to_string();
             let project = plugin.project_for(&component_id);
             let operation = match verb {
                 "COMMIT" => "statement.txn.commit",
@@ -1266,9 +1302,6 @@ async fn statement_txn_finish(
                 _ => unreachable!("transaction finish verb is fixed"),
             };
             let span = db_span_for_project(&plugin, &component_id, &project, operation);
-            let transaction = ctx.table.get(&rep)?;
-            let state = Arc::clone(&transaction.transaction.state);
-            let destroyed = Arc::clone(&transaction.transaction.destroyed);
             let started = std::time::Instant::now();
             let result = finish_statement_txn(&state, &destroyed, verb)
                 .instrument(span)

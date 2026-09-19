@@ -84,7 +84,7 @@ pub static RECORD_RECEIPT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
             },
         ],
         kind: "command",
-        transaction: Some("explicit_per_input"),
+        transaction: None,
         direct: true,
         replay: submission::Replay::Unknown,
     },

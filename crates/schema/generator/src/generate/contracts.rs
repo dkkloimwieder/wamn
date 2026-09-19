@@ -6,6 +6,7 @@ use super::rust::{
     static_sql_native_bind_fixtures, static_sql_rows, wamn_api,
 };
 use super::validation::resolve_claim;
+use super::wit::emit_custom_operation_wit;
 use super::{
     AccessOperationErrorLiteral, BTreeMap, BTreeSet, CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN,
     CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT, CREATE_STATEMENT, CREATE_STATEMENTS,
@@ -370,6 +371,7 @@ fn emit_custom_operation_contracts(
         &format!("{root}.errors.json"),
         &custom_operation_error_contract(catalog, operation),
     )?;
+    emit_custom_operation_wit(files, manifest, operation_name, operation)?;
     // One artifact per declared shape, named for the shape it holds. A runner
     // reads the shape off the file name and never guesses which cases apply.
     match &operation.idempotent_by {

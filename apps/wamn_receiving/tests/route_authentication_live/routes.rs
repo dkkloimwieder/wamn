@@ -312,11 +312,19 @@ async fn receiving_release_journey(
         "cold nested Receiving invocation did not share its budget with flow-http: {memory:?}"
     );
     anyhow::ensure!(
-        value["purchase_order_status"] == "complete"
+        value.as_object().is_some_and(|value| value.len() == 4)
+            && value["receipt_id"].as_str().is_some_and(|id| {
+                id.len() == 36
+                    && id.bytes().all(|byte| {
+                        byte == b'-' || (byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                    })
+            })
+            && value["purchase_order_id"] == "00000000-0000-0000-0000-000000000302"
+            && value["purchase_order_status"] == "complete"
             && value["row_version"] == "2"
-            && value["acme_inspection_required"] == false
-            && value["acme_quality_status"] == "not_required",
-        "cold Acme receiving.record_receipt returned the wrong result: {value}"
+            && value.get("acme_inspection_required").is_none()
+            && value.get("acme_quality_status").is_none(),
+        "cold Acme receiving.record_receipt did not return the exact base result: {value}"
     );
 
     let (_, traceparent) = journey_trace(15);
@@ -620,7 +628,7 @@ async fn receiving_release_journey(
             && value["row_version"] == "2"
             && value["acme_inspection_required"] == false
             && value["acme_quality_status"] == "not_required",
-        "Acme purchase_order.get returned the wrong row: {value}"
+        "the separate Acme purchase_order.get returned the wrong receipt details: {value}"
     );
     expected_direct_traces.push((
         trace_id,

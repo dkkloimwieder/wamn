@@ -37,10 +37,11 @@ wit_bindgen::generate!({
         "../../wamn_receiving/data/wit/deps/wamn-postgres",
         "wit/deps/client-acme-receiving-purchase-order",
         "wit/deps/client-acme-receiving-quality",
-        "wit/deps/client-acme-receiving-receiving",
-        "wit/deps/wamn-receiving-receiving",
+        "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
+        "../generated/wit/deps/client-acme-receiving-receiving",
     ],
     generate_all,
+    async: true,
 });
 
 struct Component;
@@ -52,25 +53,24 @@ fn emission(payload: String) -> Emission {
     }
 }
 
-fn invoke_public<F>(operation: F) -> Result<Emission, NodeError>
+async fn invoke_public<F>(operation: F) -> Result<Emission, NodeError>
 where
     F: Future<Output = Result<String, InvocationError>>,
 {
-    futures_executor::block_on(operation)
-        .map(emission)
-        .map_err(|error| {
-            NodeError::InvalidInput(ErrorDetail {
-                message: error.context().to_owned(),
-                code: Some(error.code().to_owned()),
-            })
+    operation.await.map(emission).map_err(|error| {
+        NodeError::InvalidInput(ErrorDetail {
+            message: error.context().to_owned(),
+            code: Some(error.code().to_owned()),
         })
+    })
 }
 
-fn invoke_private<F>(operation: F) -> Result<Emission, NodeError>
+async fn invoke_private<F>(operation: F) -> Result<Emission, NodeError>
 where
     F: Future<Output = Result<String, AccessError>>,
 {
-    futures_executor::block_on(operation)
+    operation
+        .await
         .map(emission)
         .map_err(|error| private_node_error(&error))
 }
@@ -103,60 +103,74 @@ fn private_node_error(error: &AccessError) -> NodeError {
 }
 
 impl PurchaseOrderGet for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
         invoke_public(wamn_client_acme_receiving_data_access::operation::purchase_order_get(&input))
+            .await
     }
 }
 
 impl PurchaseOrderUpdate for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
         invoke_public(
             wamn_client_acme_receiving_data_access::operation::purchase_order_update(&input),
         )
+        .await
     }
 }
 
 impl LoadPurchaseOrderDetail for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
         invoke_public(
             wamn_client_acme_receiving_data_access::operation::quality_load_purchase_order_detail(
                 &input,
             ),
         )
+        .await
     }
 }
 
 impl ApproveInspection for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
         invoke_public(
             wamn_client_acme_receiving_data_access::operation::quality_approve_inspection(&input),
         )
+        .await
     }
 }
 
 impl CreateInspection for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
         invoke_private(
             wamn_client_acme_receiving_data_access::operation::quality_create_inspection(&input),
         )
+        .await
     }
 }
 
+use wamn_receiving::receiving::record_receipt as contract;
+
+mod receipt_codec {
+    use super::contract;
+    include!("../../generated/wit/receiving_record_receipt_codec.rs");
+}
+
 impl RecordReceipt for Component {
-    fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let mut base = wamn_receiving::receiving::record_receipt::run(&context, &input)?;
-        base.payload = futures_executor::block_on(
-            wamn_client_acme_receiving_data_access::operation::receiving_record_receipt_result(
-                &base.payload,
-            ),
-        )
-        .map_err(|error| {
-            NodeError::Terminal(ErrorDetail {
+    async fn run(
+        context: NodeContext,
+        input: Vec<contract::RecordReceiptItem>,
+    ) -> Result<Vec<contract::RecordReceiptOutcome>, NodeError> {
+        contract::run(context, input).await
+    }
+
+    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        let input = receipt_codec::decode(&input).map_err(|error| {
+            NodeError::InvalidInput(ErrorDetail {
                 message: error.context().to_owned(),
-                code: Some("internal_error".to_owned()),
+                code: Some("invalid_input".to_owned()),
             })
         })?;
-        Ok(base)
+        let output = <Self as RecordReceipt>::run(context, input).await?;
+        Ok(emission(receipt_codec::encode(&output)))
     }
 }
 

@@ -23,7 +23,7 @@ mod node_contract {
 
 use node_contract::wamn::node::types as node_types;
 
-/// The async node contract; the one export an async lift is admitted on.
+/// The async contract for generic nodes. Application operations also support async.
 pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.1.0";
 const HANDLER_SIGNATURE: &str =
     "wamn:node/handler@0.1.0::run(node-context, string) -> result<emission, node-error>";
@@ -130,14 +130,61 @@ pub fn validate_component_admission(
         let ComponentItem::ComponentFunc(run) = run.ty else {
             anyhow::bail!("interface member run is not a component function");
         };
-        // The async lift belongs to the async-typed contract only
-        // (wamn:node/async-handler, RULED wamn-362o.46): the component model
-        // permits the `async` canonical option solely on an `async func`
-        // type, and a sync node must not present the async ABI to a router
-        // that pools it as a pure function. The type check below is the same
-        // for both contracts.
-        if run.async_() && export != ASYNC_HANDLER_OPERATION {
-            anyhow::bail!("run uses the async ABI");
+        if let Some(adapter) = instance.get_export(raw, "run-json") {
+            let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
+                anyhow::bail!("run-json is not a component function");
+            };
+            adapter.typecheck::<
+                (&node_types::NodeContext, &str),
+                (Result<node_types::Emission, node_types::NodeError>,),
+            >(&component_type.instance_type())?;
+            anyhow::ensure!(
+                run.async_() && adapter.async_(),
+                "typed operations and their JSON adapters must be async"
+            );
+            let params: Vec<_> = run.params().collect();
+            let adapter_params: Vec<_> = adapter.params().collect();
+            anyhow::ensure!(
+                params.len() == 2 && params[0].1 == adapter_params[0].1,
+                "typed operation must accept node-context and one input"
+            );
+            anyhow::ensure!(
+                matches!(
+                    params[1].1,
+                    wash_runtime::wasmtime::component::Type::List(_)
+                ),
+                "typed operation input must be a list of owned values"
+            );
+            anyhow::ensure!(
+                owned_operation_value(&params[1].1),
+                "typed operations cannot transfer store-owned resources"
+            );
+            let results: Vec<_> = run.results().collect();
+            let adapter_results: Vec<_> = adapter.results().collect();
+            let [wash_runtime::wasmtime::component::Type::Result(result)] = results.as_slice()
+            else {
+                anyhow::bail!("typed operation must return one result");
+            };
+            let wash_runtime::wasmtime::component::Type::Result(adapter_result) =
+                &adapter_results[0]
+            else {
+                unreachable!("the JSON adapter passed its result type check");
+            };
+            anyhow::ensure!(
+                result.err() == adapter_result.err(),
+                "typed operation must retain node-error"
+            );
+            anyhow::ensure!(
+                matches!(
+                    result.ok(),
+                    Some(wash_runtime::wasmtime::component::Type::List(_))
+                ) && result.ok().as_ref().is_some_and(owned_operation_value),
+                "typed operation must return a list of owned outcomes"
+            );
+            return Ok(());
+        }
+        if run.async_() && export == "wamn:node/handler@0.1.0" {
+            anyhow::bail!("run uses the async ABI without a typed contract and JSON adapter");
         }
         run.typecheck::<
             (&node_types::NodeContext, &str),
@@ -267,6 +314,31 @@ pub fn validate_component_admission(
             source,
         )
     })
+}
+
+// Nested calls use separate stores. Only owned values can cross that boundary.
+fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
+    use wash_runtime::wasmtime::component::Type;
+    match ty {
+        Type::Own(_) | Type::Borrow(_) | Type::Future(_) | Type::Stream(_) | Type::ErrorContext => {
+            false
+        }
+        Type::List(list) => owned_operation_value(&list.ty()),
+        Type::Map(map) => owned_operation_value(&map.key()) && owned_operation_value(&map.value()),
+        Type::Record(record) => record
+            .fields()
+            .all(|field| owned_operation_value(&field.ty)),
+        Type::Tuple(tuple) => tuple.types().all(|ty| owned_operation_value(&ty)),
+        Type::Variant(variant) => variant
+            .cases()
+            .all(|case| case.ty.as_ref().is_none_or(owned_operation_value)),
+        Type::Option(option) => owned_operation_value(&option.ty()),
+        Type::Result(result) => {
+            result.ok().as_ref().is_none_or(owned_operation_value)
+                && result.err().as_ref().is_none_or(owned_operation_value)
+        }
+        _ => true,
+    }
 }
 
 /// Whether an import is a cross-package APPLICATION call rather than a
@@ -704,6 +776,63 @@ mod tests {
         assert!(run.async_(), "the fixture's run is async-lifted");
         validate_component_admission(&engine, &bytes, request)
             .expect("an async-lifted run on the async handler contract is admitted");
+    }
+
+    #[test]
+    fn typed_async_operation_requires_owned_values() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        for (input, expected) in [
+            ("list<item>", true),
+            ("string", false),
+            ("list<own<handle>>", false),
+        ] {
+            let mut resolve = Resolve::new();
+            resolve
+                .push_str(
+                    "node.wit",
+                    include_str!("../../../execution/router/wit/package.wit"),
+                )
+                .unwrap();
+            let package = resolve.push_str("typed.wit", &format!(r"
+                package test:typed@1.0.0;
+                interface receipt {{
+                    use wamn:node/types@0.1.0.{{node-context, node-error, emission}};
+                    resource handle;
+                    record item {{ request-id: string, quantity: string }}
+                    run: async func(ctx: node-context, input: {input}) -> result<list<item>, node-error>;
+                    run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+                }}
+                world fixture {{ export receipt; }}
+            ")).unwrap();
+            let world = resolve.select_world(&[package], Some("fixture")).unwrap();
+            let mut module = dummy_module(
+                &resolve,
+                world,
+                ManglingAndAbi::Legacy(LiftLowerAbi::AsyncCallback),
+            );
+            embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+            let bytes = ComponentEncoder::default()
+                .module(&module)
+                .unwrap()
+                .validate(true)
+                .encode()
+                .unwrap();
+            let mut request = request();
+            let declaration = request.declaration.operations.remove(OPERATION).unwrap();
+            request
+                .declaration
+                .operations
+                .insert("test:typed/receipt@1.0.0".to_owned(), declaration);
+            let result = validate_component_admission(&engine, &bytes, request);
+            if expected {
+                result.expect("owned typed values are admitted");
+            } else {
+                assert_eq!(
+                    result.unwrap_err().kind(),
+                    ComponentAdmissionErrorKind::OperationSignatureMismatch
+                );
+            }
+        }
     }
 
     // No test builds the refused shape -- an async lift of the sync-typed

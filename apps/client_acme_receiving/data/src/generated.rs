@@ -31,14 +31,3 @@ pub(crate) mod quality_load_purchase_order_detail {
         "/../generated/wamn/quality_load_purchase_order_detail.rs"
     ));
 }
-
-#[expect(
-    dead_code,
-    reason = "the shared confirmation projection returns base fields while this BFF appends only its two overlay fields"
-)]
-pub(crate) mod receiving_record_receipt {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../generated/wamn/receiving_record_receipt.rs"
-    ));
-}

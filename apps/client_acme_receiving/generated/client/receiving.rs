@@ -7,18 +7,6 @@ use wamn_client::{ClientError, FieldDescriptor, RouteMetadata, WamnClient};
 /// Every field the `receiving` model projects.
 pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
     FieldDescriptor {
-        path: "acme_inspection_required",
-        type_name: "boolean",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "acme_quality_status",
-        type_name: "text",
-        nullable: false,
-        values: &["approved", "not_required", "pending"],
-    },
-    FieldDescriptor {
         path: "purchase_order_id",
         type_name: "uuid",
         nullable: false,
@@ -80,10 +68,6 @@ pub struct ReceivingRecordReceiptRequestValueLine {
 /// Result of `client-acme-receiving:receiving/record-receipt@3.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingRecordReceiptResult {
-    /// `boolean`
-    pub acme_inspection_required: bool,
-    /// `text`
-    pub acme_quality_status: String,
     /// `uuid`
     pub purchase_order_id: uuid::Uuid,
     /// `text`
@@ -148,18 +132,6 @@ pub const RECEIVING_RECORD_RECEIPT_INPUT: &[FieldDescriptor] = &[
 
 /// Result descriptors for `client-acme-receiving:receiving/record-receipt@3.0.0`.
 pub const RECEIVING_RECORD_RECEIPT_RESULT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "acme_inspection_required",
-        type_name: "boolean",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "acme_quality_status",
-        type_name: "text",
-        nullable: false,
-        values: &["approved", "not_required", "pending"],
-    },
     FieldDescriptor {
         path: "purchase_order_id",
         type_name: "uuid",
@@ -312,30 +284,6 @@ pub const RECEIVING_RECORD_RECEIPT_INPUT_SCHEMA: &[wamn_client::descriptor::Fiel
 ];
 
 pub const RECEIVING_RECORD_RECEIPT_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "acme_inspection_required",
-            type_name: "boolean",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "acme_quality_status",
-            type_name: "text",
-            nullable: false,
-            values: &["approved", "not_required", "pending"],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "purchase_order_id",

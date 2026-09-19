@@ -20,10 +20,17 @@ Package operations version together even when their implementations occupy separ
 A component declaration records its operations, ports, effects, static SQL, and connection requirements.
 Admission derives effects from the actual imports and compares the declared operation facts.
 The component's complete admitted facts remain separate from its compiled bytes.
-Synchronous nodes export `wamn:node/handler`.
-Nodes that await asynchronous capabilities export `wamn:node/async-handler@0.1.0` with an asynchronous lift.
+Synchronous palette nodes export `wamn:node/handler`.
+Asynchronous palette nodes export `wamn:node/async-handler@0.1.0`.
+Application operations use their package interfaces and can await asynchronous capabilities.
 The P3 HTTP shell separately exports `wasi:http/handler@0.3.0`.
 The [capability rules](capabilities.md) govern imported authority, and [naming](naming.md) defines exported operation tokens.
+
+The receipt operation uses typed WIT calls between Acme and Receiving.
+The application model generates its WIT contract, Rust bindings, and JSON conversion code.
+The generated `run-json` adapter serves HTTP and dynamic routing, while nested receipt calls use the typed `run` function.
+Native dispatch carries owned values between stores and retains the caller's authority and deadline.
+Admission refuses resource handles in this operation boundary because those handles belong to one store.
 
 Application operation dependencies resolve to exact admitted providers.
 Every interface imported by the admitted closure has one provider, including its interface version.

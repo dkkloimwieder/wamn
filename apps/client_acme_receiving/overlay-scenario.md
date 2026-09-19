@@ -34,13 +34,15 @@ The [attachments](publication/attachments.json) expose five authenticated POST r
 | `/acme/quality/load_purchase_order_detail` | `quality.load_purchase_order_detail` |
 | `/acme/quality/approve_inspection` | `quality.approve_inspection` |
 
-The Acme receipt operation reads client inspection state before calling the declared base operation.
+The Acme receipt operation awaits the declared base operation through a generated typed WIT interface.
+It returns the base receipt result unchanged and performs no additional SQL.
 The nested call retains the same caller and enforces the callee permission.
 The effective release resolves `base_receiving` to one exact implementation.
 The overlay's compiled requirement remains separate from that selected implementation.
 
-This composition supports screen preparation and checks before the base call.
-It does not guarantee an inspection condition at the base transaction's commit point.
+Clients read inspection details separately through the existing purchase-order query.
+A failed detail read does not change a successful receipt result or authorize reposting.
+This composition does not enforce an inspection condition at the base transaction's commit point.
 Atomic client extensions need an explicit transaction contract that the base does not currently provide.
 
 The detail projection combines declared base and client fields for the screen.

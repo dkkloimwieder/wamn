@@ -6,13 +6,12 @@ use serde_json::Value;
 use wamn_postgres_statements::{Connection, Uuid as WamnUuid};
 
 use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
-use crate::record_receipt::{RecordReceiptError, RecordReceiptErrorKind};
 use crate::{
     generated::wamn::{
         location_list as location_sql, receiving_load_purchase_order_history as history_sql,
         receiving_load_receipt_screen as screen_sql,
     },
-    purchase_order, receipt, record_receipt,
+    purchase_order, receipt,
 };
 
 const MAX_ENVELOPE_ITEMS: usize = 100;
@@ -284,57 +283,6 @@ impl From<Nullable<Box<str>>> for purchase_order::SupplierIdUpdate {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RecordReceiptInput {
-    value: RecordReceiptValue,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RecordReceiptValue {
-    idempotency_key: Box<str>,
-    purchase_order_id: Box<str>,
-    receipt_reference: Box<str>,
-    occurred_at: Box<str>,
-    line: Box<[RecordReceiptLine]>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RecordReceiptLine {
-    purchase_order_line_id: Box<str>,
-    quantity: Box<str>,
-    location_id: Box<str>,
-}
-
-fn record_receipt_input(
-    request_id: Box<str>,
-    value: RecordReceiptInput,
-) -> record_receipt::RecordReceiptInput {
-    record_receipt::RecordReceiptInput {
-        request_id,
-        value: record_receipt::RecordReceiptValue {
-            idempotency_key: value.value.idempotency_key,
-            purchase_order_id: value.value.purchase_order_id,
-            receipt_reference: value.value.receipt_reference,
-            occurred_at: value.value.occurred_at,
-            line: value
-                .value
-                .line
-                .into_vec()
-                .into_iter()
-                .map(|line| record_receipt::RecordReceiptLine {
-                    purchase_order_line_id: line.purchase_order_line_id,
-                    quantity: line.quantity,
-                    location_id: line.location_id,
-                })
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-        },
-    }
-}
-
 /// Parse any accepted int64 spelling and re-spell it as the canonical decimal.
 ///
 /// Numerics stay strict on scale, because scale is value in PostgreSQL, where
@@ -367,7 +315,6 @@ struct OperationError {
 #[serde(untagged)]
 enum ErrorDetail {
     InvalidInput(InvalidInputDetail),
-    Field(FieldDetail),
     FieldId(FieldIdDetail),
     Concurrency(ConcurrencyDetail),
     Constraint(ConstraintDetail),
@@ -384,11 +331,6 @@ struct InvalidInputDetail {
     maximum: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     observed: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-struct FieldDetail {
-    field: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -598,25 +540,6 @@ fn receipt_page(page: receipt::Page) -> PageValue<ReceiptValue> {
             .collect::<Vec<_>>()
             .into_boxed_slice(),
         next_cursor: page.next_cursor,
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct RecordReceiptResultValue {
-    receipt_id: Box<str>,
-    purchase_order_id: Box<str>,
-    purchase_order_status: &'static str,
-    row_version: Box<str>,
-}
-
-impl From<record_receipt::RecordReceiptResult> for RecordReceiptResultValue {
-    fn from(result: record_receipt::RecordReceiptResult) -> Self {
-        Self {
-            receipt_id: result.receipt_id,
-            purchase_order_id: result.purchase_order_id,
-            purchase_order_status: result.purchase_order_status.as_str(),
-            row_version: result.row_version.to_string().into_boxed_str(),
-        }
     }
 }
 
@@ -916,65 +839,6 @@ pub async fn receiving_load_purchase_order_history(input: &str) -> Result<String
     Ok(serialized(&output))
 }
 
-fn record_receipt_error(error: &RecordReceiptError) -> OperationError {
-    let empty = || ErrorDetail::Empty(EmptyDetail {});
-    let internal = || OperationError {
-        code: "internal_error",
-        detail: empty(),
-    };
-    let detail = match error.kind() {
-        RecordReceiptErrorKind::InvalidInput => {
-            let Some(field) = error.field() else {
-                return internal();
-            };
-            ErrorDetail::InvalidInput(InvalidInputDetail {
-                field,
-                minimum: error.minimum().and_then(|value| i64::try_from(value).ok()),
-                maximum: error.maximum().and_then(|value| i64::try_from(value).ok()),
-                observed: error.observed().and_then(|value| i64::try_from(value).ok()),
-            })
-        }
-        RecordReceiptErrorKind::PurchaseOrderNotFound
-        | RecordReceiptErrorKind::PurchaseOrderNotOpen
-        | RecordReceiptErrorKind::IdempotencyConflict => {
-            let Some(field) = error.field() else {
-                return internal();
-            };
-            ErrorDetail::Field(FieldDetail { field })
-        }
-        RecordReceiptErrorKind::PurchaseOrderLineNotFound
-        | RecordReceiptErrorKind::PurchaseOrderLineMismatch
-        | RecordReceiptErrorKind::LocationNotFound
-        | RecordReceiptErrorKind::QuantityExceedsRemaining => {
-            let (Some(field), Some(id)) = (error.field(), error.id()) else {
-                return internal();
-            };
-            ErrorDetail::FieldId(FieldIdDetail {
-                field,
-                id: id.into(),
-            })
-        }
-        RecordReceiptErrorKind::ReceiptReferenceConflict => {
-            let Some(constraint) = error.constraint() else {
-                return internal();
-            };
-            ErrorDetail::Constraint(ConstraintDetail {
-                constraint: constraint.into(),
-            })
-        }
-        RecordReceiptErrorKind::PermissionDenied => ErrorDetail::Permission(PermissionDetail {
-            operation: "receiving.record_receipt",
-        }),
-        RecordReceiptErrorKind::Retry
-        | RecordReceiptErrorKind::Timeout
-        | RecordReceiptErrorKind::InternalError => empty(),
-    };
-    OperationError {
-        code: error.kind().literal(),
-        detail,
-    }
-}
-
 fn refused<T>(request_id: Box<str>, error: OperationError) -> ItemResult<T> {
     ItemResult::Refused { request_id, error }
 }
@@ -1137,46 +1001,6 @@ pub async fn receipt_query(input: &str) -> Result<String, InvocationError> {
                 item.request_id,
                 access_error(&error, "receipt.query", None, None),
             ),
-        });
-    }
-    Ok(serialized(&output))
-}
-
-/// Execute only `receiving.record_receipt`.
-pub async fn receiving_record_receipt(input: &str) -> Result<String, InvocationError> {
-    let items = prepare_envelope(input)?;
-    let mut connection = Connection::new();
-    let mut output: Vec<ItemResult<RecordReceiptResultValue>> = Vec::with_capacity(items.len());
-    for item in items.into_vec() {
-        let parsed = match parse_item::<RecordReceiptInput>(&item) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                output.push(refused(item.request_id, error));
-                continue;
-            }
-        };
-        let command = [record_receipt_input(item.request_id.clone(), parsed)];
-        let result = record_receipt::record_receipt(&mut connection, &command).await;
-        let result = match result {
-            Ok(outcome) => outcome
-                .into_vec()
-                .pop()
-                .expect("one command yields one correlated result"),
-            Err(error) => {
-                output.push(refused(item.request_id, record_receipt_error(&error)));
-                continue;
-            }
-        };
-        output.push(match result {
-            record_receipt::RecordReceiptItemOutcome::Succeeded { request_id, value } => {
-                ItemResult::Succeeded {
-                    request_id,
-                    value: value.into(),
-                }
-            }
-            record_receipt::RecordReceiptItemOutcome::Refused { request_id, error } => {
-                refused(request_id, record_receipt_error(&error))
-            }
         });
     }
     Ok(serialized(&output))

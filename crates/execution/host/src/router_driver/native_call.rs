@@ -12,7 +12,7 @@ use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::invocation_trace::InvocationTrace;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
-use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc};
+use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc, Val};
 
 use super::native_policy::InvocationScope;
 use super::native_workload::NativeApplication;
@@ -28,11 +28,46 @@ pub(super) type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>
 pub(super) struct NativeInvocation {
     pub(super) operation: String,
     pub(super) context: node_types::NodeContext,
-    pub(super) input: String,
+    pub(super) input: NativeInput,
     pub(super) deadline: Instant,
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,
     pub(super) application: Arc<NativeApplication>,
+}
+
+/// JSON exists only at dynamic routing. Nested known calls retain WIT values.
+#[derive(Debug)]
+pub(super) enum NativeInput {
+    Json(String),
+    Typed(Val),
+}
+
+impl From<String> for NativeInput {
+    fn from(value: String) -> Self {
+        Self::Json(value)
+    }
+}
+
+impl From<&str> for NativeInput {
+    fn from(value: &str) -> Self {
+        Self::Json(value.to_owned())
+    }
+}
+
+pub(super) enum NativeOutcome {
+    Json(Result<node_types::Emission, node_types::NodeError>),
+    Typed(Val),
+}
+
+impl NativeOutcome {
+    pub(super) fn into_json(
+        self,
+    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+        match self {
+            Self::Json(value) => Ok(value),
+            Self::Typed(_) => anyhow::bail!("typed operation returned to a JSON-only caller"),
+        }
+    }
 }
 
 impl fmt::Debug for NativeInvocation {
@@ -47,7 +82,7 @@ impl fmt::Debug for NativeInvocation {
 
 struct NativeCall {
     request: NativeInvocation,
-    reply: oneshot::Sender<Result<node_types::Emission, node_types::NodeError>>,
+    reply: oneshot::Sender<NativeOutcome>,
     failure: NativeCallFailure,
     trace: InvocationTrace,
     retired_after_reply: Arc<AtomicBool>,
@@ -136,49 +171,66 @@ impl GuestCall for NativeCall {
                     Arc::clone(&failure),
                 )
                 .await?;
-            let run: TypedFunc<
-                (node_types::NodeContext, String),
-                (Result<node_types::Emission, node_types::NodeError>,),
-            > = accessor.with(|mut access| {
-                let handler = instance
-                    .get_export_index(&mut access, None, &request.operation)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "component has no exported operation {:?}",
-                            request.operation
+            let outcome =
+                match request.input {
+                    NativeInput::Json(input) => {
+                        let run: TypedFunc<
+                            (node_types::NodeContext, String),
+                            (Result<node_types::Emission, node_types::NodeError>,),
+                        > = accessor.with(|mut access| {
+                            let handler = instance
+                                .get_export_index(&mut access, None, &request.operation)
+                                .context("component has no admitted operation export")?;
+                            // Generated adapters own JSON at the dynamic routing boundary.
+                            let run = instance
+                                .get_export_index(&mut access, Some(&handler), "run-json")
+                                .or_else(|| {
+                                    instance.get_export_index(&mut access, Some(&handler), "run")
+                                })
+                                .context("operation has no dynamic entrypoint")?;
+                            instance
+                                .get_typed_func(&mut access, run)
+                                .map_err(anyhow::Error::from)
+                        })?;
+                        let (outcome,) = tokio::select! {
+                        biased;
+                        () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
+                        result = run.call_concurrent(accessor, (request.context, input)) => result,
+                    }.map_err(anyhow::Error::from).context("dynamic operation trapped")?;
+                        NativeOutcome::Json(outcome)
+                    }
+                    NativeInput::Typed(input) => {
+                        let run = accessor.with(|mut access| {
+                            let handler = instance
+                                .get_export_index(&mut access, None, &request.operation)
+                                .context("component has no admitted operation export")?;
+                            let run = instance
+                                .get_export_index(&mut access, Some(&handler), "run")
+                                .context("operation has no typed entrypoint")?;
+                            instance
+                                .get_func(&mut access, run)
+                                .context("typed entrypoint is not a function")
+                        })?;
+                        let arguments = [context_value(request.context), input];
+                        let mut results = [Val::Bool(false)];
+                        tokio::select! {
+                        biased;
+                        () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
+                        result = run.call_concurrent(accessor, &arguments, &mut results) => result,
+                    }.map_err(anyhow::Error::from).context("typed operation trapped")?;
+                        NativeOutcome::Typed(
+                            results
+                                .into_iter()
+                                .next()
+                                .expect("one typed operation result"),
                         )
-                    })?;
-                let run = instance
-                    .get_export_index(&mut access, Some(&handler), "run")
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "operation {:?} has no handler.run export",
-                            request.operation
-                        )
-                    })?;
-                instance.get_typed_func(&mut access, run).map_err(|error| {
-                    anyhow::anyhow!(
-                        "operation {:?} handler.run has wrong type: {error}",
-                        request.operation
-                    )
-                })
-            })?;
-            anyhow::ensure!(
-                Instant::now() < request.deadline,
-                "native-node-deadline-exceeded"
-            );
-            // call_concurrent owns its parameters and performs post-return.
-            // The unmoved application field stays owned by this call future
-            // while native abandonment stops a cancelled caller's guest.
-            let result = tokio::select! {
-                biased;
-                () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
-                result = run.call_concurrent(accessor, (request.context, request.input)) => result,
-            };
-            let (outcome,) = result.map_err(anyhow::Error::from).with_context(|| {
-                format!("operation {:?} handler.run trapped", request.operation)
-            })?;
-            let refused = outcome.is_err().then_some("handler");
+                    }
+                };
+            let refused = match &outcome {
+                NativeOutcome::Json(value) => value.is_err(),
+                NativeOutcome::Typed(value) => matches!(value, Val::Result(Err(_))),
+            }
+            .then_some("handler");
             reply
                 .send(outcome)
                 .map_err(|_| anyhow::anyhow!("native-node-response-abandoned"))?;
@@ -237,10 +289,10 @@ pub(super) async fn prepare_native(
 }
 
 /// Dispatch and receive a typed node result under the same enclosing deadline.
-pub(super) async fn invoke_native(
+pub(super) async fn invoke_owned(
     target: &DispatchTarget,
     request: NativeInvocation,
-) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+) -> anyhow::Result<NativeOutcome> {
     let deadline = request.deadline;
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
     let (reply, response) = oneshot::channel();
@@ -291,4 +343,83 @@ pub(super) async fn invoke_native(
     })
     .await
     .context("native node enclosing deadline elapsed")?
+}
+
+/// Invoke the JSON adapter at an HTTP or dynamic routing boundary.
+pub(super) async fn invoke_native(
+    target: &DispatchTarget,
+    request: NativeInvocation,
+) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+    invoke_owned(target, request).await?.into_json()
+}
+
+fn context_value(context: node_types::NodeContext) -> Val {
+    fn optional_string(value: Option<String>) -> Val {
+        Val::Option(value.map(|value| Box::new(Val::String(value))))
+    }
+    Val::Record(vec![
+        ("wiring-id".into(), Val::String(context.wiring_id)),
+        ("wiring-version".into(), Val::U32(context.wiring_version)),
+        ("node-id".into(), Val::String(context.node_id)),
+        ("delivery-id".into(), Val::String(context.delivery_id)),
+        ("input-port".into(), optional_string(context.input_port)),
+        ("occurrence".into(), Val::U32(context.occurrence)),
+        ("traceparent".into(), optional_string(context.traceparent)),
+        ("tracestate".into(), optional_string(context.tracestate)),
+        (
+            "deadline-ms".into(),
+            Val::Option(context.deadline_ms.map(|value| Box::new(Val::U64(value)))),
+        ),
+        ("config".into(), Val::String(context.config)),
+    ])
+}
+
+/// Read the same context record that admission compares with the node contract.
+pub(super) fn typed_context(value: &Val) -> anyhow::Result<node_types::NodeContext> {
+    let Val::Record(fields) = value else {
+        anyhow::bail!("typed operation context is not a record");
+    };
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+            .with_context(|| format!("typed operation context lacks {name}"))
+    };
+    let string = |name: &str| match field(name)? {
+        Val::String(value) => Ok(value.clone()),
+        _ => anyhow::bail!("typed context {name} is not a string"),
+    };
+    let u32_field = |name: &str| match field(name)? {
+        Val::U32(value) => Ok(*value),
+        _ => anyhow::bail!("typed context {name} is not a u32"),
+    };
+    let optional_string = |name: &str| match field(name)? {
+        Val::Option(None) => Ok(None),
+        Val::Option(Some(value)) => match value.as_ref() {
+            Val::String(value) => Ok(Some(value.clone())),
+            _ => anyhow::bail!("typed context {name} is not an optional string"),
+        },
+        _ => anyhow::bail!("typed context {name} is not optional"),
+    };
+    let deadline_ms = match field("deadline-ms")? {
+        Val::Option(None) => None,
+        Val::Option(Some(value)) => match value.as_ref() {
+            Val::U64(value) => Some(*value),
+            _ => anyhow::bail!("typed context deadline is not a u64"),
+        },
+        _ => anyhow::bail!("typed context deadline is not optional"),
+    };
+    Ok(node_types::NodeContext {
+        wiring_id: string("wiring-id")?,
+        wiring_version: u32_field("wiring-version")?,
+        node_id: string("node-id")?,
+        delivery_id: string("delivery-id")?,
+        input_port: optional_string("input-port")?,
+        occurrence: u32_field("occurrence")?,
+        traceparent: optional_string("traceparent")?,
+        tracestate: optional_string("tracestate")?,
+        deadline_ms,
+        config: string("config")?,
+    })
 }

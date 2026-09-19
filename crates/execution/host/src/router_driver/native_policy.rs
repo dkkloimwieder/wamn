@@ -25,7 +25,9 @@ use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use super::native_call::{NativeCallFailure, NativeInvocation, invoke_native};
+use super::native_call::{
+    NativeCallFailure, NativeInput, NativeInvocation, NativeOutcome, invoke_owned, typed_context,
+};
 use super::native_workload::{NativeApplication, native_component_name};
 use super::{
     NestedOperationRefusal, NestedOperationRefusalKind, NodeAcquisition, OperationRefusal,
@@ -361,8 +363,8 @@ impl NativePolicy {
         owners: &BTreeSet<String>,
         dependency: &ComponentOperationDependency,
         mut context: node_types::NodeContext,
-        input: String,
-    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+        input: NativeInput,
+    ) -> anyhow::Result<NativeOutcome> {
         let bound = self
             .invocations
             .lock()
@@ -475,7 +477,7 @@ impl NativePolicy {
                 },
             );
         }
-        invoke_native(
+        invoke_owned(
             &dispatch,
             NativeInvocation {
                 operation: dependency.operation.clone(),
@@ -574,6 +576,78 @@ impl HostPlugin for NativePolicy {
         for (dependency, owners) in links.values() {
             let dependency = dependency.clone();
             let owners = Arc::new(owners.clone());
+            let component_type = component.component_type();
+            let import = component_type
+                .get_import(component.engine(), &dependency.operation)
+                .context("admitted dependency import is absent")?;
+            let wash_runtime::wasmtime::component::types::ComponentItem::ComponentInstance(
+                interface,
+            ) = import.ty
+            else {
+                anyhow::bail!("admitted dependency is not an interface");
+            };
+            let typed = interface
+                .get_export(component.engine(), "run-json")
+                .is_some();
+            if typed {
+                let mut dependency_linker = linker.instance(&dependency.operation)?;
+                dependency_linker.func_new_concurrent(
+                    "run",
+                    move |accessor, _ty, params, results| {
+                        let (trace, scope, policy) = accessor.with(|mut access| {
+                            let active = extract_active_ctx(access.get());
+                            (
+                                invocation_trace(&active),
+                                Arc::clone(&active.ctx.component_id),
+                                active.ctx.get_plugin::<NativePolicy>(NATIVE_POLICY_ID),
+                            )
+                        });
+                        let owners = Arc::clone(&owners);
+                        let dependency = dependency.clone();
+                        Box::pin(trace.run(async move {
+                            let [context, input] = params else {
+                                wash_runtime::wasmtime::bail!(
+                                    "typed operation requires context and input"
+                                );
+                            };
+                            let context = typed_context(context)
+                                .map_err(|error| policy.host_failure(&scope, error))?;
+                            let outcome = policy
+                                .invoke_nested(
+                                    &scope,
+                                    &owners,
+                                    &dependency,
+                                    context,
+                                    NativeInput::Typed(input.clone()),
+                                )
+                                .await
+                                .map_err(|error| policy.host_failure(&scope, error))?;
+                            let NativeOutcome::Typed(value) = outcome else {
+                                wash_runtime::wasmtime::bail!("typed operation returned JSON");
+                            };
+                            let [result] = results else {
+                                wash_runtime::wasmtime::bail!(
+                                    "typed operation requires one result"
+                                );
+                            };
+                            *result = value;
+                            Ok(())
+                        }))
+                    },
+                )?;
+                // This adapter belongs to dynamic entry, never to a known nested call.
+                dependency_linker.func_new_concurrent(
+                    "run-json",
+                    |_accessor, _ty, _params, _results| {
+                        Box::pin(async {
+                            wash_runtime::wasmtime::bail!(
+                                "nested application calls must use the typed operation"
+                            )
+                        })
+                    },
+                )?;
+                continue;
+            }
             linker.instance(&dependency.operation)?.func_wrap_async(
                 "run",
                 move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
@@ -586,8 +660,9 @@ impl HostPlugin for NativePolicy {
                     let dependency = dependency.clone();
                     Box::new(trace.run(async move {
                         let result = policy
-                            .invoke_nested(&scope, &owners, &dependency, context, input)
+                            .invoke_nested(&scope, &owners, &dependency, context, input.into())
                             .await
+                            .and_then(NativeOutcome::into_json)
                             .map_err(|error| policy.host_failure(&scope, error))?;
                         Ok((result,))
                     }))

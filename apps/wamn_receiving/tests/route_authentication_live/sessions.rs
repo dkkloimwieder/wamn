@@ -548,17 +548,16 @@ pub(super) async fn assert_nested_session(
     let traces = TraceHarness::install();
     let (engine, flow_http, routing, bridge, identity_task) =
         build_journey_runtime(&inputs, &credentials, release, Some(verifier.clone())).await?;
-    // The base replays its stored result; the overlay reads the current Acme fields.
-    // The PAT journey updated those fields after it first recorded this command.
+    // The base replays its stored result unchanged. Read current Acme fields separately.
     let expected_replay = project
         .query_one(
             "SELECT jsonb_build_object(\
            'receipt_id', command.receipt_id::text, \
            'purchase_order_id', command.purchase_order_id::text, \
            'purchase_order_status', command.purchase_order_status, \
-           'row_version', command.row_version::text, \
-           'acme_inspection_required', purchase.acme_inspection_required, \
-           'acme_quality_status', purchase.acme_quality_status), purchase.row_version \
+           'row_version', command.row_version::text), \
+           purchase.row_version, purchase.acme_inspection_required, \
+           purchase.acme_quality_status \
          FROM receiving.record_receipt_command AS command \
          JOIN receiving.purchase_order AS purchase ON purchase.id = command.purchase_order_id \
          WHERE command.idempotency_key = 'receipt-command-2' \
@@ -567,13 +566,15 @@ pub(super) async fn assert_nested_session(
         )
         .await?;
     let current_version: i64 = expected_replay.get(1);
+    let inspection_required: bool = expected_replay.get(2);
+    let quality_status: String = expected_replay.get(3);
     let expected_replay: Value = expected_replay.get(0);
     anyhow::ensure!(
         current_version == 3
             && expected_replay["purchase_order_status"] == "complete"
             && expected_replay["row_version"] == "2"
-            && expected_replay["acme_inspection_required"] == true
-            && expected_replay["acme_quality_status"] == "pending",
+            && inspection_required
+            && quality_status == "pending",
         "nested replay requires the completed PAT journey state"
     );
     let before = nested_receipt_state(project.as_ref()).await?;

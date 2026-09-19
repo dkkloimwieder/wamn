@@ -1,0 +1,114 @@
+package wamn-receiving:receiving@1.0.0;
+
+interface load-purchase-order-history {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface load-receipt-screen {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface record-receipt {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record record-receipt-line {
+    purchase-order-line-id: string,
+    quantity: string,
+    location-id: string,
+  }
+
+  record record-receipt-request {
+    idempotency-key: string,
+    purchase-order-id: string,
+    receipt-reference: string,
+    occurred-at: string,
+    line: list<record-receipt-line>,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<s64>,
+    maximum: option<s64>,
+    observed: option<s64>,
+  }
+
+  record location-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  record purchase-order-line-mismatch-detail {
+    field: string,
+    id: string,
+  }
+
+  record purchase-order-line-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record purchase-order-not-found-detail {
+    field: string,
+  }
+
+  record purchase-order-not-open-detail {
+    field: string,
+  }
+
+  record quantity-exceeds-remaining-detail {
+    field: string,
+    id: string,
+  }
+
+  record receipt-reference-conflict-detail {
+    constraint: string,
+  }
+
+  variant record-receipt-error {
+    invalid-input(invalid-input-detail),
+    purchase-order-not-found(purchase-order-not-found-detail),
+    purchase-order-not-open(purchase-order-not-open-detail),
+    purchase-order-line-not-found(purchase-order-line-not-found-detail),
+    purchase-order-line-mismatch(purchase-order-line-mismatch-detail),
+    location-not-found(location-not-found-detail),
+    quantity-exceeds-remaining(quantity-exceeds-remaining-detail),
+    receipt-reference-conflict(receipt-reference-conflict-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record record-receipt-item {
+    request-id: string,
+    input: result<record-receipt-request, record-receipt-error>,
+  }
+
+  record record-receipt-result {
+    receipt-id: string,
+    purchase-order-id: string,
+    purchase-order-status: string,
+    row-version: s64,
+  }
+
+  record record-receipt-outcome {
+    request-id: string,
+    outcome: result<record-receipt-result, record-receipt-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

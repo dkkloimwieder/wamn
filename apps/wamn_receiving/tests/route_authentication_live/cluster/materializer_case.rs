@@ -229,18 +229,36 @@ pub(super) async fn trigger(
         let receipt_id = receipt[0]["value"]["receipt_id"].as_str().context("the Receipt command returned its identity")?;
         ensure!(receipt.as_array().is_some_and(|items| items.len() == 1)
             && receipt[0]["request_id"] == "materializer-receipt"
+            && receipt[0]["value"].as_object().is_some_and(|value| value.len() == 4)
             && receipt[0]["value"]["purchase_order_id"] == "00000000-0000-0000-0000-000000000304"
             && receipt[0]["value"]["purchase_order_status"] == "complete"
             && receipt[0]["value"]["row_version"] == "3"
-            && receipt[0]["value"]["acme_inspection_required"] == true
-            && receipt[0]["value"]["acme_quality_status"] == "pending"
+            && receipt[0]["value"].get("acme_inspection_required").is_none()
+            && receipt[0]["value"].get("acme_quality_status").is_none()
             && receipt_id.len() == 36 && receipt_id.bytes().all(|byte| byte == b'-'
                 || (byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
-            "the materializer Receipt command must retain its expected state");
+            "the materializer Receipt command must return the exact base result");
+        let detail = http.post(format!("{endpoint}/acme/purchase_order/get"))
+            .header("Host", &cluster.inputs.route_host).bearer_auth(&token)
+            .json(&json!([{"request_id":"materializer-receipt-detail",
+                "id":"00000000-0000-0000-0000-000000000304"}]))
+            .send().await?;
+        ensure!(detail.status() == reqwest::StatusCode::OK,
+            "the materializer Receipt detail read must return HTTP 200");
+        let detail: Value = detail.json().await?;
+        fs::write(cluster.resources.evidence.join("materializer-receipt-detail.json"),
+            serde_json::to_vec_pretty(&detail)?)?;
+        ensure!(detail.as_array().is_some_and(|items| items.len() == 1)
+            && detail[0]["request_id"] == "materializer-receipt-detail"
+            && detail[0]["value"]["id"] == "00000000-0000-0000-0000-000000000304"
+            && detail[0]["value"]["row_version"] == "3"
+            && detail[0]["value"]["acme_inspection_required"] == true
+            && detail[0]["value"]["acme_quality_status"] == "pending",
+            "the separate materializer Receipt detail read must retain its expected state");
         Ok::<_, anyhow::Error>(MaterializerPhase {
             project_pg_url: route.database_url.clone(), nats_url: cluster.nats_url.clone(), receipt_id: receipt_id.to_owned(),
         })
-    }).await.context("the two materializer HTTP commands exceeded 90 seconds")?
+    }).await.context("the materializer HTTP commands exceeded 90 seconds")?
         .map(|phase| (phase, update_trace, receipt_trace))
 }
 

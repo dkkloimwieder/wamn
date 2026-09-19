@@ -6,13 +6,14 @@ description = "Package-grain Receiving operation component"
 license = "Apache-2.0"
 
 [dependencies]
-futures-executor = "0.3"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 wamn-receiving-data-access = { workspace = true }
+wamn-postgres-statements = { workspace = true }
 wit-bindgen = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
-test = false
 bench = false
 
 [lints]

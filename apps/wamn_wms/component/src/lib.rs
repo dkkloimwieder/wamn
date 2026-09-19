@@ -23,11 +23,12 @@ wit_bindgen::generate!({
 
 struct Component;
 
-fn invoke_operation<F>(operation: F) -> Result<Emission, NodeError>
+async fn invoke_operation<F>(operation: F) -> Result<Emission, NodeError>
 where
     F: Future<Output = Result<String, operation::InvocationError>>,
 {
-    futures_executor::block_on(operation)
+    operation
+        .await
         .map(|payload| Emission {
             payload,
             port: None,
@@ -41,44 +42,44 @@ where
 }
 
 impl InventoryAdjust for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(operation::inventory_adjust_operation(&input))
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(operation::inventory_adjust_operation(&input)).await
     }
 }
 
 impl InventoryAggregate for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(operation::inventory_aggregate_operation(&input))
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(operation::inventory_aggregate_operation(&input)).await
     }
 }
 
 impl InventoryMerge for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(operation::inventory_merge_operation(&input))
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(operation::inventory_merge_operation(&input)).await
     }
 }
 
 impl InventoryMove for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(operation::inventory_move_operation(&input))
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(operation::inventory_move_operation(&input)).await
     }
 }
 
 impl InventorySplit for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(operation::inventory_split_operation(&input))
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(operation::inventory_split_operation(&input)).await
     }
 }
 
 impl PalletGet for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(operation::pallet_get_operation(&input))
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(operation::pallet_get_operation(&input)).await
     }
 }
 
 impl PalletQuery for Component {
-    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        invoke_operation(operation::pallet_query_operation(&input))
+    async fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(operation::pallet_query_operation(&input)).await
     }
 }
 

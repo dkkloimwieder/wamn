@@ -103,7 +103,7 @@ sqlx-core = { version = "=0.9.0", default-features = false }
 # guests through feature unification. `apps/platform/no-std` deliberately stays at
 # 0.44: it is a separate workspace, so unification does not cross, and nothing
 # there imports an async contract.
-wit-bindgen = { version = "0.61", default-features = false, features = ["macros", "realloc"] }
+wit-bindgen = { version = "0.61", default-features = false, features = ["async", "macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
 wamn-event-reg = { path = "platform/events/registration", version = "0.1.0" }

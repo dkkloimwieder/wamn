@@ -58,6 +58,7 @@ Command source uses generated accessors and named queries instead of adding unre
 
 Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
+The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
 The host resolves those identities to admitted SQL bytes and the operation's allowed statements.
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
 SQLx metadata is compilation data, not the SQL or package contract.

@@ -94,7 +94,8 @@ dependencies = [
 name = "client-acme-receiving"
 version = "0.1.0"
 dependencies = [
- "futures-executor",
+ "serde",
+ "serde_json",
  "wamn-client-acme-receiving-data-access",
  "wit-bindgen",
 ]
@@ -743,7 +744,9 @@ dependencies = [
 name = "receiving"
 version = "0.1.0"
 dependencies = [
- "futures-executor",
+ "serde",
+ "serde_json",
+ "wamn-postgres-statements",
  "wamn-receiving-data-access",
  "wit-bindgen",
 ]
@@ -1423,7 +1426,6 @@ dependencies = [
 name = "wms"
 version = "0.1.0"
 dependencies = [
- "futures-executor",
  "wamn-wms-data-access",
  "wit-bindgen",
 ]

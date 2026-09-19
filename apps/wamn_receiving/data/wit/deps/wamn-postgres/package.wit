@@ -150,13 +150,13 @@ interface statements {
   }
 
   resource transaction {
-    run: func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
-    commit: func() -> result<_, statement-error>;
-    rollback: func() -> result<_, statement-error>;
+    run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+    commit: async func() -> result<_, statement-error>;
+    rollback: async func() -> result<_, statement-error>;
   }
 
-  run: func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
-  begin: func() -> result<transaction, statement-error>;
+  run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+  begin: async func() -> result<transaction, statement-error>;
 }
 
 /// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).

@@ -1,0 +1,9 @@
+package client-acme-receiving:receiving@3.0.0;
+
+interface record-receipt {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+  use wamn-receiving:receiving/record-receipt@1.0.0.{record-receipt-item, record-receipt-outcome};
+
+  run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

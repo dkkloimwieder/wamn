@@ -9,7 +9,6 @@ use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
 use crate::generated::{
     purchase_order as purchase_order_sql, quality_approve_inspection as approve_sql,
     quality_create_inspection as create_sql, quality_load_purchase_order_detail as detail_sql,
-    receiving_record_receipt as record_receipt_sql,
 };
 
 const MAX_ENVELOPE_ITEMS: usize = 100;
@@ -296,19 +295,6 @@ fn parse_uuid(value: &str, field: &'static str) -> Result<WamnUuid, AccessError>
     uuid::Uuid::parse_str(value)
         .map(|parsed| WamnUuid(parsed.hyphenated().to_string()))
         .map_err(|_| AccessError::invalid("input is not a UUID", field))
-}
-
-/// The base `record_receipt` result carries text this platform wrote, not a
-/// caller's representation choice, so a different spelling is a broken
-/// invariant rather than a spelling choice, and this one still refuses.
-fn base_result_uuid(value: &str) -> Result<WamnUuid, AccessError> {
-    uuid::Uuid::parse_str(value)
-        .ok()
-        .filter(|parsed| parsed.hyphenated().to_string() == value)
-        .map(|parsed| WamnUuid(parsed.hyphenated().to_string()))
-        .ok_or_else(|| {
-            AccessError::internal("base record_receipt returned a noncanonical purchase_order_id")
-        })
 }
 
 /// Parse any accepted int64 spelling and re-spell it as the canonical decimal.
@@ -790,117 +776,6 @@ pub async fn quality_create_inspection(input: &str) -> Result<String, AccessErro
     Ok(input.to_owned())
 }
 
-/// Project Acme fields onto a successful exact base `record_receipt` result.
-pub async fn receiving_record_receipt_result(input: &str) -> Result<String, AccessError> {
-    let Value::Array(mut items) = serde_json::from_str::<Value>(input)
-        .map_err(|_| AccessError::internal("base record_receipt emitted invalid JSON"))?
-    else {
-        return Err(AccessError::internal(
-            "base record_receipt result is not an array",
-        ));
-    };
-    let mut connection = Connection::new();
-    for item in &mut items {
-        let object = item.as_object_mut().ok_or_else(|| {
-            AccessError::internal("base record_receipt result item is not an object")
-        })?;
-        let request_id = object
-            .get("request_id")
-            .and_then(Value::as_str)
-            .filter(|request_id| !request_id.is_empty())
-            .ok_or_else(|| AccessError::internal("base record_receipt result omitted request_id"))?
-            .to_owned()
-            .into_boxed_str();
-        let has_value = matches!(object.get("value"), Some(Value::Object(_)));
-        let has_error = matches!(object.get("error"), Some(Value::Object(_)));
-        match (has_value, has_error) {
-            (false, true) => {}
-            (true, false) => {
-                let value = object
-                    .get_mut("value")
-                    .and_then(Value::as_object_mut)
-                    .expect("the outcome shape was checked above");
-                if value.contains_key("acme_inspection_required")
-                    || value.contains_key("acme_quality_status")
-                {
-                    return Err(AccessError::internal(
-                        "base record_receipt result unexpectedly owns Acme fields",
-                    ));
-                }
-                let purchase_order_id = value
-                    .get("purchase_order_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        AccessError::internal(
-                            "base record_receipt result omitted purchase_order_id",
-                        )
-                    })?
-                    .to_owned();
-                let result = match base_result_uuid(&purchase_order_id) {
-                    Ok(id) => {
-                        async {
-                            let mut transaction = connection.begin().await.map_err(|source| {
-                                AccessError::from_statement(
-                                    "begin Acme record_receipt confirmation",
-                                    &source,
-                                )
-                            })?;
-                            let row = record_receipt_sql::load_purchase_order_detail(
-                                &mut transaction,
-                                id,
-                            )
-                            .await
-                            .map_err(|source| {
-                                AccessError::from_statement(
-                                    "load Acme record_receipt confirmation",
-                                    &source,
-                                )
-                            })?;
-                            transaction.commit().await.map_err(|source| {
-                                AccessError::from_statement(
-                                    "commit Acme record_receipt confirmation",
-                                    &source,
-                                )
-                            })?;
-                            row.ok_or_else(|| {
-                                AccessError::internal(
-                                    "base record_receipt returned a missing purchase_order",
-                                )
-                            })
-                        }
-                        .await
-                    }
-                    Err(error) => Err(error),
-                };
-                match result {
-                    Ok(row) => {
-                        value.insert(
-                            "acme_inspection_required".to_owned(),
-                            Value::Bool(row.acme_inspection_required),
-                        );
-                        value.insert(
-                            "acme_quality_status".to_owned(),
-                            Value::String(row.acme_quality_status),
-                        );
-                    }
-                    Err(error) => {
-                        let error = access_error(&error, "receiving.record_receipt", None, None);
-                        *item = serde_json::to_value(refused::<Value>(request_id, error))
-                            .expect("closed record_receipt refusal serializes");
-                    }
-                }
-            }
-            _ => {
-                return Err(AccessError::internal(
-                    "base record_receipt result item has no exact outcome",
-                ));
-            }
-        }
-    }
-    serde_json::to_string(&items)
-        .map_err(|_| AccessError::internal("Acme record_receipt result did not serialize"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1052,25 +927,6 @@ mod tests {
     }
 
     #[test]
-    fn a_noncanonical_base_purchase_order_id_still_refuses_internally() {
-        let base = serde_json::json!([{
-            "request_id": "r1",
-            "value": {"purchase_order_id": ID.to_uppercase()}
-        }]);
-        let projected = futures_executor::block_on(receiving_record_receipt_result(
-            &serde_json::to_string(&base).unwrap(),
-        ))
-        .unwrap();
-        assert_eq!(
-            serde_json::from_str::<Value>(&projected).unwrap(),
-            serde_json::json!([{
-                "request_id": "r1",
-                "error": {"code": "internal_error", "detail": {}}
-            }])
-        );
-    }
-
-    #[test]
     fn private_event_requires_insert_and_receipt_id_without_caller_fields() {
         let parsed: CreateInspectionInput = serde_json::from_value(serde_json::json!({
             "event": "insert",
@@ -1119,18 +975,5 @@ mod tests {
                 "detail": {"expected_row_version": "4", "observed_row_version": "5"}
             })
         );
-    }
-
-    #[test]
-    fn record_receipt_projection_preserves_exact_base_refusals_without_sql() {
-        let base = serde_json::json!([{
-            "request_id": "r1",
-            "error": {"code": "invalid_input", "detail": {"field": "value"}}
-        }]);
-        let projected = futures_executor::block_on(receiving_record_receipt_result(
-            &serde_json::to_string(&base).unwrap(),
-        ))
-        .unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&projected).unwrap(), base);
     }
 }

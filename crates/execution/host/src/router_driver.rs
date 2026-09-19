@@ -1444,7 +1444,7 @@ impl RouterDriver {
                 NativeInvocation {
                     operation: call.operation.clone(),
                     context,
-                    input,
+                    input: input.into(),
                     deadline,
                     acquisition,
                     caller: request.caller.clone(),
