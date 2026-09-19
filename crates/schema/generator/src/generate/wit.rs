@@ -1,13 +1,361 @@
-//! Typed component contracts generated from custom-operation declarations.
+//! Typed component contracts generated from operation declarations.
 
 use std::fmt::Write as _;
 
 use super::{
-    BTreeMap, ColumnType, ContractFieldDeclaration, CustomOperationDeclaration, GenerateError,
-    GenerateErrorKind, OperationErrorDetailDeclaration, PackageManifest, insert_bytes,
+    AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
+    CrudAction, CustomOperationDeclaration, GenerateError, GenerateErrorKind, ModelDeclaration,
+    OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, Table, insert_bytes,
     rust_identifier, rust_type_identifier,
 };
 use crate::manifest::OperationErrorDetailKey;
+
+/// Emit the typed update boundary for a model that declares `update`.
+pub(super) fn emit_model_update_wit(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &PackageManifest,
+    model_name: &str,
+    model: &ModelDeclaration,
+    table: &Table,
+) -> Result<(), GenerateError> {
+    if model_name != "purchase_order" {
+        return Ok(());
+    }
+    let Some(operation) = model.operations.get(&CrudAction::Update) else {
+        return Ok(());
+    };
+    let package = manifest.package.id.replace('_', "-");
+    let directory = format!("generated/wit/deps/{package}-{}", wit_name(model_name));
+    insert_bytes(
+        files,
+        &format!("{directory}/package.wit"),
+        emit_model_package_wit(manifest, model_name, model, table, operation).into_bytes(),
+    )?;
+    insert_bytes(
+        files,
+        &format!("generated/wit/{}_update_codec.rs", model_name),
+        emit_update_codec(table, operation).into_bytes(),
+    )
+}
+
+fn emit_model_package_wit(
+    manifest: &PackageManifest,
+    model_name: &str,
+    model: &ModelDeclaration,
+    table: &Table,
+    operation: &OperationDeclaration,
+) -> String {
+    let package = manifest.package.id.replace('_', "-");
+    let mut source = format!(
+        "package {package}:{}@{};\n\n",
+        wit_name(model_name),
+        manifest.package.version
+    );
+    for action in model.operations.keys() {
+        if *action == CrudAction::Update {
+            emit_update_interface(&mut source, table, operation);
+        } else {
+            writeln!(
+                source,
+                "interface {} {{\n  use wamn:node/types@0.1.0.{{json, node-context, emission, node-error}};\n\n  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;\n}}\n",
+                action.as_str()
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
+    source
+}
+
+fn emit_update_interface(source: &mut String, table: &Table, operation: &OperationDeclaration) {
+    source.push_str("interface update {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n\n  record update-change {\n");
+    for field in &operation.writable_fields {
+        let column = model_column(table, field);
+        writeln!(
+            source,
+            "    {}: option<option<{}>>,",
+            wit_name(field),
+            wit_type(column.column_type())
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source.push_str("  }\n\n  record update-request {\n    id: string,\n    expected-row-version: s64,\n    change: update-change,\n  }\n\n");
+    for (literal, detail) in &operation.error_details {
+        if !detail.required.is_empty() || !detail.optional.is_empty() {
+            emit_error_detail(source, access_error_literal(*literal), detail);
+        }
+    }
+    source.push_str("  variant update-error {\n");
+    for (literal, detail) in &operation.error_details {
+        let literal = access_error_literal(*literal);
+        if detail.required.is_empty() && detail.optional.is_empty() {
+            writeln!(source, "    {},", wit_name(literal))
+                .expect("writing to a String cannot fail");
+        } else {
+            writeln!(
+                source,
+                "    {}({}-detail),",
+                wit_name(literal),
+                wit_name(literal)
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
+    source.push_str("  }\n\n  record update-item {\n    request-id: string,\n    input: result<update-request, invalid-input-detail>,\n  }\n\n  record update-result {\n");
+    for column in table.columns() {
+        let mut ty = wit_type(column.column_type());
+        if column.nullable() {
+            ty = format!("option<{ty}>");
+        }
+        writeln!(source, "    {}: {ty},", wit_name(column.name()))
+            .expect("writing to a String cannot fail");
+    }
+    source.push_str("  }\n\n  record update-outcome {\n    request-id: string,\n    outcome: result<update-result, update-error>,\n  }\n\n  run: async func(ctx: node-context, input: list<update-item>) -> result<list<update-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}\n");
+}
+
+fn model_column<'a>(table: &'a Table, field: &str) -> &'a Column {
+    table
+        .columns()
+        .iter()
+        .find(|column| column.name() == field)
+        .expect("validated model operation field exists")
+}
+
+fn access_error_literal(literal: AccessOperationErrorLiteral) -> &'static str {
+    match literal {
+        AccessOperationErrorLiteral::InvalidInput => "invalid_input",
+        AccessOperationErrorLiteral::NotFound => "not_found",
+        AccessOperationErrorLiteral::ConcurrencyConflict => "concurrency_conflict",
+        AccessOperationErrorLiteral::IdempotencyConflict => "idempotency_conflict",
+        AccessOperationErrorLiteral::UniqueViolation => "unique_violation",
+        AccessOperationErrorLiteral::ForeignKeyViolation => "foreign_key_violation",
+        AccessOperationErrorLiteral::CheckViolation => "check_violation",
+        AccessOperationErrorLiteral::ExclusionViolation => "exclusion_violation",
+        AccessOperationErrorLiteral::Retry => "retry",
+        AccessOperationErrorLiteral::Timeout => "timeout",
+        AccessOperationErrorLiteral::PermissionDenied => "permission_denied",
+        AccessOperationErrorLiteral::InternalError => "internal_error",
+    }
+}
+
+fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String {
+    let mut source = String::from(UPDATE_CODEC_HEADER);
+    for field in &operation.writable_fields {
+        let column = model_column(table, field);
+        writeln!(
+            source,
+            "    #[serde(default)]\n    {}: JsonChange<{}>,",
+            rust_identifier(field).expect("validated update field has a Rust name"),
+            codec_rust_type(column.column_type(), false)
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source.push_str(UPDATE_CODEC_DECODE_PREFIX);
+    for field in &operation.writable_fields {
+        let name = rust_identifier(field).expect("validated update field has a Rust name");
+        writeln!(
+            source,
+            "                        {name}: change(request.change.{name}),"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source.push_str(UPDATE_CODEC_VALIDATE_PREFIX);
+    source.push_str(UPDATE_CODEC_ENCODE_PREFIX);
+    for column in table.columns() {
+        let name = rust_identifier(column.name()).expect("validated result field has a Rust name");
+        if column.column_type() == ColumnType::Int64 {
+            if column.nullable() {
+                writeln!(
+                    source,
+                    "                    {:?}: value.{name}.map(|value| value.to_string()),",
+                    column.name()
+                )
+                .expect("writing to a String cannot fail");
+            } else {
+                writeln!(
+                    source,
+                    "                    {:?}: value.{name}.to_string(),",
+                    column.name()
+                )
+                .expect("writing to a String cannot fail");
+            }
+        } else {
+            writeln!(
+                source,
+                "                    {:?}: value.{name},",
+                column.name()
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
+    source.push_str(UPDATE_CODEC_ERROR_PREFIX);
+    for (literal, detail) in &operation.error_details {
+        let literal_name = access_error_literal(*literal);
+        let variant = rust_type_identifier(literal_name);
+        if detail.required.is_empty() && detail.optional.is_empty() {
+            writeln!(
+                source,
+                "        contract::UpdateError::{variant} => ({literal_name:?}, Map::new()),"
+            )
+            .expect("writing to a String cannot fail");
+        } else {
+            writeln!(
+                source,
+                "        contract::UpdateError::{variant}(value) => {{"
+            )
+            .expect("writing to a String cannot fail");
+            source.push_str("            let mut detail = Map::new();\n");
+            for key in &detail.required {
+                let name = detail_name(*key).replace('-', "_");
+                writeln!(
+                    source,
+                    "            detail.insert({name:?}.to_owned(), json!(value.{name}));"
+                )
+                .expect("writing to a String cannot fail");
+            }
+            for key in &detail.optional {
+                let name = detail_name(*key).replace('-', "_");
+                writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(detail_value)); }}")
+                    .expect("writing to a String cannot fail");
+            }
+            writeln!(source, "            ({literal_name:?}, detail)\n        }}")
+                .expect("writing to a String cannot fail");
+        }
+    }
+    source.push_str(UPDATE_CODEC_FOOTER);
+    source
+}
+
+const UPDATE_CODEC_HEADER: &str = r#"// @generated from wamn.json and schema IR; do not edit.
+
+use serde::Deserialize;
+use serde_json::{Map, Value, json};
+
+#[derive(Debug)]
+pub(crate) struct CodecError(&'static str);
+
+impl CodecError {
+    pub(crate) const fn context(&self) -> &'static str { self.0 }
+}
+
+impl std::fmt::Display for CodecError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl std::error::Error for CodecError {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonRequest {
+    id: String,
+    expected_row_version: String,
+    change: JsonUpdateChange,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonUpdateChange {
+"#;
+
+const UPDATE_CODEC_DECODE_PREFIX: &str = r#"}
+
+#[derive(Default)]
+enum JsonChange<T> {
+    #[default]
+    Absent,
+    Null,
+    Value(T),
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonChange<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<T>::deserialize(deserializer).map(|value| match value {
+            Some(value) => Self::Value(value),
+            None => Self::Null,
+        })
+    }
+}
+
+fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
+    match value {
+        JsonChange::Absent => None,
+        JsonChange::Null => Some(None),
+        JsonChange::Value(value) => Some(Some(value)),
+    }
+}
+
+pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
+    let Value::Array(values) = serde_json::from_str(input)
+        .map_err(|_| CodecError("operation input must be a JSON array"))?
+    else { return Err(CodecError("operation input must be a JSON array")); };
+    if !(1..=100).contains(&values.len()) {
+        return Err(CodecError("operation input item count must be 1..=100"));
+    }
+    values.into_iter().map(|value| {
+        let Value::Object(mut object) = value else {
+            return Err(CodecError("every operation item must be a JSON object"));
+        };
+        let Some(Value::String(request_id)) = object.remove("request_id") else {
+            return Err(CodecError("every operation item must carry a nonempty string request_id"));
+        };
+        if request_id.is_empty() {
+            return Err(CodecError("every operation item must carry a nonempty string request_id"));
+        }
+        let input = match serde_json::from_value::<JsonRequest>(Value::Object(object)) {
+            Ok(request) => match request.expected_row_version.parse::<i64>() {
+                Ok(expected_row_version) => {
+                    let request = contract::UpdateRequest {
+                        id: request.id,
+                        expected_row_version,
+                        change: contract::UpdateChange {
+"#;
+
+const UPDATE_CODEC_VALIDATE_PREFIX: &str = r#"                        },
+                    };
+                    Ok(request)
+                }
+                Err(_) => Err(invalid("expected_row_version")),
+            },
+            Err(_) => Err(invalid("input")),
+        };
+        Ok(contract::UpdateItem { request_id, input })
+    }).collect()
+}
+
+"#;
+
+const UPDATE_CODEC_ENCODE_PREFIX: &str = r#"fn invalid(field: &str) -> contract::InvalidInputDetail {
+    contract::InvalidInputDetail { field: field.to_owned() }
+}
+
+pub(crate) fn encode(output: &[contract::UpdateOutcome]) -> String {
+    let values = output.iter().map(|item| {
+        match &item.outcome {
+            Ok(value) => json!({
+                "request_id": item.request_id,
+                "value": {
+"#;
+
+const UPDATE_CODEC_ERROR_PREFIX: &str = r#"                }
+            }),
+            Err(error) => json!({
+                "request_id": item.request_id,
+                "error": error_value(error),
+            }),
+        }
+    }).collect::<Vec<_>>();
+    serde_json::to_string(&values).expect("typed update outcomes always serialize")
+}
+
+fn error_value(error: &contract::UpdateError) -> Value {
+    let (code, detail) = match error {
+"#;
+
+const UPDATE_CODEC_FOOTER: &str = r#"    };
+    json!({"code": code, "detail": detail})
+}
+"#;
 
 /// Emit the first typed component boundary for the receipt pilot.
 ///

@@ -300,6 +300,43 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
         "invalid_input"
     );
     assert_eq!(input["server_owned_fields"]["if_supplied"], "invalid_input");
+
+    let wit = std::str::from_utf8(
+        package
+            .file("generated/wit/deps/wamn-receiving-purchase-order/package.wit")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(wit.contains("interface get"));
+    assert!(wit.contains("interface query"));
+    assert!(wit.contains("interface update"));
+    assert!(wit.contains("supplier-id: option<option<string>>"));
+    assert!(wit.contains("expected-row-version: s64"));
+    assert!(wit.contains("input: result<update-request, invalid-input-detail>"));
+    for field in [
+        "created-at",
+        "id",
+        "purchase-order-number",
+        "row-version",
+        "status",
+        "supplier-id",
+    ] {
+        assert!(wit.contains(&format!("    {field}:")));
+    }
+
+    let codec = std::str::from_utf8(
+        package
+            .file("generated/wit/purchase_order_update_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(codec.contains("JsonChange::Absent => None"));
+    assert!(codec.contains("JsonChange::Null => Some(None)"));
+    assert!(codec.contains("expected_row_version.parse::<i64>()"));
+    assert!(codec.contains("(1..=100).contains(&values.len())"));
+    assert!(codec.contains("row_version.to_string()"));
 }
 
 #[test]
