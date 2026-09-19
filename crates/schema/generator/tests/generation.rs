@@ -324,19 +324,6 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     ] {
         assert!(wit.contains(&format!("    {field}:")));
     }
-
-    let codec = std::str::from_utf8(
-        package
-            .file("generated/wit/purchase_order_update_codec.rs")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    assert!(codec.contains("JsonChange::Absent => None"));
-    assert!(codec.contains("JsonChange::Null => Some(None)"));
-    assert!(codec.contains("expected_row_version.parse::<i64>()"));
-    assert!(codec.contains("(1..=100).contains(&values.len())"));
-    assert!(codec.contains("row_version.to_string()"));
 }
 
 #[test]

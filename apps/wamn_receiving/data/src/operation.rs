@@ -1,7 +1,7 @@
-//! Shared wire adapter for the nine operations exported by the Receiving component.
+//! JSON adapters for Receiving operations that retain their original boundary.
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wamn_postgres_statements::{Connection, Uuid as WamnUuid};
 
@@ -235,50 +235,6 @@ impl From<ReceiptQueryInput> for receipt::QueryInput {
         Self {
             cursor: value.cursor,
             limit: value.limit,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PurchaseOrderUpdateInput {
-    id: Box<str>,
-    expected_row_version: Box<str>,
-    change: PurchaseOrderChangeInput,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PurchaseOrderChangeInput {
-    #[serde(default, deserialize_with = "deserialize_nullable")]
-    supplier_id: Nullable<Box<str>>,
-}
-
-#[derive(Debug, Default)]
-enum Nullable<T> {
-    #[default]
-    Omitted,
-    Null,
-    Value(T),
-}
-
-fn deserialize_nullable<'de, D, T>(deserializer: D) -> Result<Nullable<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(|value| match value {
-        Some(value) => Nullable::Value(value),
-        None => Nullable::Null,
-    })
-}
-
-impl From<Nullable<Box<str>>> for purchase_order::SupplierIdUpdate {
-    fn from(value: Nullable<Box<str>>) -> Self {
-        match value {
-            Nullable::Omitted => Self::Omitted,
-            Nullable::Null => Self::Null,
-            Nullable::Value(value) => Self::Value(value),
         }
     }
 }
@@ -904,52 +860,6 @@ pub async fn purchase_order_query(input: &str) -> Result<String, InvocationError
     Ok(serialized(&output))
 }
 
-/// Execute only `purchase_order.update`.
-pub async fn purchase_order_update(input: &str) -> Result<String, InvocationError> {
-    let items = prepare_envelope(input)?;
-    let mut connection = Connection::new();
-    let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
-    for item in items.into_vec() {
-        let parsed = match parse_item::<PurchaseOrderUpdateInput>(&item) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                output.push(refused(item.request_id, error));
-                continue;
-            }
-        };
-        let Ok(expected_row_version) = parse_int64(&parsed.expected_row_version) else {
-            output.push(refused(
-                item.request_id,
-                invalid_input("expected_row_version"),
-            ));
-            continue;
-        };
-        let result = purchase_order::update(
-            &mut connection,
-            &parsed.id,
-            expected_row_version,
-            parsed.change.supplier_id.into(),
-        )
-        .await;
-        output.push(match result {
-            Ok(value) => ItemResult::Succeeded {
-                request_id: item.request_id,
-                value: value.into(),
-            },
-            Err(error) => refused(
-                item.request_id,
-                access_error(
-                    &error,
-                    "purchase_order.update",
-                    Some(("id", &parsed.id)),
-                    Some(expected_row_version),
-                ),
-            ),
-        });
-    }
-    Ok(serialized(&output))
-}
-
 /// Execute only `receipt.get`.
 pub async fn receipt_get(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
@@ -1118,27 +1028,6 @@ mod tests {
         assert!(parse_uuid("not-a-uuid", "id").is_err());
     }
 
-    /// `record_receipt` is the only command this crate mints an idempotency key
-    /// for, and it ingests no integer, so the boundary this crate owns for an
-    /// int64 is the i64 that `purchase_order.update` binds to SQL. Two
-    /// spellings of one integer must reach it as one value, or a caller whose
-    /// retry infrastructure re-spells `1` gets a refusal for the same command.
-    #[test]
-    fn two_spellings_of_one_int64_make_one_command() {
-        let send = |expected_row_version: &str| {
-            let parsed: PurchaseOrderUpdateInput = serde_json::from_value(serde_json::json!({
-                "id": "00000000-0000-0000-0000-000000000001",
-                "expected_row_version": expected_row_version,
-                "change": {},
-            }))
-            .expect("the purchase_order.update contract accepts either spelling");
-            parse_int64(&parsed.expected_row_version)
-                .expect("either spelling of one integer is an int64")
-        };
-        assert_eq!(send("01"), send("1"));
-        assert_eq!(send("+1"), 1);
-    }
-
     #[test]
     fn an_uppercase_uuid_input_is_respelled_rather_than_refused() {
         assert_eq!(
@@ -1147,25 +1036,6 @@ mod tests {
                 .0,
             "01234567-89ab-cdef-0123-456789abcdef"
         );
-    }
-
-    #[test]
-    fn update_preserves_omitted_null_and_value_states() {
-        let omitted: PurchaseOrderUpdateInput = serde_json::from_value(serde_json::json!({
-            "id": "00000000-0000-0000-0000-000000000001",
-            "expected_row_version": "1",
-            "change": {}
-        }))
-        .unwrap();
-        assert!(matches!(omitted.change.supplier_id, Nullable::Omitted));
-
-        let explicit_null: PurchaseOrderUpdateInput = serde_json::from_value(serde_json::json!({
-            "id": "00000000-0000-0000-0000-000000000001",
-            "expected_row_version": "1",
-            "change": {"supplier_id": null}
-        }))
-        .unwrap();
-        assert!(matches!(explicit_null.change.supplier_id, Nullable::Null));
     }
 
     #[test]

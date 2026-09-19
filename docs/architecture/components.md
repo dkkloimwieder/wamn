@@ -27,7 +27,10 @@ The P3 HTTP shell separately exports `wasi:http/handler@0.3.0`.
 The [capability rules](capabilities.md) govern imported authority, and [naming](naming.md) defines exported operation tokens.
 
 The receipt operation uses typed WIT calls between Acme and Receiving.
-The application model generates its WIT contract, Rust bindings, and JSON conversion code.
+Receiving's purchase-order update also uses a typed operation interface.
+The application model generates these WIT contracts, Rust bindings, and JSON conversion code.
+Update inputs distinguish an omitted field, explicit null, and a value.
+The application still decides whether a field accepts null.
 The generated `run-json` adapter serves HTTP and dynamic routing, while nested receipt calls use the typed `run` function.
 Native dispatch carries owned values between stores and retains the caller's authority and deadline.
 Admission refuses resource handles in this operation boundary because those handles belong to one store.

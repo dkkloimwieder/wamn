@@ -33,7 +33,7 @@ pub(super) fn emit_model_update_wit(
     )?;
     insert_bytes(
         files,
-        &format!("generated/wit/{}_update_codec.rs", model_name),
+        &format!("generated/wit/{model_name}_update_codec.rs"),
         emit_update_codec(table, operation).into_bytes(),
     )
 }
@@ -225,7 +225,7 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
     source
 }
 
-const UPDATE_CODEC_HEADER: &str = r#"// @generated from wamn.json and schema IR; do not edit.
+const UPDATE_CODEC_HEADER: &str = r"// @generated from wamn.json and schema IR; do not edit.
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -256,7 +256,7 @@ struct JsonRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonUpdateChange {
-"#;
+";
 
 const UPDATE_CODEC_DECODE_PREFIX: &str = r#"}
 
@@ -277,6 +277,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonChange<T> {
     }
 }
 
+#[expect(clippy::option_option, reason = "WIT update fields distinguish absent, null, and value")]
 fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
     match value {
         JsonChange::Absent => None,
