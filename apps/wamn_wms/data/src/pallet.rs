@@ -5,13 +5,16 @@
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use wamn_postgres_statements::{Connection, Json, TimestampTz, Uuid};
 
-use crate::cursor::{self, CursorDirection, CursorKey, DecodedCursor};
+pub use crate::cursor::CursorDirection;
+use crate::cursor::{self, CursorKey, DecodedCursor};
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::pallet as sql;
 use crate::scalar;
+
+pub use crate::generated::wamn::pallet::PalletRow;
 
 /// What `pallet.get` can refuse with. Read only by the contract test in
 /// `error`, which holds this list to the operation's generated contract.
@@ -39,43 +42,37 @@ pub(crate) const QUERY_REFUSALS: &[AccessErrorKind] = &[
 const MAX_PAGE_SIZE: i64 = 100;
 const STATUSES: [&str; 3] = ["available", "held", "consumed"];
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GetInput {
-    pub(crate) id: String,
-}
-
 /// The query body: every member optional, the manifest's default sort when
 /// none is named, and nothing the manifest did not declare.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct QueryInput {
+pub struct QueryInput {
     #[serde(default)]
-    filter: Option<Filter>,
+    pub filter: Option<Filter>,
     #[serde(default)]
-    sort: Option<Sort>,
+    pub sort: Option<Sort>,
     #[serde(default)]
-    cursor: Option<String>,
+    pub cursor: Option<String>,
     #[serde(default)]
-    limit: Option<i64>,
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Filter {
+pub struct Filter {
     #[serde(default)]
-    status: Option<Vec<String>>,
+    pub status: Option<Vec<String>>,
     #[serde(default)]
-    location_id: Option<Vec<String>>,
+    pub location_id: Option<Vec<String>>,
     #[serde(default)]
-    pallet_code: Option<Vec<String>>,
+    pub pallet_code: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Sort {
-    field: SortField,
-    direction: CursorDirection,
+pub struct Sort {
+    pub field: SortField,
+    pub direction: CursorDirection,
 }
 
 const DEFAULT_SORT: Sort = Sort {
@@ -85,7 +82,7 @@ const DEFAULT_SORT: Sort = Sort {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
-enum SortField {
+pub enum SortField {
     PalletCode,
     LocationId,
     UpdatedAt,
@@ -105,9 +102,9 @@ impl SortField {
 
 /// One bounded page and the cursor that continues it, if anything does.
 #[derive(Debug)]
-pub(crate) struct Page {
-    pub(crate) item: Vec<sql::PalletRow>,
-    pub(crate) next_cursor: Option<String>,
+pub struct Page {
+    pub item: Vec<PalletRow>,
+    pub next_cursor: Option<String>,
 }
 
 /// Load one pallet by id.
@@ -115,10 +112,7 @@ pub(crate) struct Page {
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
-pub(crate) async fn get(
-    connection: &mut Connection,
-    id: &str,
-) -> Result<sql::PalletRow, AccessError> {
+pub async fn get(connection: &mut Connection, id: &str) -> Result<PalletRow, AccessError> {
     let id = scalar::uuid("id", id)?;
     sql::get(connection, id.clone())
         .await
@@ -139,10 +133,7 @@ enum Cursor {
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
-pub(crate) async fn query(
-    connection: &mut Connection,
-    input: &QueryInput,
-) -> Result<Page, AccessError> {
+pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Page, AccessError> {
     let sort = input.sort.unwrap_or(DEFAULT_SORT);
     // VALIDATION ORDER IS THE CONTRACT'S: cursor, then limit, then SQL.
     let cursor = decode(sort, input.cursor.as_deref())?;
@@ -330,29 +321,6 @@ fn row_time(value: &TimestampTz) -> Result<DateTime<Utc>, AccessError> {
         .map_err(|_| internal())
 }
 
-/// The `pallet.get` result and each `pallet.query` item: the projection's
-/// fields, `row_version` as the integer the contract types it.
-pub(crate) fn row_to_json(row: &sql::PalletRow) -> Value {
-    json!({
-        "created_at": row.created_at.0,
-        "created_by": row.created_by.0,
-        "id": row.id.0,
-        "location_id": row.location_id.0,
-        "pallet_code": row.pallet_code,
-        "row_version": row.row_version,
-        "status": row.status,
-        "updated_at": row.updated_at.0,
-        "updated_by": row.updated_by.0,
-    })
-}
-
-pub(crate) fn page_to_json(page: &Page) -> Value {
-    json!({
-        "item": page.item.iter().map(row_to_json).collect::<Vec<_>>(),
-        "next_cursor": page.next_cursor,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,36 +423,5 @@ mod tests {
         );
         assert!(uuid_filter(Some(&["nope".to_owned()])).is_err());
         assert!(status_filter(None).unwrap().is_none());
-    }
-
-    #[test]
-    fn the_query_body_admits_only_declared_members() {
-        let parsed: QueryInput = serde_json::from_value(json!({
-            "filter": {"status": ["available"]},
-            "sort": {"field": "pallet_code", "direction": "descending"},
-            "limit": 5
-        }))
-        .unwrap();
-        assert_eq!(parsed.sort.unwrap().field, SortField::PalletCode);
-        assert!(serde_json::from_value::<QueryInput>(json!({"offset": 3})).is_err());
-        assert!(
-            serde_json::from_value::<QueryInput>(
-                json!({"sort": {"field": "status", "direction": "ascending"}})
-            )
-            .is_err()
-        );
-        assert!(serde_json::from_value::<GetInput>(json!({"id": FIRST, "extra": 1})).is_err());
-    }
-
-    #[test]
-    fn the_page_serializes_with_integer_revisions() {
-        let page = Page {
-            item: vec![row(FIRST, "2026-08-29T12:34:56.123456Z")],
-            next_cursor: None,
-        };
-        let value = page_to_json(&page);
-        assert_eq!(value["item"][0]["row_version"], 1);
-        assert_eq!(value["item"][0]["id"], FIRST);
-        assert!(value["next_cursor"].is_null());
     }
 }

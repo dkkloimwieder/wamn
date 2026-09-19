@@ -1,28 +1,28 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct AddToTargetRow {
+pub struct AddToTargetRow {
     pub id: uuid::Uuid,
     pub quantity: rust_decimal::Decimal,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct ClaimCommandRow {
+pub struct ClaimCommandRow {
     pub movement_id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct ConsumeSourceRow {
+pub struct ConsumeSourceRow {
     pub row_version: i64,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct FinalizeCommandRow {
+pub struct FinalizeCommandRow {
     pub row_version: Option<i64>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct FindReplayRow {
+pub struct FindReplayRow {
     pub canonical_command: Vec<u8>,
     pub movement_id: uuid::Uuid,
     pub source_pallet_id: uuid::Uuid,
@@ -31,12 +31,12 @@ pub(crate) struct FindReplayRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct InsertMovementRow {
+pub struct InsertMovementRow {
     pub id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct LockBothPalletsRow {
+pub struct LockBothPalletsRow {
     pub id: uuid::Uuid,
     pub location_id: uuid::Uuid,
     pub row_version: i64,
@@ -44,20 +44,20 @@ pub(crate) struct LockBothPalletsRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct PlaceOnTargetRow {
+pub struct PlaceOnTargetRow {
     pub id: uuid::Uuid,
     pub quantity: rust_decimal::Decimal,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct SelectSourceQuantityRow {
+pub struct SelectSourceQuantityRow {
     pub product_id: uuid::Uuid,
     pub quantity: rust_decimal::Decimal,
     pub status: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct TouchTargetRow {
+pub struct TouchTargetRow {
     pub row_version: i64,
     pub status: String,
 }

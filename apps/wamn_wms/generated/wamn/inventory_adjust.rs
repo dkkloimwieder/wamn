@@ -1,18 +1,18 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug)]
-pub(crate) struct ClaimCommandRow {
+pub struct ClaimCommandRow {
     pub movement_id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct FinalizeCommandRow {
+pub struct FinalizeCommandRow {
     pub adjusted_quantity: Option<wamn_postgres_statements::Numeric>,
     pub row_version: Option<i64>,
 }
 
 #[derive(Debug)]
-pub(crate) struct FindReplayRow {
+pub struct FindReplayRow {
     pub canonical_command: Vec<u8>,
     pub movement_id: wamn_postgres_statements::Uuid,
     pub pallet_id: wamn_postgres_statements::Uuid,
@@ -21,25 +21,25 @@ pub(crate) struct FindReplayRow {
 }
 
 #[derive(Debug)]
-pub(crate) struct InsertMovementRow {
+pub struct InsertMovementRow {
     pub id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct LockPalletRow {
+pub struct LockPalletRow {
     pub location_id: wamn_postgres_statements::Uuid,
     pub row_version: i64,
     pub status: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct SetQuantityRow {
+pub struct SetQuantityRow {
     pub id: wamn_postgres_statements::Uuid,
     pub quantity: wamn_postgres_statements::Numeric,
 }
 
 #[derive(Debug)]
-pub(crate) struct TouchPalletRow {
+pub struct TouchPalletRow {
     pub row_version: i64,
     pub status: String,
 }

@@ -4,14 +4,14 @@
 //! consumed pallets and says why. The result is the bounded list the contract
 //! declares; the input carries nothing but its correlation id.
 
-use serde::Deserialize;
-use serde_json::{Value, json};
 use wamn_postgres_statements::Connection;
 
 #[cfg(test)]
 use crate::error::AccessErrorKind;
 use crate::error::{self, AccessError};
 use crate::generated::wamn::inventory_aggregate as sql;
+
+pub use crate::generated::wamn::inventory_aggregate::InventoryAggregateRow;
 
 /// What `inventory.aggregate` can refuse with. Read only by the contract test in
 /// `error`, which holds this list to the operation's generated contract.
@@ -24,16 +24,12 @@ pub(crate) const REFUSALS: &[AccessErrorKind] = &[
     AccessErrorKind::InternalError,
 ];
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AggregateInput {}
-
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
-pub(crate) async fn execute(
+pub async fn execute(
     connection: &mut Connection,
-) -> Result<Vec<sql::InventoryAggregateRow>, AccessError> {
+) -> Result<Vec<InventoryAggregateRow>, AccessError> {
     let mut transaction = connection
         .begin()
         .await
@@ -46,21 +42,4 @@ pub(crate) async fn execute(
         .await
         .map_err(|e| error::from_statement(&e))?;
     Ok(rows)
-}
-
-pub(crate) fn rows_to_json(rows: &[sql::InventoryAggregateRow]) -> Value {
-    json!({
-        "rows": rows
-            .iter()
-            .map(|row| {
-                json!({
-                    "product_id": row.product_id.0,
-                    "location_id": row.location_id.0,
-                    "status": row.status,
-                    "quantity": row.quantity.0,
-                    "pallet_count": row.pallet_count,
-                })
-            })
-            .collect::<Vec<_>>(),
-    })
 }

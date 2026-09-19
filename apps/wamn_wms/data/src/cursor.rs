@@ -18,7 +18,7 @@ const VERSION: u8 = 1;
 /// Sort direction shared by the primary key and UUID tie-breaker.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum CursorDirection {
+pub enum CursorDirection {
     Ascending,
     Descending,
 }

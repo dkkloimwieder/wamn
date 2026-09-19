@@ -1,7 +1,7 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct InventoryAggregateRow {
+pub struct InventoryAggregateRow {
     pub product_id: uuid::Uuid,
     pub location_id: uuid::Uuid,
     pub status: String,

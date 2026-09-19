@@ -1,28 +1,28 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug)]
-pub(crate) struct AddToTargetRow {
+pub struct AddToTargetRow {
     pub id: wamn_postgres_statements::Uuid,
     pub quantity: wamn_postgres_statements::Numeric,
 }
 
 #[derive(Debug)]
-pub(crate) struct ClaimCommandRow {
+pub struct ClaimCommandRow {
     pub movement_id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct ConsumeSourceRow {
+pub struct ConsumeSourceRow {
     pub row_version: i64,
 }
 
 #[derive(Debug)]
-pub(crate) struct FinalizeCommandRow {
+pub struct FinalizeCommandRow {
     pub row_version: Option<i64>,
 }
 
 #[derive(Debug)]
-pub(crate) struct FindReplayRow {
+pub struct FindReplayRow {
     pub canonical_command: Vec<u8>,
     pub movement_id: wamn_postgres_statements::Uuid,
     pub source_pallet_id: wamn_postgres_statements::Uuid,
@@ -31,12 +31,12 @@ pub(crate) struct FindReplayRow {
 }
 
 #[derive(Debug)]
-pub(crate) struct InsertMovementRow {
+pub struct InsertMovementRow {
     pub id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub(crate) struct LockBothPalletsRow {
+pub struct LockBothPalletsRow {
     pub id: wamn_postgres_statements::Uuid,
     pub location_id: wamn_postgres_statements::Uuid,
     pub row_version: i64,
@@ -44,20 +44,20 @@ pub(crate) struct LockBothPalletsRow {
 }
 
 #[derive(Debug)]
-pub(crate) struct PlaceOnTargetRow {
+pub struct PlaceOnTargetRow {
     pub id: wamn_postgres_statements::Uuid,
     pub quantity: wamn_postgres_statements::Numeric,
 }
 
 #[derive(Debug)]
-pub(crate) struct SelectSourceQuantityRow {
+pub struct SelectSourceQuantityRow {
     pub product_id: wamn_postgres_statements::Uuid,
     pub quantity: wamn_postgres_statements::Numeric,
     pub status: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct TouchTargetRow {
+pub struct TouchTargetRow {
     pub row_version: i64,
     pub status: String,
 }

@@ -42,37 +42,25 @@ pub(crate) const REFUSALS: &[AccessErrorKind] = &[
 
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
-pub(crate) struct AdjustCommand {
-    idempotency_key: String,
-    pallet_id: String,
-    product_id: String,
-    status: String,
-    quantity: String,
-    reason_code: String,
-    expected_row_version: i64,
-    occurred_at: String,
+pub struct AdjustCommand {
+    pub idempotency_key: String,
+    pub pallet_id: String,
+    pub product_id: String,
+    pub status: String,
+    pub quantity: String,
+    pub reason_code: String,
+    pub expected_row_version: i64,
+    pub occurred_at: String,
 }
 
 /// What one accepted adjust answers with.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct AdjustResult {
-    movement_id: String,
-    pallet_id: String,
-    adjusted_quantity: String,
-    pallet_status: String,
-    row_version: i64,
-}
-
-impl AdjustResult {
-    pub(crate) fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "movement_id": self.movement_id,
-            "pallet_id": self.pallet_id,
-            "adjusted_quantity": self.adjusted_quantity,
-            "pallet_status": self.pallet_status,
-            "row_version": self.row_version,
-        })
-    }
+pub struct AdjustResult {
+    pub movement_id: String,
+    pub pallet_id: String,
+    pub adjusted_quantity: String,
+    pub pallet_status: String,
+    pub row_version: i64,
 }
 
 /// The command's scalars in their one wire spelling.
@@ -122,7 +110,7 @@ fn canonical_command(command: &AdjustCommand, parsed: &Parsed) -> Vec<u8> {
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub(crate) async fn execute(command: &AdjustCommand) -> Result<AdjustResult, AccessError> {
+pub async fn execute(command: &AdjustCommand) -> Result<AdjustResult, AccessError> {
     let parsed = parse(command)?;
     let canonical = canonical_command(command, &parsed);
 

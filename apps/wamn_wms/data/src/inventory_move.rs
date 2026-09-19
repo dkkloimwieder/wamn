@@ -47,34 +47,22 @@ pub(crate) const REFUSALS: &[AccessErrorKind] = &[
 
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
-pub(crate) struct MoveCommand {
-    pub(crate) idempotency_key: String,
-    pub(crate) pallet_id: String,
-    pub(crate) to_location_id: String,
-    pub(crate) expected_row_version: i64,
-    pub(crate) occurred_at: String,
+pub struct MoveCommand {
+    pub idempotency_key: String,
+    pub pallet_id: String,
+    pub to_location_id: String,
+    pub expected_row_version: i64,
+    pub occurred_at: String,
 }
 
 /// What one accepted move answers with.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct MoveResult {
-    pub(crate) movement_id: String,
-    pub(crate) pallet_id: String,
-    pub(crate) location_id: String,
-    pub(crate) pallet_status: String,
-    pub(crate) row_version: i64,
-}
-
-impl MoveResult {
-    pub(crate) fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "movement_id": self.movement_id,
-            "pallet_id": self.pallet_id,
-            "location_id": self.location_id,
-            "pallet_status": self.pallet_status,
-            "row_version": self.row_version,
-        })
-    }
+pub struct MoveResult {
+    pub movement_id: String,
+    pub pallet_id: String,
+    pub location_id: String,
+    pub pallet_status: String,
+    pub row_version: i64,
 }
 
 /// The command's scalars in their one wire spelling.
@@ -99,7 +87,7 @@ fn parse(command: &MoveCommand) -> Result<Parsed, AccessError> {
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub(crate) async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessError> {
+pub async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessError> {
     let parsed = parse(command)?;
     let canonical = canonical_command(command, &parsed);
 

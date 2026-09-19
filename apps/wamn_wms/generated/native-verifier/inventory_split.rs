@@ -1,25 +1,25 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct ClaimCommandRow {
+pub struct ClaimCommandRow {
     pub movement_id: uuid::Uuid,
     pub new_pallet_id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct CreatePalletRow {
+pub struct CreatePalletRow {
     pub id: uuid::Uuid,
     pub row_version: i64,
     pub status: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct FinalizeCommandRow {
+pub struct FinalizeCommandRow {
     pub row_version: Option<i64>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct FindReplayRow {
+pub struct FindReplayRow {
     pub canonical_command: Vec<u8>,
     pub movement_id: uuid::Uuid,
     pub source_pallet_id: uuid::Uuid,
@@ -28,42 +28,42 @@ pub(crate) struct FindReplayRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct InsertMovementRow {
+pub struct InsertMovementRow {
     pub id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct LockPalletRow {
+pub struct LockPalletRow {
     pub location_id: uuid::Uuid,
     pub row_version: i64,
     pub status: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct PlaceQuantityRow {
+pub struct PlaceQuantityRow {
     pub id: uuid::Uuid,
     pub quantity: rust_decimal::Decimal,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct SelectQuantityRow {
+pub struct SelectQuantityRow {
     pub quantity: rust_decimal::Decimal,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct TakeFromSourceRow {
+pub struct TakeFromSourceRow {
     pub id: uuid::Uuid,
     pub quantity: rust_decimal::Decimal,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct TouchSourceRow {
+pub struct TouchSourceRow {
     pub row_version: i64,
     pub status: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct ValidateLocationRow {
+pub struct ValidateLocationRow {
     pub id: uuid::Uuid,
 }
 

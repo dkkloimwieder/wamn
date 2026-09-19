@@ -45,38 +45,26 @@ pub(crate) const REFUSALS: &[AccessErrorKind] = &[
 
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
-pub(crate) struct SplitCommand {
-    idempotency_key: String,
-    source_pallet_id: String,
-    product_id: String,
-    status: String,
-    quantity: String,
-    new_pallet_code: String,
-    to_location_id: String,
-    expected_row_version: i64,
-    occurred_at: String,
+pub struct SplitCommand {
+    pub idempotency_key: String,
+    pub source_pallet_id: String,
+    pub product_id: String,
+    pub status: String,
+    pub quantity: String,
+    pub new_pallet_code: String,
+    pub to_location_id: String,
+    pub expected_row_version: i64,
+    pub occurred_at: String,
 }
 
 /// What one accepted split answers with.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct SplitResult {
-    movement_id: String,
-    source_pallet_id: String,
-    new_pallet_id: String,
-    source_status: String,
-    row_version: i64,
-}
-
-impl SplitResult {
-    pub(crate) fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "movement_id": self.movement_id,
-            "source_pallet_id": self.source_pallet_id,
-            "new_pallet_id": self.new_pallet_id,
-            "source_status": self.source_status,
-            "row_version": self.row_version,
-        })
-    }
+pub struct SplitResult {
+    pub movement_id: String,
+    pub source_pallet_id: String,
+    pub new_pallet_id: String,
+    pub source_status: String,
+    pub row_version: i64,
 }
 
 #[derive(Debug)]
@@ -125,7 +113,7 @@ fn canonical_command(command: &SplitCommand, parsed: &Parsed) -> Vec<u8> {
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub(crate) async fn execute(command: &SplitCommand) -> Result<SplitResult, AccessError> {
+pub async fn execute(command: &SplitCommand) -> Result<SplitResult, AccessError> {
     let parsed = parse(command)?;
     let canonical = canonical_command(command, &parsed);
 

@@ -1,0 +1,124 @@
+package wamn-wms:pallet@1.0.0;
+
+interface get {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record get-request {
+    id: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant get-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record get-item {
+    request-id: string,
+    input: result<get-request, invalid-input-detail>,
+  }
+
+  record get-row {
+    created-at: string,
+    created-by: string,
+    id: string,
+    location-id: string,
+    pallet-code: string,
+    row-version: s64,
+    status: string,
+    updated-at: string,
+    updated-by: string,
+  }
+
+  record get-result {
+    value: get-row,
+  }
+
+  record get-outcome {
+    request-id: string,
+    outcome: result<get-result, get-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<get-item>) -> result<list<get-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface query {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record query-request {
+    status: option<list<string>>,
+    location-id: option<list<string>>,
+    pallet-code: option<list<string>>,
+    sort-field: option<string>,
+    sort-direction: option<string>,
+    cursor: option<string>,
+    limit: option<s64>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<s64>,
+    maximum: option<s64>,
+    observed: option<s64>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant query-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record query-item {
+    request-id: string,
+    input: result<query-request, invalid-input-detail>,
+  }
+
+  record query-row {
+    created-at: string,
+    created-by: string,
+    id: string,
+    location-id: string,
+    pallet-code: string,
+    row-version: s64,
+    status: string,
+    updated-at: string,
+    updated-by: string,
+  }
+
+  record query-result {
+    value: list<query-row>,
+    next-cursor: option<string>,
+  }
+
+  record query-outcome {
+    request-id: string,
+    outcome: result<query-result, query-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<query-item>) -> result<list<query-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+

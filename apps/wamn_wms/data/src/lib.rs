@@ -13,13 +13,12 @@
 mod cursor;
 mod error;
 mod generated;
-mod inventory_adjust;
-mod inventory_aggregate;
-mod inventory_merge;
+pub mod inventory_adjust;
+pub mod inventory_aggregate;
+pub mod inventory_merge;
 pub mod inventory_move;
-mod inventory_split;
-pub mod operation;
-mod pallet;
+pub mod inventory_split;
+pub mod pallet;
 mod scalar;
 
 pub use error::{AccessError, AccessErrorKind};

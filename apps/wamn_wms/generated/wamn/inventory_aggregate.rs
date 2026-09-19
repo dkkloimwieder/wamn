@@ -3,7 +3,7 @@
 use wamn_postgres_statements::Transaction;
 
 #[derive(Debug)]
-pub(crate) struct InventoryAggregateRow {
+pub struct InventoryAggregateRow {
     pub product_id: wamn_postgres_statements::Uuid,
     pub location_id: wamn_postgres_statements::Uuid,
     pub status: String,

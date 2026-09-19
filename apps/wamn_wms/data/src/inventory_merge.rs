@@ -43,34 +43,22 @@ pub(crate) const REFUSALS: &[AccessErrorKind] = &[
 
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
-pub(crate) struct MergeCommand {
-    idempotency_key: String,
-    source_pallet_id: String,
-    target_pallet_id: String,
-    expected_row_version: i64,
-    occurred_at: String,
+pub struct MergeCommand {
+    pub idempotency_key: String,
+    pub source_pallet_id: String,
+    pub target_pallet_id: String,
+    pub expected_row_version: i64,
+    pub occurred_at: String,
 }
 
 /// What one accepted merge answers with.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct MergeResult {
-    movement_id: String,
-    source_pallet_id: String,
-    target_pallet_id: String,
-    target_status: String,
-    row_version: i64,
-}
-
-impl MergeResult {
-    pub(crate) fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "movement_id": self.movement_id,
-            "source_pallet_id": self.source_pallet_id,
-            "target_pallet_id": self.target_pallet_id,
-            "target_status": self.target_status,
-            "row_version": self.row_version,
-        })
-    }
+pub struct MergeResult {
+    pub movement_id: String,
+    pub source_pallet_id: String,
+    pub target_pallet_id: String,
+    pub target_status: String,
+    pub row_version: i64,
 }
 
 #[derive(Debug)]
@@ -112,7 +100,7 @@ fn canonical_command(command: &MergeCommand, parsed: &Parsed) -> Vec<u8> {
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub(crate) async fn execute(command: &MergeCommand) -> Result<MergeResult, AccessError> {
+pub async fn execute(command: &MergeCommand) -> Result<MergeResult, AccessError> {
     let parsed = parse(command)?;
     let canonical = canonical_command(command, &parsed);
 
