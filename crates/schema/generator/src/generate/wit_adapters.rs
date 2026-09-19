@@ -129,10 +129,20 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool) -> String {
         format!("Vec<__contract::{type_name}Outcome>")
     };
     let run = if direct {
-        "$handler(&mut state, input).await".to_owned()
+        "let mut input = input;
+                    __codec::normalize(&mut input).map_err(invalid)?;
+                    $handler(&mut state, input).await"
+            .to_owned()
     } else {
         "__codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, $handler).await)"
+            .to_owned()
+    };
+    let run_json = if direct {
+        "let raw = input;\n                    let input = __codec::decode(&raw).map_err(invalid)?;\n                    <Self as __contract::Guest>::run(context, input).await?;\n                    Ok(__node::Emission { payload: raw, port: None })"
+            .to_owned()
+    } else {
+        "let input = __codec::decode(&input).map_err(invalid)?;\n                    let output = <Self as __contract::Guest>::run(context, input).await?;\n                    Ok(__node::Emission {\n                        payload: __codec::encode(&output),\n                        port: None,\n                    })"
             .to_owned()
     };
     format!(
@@ -164,12 +174,7 @@ macro_rules! export_operation {{
                     context: __node::NodeContext,
                     input: String,
                 ) -> Result<__node::Emission, __node::NodeError> {{
-                    let input = __codec::decode(&input).map_err(invalid)?;
-                    let output = <Self as __contract::Guest>::run(context, input).await?;
-                    Ok(__node::Emission {{
-                        payload: __codec::encode(&output),
-                        port: None,
-                    }})
+                    {run_json}
                 }}
             }}
         }};

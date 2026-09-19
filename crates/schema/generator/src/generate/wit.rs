@@ -1264,6 +1264,13 @@ fn emit_custom_codec(
         let mut source = format!(
             "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError {{ pub(crate) const fn context(&self) -> &'static str {{ self.0 }} }}\nimpl std::fmt::Display for CodecError {{ fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ formatter.write_str(self.0) }} }}\nimpl std::error::Error for CodecError {{}}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonInput {{ event: String, new: JsonNew }}\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew {{ id: String }}\n\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let value: JsonInput = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{ event: value.event, new: contract::{type_name}New {{ id: value.new.id }} }})\n}}\n\npub(crate) fn encode(value: &contract::{type_name}Request) -> String {{\n    serde_json::json!({{\"event\": value.event, \"new\": {{\"id\": value.new.id}}}}).to_string()\n}}\n"
         );
+        source = source.replace(
+            "new: JsonNew }\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonNew",
+            "new: JsonNew }\n#[derive(Deserialize)]\nstruct JsonNew",
+        );
+        source.push_str(&format!(
+            "pub(crate) fn normalize(value: &mut contract::{type_name}Request) -> Result<(), CodecError> {{\n    if value.event != \"insert\" {{ return Err(CodecError(\"event is outside its declared value domain\")); }}\n    let parsed = uuid::Uuid::parse_str(&value.new.id).map_err(|_| CodecError(\"new.id is not a UUID\"))?;\n    value.new.id = parsed.hyphenated().to_string();\n    Ok(())\n}}\n"
+        ));
         source.push_str(&emit_export_adapter(&type_name, true));
         return Ok(source);
     };
