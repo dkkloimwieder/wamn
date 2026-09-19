@@ -177,14 +177,7 @@ impl RecordReceipt for Component {
 async fn record_receipt(
     input: Vec<contract::RecordReceiptItem>,
 ) -> Result<Vec<contract::RecordReceiptOutcome>, NodeError> {
-    if !(1..=receipt::MAX_RECORD_RECEIPT_ITEMS).contains(&input.len()) {
-        return Err(invalid_input("operation input item count must be 1..=100"));
-    }
-    if input.iter().any(|item| item.request_id.is_empty()) {
-        return Err(invalid_input(
-            "every operation item must carry a nonempty string request_id",
-        ));
-    }
+    receipt_codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
 
     let mut connection = wamn_postgres_statements::Connection::new();
     let mut output = Vec::with_capacity(input.len());

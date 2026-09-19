@@ -17,15 +17,7 @@ pub(super) mod codec {
 pub(super) async fn run(
     input: Vec<contract::UpdateItem>,
 ) -> Result<Vec<contract::UpdateOutcome>, NodeError> {
-    if !(1..=100).contains(&input.len()) {
-        return Err(invalid_input("operation input item count must be 1..=100"));
-    }
-    if input.iter().any(|item| item.request_id.is_empty()) {
-        return Err(invalid_input(
-            "every operation item must carry a nonempty string request_id",
-        ));
-    }
-
+    codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
     let mut connection = wamn_postgres_statements::Connection::new();
     let mut output = Vec::with_capacity(input.len());
     for item in input {

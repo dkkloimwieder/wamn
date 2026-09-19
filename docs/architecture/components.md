@@ -29,6 +29,7 @@ The [capability rules](capabilities.md) govern imported authority, and [naming](
 The receipt operation uses typed WIT calls between Acme and Receiving.
 Receiving and Acme each expose a typed purchase-order update interface in their own package.
 The application model generates these WIT contracts, Rust bindings, and JSON conversion code.
+Receipt and update share generation for envelope bounds, correlation checks, exact integer encoding, and declared error details.
 Update inputs distinguish an omitted field, explicit null, and a value.
 The application still decides whether a field accepts null.
 Receiving permits `supplier_id`; Acme permits `acme_inspection_required` and `acme_quality_status`.

@@ -1,24 +1,10 @@
-// @generated from wamn.json and schema IR; do not edit.
+// @generated from operation declarations; do not edit.
 
-use serde::Deserialize;
-use serde_json::{Map, Value, json};
-
-#[derive(Debug)]
-pub(crate) struct CodecError(&'static str);
-
-impl CodecError {
-    pub(crate) const fn context(&self) -> &'static str {
-        self.0
-    }
-}
-
-impl std::fmt::Display for CodecError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0)
-    }
-}
-
-impl std::error::Error for CodecError {}
+include!("operation_codec.rs");
+type Item = contract::UpdateItem;
+const MINIMUM: usize = 1;
+const MAXIMUM: usize = 100;
+const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,31 +51,10 @@ fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
-    let Value::Array(values) = serde_json::from_str(input)
-        .map_err(|_| CodecError("operation input must be a JSON array"))?
-    else {
-        return Err(CodecError("operation input must be a JSON array"));
-    };
-    if !(1..=100).contains(&values.len()) {
-        return Err(CodecError("operation input item count must be 1..=100"));
-    }
-    values
+    decode_envelope(input)?
         .into_iter()
-        .map(|value| {
-            let Value::Object(mut object) = value else {
-                return Err(CodecError("every operation item must be a JSON object"));
-            };
-            let Some(Value::String(request_id)) = object.remove("request_id") else {
-                return Err(CodecError(
-                    "every operation item must carry a nonempty string request_id",
-                ));
-            };
-            if request_id.is_empty() {
-                return Err(CodecError(
-                    "every operation item must carry a nonempty string request_id",
-                ));
-            }
-            let input = match serde_json::from_value::<JsonRequest>(Value::Object(object)) {
+        .map(|(request_id, body)| {
+            let input = match serde_json::from_value::<JsonRequest>(body) {
                 Ok(request) => match request.expected_row_version.parse::<i64>() {
                     Ok(expected_row_version) => {
                         let request = contract::UpdateRequest {

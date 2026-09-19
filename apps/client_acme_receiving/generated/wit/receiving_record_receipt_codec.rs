@@ -1,24 +1,10 @@
-// @generated from wamn.json; do not edit.
+// @generated from operation declarations; do not edit.
 
-use serde::Deserialize;
-use serde_json::{Map, Value, json};
-
-#[derive(Debug)]
-pub(crate) struct CodecError(&'static str);
-
-impl CodecError {
-    pub(crate) const fn context(&self) -> &'static str {
-        self.0
-    }
-}
-
-impl std::fmt::Display for CodecError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0)
-    }
-}
-
-impl std::error::Error for CodecError {}
+include!("operation_codec.rs");
+type Item = contract::RecordReceiptItem;
+const MINIMUM: usize = 1;
+const MAXIMUM: usize = 100;
+const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,31 +31,10 @@ struct JsonLine {
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {
-    let Value::Array(values) = serde_json::from_str(input)
-        .map_err(|_| CodecError("operation input must be a JSON array"))?
-    else {
-        return Err(CodecError("operation input must be a JSON array"));
-    };
-    if !(1..=100).contains(&values.len()) {
-        return Err(CodecError("operation input item count must be 1..=100"));
-    }
-    values
+    decode_envelope(input)?
         .into_iter()
-        .map(|value| {
-            let Value::Object(mut object) = value else {
-                return Err(CodecError("every operation item must be a JSON object"));
-            };
-            let Some(Value::String(request_id)) = object.remove("request_id") else {
-                return Err(CodecError(
-                    "every operation item must carry a nonempty string request_id",
-                ));
-            };
-            if request_id.is_empty() {
-                return Err(CodecError(
-                    "every operation item must carry a nonempty string request_id",
-                ));
-            }
-            let input = match serde_json::from_value::<JsonRequest>(Value::Object(object)) {
+        .map(|(request_id, body)| {
+            let input = match serde_json::from_value::<JsonRequest>(body) {
                 Ok(request) => Ok(contract::RecordReceiptRequest {
                     idempotency_key: request.value.idempotency_key,
                     purchase_order_id: request.value.purchase_order_id,

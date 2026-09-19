@@ -24,6 +24,7 @@ pub(super) fn emit_model_update_wit(
     let Some(operation) = model.operations.get(&CrudAction::Update) else {
         return Ok(());
     };
+    emit_codec_support(files)?;
     let package = manifest.package.id.replace('_', "-");
     let directory = format!("generated/wit/deps/{package}-{}", wit_name(model_name));
     insert_bytes(
@@ -138,7 +139,8 @@ fn access_error_literal(literal: AccessOperationErrorLiteral) -> &'static str {
 }
 
 fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String {
-    let mut source = String::from(UPDATE_CODEC_HEADER);
+    let mut source = codec_prelude("UpdateItem", 1, 100);
+    source.push_str(UPDATE_CODEC_HEADER);
     for field in &operation.writable_fields {
         let column = model_column(table, field);
         writeln!(
@@ -161,71 +163,81 @@ fn emit_update_codec(table: &Table, operation: &OperationDeclaration) -> String 
     source.push_str(UPDATE_CODEC_VALIDATE_PREFIX);
     source.push_str(UPDATE_CODEC_ENCODE_PREFIX);
     for column in table.columns() {
-        let name = rust_identifier(column.name()).expect("validated result field has a Rust name");
-        if column.column_type() == ColumnType::Int64 {
-            if column.nullable() {
-                writeln!(
-                    source,
-                    "                    {:?}: value.{name}.map(|value| value.to_string()),",
-                    column.name()
-                )
-                .expect("writing to a String cannot fail");
-            } else {
-                writeln!(
-                    source,
-                    "                    {:?}: value.{name}.to_string(),",
-                    column.name()
-                )
-                .expect("writing to a String cannot fail");
-            }
-        } else {
-            writeln!(
-                source,
-                "                    {:?}: value.{name},",
-                column.name()
-            )
-            .expect("writing to a String cannot fail");
-        }
+        emit_codec_result_field(
+            &mut source,
+            column.name(),
+            column.column_type(),
+            column.nullable(),
+        );
     }
     source.push_str(UPDATE_CODEC_ERROR_PREFIX);
     for (literal, detail) in &operation.error_details {
-        let literal_name = access_error_literal(*literal);
-        let variant = rust_type_identifier(literal_name);
-        if detail.required.is_empty() && detail.optional.is_empty() {
-            writeln!(
-                source,
-                "        contract::UpdateError::{variant} => ({literal_name:?}, Map::new()),"
-            )
-            .expect("writing to a String cannot fail");
-        } else {
-            writeln!(
-                source,
-                "        contract::UpdateError::{variant}(value) => {{"
-            )
-            .expect("writing to a String cannot fail");
-            source.push_str("            let mut detail = Map::new();\n");
-            for key in &detail.required {
-                let name = detail_name(*key).replace('-', "_");
-                writeln!(
-                    source,
-                    "            detail.insert({name:?}.to_owned(), json!(value.{name}));"
-                )
-                .expect("writing to a String cannot fail");
-            }
-            for key in &detail.optional {
-                let name = detail_name(*key).replace('-', "_");
-                writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(detail_value)); }}")
-                    .expect("writing to a String cannot fail");
-            }
-            writeln!(source, "            ({literal_name:?}, detail)\n        }}")
-                .expect("writing to a String cannot fail");
-        }
+        emit_codec_error_arm(
+            &mut source,
+            "UpdateError",
+            access_error_literal(*literal),
+            detail,
+        );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
     source
 }
 
-const UPDATE_CODEC_HEADER: &str = r"// @generated from wamn.json and schema IR; do not edit.
+fn emit_codec_support(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), GenerateError> {
+    let path = "generated/wit/operation_codec.rs";
+    if !files.contains_key(path) {
+        insert_bytes(
+            files,
+            path,
+            format!("{CODEC_HEADER}{CODEC_ENVELOPE}").into_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
+fn codec_prelude(item: &str, minimum: u32, maximum: u32) -> String {
+    format!(
+        "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\ntype Item = contract::{item};\nconst MINIMUM: usize = {minimum};\nconst MAXIMUM: usize = {maximum};\nconst COUNT_ERROR: &str = \"operation input item count must be {minimum}..={maximum}\";\n\n"
+    )
+}
+
+const CODEC_ENVELOPE: &str = r#"
+fn validate_count(count: usize) -> Result<(), CodecError> {
+    if !(MINIMUM..=MAXIMUM).contains(&count) {
+        return Err(CodecError(COUNT_ERROR));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
+    validate_count(input.len())?;
+    if input.iter().any(|item| item.request_id.is_empty()) {
+        return Err(CodecError("every operation item must carry a nonempty string request_id"));
+    }
+    Ok(())
+}
+
+fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
+    let Value::Array(values) = serde_json::from_str(input)
+        .map_err(|_| CodecError("operation input must be a JSON array"))?
+    else { return Err(CodecError("operation input must be a JSON array")); };
+    validate_count(values.len())?;
+    values.into_iter().map(|value| {
+        let Value::Object(mut object) = value else {
+            return Err(CodecError("every operation item must be a JSON object"));
+        };
+        let Some(Value::String(request_id)) = object.remove("request_id") else {
+            return Err(CodecError("every operation item must carry a nonempty string request_id"));
+        };
+        if request_id.is_empty() {
+            return Err(CodecError("every operation item must carry a nonempty string request_id"));
+        }
+        Ok((request_id, Value::Object(object)))
+    }).collect()
+}
+"#;
+
+const CODEC_HEADER: &str = r"// @generated from wamn.json and schema IR; do not edit.
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -245,7 +257,9 @@ impl std::fmt::Display for CodecError {
 
 impl std::error::Error for CodecError {}
 
-#[derive(Deserialize)]
+";
+
+const UPDATE_CODEC_HEADER: &str = r"#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
     id: String,
@@ -287,23 +301,8 @@ fn change<T>(value: JsonChange<T>) -> Option<Option<T>> {
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
-    let Value::Array(values) = serde_json::from_str(input)
-        .map_err(|_| CodecError("operation input must be a JSON array"))?
-    else { return Err(CodecError("operation input must be a JSON array")); };
-    if !(1..=100).contains(&values.len()) {
-        return Err(CodecError("operation input item count must be 1..=100"));
-    }
-    values.into_iter().map(|value| {
-        let Value::Object(mut object) = value else {
-            return Err(CodecError("every operation item must be a JSON object"));
-        };
-        let Some(Value::String(request_id)) = object.remove("request_id") else {
-            return Err(CodecError("every operation item must carry a nonempty string request_id"));
-        };
-        if request_id.is_empty() {
-            return Err(CodecError("every operation item must carry a nonempty string request_id"));
-        }
-        let input = match serde_json::from_value::<JsonRequest>(Value::Object(object)) {
+    decode_envelope(input)?.into_iter().map(|(request_id, body)| {
+        let input = match serde_json::from_value::<JsonRequest>(body) {
             Ok(request) => match request.expected_row_version.parse::<i64>() {
                 Ok(expected_row_version) => {
                     let request = contract::UpdateRequest {
@@ -372,6 +371,7 @@ pub(super) fn emit_custom_operation_wit(
         return Ok(());
     }
 
+    emit_codec_support(files)?;
     let package = manifest.package.id.replace('_', "-");
     let version = &manifest.package.version;
     let directory = format!("generated/wit/deps/{package}-receiving");
@@ -573,24 +573,21 @@ fn emit_receipt_codec(operation: &CustomOperationDeclaration) -> Result<String, 
     })?;
     let value_fields = codec_fields(&operation.input.fields, "value.");
     let line_fields = codec_fields(&operation.input.fields, "value.line[].");
-    let mut source = String::from(RECEIPT_CODEC_HEADER);
-
-    emit_json_struct(&mut source, "JsonValue", &value_fields);
-    source.push_str("    line: Vec<JsonLine>,\n}\n\n");
-    source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
-    emit_json_struct(&mut source, "JsonLine", &line_fields);
-    source.push_str("}\n");
     let envelope = operation.input.envelope.as_ref().ok_or_else(|| {
         GenerateError::new(
             GenerateErrorKind::InvalidOperation,
             "receiving.record_receipt needs envelope bounds for its JSON codec",
         )
     })?;
-    source.push_str(
-        &RECEIPT_CODEC_DECODE_PREFIX
-            .replace("$MINIMUM", &envelope.minimum.to_string())
-            .replace("$MAXIMUM", &envelope.maximum.to_string()),
-    );
+    let mut source = codec_prelude("RecordReceiptItem", envelope.minimum, envelope.maximum);
+    source.push_str(RECEIPT_CODEC_HEADER);
+
+    emit_json_struct(&mut source, "JsonValue", &value_fields);
+    source.push_str("    line: Vec<JsonLine>,\n}\n\n");
+    source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
+    emit_json_struct(&mut source, "JsonLine", &line_fields);
+    source.push_str("}\n");
+    source.push_str(RECEIPT_CODEC_DECODE_PREFIX);
     emit_codec_field_assignments(&mut source, &value_fields, "request.value", 16);
     source.push_str(
         "                line: request.value.line.into_iter().map(|line| contract::RecordReceiptLine {\n",
@@ -601,25 +598,17 @@ fn emit_receipt_codec(operation: &CustomOperationDeclaration) -> Result<String, 
         if field.path.contains("[]") || field.path.contains('.') {
             continue;
         }
-        let name = rust_identifier(&field.path).expect("validated result field has a Rust name");
-        if field.path == "row_version" {
-            writeln!(
-                source,
-                "                    {:?}: value.{name}.to_string(),",
-                field.path
-            )
-            .expect("writing to a String cannot fail");
-        } else {
-            writeln!(
-                source,
-                "                    {:?}: value.{name},",
-                field.path
-            )
-            .expect("writing to a String cannot fail");
-        }
+        emit_codec_result_field(&mut source, &field.path, field.ty, field.nullable);
     }
     source.push_str(RECEIPT_CODEC_ERROR_PREFIX);
-    emit_codec_error_arms(&mut source, operation);
+    for literal in &operation.errors {
+        emit_codec_error_arm(
+            &mut source,
+            "RecordReceiptError",
+            literal,
+            &operation.error_details[literal],
+        );
+    }
     source.push_str(RECEIPT_CODEC_FOOTER);
     Ok(source)
 }
@@ -680,71 +669,59 @@ fn emit_codec_field_assignments(
     }
 }
 
-fn emit_codec_error_arms(source: &mut String, operation: &CustomOperationDeclaration) {
-    for literal in &operation.errors {
-        let variant = rust_type_identifier(literal);
-        let detail = operation
-            .error_details
-            .get(literal)
-            .expect("validated error has a detail declaration");
-        if detail.required.is_empty() && detail.optional.is_empty() {
-            writeln!(
-                source,
-                "        contract::RecordReceiptError::{variant} => ({literal:?}, Map::new()),"
-            )
-            .expect("writing to a String cannot fail");
-            continue;
-        }
-
+fn emit_codec_error_arm(
+    source: &mut String,
+    error_type: &str,
+    literal: &str,
+    detail: &OperationErrorDetailDeclaration,
+) {
+    let variant = rust_type_identifier(literal);
+    if detail.required.is_empty() && detail.optional.is_empty() {
         writeln!(
             source,
-            "        contract::RecordReceiptError::{variant}(value) => {{"
+            "        contract::{error_type}::{variant} => ({literal:?}, Map::new()),"
         )
         .expect("writing to a String cannot fail");
-        source.push_str("            let mut detail = Map::new();\n");
-        for key in &detail.required {
-            let name = detail_name(*key).replace('-', "_");
-            writeln!(
-                source,
-                "            detail.insert({name:?}.to_owned(), json!(value.{name}));"
-            )
-            .expect("writing to a String cannot fail");
-        }
-        for key in &detail.optional {
-            let name = detail_name(*key).replace('-', "_");
-            writeln!(
-                source,
-                "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(detail_value)); }}"
-            )
-            .expect("writing to a String cannot fail");
-        }
-        writeln!(source, "            ({literal:?}, detail)")
-            .expect("writing to a String cannot fail");
-        source.push_str("        }\n");
+        return;
     }
-}
-
-const RECEIPT_CODEC_HEADER: &str = r"// @generated from wamn.json; do not edit.
-
-use serde::Deserialize;
-use serde_json::{Map, Value, json};
-
-#[derive(Debug)]
-pub(crate) struct CodecError(&'static str);
-
-impl CodecError {
-    pub(crate) const fn context(&self) -> &'static str { self.0 }
-}
-
-impl std::fmt::Display for CodecError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0)
+    writeln!(
+        source,
+        "        contract::{error_type}::{variant}(value) => {{"
+    )
+    .expect("writing to a String cannot fail");
+    source.push_str("            let mut detail = Map::new();\n");
+    for key in &detail.required {
+        let name = detail_name(*key).replace('-', "_");
+        writeln!(
+            source,
+            "            detail.insert({name:?}.to_owned(), json!(value.{name}));"
+        )
+        .expect("writing to a String cannot fail");
     }
+    for key in &detail.optional {
+        let name = detail_name(*key).replace('-', "_");
+        writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(detail_value)); }}")
+            .expect("writing to a String cannot fail");
+    }
+    writeln!(source, "            ({literal:?}, detail)\n        }}")
+        .expect("writing to a String cannot fail");
 }
 
-impl std::error::Error for CodecError {}
+fn emit_codec_result_field(source: &mut String, field: &str, ty: ColumnType, nullable: bool) {
+    let name = rust_identifier(field).expect("validated result field has a Rust name");
+    let conversion = match (ty, nullable) {
+        (ColumnType::Int64, true) => ".map(|value| value.to_string())",
+        (ColumnType::Int64, false) => ".to_string()",
+        _ => "",
+    };
+    writeln!(
+        source,
+        "                    {field:?}: value.{name}{conversion},"
+    )
+    .expect("writing to a String cannot fail");
+}
 
-#[derive(Deserialize)]
+const RECEIPT_CODEC_HEADER: &str = r"#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest { value: JsonValue }
 
@@ -752,27 +729,12 @@ struct JsonRequest { value: JsonValue }
 #[serde(deny_unknown_fields)]
 ";
 
-const RECEIPT_CODEC_DECODE_PREFIX: &str = r#"
+const RECEIPT_CODEC_DECODE_PREFIX: &str = r"
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {
-    let Value::Array(values) = serde_json::from_str(input)
-        .map_err(|_| CodecError("operation input must be a JSON array"))?
-    else { return Err(CodecError("operation input must be a JSON array")); };
-    if !($MINIMUM..=$MAXIMUM).contains(&values.len()) {
-        return Err(CodecError("operation input item count must be $MINIMUM..=$MAXIMUM"));
-    }
-    values.into_iter().map(|value| {
-        let Value::Object(mut object) = value else {
-            return Err(CodecError("every operation item must be a JSON object"));
-        };
-        let Some(Value::String(request_id)) = object.remove("request_id") else {
-            return Err(CodecError("every operation item must carry a nonempty string request_id"));
-        };
-        if request_id.is_empty() {
-            return Err(CodecError("every operation item must carry a nonempty string request_id"));
-        }
-        let input = match serde_json::from_value::<JsonRequest>(Value::Object(object)) {
+    decode_envelope(input)?.into_iter().map(|(request_id, body)| {
+        let input = match serde_json::from_value::<JsonRequest>(body) {
             Ok(request) => Ok(contract::RecordReceiptRequest {
-"#;
+";
 
 const RECEIPT_CODEC_ENCODE_PREFIX: &str = r#"                }).collect(),
             }),
@@ -861,7 +823,8 @@ mod tests {
         let manifest: PackageManifest = serde_json::from_value(manifest).unwrap();
         let codec =
             emit_receipt_codec(&manifest.custom_operations["receiving.record_receipt"]).unwrap();
-        assert!(codec.contains("(2..=7).contains"));
+        assert!(codec.contains("const MINIMUM: usize = 2;"));
+        assert!(codec.contains("const MAXIMUM: usize = 7;"));
         assert!(codec.contains("item count must be 2..=7"));
     }
 }

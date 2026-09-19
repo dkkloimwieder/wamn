@@ -173,6 +173,12 @@ impl RecordReceipt for Component {
         context: NodeContext,
         input: Vec<contract::RecordReceiptItem>,
     ) -> Result<Vec<contract::RecordReceiptOutcome>, NodeError> {
+        receipt_codec::validate(&input).map_err(|error| {
+            NodeError::InvalidInput(ErrorDetail {
+                message: error.context().to_owned(),
+                code: Some("invalid_input".to_owned()),
+            })
+        })?;
         contract::run(context, input).await
     }
 
