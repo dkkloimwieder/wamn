@@ -1115,9 +1115,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, Co
             Ok(request) => Ok(contract::RecordReceiptRequest {
 ";
 
-const RECEIPT_CODEC_ERROR_PREFIX: &str = r#"                }
-            }),
-            Err(error) => json!({
+const RECEIPT_CODEC_ERROR_PREFIX: &str = r#"            Err(error) => json!({
                 "request_id": item.request_id,
                 "error": error_value(error),
             }),
