@@ -338,6 +338,7 @@ fn emit_crud_codec(action: CrudAction, table: &Table, operation: &OperationDecla
     }
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(&format!("{type_name}Item"), 1, 100);
+    source.push_str(&emit_crud_json_codec(action, table, operation));
     source.push_str(&emit_handler(&type_name));
     source.push_str(&emit_row_adapter(
         table
@@ -354,6 +355,201 @@ fn emit_crud_codec(action: CrudAction, table: &Table, operation: &OperationDecla
     ));
     source.push_str(&emit_export_adapter(&type_name, false));
     source
+}
+
+fn emit_crud_json_codec(
+    action: CrudAction,
+    table: &Table,
+    operation: &OperationDeclaration,
+) -> String {
+    let type_name = rust_type_identifier(action.as_str());
+    let mut source = String::from("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
+    match action {
+        CrudAction::Get | CrudAction::Delete => {
+            source.push_str("struct JsonRequest { id: String");
+            if action == CrudAction::Delete {
+                let revision = rust_identifier(
+                    operation
+                        .revision_field
+                        .as_deref()
+                        .expect("validated delete revision exists"),
+                )
+                .expect("validated revision has a Rust name");
+                write!(source, ", expected_{revision}: JsonInt64")
+                    .expect("writing to a String cannot fail");
+            }
+            source.push_str(" }\n\n");
+        }
+        CrudAction::Create => {
+            source.push_str("struct JsonRequest { idempotency_key: String,\n");
+            emit_json_columns(&mut source, table, &operation.writable_fields);
+            source.push_str("}\n\n");
+        }
+        CrudAction::Query => emit_query_json_types(&mut source, table, operation),
+        CrudAction::Update => unreachable!("update owns its compatibility JSON codec"),
+    }
+    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| contract::{type_name}Request {{")
+        .expect("writing to a String cannot fail");
+    emit_crud_request_assignments(&mut source, action, table, operation);
+    writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
+        .expect("writing to a String cannot fail");
+    emit_crud_invalid_detail(&mut source, operation);
+    emit_crud_encoder(&mut source, action, table, operation);
+    source
+}
+
+fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
+    for field in fields {
+        let column = model_column(table, field);
+        writeln!(
+            source,
+            "    {}: {},",
+            rust_identifier(field).expect("validated field has a Rust name"),
+            codec_rust_type(column.column_type(), column.nullable())
+        )
+        .expect("writing to a String cannot fail");
+    }
+}
+
+fn emit_query_json_types(source: &mut String, table: &Table, operation: &OperationDeclaration) {
+    source.push_str("struct JsonRequest { #[serde(default)] filter: Option<JsonFilter>, #[serde(default)] sort: Option<JsonSort>, #[serde(default)] cursor: Option<String>, #[serde(default)] limit: Option<JsonInt64> }\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFilter {\n");
+    for filter in &operation.filters {
+        let column = model_column(table, &filter.field);
+        writeln!(
+            source,
+            "    #[serde(default)] {}: Option<Vec<{}>> ,",
+            rust_identifier(&filter.field).expect("validated filter has a Rust name"),
+            codec_rust_type(column.column_type(), false)
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source.push_str("}\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonSort { field: String, direction: String }\n\n");
+}
+
+fn emit_crud_request_assignments(
+    source: &mut String,
+    action: CrudAction,
+    table: &Table,
+    operation: &OperationDeclaration,
+) {
+    match action {
+        CrudAction::Get => source.push_str("            id: request.id,\n"),
+        CrudAction::Delete => {
+            source.push_str("            id: request.id,\n");
+            let revision = rust_identifier(
+                operation
+                    .revision_field
+                    .as_deref()
+                    .expect("delete revision exists"),
+            )
+            .expect("validated revision has a Rust name");
+            writeln!(
+                source,
+                "            expected_{revision}: request.expected_{revision}.0,"
+            )
+            .expect("writing to a String cannot fail");
+        }
+        CrudAction::Create => {
+            source.push_str("            idempotency_key: request.idempotency_key,\n");
+            for field in &operation.writable_fields {
+                let column = model_column(table, field);
+                let field = rust_identifier(field).expect("validated field has a Rust name");
+                let conversion = match (column.column_type(), column.nullable()) {
+                    (ColumnType::Int64, true) => ".map(|value| value.0)",
+                    (ColumnType::Int64, false) => ".0",
+                    _ => "",
+                };
+                writeln!(source, "            {field}: request.{field}{conversion},")
+                    .expect("writing to a String cannot fail");
+            }
+        }
+        CrudAction::Query => {
+            for filter in &operation.filters {
+                let field =
+                    rust_identifier(&filter.field).expect("validated filter has a Rust name");
+                writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()),")
+                    .expect("writing to a String cannot fail");
+            }
+            source.push_str("            sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),\n            sort_direction: request.sort.map(|sort| sort.direction),\n            cursor: request.cursor,\n            limit: request.limit.map(|value| value.0),\n");
+        }
+        CrudAction::Update => unreachable!("update has a separate codec"),
+    }
+}
+
+fn emit_crud_invalid_detail(source: &mut String, operation: &OperationDeclaration) {
+    let detail = &operation.error_details[&AccessOperationErrorLiteral::InvalidInput];
+    source.push_str("fn invalid(field: &str) -> contract::InvalidInputDetail { contract::InvalidInputDetail {\n");
+    for key in &detail.required {
+        if *key == OperationErrorDetailKey::Field {
+            source.push_str("    field: field.to_owned(),\n");
+        }
+    }
+    for key in &detail.optional {
+        writeln!(source, "    {}: None,", detail_name(*key).replace('-', "_"))
+            .expect("writing to a String cannot fail");
+    }
+    source.push_str("} }\n\n");
+}
+
+fn emit_crud_encoder(
+    source: &mut String,
+    action: CrudAction,
+    table: &Table,
+    operation: &OperationDeclaration,
+) {
+    let type_name = rust_type_identifier(action.as_str());
+    writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ \"request_id\": item.request_id, \"value\":")
+        .expect("writing to a String cannot fail");
+    match operation.result {
+        ResultClass::One => emit_json_row(source, table, "value.value", 12),
+        ResultClass::OptionalOne => {
+            source.push_str("value.value.as_ref().map(|row| json!({\n");
+            emit_json_row_fields(source, table, "row");
+            source.push_str("            }))\n");
+        }
+        ResultClass::BoundedList => {
+            source.push_str("value.value.iter().map(|row| json!({\n");
+            emit_json_row_fields(source, table, "row");
+            source.push_str("            })).collect::<Vec<_>>()\n");
+        }
+        ResultClass::Page => {
+            source.push_str("{ \"item\": value.value.iter().map(|row| json!({\n");
+            emit_json_row_fields(source, table, "row");
+            source.push_str(
+                "            })).collect::<Vec<_>>(), \"next_cursor\": value.next_cursor }\n",
+            );
+        }
+    }
+    source.push_str("        }),\n        Err(error) => json!({ \"request_id\": item.request_id, \"error\": error_value(error) }),\n    }).collect::<Vec<_>>();\n    serde_json::to_string(&values).expect(\"typed operation outcomes always serialize\")\n}\n\n");
+    writeln!(source, "fn error_value(error: &contract::{type_name}Error) -> Value {{\n    let (code, detail) = match error {{")
+        .expect("writing to a String cannot fail");
+    for (literal, detail) in &operation.error_details {
+        emit_codec_error_arm(
+            source,
+            &format!("{type_name}Error"),
+            access_error_literal(*literal),
+            detail,
+        );
+    }
+    source.push_str("    };\n    json!({\"code\": code, \"detail\": detail})\n}\n");
+}
+
+fn emit_json_row(source: &mut String, table: &Table, carrier: &str, indentation: usize) {
+    writeln!(source, "json!({{").expect("writing to a String cannot fail");
+    emit_json_row_fields(source, table, carrier);
+    writeln!(source, "{}}})", " ".repeat(indentation)).expect("writing to a String cannot fail");
+}
+
+fn emit_json_row_fields(source: &mut String, table: &Table, carrier: &str) {
+    for column in table.columns() {
+        emit_codec_result_field_for(
+            source,
+            column.name(),
+            column.column_type(),
+            column.nullable(),
+            carrier,
+        );
+    }
 }
 
 fn emit_handler(type_name: &str) -> String {
