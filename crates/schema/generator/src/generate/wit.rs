@@ -296,7 +296,15 @@ fn emit_update_codec(
     fields: &[ContractFieldDeclaration],
 ) -> String {
     let mut source = codec_prelude("UpdateItem", 1, 100);
-    source.push_str(UPDATE_CODEC_HEADER);
+    let revision = operation
+        .revision_field
+        .as_deref()
+        .expect("validated update revision exists");
+    let expected_revision = format!(
+        "expected_{}",
+        rust_identifier(revision).expect("validated revision has a Rust name")
+    );
+    source.push_str(&UPDATE_CODEC_HEADER.replace("expected_revision", &expected_revision));
     for field in &operation.writable_fields {
         let column = model_column(table, field);
         writeln!(
@@ -307,7 +315,7 @@ fn emit_update_codec(
         )
         .expect("writing to a String cannot fail");
     }
-    source.push_str(UPDATE_CODEC_DECODE_PREFIX);
+    source.push_str(&UPDATE_CODEC_DECODE_PREFIX.replace("expected_revision", &expected_revision));
     for field in &operation.writable_fields {
         let name = rust_identifier(field).expect("validated update field has a Rust name");
         writeln!(
@@ -320,7 +328,8 @@ fn emit_update_codec(
         )
         .expect("writing to a String cannot fail");
     }
-    source.push_str(UPDATE_CODEC_VALIDATE_PREFIX);
+    source.push_str(&UPDATE_CODEC_VALIDATE_PREFIX.replace("expected_revision", &expected_revision));
+    emit_crud_invalid_detail(&mut source, operation);
     source.push_str(UPDATE_CODEC_ENCODE_PREFIX);
     for column in table.columns() {
         emit_codec_result_field(
@@ -667,7 +676,13 @@ fn emit_crud_request_assignments(
             for filter in &operation.filters {
                 let field =
                     rust_identifier(&filter.field).expect("validated filter has a Rust name");
-                writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()),")
+                let conversion =
+                    if model_column(table, &filter.field).column_type() == ColumnType::Int64 {
+                        ".map(|values| values.into_iter().map(|value| value.0).collect())"
+                    } else {
+                        ""
+                    };
+                writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()){conversion},")
                     .expect("writing to a String cannot fail");
             }
             if operation.sort.is_some() {
@@ -914,7 +929,7 @@ const UPDATE_CODEC_HEADER: &str = r"#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
     id: String,
-    expected_row_version: String,
+    expected_revision: String,
     change: JsonUpdateChange,
 }
 
@@ -928,11 +943,11 @@ const UPDATE_CODEC_DECODE_PREFIX: &str = r"}
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
     decode_envelope(input)?.into_iter().map(|(request_id, body)| {
         let input = match serde_json::from_value::<JsonRequest>(body) {
-            Ok(request) => match request.expected_row_version.parse::<i64>() {
-                Ok(expected_row_version) => {
+            Ok(request) => match request.expected_revision.parse::<i64>() {
+                Ok(expected_revision) => {
                     let request = contract::UpdateRequest {
                         id: request.id,
-                        expected_row_version,
+                        expected_revision,
                         change: contract::UpdateChange {
 ";
 
@@ -940,7 +955,7 @@ const UPDATE_CODEC_VALIDATE_PREFIX: &str = r#"                        },
                     };
                     Ok(request)
                 }
-                Err(_) => Err(invalid("expected_row_version")),
+                Err(_) => Err(invalid("expected_revision")),
             },
             Err(_) => Err(invalid("input")),
         };
@@ -950,11 +965,7 @@ const UPDATE_CODEC_VALIDATE_PREFIX: &str = r#"                        },
 
 "#;
 
-const UPDATE_CODEC_ENCODE_PREFIX: &str = r#"fn invalid(field: &str) -> contract::InvalidInputDetail {
-    contract::InvalidInputDetail { field: field.to_owned() }
-}
-
-pub(crate) fn encode(output: &[contract::UpdateOutcome]) -> String {
+const UPDATE_CODEC_ENCODE_PREFIX: &str = r#"pub(crate) fn encode(output: &[contract::UpdateOutcome]) -> String {
     let values = output.iter().map(|item| {
         match &item.outcome {
             Ok(value) => json!({
