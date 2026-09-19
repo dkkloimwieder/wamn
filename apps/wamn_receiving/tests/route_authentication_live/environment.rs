@@ -759,8 +759,8 @@ pub(super) fn released_component_digests(
                 && attachment.definition["route"]["method"] == "POST"
                 && attachment.definition["route"]["path"] == expected.path
                 && attachment.definition["route"]["host"] == route_host
-                && attachment.auth_policy == serde_json::json!({"modes": ["pat"]}),
-            "released attachment {} does not match its exact PAT route tuple: {attachment:?}",
+                && attachment.auth_policy == serde_json::json!({"modes": ["pat", "session"]}),
+            "released attachment {} does not match its exact authenticated route tuple: {attachment:?}",
             expected.id
         );
     }
