@@ -432,6 +432,15 @@ const CODEC_HEADER: &str = r"// @generated from wamn.json and schema IR; do not 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+struct JsonInt64(i64);
+
+impl<'de> Deserialize<'de> for JsonInt64 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map(Self).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct CodecError(&'static str);
 
@@ -583,8 +592,8 @@ pub(super) fn emit_custom_operation_wit(
         files,
         &format!(
             "generated/wit/{}_{}_codec.rs",
-            rust_identifier(group).expect("validated custom group has a Rust name"),
-            rust_identifier(local_name).expect("validated custom operation has a Rust name")
+            artifact_name(group),
+            artifact_name(local_name)
         ),
         codec.into_bytes(),
     )
@@ -752,7 +761,7 @@ fn emit_owned_interface(
         );
         writeln!(
             source,
-            "  }}\n\n  record {interface}-result {{\n    value: list<{interface}-row>,"
+            "  }}\n\n  record {interface}-result {{\n    rows: list<{interface}-row>,"
         )
         .expect("writing to a String cannot fail");
     } else {
@@ -859,6 +868,13 @@ fn wit_name(value: &str) -> String {
     value.replace('_', "-")
 }
 
+fn artifact_name(value: &str) -> String {
+    rust_identifier(value)
+        .expect("validated operation name has a Rust spelling")
+        .trim_start_matches("r#")
+        .to_owned()
+}
+
 fn emit_custom_codec(
     local_name: &str,
     operation: &CustomOperationDeclaration,
@@ -884,7 +900,7 @@ fn emit_custom_codec(
         .input
         .envelope
         .as_ref()
-        .map_or((1, 1), |limit| (limit.minimum, limit.maximum));
+        .map_or((1, 100), |limit| (limit.minimum, limit.maximum));
     let type_name = rust_type_identifier(local_name);
     let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum);
     if value_fields.is_empty() && line_fields.is_empty() {
@@ -917,11 +933,11 @@ fn emit_custom_codec(
     emit_invalid_detail(&mut source, operation);
     source.push_str("pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": ");
     if result.class == ResultClass::BoundedList {
-        source.push_str("value.value.iter().map(|row| json!({\n");
+        source.push_str("{ \"rows\": value.rows.iter().map(|row| json!({\n");
         for field in &result.fields {
             emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
         }
-        source.push_str("                })).collect::<Vec<_>>()\n");
+        source.push_str("                })).collect::<Vec<_>>() }\n");
     } else {
         source.push_str("{\n");
         for field in &result.fields {
@@ -987,7 +1003,7 @@ fn codec_rust_type(ty: ColumnType, nullable: bool) -> String {
     let ty = match ty {
         ColumnType::Boolean => "bool",
         ColumnType::Int32 => "i32",
-        ColumnType::Int64 => "i64",
+        ColumnType::Int64 => "JsonInt64",
         ColumnType::Float64 => "f64",
         ColumnType::Text
         | ColumnType::Numeric
@@ -1010,9 +1026,14 @@ fn emit_codec_field_assignments(
     indentation: usize,
 ) {
     let indentation = " ".repeat(indentation);
-    for (_, path) in fields {
+    for (field, path) in fields {
         let name = rust_identifier(path).expect("validated input field has a Rust name");
-        writeln!(source, "{indentation}{name}: {value}.{name},")
+        let conversion = match (field.ty, field.nullable) {
+            (ColumnType::Int64, true) => ".map(|value| value.0)",
+            (ColumnType::Int64, false) => ".0",
+            _ => "",
+        };
+        writeln!(source, "{indentation}{name}: {value}.{name}{conversion},")
             .expect("writing to a String cannot fail");
     }
 }
