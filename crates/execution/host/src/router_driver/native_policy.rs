@@ -586,9 +586,17 @@ impl HostPlugin for NativePolicy {
             else {
                 anyhow::bail!("admitted dependency is not an interface");
             };
-            let typed = interface
-                .get_export(component.engine(), "run-json")
-                .is_some();
+            let run = interface
+                .get_export(component.engine(), "run")
+                .context("admitted dependency run is absent")?;
+            let wash_runtime::wasmtime::component::types::ComponentItem::ComponentFunc(run) =
+                run.ty
+            else {
+                anyhow::bail!("admitted dependency run is not a function");
+            };
+            let typed = run.params().nth(1).is_some_and(|(_, ty)| {
+                matches!(ty, wash_runtime::wasmtime::component::Type::List(_))
+            });
             if typed {
                 let mut dependency_linker = linker.instance(&dependency.operation)?;
                 dependency_linker.func_new_concurrent(

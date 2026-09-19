@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use anyhow::Context as _;
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::{
     AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration,
@@ -120,78 +121,108 @@ pub fn validate_component_admission(
     })?;
     let raw = component.engine();
     let component_type = component.component_type();
-    let validate_handler_signature = |export: &str, item: ComponentItem| -> anyhow::Result<()> {
-        let ComponentItem::ComponentInstance(instance) = item else {
-            anyhow::bail!("item is not an interface instance");
+    // Bindgen can omit an unused imported JSON adapter. An exported dynamic entry
+    // still supplies the checked context and node-error types for a typed import.
+    let dynamic_signature = component_type.exports(raw).find_map(|(_, item)| {
+        let ComponentItem::ComponentInstance(instance) = item.ty else {
+            return None;
         };
-        let Some(run) = instance.get_export(raw, "run") else {
-            anyhow::bail!("interface does not export run");
+        let entry = instance
+            .get_export(raw, "run-json")
+            .or_else(|| instance.get_export(raw, "run"))?;
+        let ComponentItem::ComponentFunc(entry) = entry.ty else {
+            return None;
         };
-        let ComponentItem::ComponentFunc(run) = run.ty else {
-            anyhow::bail!("interface member run is not a component function");
-        };
-        if let Some(adapter) = instance.get_export(raw, "run-json") {
-            let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
-                anyhow::bail!("run-json is not a component function");
+        entry
+            .typecheck::<
+                (&node_types::NodeContext, &str),
+                (Result<node_types::Emission, node_types::NodeError>,),
+            >(&component_type.instance_type())
+            .ok()
+            .map(|()| entry)
+    });
+    let validate_handler_signature =
+        |export: &str, item: ComponentItem, dependency: bool| -> anyhow::Result<()> {
+            let ComponentItem::ComponentInstance(instance) = item else {
+                anyhow::bail!("item is not an interface instance");
             };
-            adapter.typecheck::<
+            let Some(run) = instance.get_export(raw, "run") else {
+                anyhow::bail!("interface does not export run");
+            };
+            let ComponentItem::ComponentFunc(run) = run.ty else {
+                anyhow::bail!("interface member run is not a component function");
+            };
+            let adapter = instance.get_export(raw, "run-json");
+            let typed_input = run.params().nth(1).is_some_and(|(_, ty)| {
+                matches!(ty, wash_runtime::wasmtime::component::Type::List(_))
+            });
+            if adapter.is_some() || (dependency && typed_input) {
+                let adapter = if let Some(adapter) = adapter {
+                    let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
+                        anyhow::bail!("run-json is not a component function");
+                    };
+                    anyhow::ensure!(adapter.async_(), "typed JSON adapters must be async");
+                    adapter
+                } else {
+                    dynamic_signature
+                        .clone()
+                        .context("typed import requires a checked dynamic entry")?
+                };
+                adapter.typecheck::<
                 (&node_types::NodeContext, &str),
                 (Result<node_types::Emission, node_types::NodeError>,),
             >(&component_type.instance_type())?;
-            anyhow::ensure!(
-                run.async_() && adapter.async_(),
-                "typed operations and their JSON adapters must be async"
-            );
-            let params: Vec<_> = run.params().collect();
-            let adapter_params: Vec<_> = adapter.params().collect();
-            anyhow::ensure!(
-                params.len() == 2 && params[0].1 == adapter_params[0].1,
-                "typed operation must accept node-context and one input"
-            );
-            anyhow::ensure!(
-                matches!(
-                    params[1].1,
-                    wash_runtime::wasmtime::component::Type::List(_)
-                ),
-                "typed operation input must be a list of owned values"
-            );
-            anyhow::ensure!(
-                owned_operation_value(&params[1].1),
-                "typed operations cannot transfer store-owned resources"
-            );
-            let results: Vec<_> = run.results().collect();
-            let adapter_results: Vec<_> = adapter.results().collect();
-            let [wash_runtime::wasmtime::component::Type::Result(result)] = results.as_slice()
-            else {
-                anyhow::bail!("typed operation must return one result");
-            };
-            let wash_runtime::wasmtime::component::Type::Result(adapter_result) =
-                &adapter_results[0]
-            else {
-                unreachable!("the JSON adapter passed its result type check");
-            };
-            anyhow::ensure!(
-                result.err() == adapter_result.err(),
-                "typed operation must retain node-error"
-            );
-            anyhow::ensure!(
-                matches!(
-                    result.ok(),
-                    Some(wash_runtime::wasmtime::component::Type::List(_))
-                ) && result.ok().as_ref().is_some_and(owned_operation_value),
-                "typed operation must return a list of owned outcomes"
-            );
-            return Ok(());
-        }
-        if run.async_() && export == "wamn:node/handler@0.1.0" {
-            anyhow::bail!("run uses the async ABI without a typed contract and JSON adapter");
-        }
-        run.typecheck::<
+                anyhow::ensure!(run.async_(), "typed operations must be async");
+                let params: Vec<_> = run.params().collect();
+                let adapter_params: Vec<_> = adapter.params().collect();
+                anyhow::ensure!(
+                    params.len() == 2 && params[0].1 == adapter_params[0].1,
+                    "typed operation must accept node-context and one input"
+                );
+                anyhow::ensure!(
+                    matches!(
+                        params[1].1,
+                        wash_runtime::wasmtime::component::Type::List(_)
+                    ),
+                    "typed operation input must be a list of owned values"
+                );
+                anyhow::ensure!(
+                    owned_operation_value(&params[1].1),
+                    "typed operations cannot transfer store-owned resources"
+                );
+                let results: Vec<_> = run.results().collect();
+                let adapter_results: Vec<_> = adapter.results().collect();
+                let [wash_runtime::wasmtime::component::Type::Result(result)] = results.as_slice()
+                else {
+                    anyhow::bail!("typed operation must return one result");
+                };
+                let wash_runtime::wasmtime::component::Type::Result(adapter_result) =
+                    &adapter_results[0]
+                else {
+                    unreachable!("the JSON adapter passed its result type check");
+                };
+                anyhow::ensure!(
+                    result.err() == adapter_result.err(),
+                    "typed operation must retain node-error"
+                );
+                anyhow::ensure!(
+                    matches!(
+                        result.ok(),
+                        Some(wash_runtime::wasmtime::component::Type::List(_))
+                    ) && result.ok().as_ref().is_some_and(owned_operation_value),
+                    "typed operation must return a list of owned outcomes"
+                );
+                return Ok(());
+            }
+            if run.async_() && export == "wamn:node/handler@0.1.0" {
+                anyhow::bail!("run uses the async ABI without a typed contract and JSON adapter");
+            }
+            run.typecheck::<
             (&node_types::NodeContext, &str),
             (Result<node_types::Emission, node_types::NodeError>,),
         >(&component_type.instance_type())
         .map_err(anyhow::Error::from)
-    };
+        };
     let declared_exports: BTreeSet<_> = request.declaration.operations.keys().cloned().collect();
     let byte_exports: BTreeSet<_> = component_type
         .exports(raw)
@@ -218,7 +249,7 @@ pub fn validate_component_admission(
         let item = component_type
             .get_export(raw, export)
             .expect("equal declaration and byte export sets contain every operation");
-        if let Err(error) = validate_handler_signature(export, item.ty) {
+        if let Err(error) = validate_handler_signature(export, item.ty, false) {
             return Err(operation_signature_mismatch(&component_name, export, error));
         }
     }
@@ -265,7 +296,7 @@ pub fn validate_component_admission(
         let item = component_type
             .get_import(raw, dependency)
             .expect("the component import list contains the dependency");
-        if let Err(error) = validate_handler_signature(dependency, item.ty) {
+        if let Err(error) = validate_handler_signature(dependency, item.ty, true) {
             return Err(ComponentAdmissionError::new(
                 ComponentAdmissionErrorKind::OperationSignatureMismatch,
                 &component_name,
@@ -781,11 +812,25 @@ mod tests {
     #[test]
     fn typed_async_operation_requires_owned_values() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        for (input, expected) in [
-            ("list<item>", true),
-            ("string", false),
-            ("list<own<handle>>", false),
+        const TYPED_OPERATION: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+        for (input, expected, imported) in [
+            ("list<item>", true, false),
+            ("string", false, false),
+            ("list<own<handle>>", false, false),
+            ("list<item>", true, true),
+            ("string", false, true),
+            ("list<own<handle>>", false, true),
         ] {
+            let adapter = if imported {
+                ""
+            } else {
+                "run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;"
+            };
+            let fixture = if imported {
+                "import record-receipt; export wamn:node/handler@0.1.0;"
+            } else {
+                "export record-receipt;"
+            };
             let mut resolve = Resolve::new();
             resolve
                 .push_str(
@@ -794,15 +839,15 @@ mod tests {
                 )
                 .unwrap();
             let package = resolve.push_str("typed.wit", &format!(r"
-                package test:typed@1.0.0;
-                interface receipt {{
+                package wamn-receiving:receiving@1.0.0;
+                interface record-receipt {{
                     use wamn:node/types@0.1.0.{{node-context, node-error, emission}};
                     resource handle;
                     record item {{ request-id: string, quantity: string }}
                     run: async func(ctx: node-context, input: {input}) -> result<list<item>, node-error>;
-                    run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+                    {adapter}
                 }}
-                world fixture {{ export receipt; }}
+                world fixture {{ {fixture} }}
             ")).unwrap();
             let world = resolve.select_world(&[package], Some("fixture")).unwrap();
             let mut module = dummy_module(
@@ -818,11 +863,20 @@ mod tests {
                 .encode()
                 .unwrap();
             let mut request = request();
-            let declaration = request.declaration.operations.remove(OPERATION).unwrap();
-            request
-                .declaration
-                .operations
-                .insert("test:typed/receipt@1.0.0".to_owned(), declaration);
+            if imported {
+                request
+                    .declaration
+                    .operations
+                    .get_mut(OPERATION)
+                    .unwrap()
+                    .dependencies = vec![dependency(TYPED_OPERATION)];
+            } else {
+                let declaration = request.declaration.operations.remove(OPERATION).unwrap();
+                request
+                    .declaration
+                    .operations
+                    .insert(TYPED_OPERATION.to_owned(), declaration);
+            }
             let result = validate_component_admission(&engine, &bytes, request);
             if expected {
                 result.expect("owned typed values are admitted");
