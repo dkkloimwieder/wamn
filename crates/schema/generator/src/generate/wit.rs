@@ -447,10 +447,10 @@ fn emit_crud_json_codec(
 
 fn mutation_value(column: &Column, access: &str) -> String {
     let value = format!("change({access})");
-    if column.column_type() == ColumnType::Int64 {
-        format!("{value}.map(|value| value.map(|value| value.0))")
-    } else {
-        value
+    match column.column_type() {
+        ColumnType::Int64 => format!("{value}.map(|value| value.map(|value| value.0))"),
+        ColumnType::Json => format!("{value}.map(|value| value.map(|value| value.to_string()))"),
+        _ => value,
     }
 }
 
@@ -676,12 +676,15 @@ fn emit_crud_request_assignments(
             for filter in &operation.filters {
                 let field =
                     rust_identifier(&filter.field).expect("validated filter has a Rust name");
-                let conversion =
-                    if model_column(table, &filter.field).column_type() == ColumnType::Int64 {
+                let conversion = match model_column(table, &filter.field).column_type() {
+                    ColumnType::Int64 => {
                         ".map(|values| values.into_iter().map(|value| value.0).collect())"
-                    } else {
-                        ""
-                    };
+                    }
+                    ColumnType::Json => {
+                        ".map(|values| values.into_iter().map(|value| value.to_string()).collect())"
+                    }
+                    _ => "",
+                };
                 writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()){conversion},")
                     .expect("writing to a String cannot fail");
             }
@@ -1665,6 +1668,7 @@ fn codec_ir_rust_type(type_name: &str) -> String {
         "int64" => "JsonInt64",
         "float64" => "f64",
         "bytes" => "Vec<u8>",
+        "json" => "serde_json::Value",
         _ => "String",
     }
     .to_owned()
@@ -1693,6 +1697,8 @@ fn emit_contract_tree_assignments(
             let conversion = match (field.type_name.as_str(), field.nullable) {
                 ("int64", true) => ".map(|value| value.0)",
                 ("int64", false) => ".0",
+                ("json", true) => ".map(|value| value.to_string())",
+                ("json", false) => ".to_string()",
                 _ => "",
             };
             writeln!(source, "{indent}{member}: {access}.{member}{conversion},")
@@ -1832,11 +1838,10 @@ fn codec_rust_type(ty: ColumnType, nullable: bool) -> String {
         ColumnType::Int32 => "i32",
         ColumnType::Int64 => "JsonInt64",
         ColumnType::Float64 => "f64",
-        ColumnType::Text
-        | ColumnType::Numeric
-        | ColumnType::Timestamptz
-        | ColumnType::Json
-        | ColumnType::Uuid => "String",
+        ColumnType::Json => "serde_json::Value",
+        ColumnType::Text | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Uuid => {
+            "String"
+        }
         ColumnType::Bytes => "Vec<u8>",
     };
     if nullable {
@@ -1917,6 +1922,20 @@ fn emit_codec_result_field_for(
     carrier: &str,
 ) {
     let name = rust_identifier(field).expect("validated result field has a Rust name");
+    if ty == ColumnType::Json {
+        let value = if nullable {
+            format!(
+                "{carrier}.{name}.as_ref().map(|value| serde_json::from_str::<Value>(value).expect(\"declared JSON result contains valid JSON\"))"
+            )
+        } else {
+            format!(
+                "serde_json::from_str::<Value>(&{carrier}.{name}).expect(\"declared JSON result contains valid JSON\")"
+            )
+        };
+        writeln!(source, "                    {field:?}: {value},")
+            .expect("writing to a String cannot fail");
+        return;
+    }
     let conversion = match (ty, nullable) {
         (ColumnType::Int64, true) => ".map(|value| value.to_string())",
         (ColumnType::Int64, false) => ".to_string()",
