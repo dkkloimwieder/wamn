@@ -1010,19 +1010,34 @@ pub(super) fn emit_custom_operation_wit(
     let package = manifest.package.id.replace('_', "-");
     let version = &manifest.package.version;
     let directory = format!("generated/wit/deps/{package}-{}", wit_name(group));
-    let source = if let Some((_, dependency)) =
-        manifest.base_dependencies.iter().find(|(_, item)| {
-            item.operations
-                .iter()
-                .any(|candidate| candidate == operation_name)
-        }) {
-        emit_forwarding_interface(&package, version, group, local_name, dependency)
-    } else {
-        emit_owned_group(&package, version, group, manifest)
-    };
     let package_path = format!("{directory}/package.wit");
-    if !files.contains_key(&package_path) {
-        insert_bytes(files, &package_path, source.into_bytes())?;
+    let group_marker = manifest
+        .custom_operations
+        .keys()
+        .find_map(|candidate| {
+            candidate
+                .strip_prefix(&format!("{group}."))
+                .map(|name| format!("interface {} {{", wit_name(name)))
+        })
+        .expect("current custom operation belongs to its group");
+    let group_is_emitted = files.get(&package_path).is_some_and(|existing| {
+        String::from_utf8_lossy(existing).contains(&group_marker)
+    });
+    if !group_is_emitted {
+        let source = emit_custom_group(&package, version, group, manifest);
+        if let Some(existing) = files.get_mut(&package_path) {
+            while existing.last().is_some_and(u8::is_ascii_whitespace) {
+                existing.pop();
+            }
+            existing.extend_from_slice(b"\n\n");
+            let body = source
+                .split_once("\n\n")
+                .map_or(source.as_str(), |(_, body)| body);
+            existing.extend_from_slice(body.trim_end().as_bytes());
+            existing.push(b'\n');
+        } else {
+            insert_bytes(files, &package_path, source.into_bytes())?;
+        }
     }
     let codec = emit_custom_codec(local_name, operation);
     insert_bytes(
@@ -1036,7 +1051,7 @@ pub(super) fn emit_custom_operation_wit(
     )
 }
 
-fn emit_owned_group(
+fn emit_custom_group(
     package: &str,
     version: &str,
     group: &str,
@@ -1047,14 +1062,24 @@ fn emit_owned_group(
         let Some(local_name) = operation_name.strip_prefix(&format!("{group}.")) else {
             continue;
         };
-        let emitted =
-            emit_owned_interface(package, version, group, local_name, manifest, operation);
+        let emitted = if let Some((_, dependency)) =
+            manifest.base_dependencies.iter().find(|(_, item)| {
+                item.operations
+                    .iter()
+                    .any(|candidate| candidate == operation_name)
+            }) {
+            emit_forwarding_interface(package, version, group, local_name, dependency)
+        } else {
+            emit_owned_interface(package, version, group, local_name, manifest, operation)
+        };
         let marker = format!("interface {} {{", wit_name(local_name));
         let start = emitted
             .rfind(&marker)
-            .expect("owned interface emitter includes its operation");
+            .expect("custom interface emitter includes its operation");
         source.push_str(&emitted[start..]);
     }
+    source.truncate(source.trim_end().len());
+    source.push('\n');
     source
 }
 
