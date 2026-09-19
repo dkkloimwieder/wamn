@@ -56,6 +56,17 @@ Package-owned typed accessors and registered operations expose that fixed set.
 There is no universal runtime controller with unrestricted operation-ID authority over the database.
 Command source uses generated accessors and named queries instead of adding unreviewed SQL strings.
 
+The generator derives native-async WIT contracts and Rust adapters from supported CRUD and custom-operation declarations.
+Each package owns its contracts under `generated/wit`.
+Names, fields, revision inputs, nested values, results, and error details follow the declarations.
+Separate operations over one table retain separate writable fields and permissions.
+
+Generated codecs handle JSON entry, typed input validation, primitive conversion, correlation, and declared error details.
+Their `export_operation!` macro connects a typed application handler to `run` and `run-json`.
+Known component calls use typed values.
+HTTP and dynamic entry use the JSON adapter.
+Application handlers retain business rules, transaction sequencing, and deliberate result transformations.
+
 Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.

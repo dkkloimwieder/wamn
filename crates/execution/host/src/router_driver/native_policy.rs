@@ -595,7 +595,11 @@ impl HostPlugin for NativePolicy {
                 anyhow::bail!("admitted dependency run is not a function");
             };
             let typed = run.params().nth(1).is_some_and(|(_, ty)| {
-                matches!(ty, wash_runtime::wasmtime::component::Type::List(_))
+                matches!(
+                    ty,
+                    wash_runtime::wasmtime::component::Type::List(_)
+                        | wash_runtime::wasmtime::component::Type::Record(_)
+                )
             });
             if typed {
                 let mut dependency_linker = linker.instance(&dependency.operation)?;

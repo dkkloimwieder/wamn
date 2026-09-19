@@ -96,6 +96,12 @@ All cleanup paths retain their resource bounds and return failures to their owne
 
 The [driver](../../crates/execution/host/src/router_driver.rs) coordinates the graph through native dispatch.
 Its private modules own admission, authority, dependency calls, workload loading, and invocation state.
+
+Typed operation inputs and successful results contain owned lists or records.
+Admission checks the context, node errors, and every nested value.
+It refuses store-owned resources at these boundaries.
+Nested calls use the typed entrypoint under the existing authority and deadline.
+JSON adapters serve HTTP and dynamic routing.
 The pure router owns deterministic graph decisions.
 After initialization, the host records caller, SQL, claims, causation, and effect authority in an invocation scope.
 Native callbacks restore the trace context from that scope.

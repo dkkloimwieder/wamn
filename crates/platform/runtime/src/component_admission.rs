@@ -154,7 +154,11 @@ pub fn validate_component_admission(
             };
             let adapter = instance.get_export(raw, "run-json");
             let typed_input = run.params().nth(1).is_some_and(|(_, ty)| {
-                matches!(ty, wash_runtime::wasmtime::component::Type::List(_))
+                matches!(
+                    ty,
+                    wash_runtime::wasmtime::component::Type::List(_)
+                        | wash_runtime::wasmtime::component::Type::Record(_)
+                )
             });
             if adapter.is_some() || (dependency && typed_input) {
                 let adapter = if let Some(adapter) = adapter {
@@ -183,8 +187,9 @@ pub fn validate_component_admission(
                     matches!(
                         params[1].1,
                         wash_runtime::wasmtime::component::Type::List(_)
+                            | wash_runtime::wasmtime::component::Type::Record(_)
                     ),
-                    "typed operation input must be a list of owned values"
+                    "typed operation input must be an owned list or record"
                 );
                 anyhow::ensure!(
                     owned_operation_value(&params[1].1),
@@ -208,9 +213,12 @@ pub fn validate_component_admission(
                 anyhow::ensure!(
                     matches!(
                         result.ok(),
-                        Some(wash_runtime::wasmtime::component::Type::List(_))
+                        Some(
+                            wash_runtime::wasmtime::component::Type::List(_)
+                                | wash_runtime::wasmtime::component::Type::Record(_)
+                        )
                     ) && result.ok().as_ref().is_some_and(owned_operation_value),
-                    "typed operation must return a list of owned outcomes"
+                    "typed operation must return an owned list or record"
                 );
                 return Ok(());
             }
@@ -813,13 +821,14 @@ mod tests {
     fn typed_async_operation_requires_owned_values() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         const TYPED_OPERATION: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
-        for (input, expected, imported) in [
-            ("list<item>", true, false),
-            ("string", false, false),
-            ("list<own<handle>>", false, false),
-            ("list<item>", true, true),
-            ("string", false, true),
-            ("list<own<handle>>", false, true),
+        for (input, output, expected, imported) in [
+            ("list<item>", "list<item>", true, false),
+            ("item", "item", true, false),
+            ("string", "list<item>", false, false),
+            ("list<own<handle>>", "list<item>", false, false),
+            ("list<item>", "list<item>", true, true),
+            ("string", "list<item>", false, true),
+            ("list<own<handle>>", "list<item>", false, true),
         ] {
             let adapter = if imported {
                 ""
@@ -844,7 +853,7 @@ mod tests {
                     use wamn:node/types@0.1.0.{{node-context, node-error, emission}};
                     resource handle;
                     record item {{ request-id: string, quantity: string }}
-                    run: async func(ctx: node-context, input: {input}) -> result<list<item>, node-error>;
+                    run: async func(ctx: node-context, input: {input}) -> result<{output}, node-error>;
                     {adapter}
                 }}
                 world fixture {{ {fixture} }}
