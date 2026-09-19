@@ -1098,7 +1098,12 @@ fn emit_owned_interface(
         }
     }
     writeln!(source, "  }}\n\n  record {interface}-item {{\n    request-id: string,\n    input: result<{interface}-request, invalid-input-detail>,\n  }}\n").expect("writing to a String cannot fail");
-    if result.is_some_and(|result| result.class == ResultClass::BoundedList) {
+    if result.is_some_and(|result| {
+        matches!(
+            result.class,
+            ResultClass::BoundedList | ResultClass::OptionalOne
+        )
+    }) {
         writeln!(source, "  record {interface}-row {{").expect("writing to a String cannot fail");
         emit_record_fields(
             &mut source,
@@ -1106,9 +1111,14 @@ fn emit_owned_interface(
             "",
             false,
         );
+        let carrier = if result.expect("result exists").class == ResultClass::BoundedList {
+            format!("rows: list<{interface}-row>")
+        } else {
+            format!("value: option<{interface}-row>")
+        };
         writeln!(
             source,
-            "  }}\n\n  record {interface}-result {{\n    rows: list<{interface}-row>,"
+            "  }}\n\n  record {interface}-result {{\n    {carrier},"
         )
         .expect("writing to a String cannot fail");
     } else {
@@ -1325,17 +1335,6 @@ fn emit_custom_codec(
         source.push_str(&emit_export_adapter(&type_name, true));
         return Ok(source);
     };
-    let value_fields = codec_fields(&operation.input.fields, "value.");
-    let line_fields = codec_fields(&operation.input.fields, "value.line[].");
-    let flat_fields = operation
-        .input
-        .fields
-        .iter()
-        .filter_map(|field| {
-            (!field.path.contains('.') && field.path != "request_id")
-                .then_some((field, field.path.as_str()))
-        })
-        .collect::<Vec<_>>();
     let (minimum, maximum) = operation
         .input
         .envelope
@@ -1343,47 +1342,7 @@ fn emit_custom_codec(
         .map_or((1, 100), |limit| (limit.minimum, limit.maximum));
     let type_name = rust_type_identifier(local_name);
     let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum);
-    if value_fields.is_empty() && line_fields.is_empty() {
-        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
-        emit_json_struct(&mut source, "JsonRequest", &flat_fields);
-        let request = if flat_fields.is_empty() {
-            "_request"
-        } else {
-            "request"
-        };
-        let constructor = if flat_fields.is_empty() {
-            "contract::RecordReceiptRequest::Request".to_owned()
-        } else {
-            format!("contract::RecordReceiptRequest {{\n")
-        };
-        write!(source, "}}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|{request}| {constructor}")
-            .expect("writing to a String cannot fail");
-        if !flat_fields.is_empty() {
-            emit_codec_field_assignments(&mut source, &flat_fields, "request", 12);
-            source.push_str("        }");
-        }
-        source.push_str(").map_err(|_| invalid(\"input\"));\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
-    } else {
-        source.push_str(RECEIPT_CODEC_HEADER);
-        emit_json_struct(&mut source, "JsonValue", &value_fields);
-        if !line_fields.is_empty() {
-            source.push_str("    line: Vec<JsonLine>,\n");
-        }
-        source.push_str("}\n\n");
-        if !line_fields.is_empty() {
-            source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
-            emit_json_struct(&mut source, "JsonLine", &line_fields);
-            source.push_str("}\n");
-        }
-        source.push_str(RECEIPT_CODEC_DECODE_PREFIX);
-        emit_codec_field_assignments(&mut source, &value_fields, "request.value", 16);
-        if !line_fields.is_empty() {
-            source.push_str("                line: request.value.line.into_iter().map(|line| contract::RecordReceiptLine {\n");
-            emit_codec_field_assignments(&mut source, &line_fields, "line", 20);
-            source.push_str("                }).collect(),\n");
-        }
-        source.push_str("            }),\n            Err(_) => Err(invalid(\"input\")),\n        };\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
-    }
+    source.push_str(&emit_custom_decoder(&type_name, operation));
     emit_invalid_detail(&mut source, operation);
     source.push_str("pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": ");
     if result.class == ResultClass::BoundedList {
@@ -1392,6 +1351,12 @@ fn emit_custom_codec(
             emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
         }
         source.push_str("                })).collect::<Vec<_>>() }\n");
+    } else if result.class == ResultClass::OptionalOne {
+        source.push_str("value.value.as_ref().map(|row| json!({\n");
+        for field in &result.fields {
+            emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
+        }
+        source.push_str("                }))\n");
     } else {
         source.push_str("{\n");
         for field in &result.fields {
@@ -1431,6 +1396,169 @@ fn emit_custom_codec(
     ));
     source.push_str(&emit_export_adapter(&type_name, false));
     Ok(source)
+}
+
+fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) -> String {
+    let tree = input_fields_of(
+        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
+    );
+    let value = tree.iter().find(|field| field.path == "value");
+    let fields = value.map_or_else(
+        || {
+            tree.iter()
+                .filter(|field| field.path != "request_id")
+                .cloned()
+                .collect()
+        },
+        |value| value.children.clone(),
+    );
+    let root = if value.is_some() { "value." } else { "" };
+    let mut source = String::new();
+    emit_json_tree_records(&mut source, &fields, root);
+    source
+        .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {\n");
+    if value.is_some() {
+        source.push_str("    value: JsonRoot,\n");
+    } else {
+        emit_json_tree_fields(&mut source, &fields, root);
+    }
+    source.push_str("}\n\n");
+    if value.is_some() {
+        source
+            .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRoot {\n");
+        emit_json_tree_fields(&mut source, &fields, root);
+        source.push_str("}\n\n");
+    }
+    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| {{")
+        .expect("writing to a String cannot fail");
+    if fields.is_empty() {
+        writeln!(source, "            contract::{type_name}Request::Request")
+            .expect("writing to a String cannot fail");
+    } else {
+        let access = if value.is_some() {
+            "request.value"
+        } else {
+            "request"
+        };
+        writeln!(source, "            contract::{type_name}Request {{")
+            .expect("writing to a String cannot fail");
+        emit_contract_tree_assignments(&mut source, type_name, &fields, access, root, 16);
+        source.push_str("            }\n");
+    }
+    writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
+        .expect("writing to a String cannot fail");
+    source
+}
+
+fn emit_json_tree_records(source: &mut String, fields: &[FieldIr], root: &str) {
+    for field in fields.iter().filter(|field| !field.children.is_empty()) {
+        emit_json_tree_records(source, &field.children, root);
+        writeln!(
+            source,
+            "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct Json{} {{",
+            rust_type_identifier(&field_type_suffix(&field.path, root))
+        )
+        .expect("writing to a String cannot fail");
+        emit_json_tree_fields(source, &field.children, root);
+        source.push_str("}\n\n");
+    }
+}
+
+fn emit_json_tree_fields(source: &mut String, fields: &[FieldIr], root: &str) {
+    for field in fields {
+        let member = rust_identifier(
+            field
+                .path
+                .rsplit('.')
+                .next()
+                .unwrap()
+                .trim_end_matches("[]"),
+        )
+        .unwrap();
+        let mut ty = if field.children.is_empty() {
+            codec_ir_rust_type(&field.type_name)
+        } else {
+            format!(
+                "Json{}",
+                rust_type_identifier(&field_type_suffix(&field.path, root))
+            )
+        };
+        if field.type_name == "array" || field.path.ends_with("[]") {
+            ty = format!("Vec<{ty}>");
+        }
+        if field.nullable {
+            ty = format!("Option<{ty}>");
+        }
+        writeln!(source, "    {member}: {ty},").expect("writing to a String cannot fail");
+    }
+}
+
+fn codec_ir_rust_type(type_name: &str) -> String {
+    match type_name {
+        "boolean" => "bool",
+        "int32" => "i32",
+        "int64" => "JsonInt64",
+        "float64" => "f64",
+        "bytes" => "Vec<u8>",
+        _ => "String",
+    }
+    .to_owned()
+}
+
+fn emit_contract_tree_assignments(
+    source: &mut String,
+    type_name: &str,
+    fields: &[FieldIr],
+    access: &str,
+    root: &str,
+    indentation: usize,
+) {
+    let indent = " ".repeat(indentation);
+    for field in fields {
+        let member = rust_identifier(
+            field
+                .path
+                .rsplit('.')
+                .next()
+                .unwrap()
+                .trim_end_matches("[]"),
+        )
+        .unwrap();
+        if field.children.is_empty() {
+            let conversion = match (field.type_name.as_str(), field.nullable) {
+                ("int64", true) => ".map(|value| value.0)",
+                ("int64", false) => ".0",
+                _ => "",
+            };
+            writeln!(source, "{indent}{member}: {access}.{member}{conversion},")
+                .expect("writing to a String cannot fail");
+        } else if field.type_name == "array" || field.path.ends_with("[]") {
+            let nested = rust_type_identifier(&field_type_suffix(&field.path, root));
+            writeln!(source, "{indent}{member}: {access}.{member}.into_iter().map(|value| contract::{type_name}{nested} {{").expect("writing to a String cannot fail");
+            emit_contract_tree_assignments(
+                source,
+                type_name,
+                &field.children,
+                "value",
+                root,
+                indentation + 4,
+            );
+            writeln!(source, "{indent}}}).collect(),").expect("writing to a String cannot fail");
+        } else {
+            let nested = rust_type_identifier(&field_type_suffix(&field.path, root));
+            writeln!(source, "{indent}{member}: contract::{type_name}{nested} {{")
+                .expect("writing to a String cannot fail");
+            emit_contract_tree_assignments(
+                source,
+                type_name,
+                &field.children,
+                &format!("{access}.{member}"),
+                root,
+                indentation + 4,
+            );
+            writeln!(source, "{indent}}},").expect("writing to a String cannot fail");
+        }
+    }
 }
 
 fn emit_custom_normalizer(type_name: &str, operation: &CustomOperationDeclaration) -> String {
@@ -1533,28 +1661,6 @@ fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, i
     }
 }
 
-fn codec_fields<'a>(
-    fields: &'a [ContractFieldDeclaration],
-    prefix: &str,
-) -> Vec<(&'a ContractFieldDeclaration, &'a str)> {
-    fields
-        .iter()
-        .filter_map(|field| {
-            let path = field.path.strip_prefix(prefix)?;
-            (!path.contains("[]") && !path.contains('.')).then_some((field, path))
-        })
-        .collect()
-}
-
-fn emit_json_struct(source: &mut String, name: &str, fields: &[(&ContractFieldDeclaration, &str)]) {
-    writeln!(source, "struct {name} {{").expect("writing to a String cannot fail");
-    for (field, path) in fields {
-        let name = rust_identifier(path).expect("validated input field has a Rust name");
-        let ty = codec_rust_type(field.ty, field.nullable);
-        writeln!(source, "    {name}: {ty},").expect("writing to a String cannot fail");
-    }
-}
-
 fn codec_rust_type(ty: ColumnType, nullable: bool) -> String {
     let ty = match ty {
         ColumnType::Boolean => "bool",
@@ -1572,25 +1678,6 @@ fn codec_rust_type(ty: ColumnType, nullable: bool) -> String {
         format!("Option<{ty}>")
     } else {
         ty.to_owned()
-    }
-}
-
-fn emit_codec_field_assignments(
-    source: &mut String,
-    fields: &[(&ContractFieldDeclaration, &str)],
-    value: &str,
-    indentation: usize,
-) {
-    let indentation = " ".repeat(indentation);
-    for (field, path) in fields {
-        let name = rust_identifier(path).expect("validated input field has a Rust name");
-        let conversion = match (field.ty, field.nullable) {
-            (ColumnType::Int64, true) => ".map(|value| value.0)",
-            (ColumnType::Int64, false) => ".0",
-            _ => "",
-        };
-        writeln!(source, "{indentation}{name}: {value}.{name}{conversion},")
-            .expect("writing to a String cannot fail");
     }
 }
 
@@ -1677,21 +1764,6 @@ fn emit_codec_result_field_for(
     .expect("writing to a String cannot fail");
 }
 
-const RECEIPT_CODEC_HEADER: &str = r"#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JsonRequest { value: JsonValue }
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-";
-
-const RECEIPT_CODEC_DECODE_PREFIX: &str = r"
-pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {
-    decode_envelope(input)?.into_iter().map(|(request_id, body)| {
-        let input = match serde_json::from_value::<JsonRequest>(body) {
-            Ok(request) => Ok(contract::RecordReceiptRequest {
-";
-
 const RECEIPT_CODEC_ERROR_PREFIX: &str = r#"            Err(error) => json!({
                 "request_id": item.request_id,
                 "error": error_value(error),
@@ -1741,7 +1813,7 @@ mod tests {
                 std::str::from_utf8(&files["generated/wit/receiving_record_receipt_codec.rs"])
                     .unwrap();
             assert!(codec.contains("row_version.to_string()"));
-            assert!(codec.contains("Err(invalid(\"input\"))"));
+            assert!(codec.contains("map_err(|_| invalid(\"input\"))"));
             assert!(codec.contains("RecordReceiptError::QuantityExceedsRemaining"));
         }
     }
@@ -1811,5 +1883,9 @@ mod tests {
         assert!(source.contains("record record-receipt-entries"));
         assert!(source.contains("entries: list<record-receipt-entries>"));
         assert!(!source.contains("record record-receipt-line"));
+        let codec = emit_custom_codec("record_receipt", operation).unwrap();
+        assert!(codec.contains("struct JsonEntries"));
+        assert!(codec.contains("contract::RecordReceiptEntries"));
+        assert!(!codec.contains("JsonLine"));
     }
 }
