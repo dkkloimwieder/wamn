@@ -1490,9 +1490,8 @@ fn emit_direct_custom_codec(type_name: &str, operation: &CustomOperationDeclarat
         .into_iter()
         .filter(|field| field.path != "request_id")
         .collect::<Vec<_>>();
-    let mut source = String::from(
-        "// @generated from operation declarations; do not edit.\n\nuse serde::Deserialize;\n\n#[derive(Debug)]\npub(crate) struct CodecError(&'static str);\nimpl CodecError { pub(crate) const fn context(&self) -> &'static str { self.0 } }\nimpl std::fmt::Display for CodecError { fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str(self.0) } }\nimpl std::error::Error for CodecError {}\n\n",
-    );
+    let mut source = String::from(CODEC_HEADER);
+    source.push_str("fn invalid(field: &'static str) -> CodecError { CodecError(field) }\n\n");
     emit_direct_json_tree_records(&mut source, &fields, "");
     source
         .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {\n");
@@ -1504,7 +1503,7 @@ fn emit_direct_custom_codec(type_name: &str, operation: &CustomOperationDeclarat
     source.push_str("    })\n}\n\n");
     writeln!(source, "pub(crate) fn normalize(request: &mut contract::{type_name}Request) -> Result<(), CodecError> {{")
         .expect("writing to a String cannot fail");
-    emit_direct_tree_validation(&mut source, &fields, "request", 4);
+    emit_tree_validation(&mut source, &fields, "request", 4);
     source.push_str("    Ok(())\n}\n");
     source
 }
@@ -1520,46 +1519,6 @@ fn emit_direct_json_tree_records(source: &mut String, fields: &[FieldIr], root: 
         .expect("writing to a String cannot fail");
         emit_json_tree_fields(source, &field.children, root);
         source.push_str("}\n\n");
-    }
-}
-
-fn emit_direct_tree_validation(
-    source: &mut String,
-    fields: &[FieldIr],
-    access: &str,
-    indentation: usize,
-) {
-    let indent = " ".repeat(indentation);
-    for field in fields {
-        let member = rust_identifier(
-            field
-                .path
-                .rsplit('.')
-                .next()
-                .unwrap()
-                .trim_end_matches("[]"),
-        )
-        .expect("validated field has a Rust name");
-        let field_access = format!("{access}.{member}");
-        if !field.children.is_empty() {
-            if field.type_name == "array" || field.path.ends_with("[]") {
-                writeln!(source, "{indent}for value in &mut {field_access} {{")
-                    .expect("writing to a String cannot fail");
-                emit_direct_tree_validation(source, &field.children, "value", indentation + 4);
-                writeln!(source, "{indent}}}").expect("writing to a String cannot fail");
-            } else {
-                emit_direct_tree_validation(source, &field.children, &field_access, indentation);
-            }
-            continue;
-        }
-        if field.type_name == "uuid" {
-            writeln!(source, "{indent}let parsed = uuid::Uuid::parse_str(&{field_access}).map_err(|_| CodecError({:?}))?;\n{indent}{field_access} = parsed.hyphenated().to_string();", format!("{} is not a UUID", field.path))
-                .expect("writing to a String cannot fail");
-        }
-        if !field.values.is_empty() {
-            writeln!(source, "{indent}if !{:?}.contains(&{field_access}.as_str()) {{ return Err(CodecError({:?})); }}", field.values, format!("{} is outside its declared value domain", field.path))
-                .expect("writing to a String cannot fail");
-        }
     }
 }
 
@@ -2084,7 +2043,7 @@ mod tests {
             &direct.custom_operations["quality.create_inspection"],
         );
         assert!(codec.contains("struct JsonPayload"));
-        assert!(codec.contains("request.action.as_str()"));
+        assert!(codec.contains("request.action"));
         assert!(codec.contains("request.payload.key"));
         assert!(!codec.contains("value.event"));
     }
