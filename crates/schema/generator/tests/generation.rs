@@ -1065,6 +1065,177 @@ fn claim_manifest() -> Value {
     manifest
 }
 
+/// A non-Receiving model with create fields in each admitted presence state
+/// and a revision name that is not `row_version`.
+fn inventory_item_fixture() -> (CatalogIr, Value) {
+    let model = Table::new(
+        "receiving",
+        "inventory_item",
+        vec![
+            Column::new(
+                "id",
+                ColumnType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("sku", ColumnType::Text, false, None, None),
+            Column::new("note", ColumnType::Text, true, None, None),
+            Column::new(
+                "priority",
+                ColumnType::Int64,
+                false,
+                Some(ColumnDefault::int64(0)),
+                None,
+            ),
+            Column::new(
+                "sequence_number",
+                ColumnType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+            Column::new(
+                "created_at",
+                ColumnType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+        ],
+        vec![Constraint::primary_key("inventory_item_id_pkey", ["id"]).unwrap()],
+        Vec::new(),
+    );
+    let claim = Table::new(
+        "receiving",
+        CLAIM_TABLE,
+        claim_columns(),
+        claim_constraints(),
+        Vec::new(),
+    );
+    let manifest = json!({
+        "package": {"id": "wamn_inventory", "version": "1.0.0"},
+        "required_platform_policy_contract": {
+            "id": "inventory_data_access",
+            "state": "unsatisfied"
+        },
+        "models": {
+            "inventory_item": {
+                "schema": "receiving",
+                "table": "inventory_item",
+                "owner": "wamn_inventory",
+                "server_owned_fields": ["id", "sequence_number", "created_at"],
+                "audit_log": {"columns": ["created_at"], "retention": "none"},
+                "delete_mode": "hard",
+                "operations": {
+                    "create": {
+                        "permission": "inventory_item.create",
+                        "error_details": {
+                            "invalid_input": {"required": ["field"]},
+                            "idempotency_conflict": {"required": ["field"]},
+                            "unique_violation": {"required": ["constraint"]},
+                            "retry": {},
+                            "timeout": {},
+                            "permission_denied": {"required": ["operation"]},
+                            "internal_error": {}
+                        },
+                        "writable_fields": ["sku", "note", "priority"],
+                        "claim": {
+                            "table": CLAIM_TABLE,
+                            "identities": {"id": "purchase_order_id"}
+                        },
+                        "result": "one"
+                    },
+                    "delete": {
+                        "permission": "inventory_item.delete",
+                        "error_details": {
+                            "invalid_input": {"required": ["field"]},
+                            "not_found": {"required": ["field", "id"]},
+                            "concurrency_conflict": {
+                                "required": ["expected_row_version", "observed_row_version"]
+                            },
+                            "retry": {},
+                            "timeout": {},
+                            "permission_denied": {"required": ["operation"]},
+                            "internal_error": {}
+                        },
+                        "revision_field": "sequence_number",
+                        "result": "one"
+                    }
+                }
+            }
+        },
+        "internal_relations": {
+            CLAIM_TABLE: {"schema": "receiving", "table": CLAIM_TABLE, "cdc": "excluded"}
+        },
+        "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
+        "components": {"inventory": {"connections": ["postgres"]}}
+    });
+    (CatalogIr::new(vec![model, claim]), manifest)
+}
+
+#[test]
+fn typed_crud_contracts_follow_a_non_receiving_model_declaration() {
+    let (catalog, manifest) = inventory_item_fixture();
+    let package = run(&catalog, &manifest, &[]).expect("the inventory CRUD fixture generates");
+    let input = artifact_json(
+        &package,
+        "generated/contracts/inventory_item/create.input.json",
+    );
+    let fields = input["writable_fields"].as_array().unwrap();
+    let field = |name| {
+        fields
+            .iter()
+            .find(|field| field["field"] == name)
+            .unwrap_or_else(|| panic!("create contract omitted {name}"))
+    };
+    assert_eq!(field("sku")["omitted"], "postgres_default");
+    assert_eq!(field("sku")["explicit_null"], "invalid_input");
+    assert_eq!(field("note")["omitted"], "postgres_default");
+    assert_eq!(field("note")["explicit_null"], "accepted");
+    assert_eq!(field("priority")["omitted"], "postgres_default");
+    assert_eq!(field("priority")["explicit_null"], "invalid_input");
+
+    let wit = std::str::from_utf8(
+        package
+            .file("generated/wit/deps/wamn-inventory-inventory-item/package.wit")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(wit.contains("sku: option<option<string>>"), "{wit}");
+    assert!(wit.contains("note: option<option<string>>"), "{wit}");
+    assert!(wit.contains("priority: option<option<s64>>"), "{wit}");
+    assert!(wit.contains("expected-sequence-number: s64"), "{wit}");
+    assert!(
+        wit.contains("record delete-row {\n    outcome: option<string>,"),
+        "{wit}"
+    );
+
+    let create_codec = std::str::from_utf8(
+        package
+            .file("generated/wit/inventory_item_create_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(
+        create_codec.contains(
+            "if matches!(request.sku, Some(None)) {\n        return Err(invalid(\"sku\"));\n    }"
+        ),
+        "{create_codec}"
+    );
+
+    let delete = artifact_json(
+        &package,
+        "generated/contracts/inventory_item/delete.input.json",
+    );
+    assert_eq!(
+        delete["expected_sequence_number"],
+        json!({"field": "sequence_number", "type": "int64", "required": true})
+    );
+}
+
 fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
     String::from_utf8(
         package
