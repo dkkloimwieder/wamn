@@ -1,6 +1,6 @@
-# WAMN simplification — implementation plan
+# WAMN platform simplification — implementation plan
 
-**Status:** draft 0.6 for review. Suggested home: `docs/plan/application-simplification.md`.
+**Scope:** platform simplification. Receiving, Acme, and WMS are consumers and test fixtures, not the completion boundary.
 Replaces draft 0.5 and absorbs testing-simplification draft 0.1; no parallel plan. Based on the earlier `40b7c361` review and owner decisions, not a fresh audit. Check what has landed before editing.
 
 ## Priority: minimize churn
@@ -9,9 +9,9 @@ Replaces draft 0.5 and absorbs testing-simplification draft 0.1; no parallel pla
 
 | Order | Work | Completion |
 | --- | --- | --- |
-| **1** | Native async and target component contracts | One real Receiving/Acme path works without application-owned async bridging. |
-| **2** | SQLx/data-access and adapter generation | Expand that pattern; remove handwritten protocol duplication and unnecessary SQL preparation. |
-| **3** | Testing simplification | Move repetitive screen checks in-process; retain small real-boundary coverage. Apply the testing policy below from step 1. |
+| **1** | Platform native async and target component contracts | Production I/O component boundaries use native async. The Receiving/Acme path establishes the pilot pattern. |
+| **2** | General SQLx/data-access and adapter generation | Any existing supported model or operation produces its typed interface and standard adapter without generator edits or copied protocol handlers. |
+| **3** | Testing simplification | Reduce platform test setup after the general interfaces settle. Keep UI work deferred and retain real-boundary coverage. |
 | **4** | Service consolidation | Remove duplicate runtime/process lifecycles after settling the deployment trade. |
 | **5 — later feature** | Transactional application extension | Conditional QC participates atomically without copying base logic. **Not required to complete the refactor.** |
 
@@ -19,9 +19,9 @@ Use existing libraries and the pinned upstream runtime. Breaking internal APIs a
 
 ## 1. Native async and target contracts first
 
-Convert one actual **Acme → Receiving → `wamn:postgres/statements`** path, including its transaction calls, to native async WIT and generated bindings. Use `async fn`/`.await`; remove replaced application `block_on`, executor dependencies and bridging code. Reuse the existing P3 HTTP entrypoint. Confirm required binding/toolchain support without an unrelated runtime upgrade.
+Use the **Acme → Receiving → `wamn:postgres/statements`** path as the pilot for native async WIT and generated bindings. Complete the platform rollout across production I/O capabilities, guests, and their host bindings. Cover outbound HTTP, materializer NATS and delivery calls, and the retained PostgreSQL client interface. Preserve pure synchronous transforms and top-level runtime entrypoints where they do no asynchronous I/O. Use `async fn`/`.await`; remove replaced application `block_on`, executor dependencies and bridging code. Reuse the existing P3 HTTP entrypoint. Confirm required binding/toolchain support without an unrelated runtime upgrade.
 
-Generate typed WIT request/result/error contracts and Rust bindings from the existing application model for known Acme/Receiving calls. Known component calls carry typed values, not serialized JSON through `run(string)`. Update caller, callee, and dispatch integration together. Generate the pilot contracts once, then extend that emitter in step 2. Do not first improve a wrapper around the old JSON contract. Keep JSON at HTTP and genuinely dynamic boundaries. Preserve per-item correlation, exact numbers, absent/null/value updates, authorization, deadlines, and public JSON behavior. Generic palettes need not change. No streaming rewrite or concurrency increase.
+Generate typed WIT request/result/error contracts and Rust bindings from the existing supported application declarations. Known component calls carry typed values, not serialized JSON through `run(string)`. The demo operations establish a reusable platform pattern; their success alone does not complete platform generation. Update caller, callee, and dispatch integration together. Generate the pilot contracts once, then extend that emitter in step 2. Do not first improve a wrapper around the old JSON contract. Keep JSON at HTTP and genuinely dynamic boundaries. Preserve per-item correlation, exact numbers, absent/null/value updates, authorization, deadlines, and public JSON behavior. Generic palettes need not change. No streaming rewrite or concurrency increase.
 
 Return base receipt results unchanged. Delete `receiving_record_receipt_result` enrichment and unused helpers. Update the declared result and generated clients with the server contract. Preserve per-item refusals and uncertainty when posting itself is unconfirmed.
 
@@ -31,7 +31,15 @@ Update build/admission consumers with the real native-call and PostgreSQL path. 
 
 ## 2. SQLx/data-access generation next
 
-Extend `crates/schema/generator` around step 1's interfaces: Receiving `purchase_order.update` and `receiving.record_receipt`, then Acme and remaining affected applications. Do not revisit converted boundaries.
+Generalize `crates/schema/generator` across the CRUD and custom-operation shapes that WAMN already supports. Derive package/module names, fields, revision inputs, result cardinality, nested shapes, and errors from existing declarations and schema contracts. Remove operation-name gates and Receiving-specific assumptions. Reuse existing representations instead of adding a schema language.
+
+Generate or share standard envelopes, primitive conversions, schema-declared validation, correlation, and standard error mapping. Application authors retain business rules, transaction sequencing, and deliberate result transformations.
+
+Move supported operation families in Receiving, Acme, and WMS onto this implementation. Update each boundary with its consumers and delete replaced adapters. Preserve each operation's writable authority, permission path, transaction behavior, and result contract. Acme's update is a distinct package-owned mutation, not a wrapper around Receiving's update.
+
+Completion requires that an author can declare another supported model or operation and obtain its typed interface and standard adapter without changing generator code or copying protocol handlers. Two working example operations do not meet this criterion. Finish this work in epic 2 before the testing refactor; no later epic owns unfinished generation.
+
+Generalization covers existing supported shapes only. Add no universal runtime controller, arbitrary-SQL facility, streaming framework, or transactional-extension machinery.
 
 | Generate/share | Keep as application code |
 | --- | --- |
@@ -56,6 +64,8 @@ Delete replaced parsers, error mirrors and conversions after callers move—not 
 | **Generator/client boundary lands** | Check representative exact values, absent/null/value, rejected fields and correlated outcomes against independent expectations. Verify offline build, local SQL refresh and CI stale-metadata refusal. |
 | **Process/deployment boundary lands** | Run the relevant startup/shutdown and HTTP/queue cases, plus a packaged smoke test against the changed topology. |
 | **Integrated refactor lands** | Run affected suites and one real Receiving/Acme client-to-database journey on the integrated artifacts. Reuse this result; do not repeat it for every subchange. |
+
+Use existing generation fixtures for materially different supported shapes, including a non-Receiving model with different fields and revision naming. Compile affected consumers and reuse focused behavior assertions. Add no exhaustive combination matrix, separate suite per generated operation, or repeated cluster campaign.
 
 When deferred UI work starts, test that failed or denied detail reads preserve posting success without reposting. Resolve failures introduced by the change; report unrelated baseline failures without requiring a repository-wide repair. Skipped, unexecuted or zero-case runs are not passes.
 
@@ -91,7 +101,7 @@ Feature-specific tests cover these branches, joint rollback, complete-intent rep
 
 ## Completion
 
-**The refactor finishes after steps 1–4, not the extension feature.** Target interfaces replace old adapters; tests need less setup; obsolete code and processes disappear. Preserve required offline/distribution artifacts. Broader generated-file and workspace cleanup stays separate unless directly necessary.
+**The refactor finishes after platform-wide steps 1–4, not the extension feature.** Example applications supply evidence, not a scope limit. General generation must satisfy section 2 before step 3 starts. Target interfaces replace old adapters; tests need less setup; obsolete code and processes disappear. Preserve required offline/distribution artifacts. Broader generated-file and workspace cleanup stays separate unless directly necessary.
 
 Update callers, tests and deletions together; one active refactor per shared area. Update current documentation and summarize changes, deletions, test results and gaps. Investigate suspected performance regressions without making a benchmark or speedup a prerequisite.
 
