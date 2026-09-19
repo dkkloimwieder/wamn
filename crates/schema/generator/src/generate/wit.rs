@@ -630,8 +630,10 @@ fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
 const CODEC_HEADER: &str = r"// @generated from wamn.json and schema IR; do not edit.
 
 use serde::Deserialize;
+#[allow(unused_imports)]
 use serde_json::{Map, Value, json};
 
+#[allow(dead_code)]
 struct JsonInt64(i64);
 
 impl<'de> Deserialize<'de> for JsonInt64 {
@@ -1137,7 +1139,13 @@ fn emit_custom_codec(
     if value_fields.is_empty() && line_fields.is_empty() {
         source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
         emit_json_struct(&mut source, "JsonRequest", &flat_fields);
-        source.push_str("}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| contract::RecordReceiptRequest {\n");
+        let request = if flat_fields.is_empty() {
+            "_request"
+        } else {
+            "request"
+        };
+        write!(source, "}}\n\npub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordReceiptItem>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|{request}| contract::RecordReceiptRequest {{\n")
+            .expect("writing to a String cannot fail");
         emit_codec_field_assignments(&mut source, &flat_fields, "request", 12);
         source.push_str("        }).map_err(|_| invalid(\"input\"));\n        Ok(contract::RecordReceiptItem { request_id, input })\n    }).collect()\n}\n\n");
     } else {

@@ -10,7 +10,7 @@ pub(super) fn emit_row_adapter<'a>(
     fields: impl IntoIterator<Item = (&'a str, ColumnType, bool)>,
 ) -> String {
     let mut source = String::from(
-        "\nmacro_rules! row {\n    ($row:expr, $target:path) => {{\n        let row = $row;\n        $target {\n",
+        "\n#[allow(unused_macros)]\nmacro_rules! row {\n    ($row:expr, $target:path) => {{\n        let row = $row;\n        $target {\n",
     );
     for (name, ty, nullable) in fields {
         let field = rust_identifier(name).expect("validated field has a Rust name");
@@ -32,7 +32,7 @@ pub(super) fn emit_row_adapter<'a>(
         };
         writeln!(source, "            {field}: {value},").expect("writing to a String cannot fail");
     }
-    source.push_str("        }\n    }};\n}\npub(crate) use row;\n");
+    source.push_str("        }\n    }};\n}\n#[allow(unused_imports)]\npub(crate) use row;\n");
     source
 }
 
