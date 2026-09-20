@@ -342,7 +342,7 @@ async fn create_tls(cluster: &ReceivingCluster) -> anyhow::Result<()> {
                 "rsa:2048".into(),
                 "-nodes".into(),
                 "-subj".into(),
-                format!("/CN={hostname}"),
+                format!("/CN={IDENTITY}"),
                 "-keyout".into(),
                 "session-tls.key".into(),
                 "-out".into(),
