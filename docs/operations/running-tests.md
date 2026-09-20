@@ -18,6 +18,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
+- Canonical router/runtime WIT changes select all three workspaces because direct bindings cross Cargo dependency boundaries. Shared router-delivery and materializer WASI WIT select root and apps.
 - Any other file outside `docs/`, `.beads/`, and the root Markdown files runs the root command `cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast`.
 - A change set with only `docs/` files, `.beads/` files, and root Markdown files such as `README.md` and `CLAUDE.md` selects nothing.
   A Markdown file below another directory follows the rules above.

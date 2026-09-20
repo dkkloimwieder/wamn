@@ -393,6 +393,40 @@ fn a_platform_crate_selects_its_dependents_in_every_workspace() {
 }
 
 #[test]
+fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
+    for (path, no_std) in [
+        ("crates/execution/router/wit/package.wit", true),
+        (
+            "crates/platform/runtime/wit/deps/wamn-postgres/package.wit",
+            true,
+        ),
+        (
+            "crates/execution/host/wit/deps/wamn-router-delivery/package.wit",
+            false,
+        ),
+        (
+            "apps/platform/execution/materializer/wit/deps/wasi-cli/package.wit",
+            false,
+        ),
+        (
+            "apps/platform/execution/materializer/wit/deps/wasi-clocks/package.wit",
+            false,
+        ),
+    ] {
+        let fixture = Fixture::new();
+        fixture.write(path, "changed shared interface\n");
+        let mut expected = vec![
+            fixture.command("Cargo.toml", &["--workspace", "--features", "wamn-ctl/ops"]),
+            fixture.command("apps/Cargo.toml", &["--workspace"]),
+        ];
+        if no_std {
+            expected.push(fixture.command("apps/platform/no-std/Cargo.toml", &["--workspace"]));
+        }
+        assert_eq!(fixture.selected(&[]), expected, "{path}");
+    }
+}
+
+#[test]
 fn workspace_files_and_unowned_inputs_run_the_full_command() {
     let root_full = ["--workspace", "--features", "wamn-ctl/ops"];
     let fixture = Fixture::new();
