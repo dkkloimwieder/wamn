@@ -1,8 +1,7 @@
 //! The complete Receiving route, event, startup, and environment-isolation case.
 
 use anyhow::Context as _;
-use wamn_control_registry::Triple;
-use wamn_test_infrastructure::{event_broker, executor, workload};
+use wamn_test_infrastructure::{event_broker, workload};
 
 use super::{
     cdc, checked, deployment, install_host, kubectl, materializer_case, postcommit_case, provision,
@@ -51,30 +50,6 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
         )
         .await?;
         let resources = &cluster.resources;
-        let scope = Triple::new(
-            super::super::ORG,
-            super::super::PROJECT,
-            super::super::ENVIRONMENT,
-        );
-        executor::assert_idle_lifecycle(
-            &executor::ExecutorInput {
-                binary: &cluster.artifacts.target.join("debug/wamn-run-worker"),
-                host_secrets: &cluster.inputs.host_secret_directory,
-                component_artifact_base: &cluster.inputs.component_artifact_base,
-                release_artifact_base: &carrier.artifact_base,
-                manifest_digest: &carrier.manifest_digest.to_string(),
-                registry_auth: &cluster.inputs.registry_auth_file,
-                nats_url: &cluster.nats_url,
-                event_scope: &scope,
-                project: super::super::PROJECT,
-                schema: "receiving",
-                credentials: &cluster.broker.runtime,
-                source: &resources.source,
-                stream: &cluster.source,
-            },
-            evidence,
-        )
-        .await?;
         let secrets = deployment::native_secrets(&cluster)?;
         let (issuer, instance) =
             super::session_cluster::prepare_application(&cluster, &carrier).await?;

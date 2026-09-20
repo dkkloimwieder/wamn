@@ -496,39 +496,6 @@ async fn run_created(
     drop(source_observed);
     drop(advisory_observed);
     drop(context);
-    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()?
-        && let Some(image) = &candidate.executor_image
-    {
-        let binary =
-            crate::delivery::executor_launcher(work, image, &format!("{cluster}-executor"))?;
-        wamn_test_infrastructure::executor::assert_idle_lifecycle(
-            &wamn_test_infrastructure::executor::ExecutorInput {
-                binary: &binary,
-                host_secrets: &document.host_secret_directory,
-                component_artifact_base: &document.component_artifact_base,
-                release_artifact_base: &release.artifact_base,
-                manifest_digest: release.manifest_digest.as_str(),
-                registry_auth: &document.registry_auth_file,
-                nats_url: &nats_url,
-                event_scope: scope,
-                project: crate::environment::PROJECT,
-                schema: crate::environment::SCHEMA,
-                credentials: &broker.runtime,
-                source: source_head,
-                stream: source,
-            },
-            evidence,
-        )
-        .await?;
-        write_result(
-            evidence,
-            "candidate-executor.json",
-            &json!({
-                "image":image,"manifest_digest":release.manifest_digest,
-                "boundary":"idle-readiness-and-signal-shutdown","result":"pass",
-            }),
-        )?;
-    }
     observer
         .drain()
         .await

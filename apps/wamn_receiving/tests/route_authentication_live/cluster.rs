@@ -289,52 +289,6 @@ async fn provision(
     Ok((route, carrier))
 }
 
-async fn candidate_executor(
-    cluster: &ReceivingCluster,
-    carrier: &ReleaseCarrier,
-) -> anyhow::Result<()> {
-    let Some(image) = cluster
-        .resources
-        .candidate
-        .as_ref()
-        .and_then(|(candidate, _)| candidate.executor_image.as_deref())
-    else {
-        return Ok(());
-    };
-    let binary = super::delivery::executor_launcher(
-        &cluster.resources.work,
-        image,
-        &format!("{}-executor", cluster.resources.name),
-    )?;
-    let scope = Triple::new(ORG, PROJECT, ENVIRONMENT);
-    wamn_test_infrastructure::executor::assert_idle_lifecycle(
-        &wamn_test_infrastructure::executor::ExecutorInput {
-            binary: &binary,
-            host_secrets: &cluster.inputs.host_secret_directory,
-            component_artifact_base: &cluster.inputs.component_artifact_base,
-            release_artifact_base: &carrier.artifact_base,
-            manifest_digest: carrier.manifest_digest.as_str(),
-            registry_auth: &cluster.inputs.registry_auth_file,
-            nats_url: &cluster.nats_url,
-            event_scope: &scope,
-            project: PROJECT,
-            schema: "receiving",
-            credentials: &cluster.broker.runtime,
-            source: &cluster.resources.source,
-            stream: &cluster.source,
-        },
-        &cluster.resources.evidence,
-    )
-    .await?;
-    fs::write(
-        cluster.resources.evidence.join("candidate-executor.json"),
-        serde_json::to_vec_pretty(
-            &json!({"image":image,"manifest_digest":carrier.manifest_digest,"boundary":"idle-readiness-and-signal-shutdown","result":"pass"}),
-        )?,
-    )?;
-    Ok(())
-}
-
 /// What one installed host group binds to: how many replicas, which broker,
 /// and the optional session issuer the overlay pins.
 struct HostBinding<'a> {
@@ -656,7 +610,6 @@ async fn released_http(
 )> {
     use wamn_test_infrastructure::workload;
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
-    candidate_executor(cluster, &carrier).await?;
     let secrets = deployment::native_secrets(cluster)?;
     let resources = &cluster.resources;
     let (issuer, instance) = session_cluster::prepare_application(cluster, &carrier).await?;

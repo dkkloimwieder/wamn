@@ -267,8 +267,6 @@ async fn qualify_candidate(
             "wamn-cdc-reader",
             "-p",
             "wamn-scenario-worker",
-            "-p",
-            "wamn-executor",
         ]),
         &target_env,
         &mut result.checks,
@@ -279,7 +277,6 @@ async fn qualify_candidate(
         ("host", Some(result.candidate.host_image.clone())),
         ("gates", result.candidate.gates_image.clone()),
         ("identity", result.candidate.identity_image.clone()),
-        ("executor", result.candidate.executor_image.clone()),
     ];
     for (target, image) in images {
         if let Some(image) = image {

@@ -1,7 +1,7 @@
 # EXAMPLE default-project DB Secret for the HOST TIER
 # (deploy/platform/values-host-default.yaml, which references it as
 # `WAMN_PG_URL` via secretKeyRef). DELIBERATELY a separate manifest — the
-# dispatcher-projects/runner-db/runner-credentials precedent: it is
+# generated database-secret carrier pattern: it is
 # per-environment config, so `helm upgrade` of the host release never clobbers a
 # customized Secret back to this demo value.
 #
@@ -9,19 +9,8 @@
 # wamn:postgres plugin's from_env() default pool connects as that LOGIN for
 # guest SQL; it inherits grants from the passwordless NOLOGIN `wamn_app` role.
 #
-# NOT the executor's `wamn-executor-db` on purpose, even though the demo values
-# point at the same fixture database: that Secret is per-PROJECT config owned by
-# deploy/platform/executor.yaml's lifecycle, while this one is per-ENVIRONMENT
-# config owned by the host Helm release. Sharing one Secret would make an edit
-# for the executor's project silently repoint every host in the group. This
-# clause named `wamn-runner-db` and `deploy/platform/runner.yaml` until
-# wamn-0h0g.10.5's BoM pass; `ea71c1c4` deleted both, and the executor inherited
-# the role. It inherited no `.example` carrier either, and for a while
-# `wamn-executor-db` was the one Secret this tier mounted that no file here
-# declared (wamn-0h0g.10.5 reported it). `wamn-0h0g.10.14` closed that:
-# `executor-db.example.yaml` declares it and its executor-platform sibling. The
-# deleted file's `?sslmode=disable` did NOT come back — no carrier in this tier
-# spells an sslmode, this one included.
+# This per-environment Secret is owned by the combined host Helm release.
+# No carrier in this tier spells an sslmode, this one included.
 #
 # SOURCE: run `wamn-ctl provision-project-env` with the normal org/project/env
 # and admin arguments plus `--tenant <tenant>`,

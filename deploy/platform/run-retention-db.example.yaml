@@ -1,7 +1,7 @@
 # EXAMPLE per-project-env RETENTION DB Secret for the run-history retention
 # CronJob (deploy/platform/run-retention.example.yaml, which references it as
 # `WAMN_PG_URL` via secretKeyRef). DELIBERATELY a separate manifest — the
-# dispatcher-projects/runner-db/runner-credentials precedent: it is
+# generated database-secret carrier pattern: it is
 # per-project-env config, so re-applying the CronJob manifest never clobbers a
 # customized Secret back to this demo value.
 #

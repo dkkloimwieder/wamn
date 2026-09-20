@@ -84,32 +84,6 @@ pub(super) fn registry_files(candidate: &Candidate, work: &std::path::Path) -> a
     Ok(())
 }
 
-pub(super) fn executor_launcher(
-    work: &std::path::Path,
-    image: &str,
-    container: &str,
-) -> anyhow::Result<std::path::PathBuf> {
-    use std::os::unix::fs::PermissionsExt as _;
-    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
-    let path = work.join("executor-launcher");
-    let script = format!(
-        r#"#!/bin/sh
-exec docker run --rm --name {} --network host --pull never \
-  --read-only --tmpfs /tmp --volume {} \
-  --env WAMN_PG_URL --env WAMN_EXECUTOR_PLATFORM_PG_URL --env WAMN_HTTP_ADMITTER_PG_URL \
-  --env WAMN_EVT_NATS_URL --env WAMN_EVT_ORG --env WAMN_EVT_PROJECT --env WAMN_EVT_ENV \
-  --env WAMN_EVT_NATS_USERNAME --env WAMN_EVT_NATS_PASSWORD_FILE \
-  --env WAMN_EVT_STREAM_REPLICAS --env WAMN_EVT_DUP_WINDOW_SECS {} "$@"
-"#,
-        quote(container),
-        quote(&format!("{}:{}:ro", work.display(), work.display())),
-        quote(image),
-    );
-    std::fs::write(&path, script)?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
-    Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
     #[test]

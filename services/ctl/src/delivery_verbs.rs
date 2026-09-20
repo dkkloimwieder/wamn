@@ -1,15 +1,12 @@
 //! Arguments and output of the release-manifest, release-environment, and
 //! delivery verbs.
 //!
-//! # Both carriers are printed, and they are not the same shape
+//! # The host carrier uses explicit flags
 //!
-//! Two workloads carry a release, and only the executor takes the pair as
-//! environment entries. The host takes it as `hostGroups[].extraArgs` FLAGS
-//! deliberately: clap exits nonzero on an unknown flag, so a misspelt
+//! The host takes the release pair as `hostGroups[].extraArgs` flags. Clap
+//! exits nonzero on an unknown flag, so a misspelt
 //! `--release-manifest-diges` crashloops the pod, while a misspelt
 //! `WAMN_RELEASE_MANIFEST_DIGES` would deploy cleanly and serve nothing.
-//! Printing only environment lines would leave a host operator translating by
-//! hand, so both forms are printed and each names the file it belongs in.
 
 use std::path::PathBuf;
 
@@ -21,13 +18,6 @@ use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_control::push_release_manifest::PushReleaseManifestRequest;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
-/// The repository name both release-carrying workloads read.
-const ARTIFACT_BASE_ENV: &str = "WAMN_RELEASE_ARTIFACT_BASE";
-/// The fixed manifest digest both release-carrying workloads read.
-const MANIFEST_DIGEST_ENV: &str = "WAMN_RELEASE_MANIFEST_DIGEST";
-
-/// The executor's carrier: `env:` entries on its Deployment container.
-const EXECUTOR_CARRIER: &str = "deploy/platform/executor.yaml";
 /// The host's carrier: per host group `extraArgs`, flags rather than env.
 const HOST_CARRIER: &str = "deploy/platform/values-host-receiving-pat.yaml";
 
@@ -143,8 +133,6 @@ pub struct PrepareReleaseArgs {
     #[arg(long)]
     pub identity_image: Option<String>,
     #[arg(long)]
-    pub executor_image: Option<String>,
-    #[arg(long)]
     pub native_registry_endpoint: Option<String>,
     #[arg(long, requires = "native_registry_endpoint")]
     pub native_registry_insecure: bool,
@@ -189,9 +177,6 @@ pub struct DeployArgs {
     /// Existing rendered native Kubernetes Deployment JSON for the host.
     #[arg(long)]
     pub host_deployment: PathBuf,
-    /// Required when the qualified candidate includes an executor image.
-    #[arg(long)]
-    pub executor_deployment: Option<PathBuf>,
     #[arg(long)]
     pub identity_deployment: Option<PathBuf>,
     #[arg(long)]
@@ -264,10 +249,7 @@ fn release_lines(carrier: &ReleaseCarrier) -> String {
         manifest_digest,
     } = carrier;
     format!(
-        "# {EXECUTOR_CARRIER} env:\n\
-         {ARTIFACT_BASE_ENV}={artifact_base}\n\
-         {MANIFEST_DIGEST_ENV}={manifest_digest}\n\
-         # {HOST_CARRIER} hostGroups[].extraArgs\n\
+        "# {HOST_CARRIER} hostGroups[].extraArgs\n\
          {ARTIFACT_BASE_FLAG}={artifact_base}\n\
          {MANIFEST_DIGEST_FLAG}={manifest_digest}\n"
     )
@@ -286,7 +268,6 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
         host_image: args.host_image,
         gates_image: args.gates_image,
         identity_image: args.identity_image,
-        executor_image: args.executor_image,
         native_registry_endpoint: args.native_registry_endpoint,
         native_registry_insecure: args.native_registry_insecure,
         deployment_files: args.deployment_files,
@@ -327,7 +308,6 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
         namespace,
         http_workload,
         host_deployment,
-        executor_deployment,
         identity_deployment,
         principal,
         interaction_url,
@@ -343,7 +323,6 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
         namespace,
         http_workload,
         host_deployment,
-        executor_deployment,
         identity_deployment,
         principal,
         interaction_url,
@@ -569,16 +548,13 @@ mod tests {
         assert_eq!(
             printed,
             format!(
-                "# deploy/platform/executor.yaml env:\n\
-                 WAMN_RELEASE_ARTIFACT_BASE=registry.example/wamn/releases\n\
-                 WAMN_RELEASE_MANIFEST_DIGEST=sha256:{seven}\n\
-                 # deploy/platform/values-host-receiving-pat.yaml hostGroups[].extraArgs\n\
+                "# deploy/platform/values-host-receiving-pat.yaml hostGroups[].extraArgs\n\
                  --release-artifact-base=registry.example/wamn/releases\n\
                  --release-manifest-digest=sha256:{seven}\n",
                 seven = "7".repeat(64)
             )
         );
-        assert_eq!(printed.lines().count(), 6);
+        assert_eq!(printed.lines().count(), 3);
     }
 
     #[test]

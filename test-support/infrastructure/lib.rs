@@ -5,7 +5,6 @@
 pub mod ctl_process;
 pub mod declarations;
 pub mod event_broker;
-pub mod executor;
 pub mod locked_database;
 pub mod platform;
 pub use wamn_test_postgres as postgres;

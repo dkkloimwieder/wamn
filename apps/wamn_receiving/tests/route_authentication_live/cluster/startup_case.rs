@@ -727,7 +727,7 @@ fn redactions(cluster: &ReceivingCluster) -> anyhow::Result<Vec<String>> {
         values.insert(url.to_owned());
         if let Some(password) = reqwest::Url::parse(url)?.password() {
             values.insert(password.to_owned());
-            values.insert(wamn_test_infrastructure::executor::decoded_password(
+            values.insert(wamn_test_infrastructure::secrets::decoded_password(
                 password,
             )?);
         }

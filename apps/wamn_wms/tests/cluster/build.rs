@@ -60,9 +60,7 @@ pub(super) async fn build(
 
     let mut native = Command::new("cargo");
     native.args(["build", "--locked", "--offline"]);
-    if !delivery {
-        native.args(["-p", "wamn-host"]);
-    }
+    native.args(["-p", "wamn-host"]);
     native.args([
         "-p",
         "wamn-ctl",
@@ -73,9 +71,6 @@ pub(super) async fn build(
         "-p",
         "wamn-scenario-worker",
     ]);
-    if delivery {
-        native.args(["-p", "wamn-executor"]);
-    }
     prepare(&mut native, repository, target);
     run(&mut native, evidence, "native").await?;
     if generated_terminal {

@@ -109,7 +109,6 @@ async fn exercise(
     .await?;
     let host_image = fs::read_to_string(resources.work.join("native-host-image"))?;
     let gates_image = fs::read_to_string(resources.work.join("native-gates-image"))?;
-    let executor_image = fs::read_to_string(resources.work.join("native-executor-image"))?;
     let identity_image = fs::read_to_string(resources.work.join("native-identity-image"))?;
     let native_secrets = deployment::native_secrets(cluster)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
@@ -161,11 +160,6 @@ async fn exercise(
         "the host renderer changed the supplied native image"
     );
     let host_path = artifact(cluster, "host-deployment.json", &host)?;
-    let executor_path = artifact(
-        cluster,
-        "executor-deployment.json",
-        &executor(cluster, &carrier, &executor_image)?,
-    )?;
     let http_image = deployment::publish_http(cluster).await?;
     let mut http =
         kubernetes_documents(deployment::http_workload(cluster, &http_image)?.as_bytes())?;
@@ -244,15 +238,13 @@ async fn exercise(
             &host_image,
             "--gates-image",
             &gates_image,
-            "--executor-image",
-            &executor_image,
             "--identity-image",
             &identity_image,
             "--native-registry-endpoint",
             &format!("{}-native-registry:5000", resources.name),
             "--native-registry-insecure",
         ]);
-    for path in [&host_path, &executor_path, &http_path, &request, &expected] {
+    for path in [&host_path, &http_path, &request, &expected] {
         prepare.arg("--deployment-file").arg(path);
     }
     step(
@@ -336,8 +328,6 @@ async fn exercise(
                 ])
                 .arg("--host-deployment")
                 .arg(&host_path)
-                .arg("--executor-deployment")
-                .arg(&executor_path)
                 .args([
                     "--principal",
                     route
@@ -386,74 +376,6 @@ fn artifact(cluster: &ReceivingCluster, name: &str, value: &Value) -> anyhow::Re
     let path = cluster.resources.evidence.join(name);
     resources::write_private(&path, &serde_json::to_vec_pretty(value)?)?;
     Ok(path)
-}
-
-fn executor(
-    cluster: &ReceivingCluster,
-    carrier: &wamn_control::print_release_env::ReleaseCarrier,
-    image: &str,
-) -> anyhow::Result<Value> {
-    let mut document = kubernetes_documents(&fs::read(
-        cluster
-            .resources
-            .repository
-            .join("deploy/platform/executor.yaml"),
-    )?)?
-    .into_iter()
-    .find(|document| document["kind"] == "Deployment")
-    .context("the existing executor Deployment is present")?;
-    document["metadata"]["namespace"] = json!(cluster.resources.name);
-    document["spec"]["replicas"] = json!(1);
-    let container = &mut document["spec"]["template"]["spec"]["containers"][0];
-    container["image"] = json!(image);
-    container["args"] = json!(["--log-level=info", "--allow-insecure-registries"]);
-    for entry in container["env"]
-        .as_array_mut()
-        .context("the executor has explicit environment entries")?
-    {
-        for (name, value) in [
-            ("WAMN_PROJECT", PROJECT),
-            ("WAMN_SCHEMA", "receiving"),
-            ("WAMN_EVT_NATS_URL", cluster.nats_url.as_str()),
-            ("WAMN_RELEASE_ARTIFACT_BASE", carrier.artifact_base.as_str()),
-            (
-                "WAMN_RELEASE_MANIFEST_DIGEST",
-                carrier.manifest_digest.as_str(),
-            ),
-            (
-                "WAMN_COMPONENT_ARTIFACT_BASE",
-                cluster.inputs.component_artifact_base.as_str(),
-            ),
-        ] {
-            if entry["name"] == name {
-                *entry = json!({"name":name,"value":value});
-            }
-        }
-        for (name, stem) in [
-            ("WAMN_PG_URL", "guest-sql"),
-            ("WAMN_EXECUTOR_PLATFORM_PG_URL", "executor-platform"),
-            ("WAMN_HTTP_ADMITTER_PG_URL", "http-admitter"),
-        ] {
-            if entry["name"] == name {
-                let secret: Value = serde_json::from_slice(&fs::read(
-                    cluster
-                        .inputs
-                        .host_secret_directory
-                        .join(format!("{stem}.json")),
-                )?)?;
-                entry["valueFrom"]["secretKeyRef"]["name"] = secret["metadata"]["name"].clone();
-            }
-        }
-    }
-    container["volumeMounts"]
-        .as_array_mut()
-        .context("the executor has volume mounts")?
-        .retain(|mount| mount["name"] != "registry-ca");
-    document["spec"]["template"]["spec"]["volumes"]
-        .as_array_mut()
-        .context("the executor has volumes")?
-        .retain(|volume| volume["name"] != "registry-ca");
-    Ok(document)
 }
 
 async fn step(

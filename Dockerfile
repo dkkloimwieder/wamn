@@ -1,17 +1,14 @@
 # wamn images (SR1 pattern: one build, one final stage per artifact; SR9 split).
-#   docker build --target host       -t wamn-host:dev       .  # washlet ONLY
-#   docker build --target executor   -t wamn-executor:dev   .  # router queue executor
+#   docker build --target host       -t wamn-host:dev       .  # HTTP + durable queue host
 #   docker build --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
-#   docker build --target dispatcher -t wamn-dispatcher:dev .  # trigger dispatcher
 #   docker build --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
-#   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
 #   docker build --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 # Later invocations reuse shared BuildKit registry and Git caches and one
 # locked target cache per build stage, so the stages no longer wait on each
 # other. Each retained native image builds only its top-level package. The
-# washlet artifact ships no provisioning / replication-credential / gate code
+# host artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
 # IDENTICAL host stage so Jobs exercise the same host lib code they verify.
 FROM rust:1.98-trixie AS toolchain
@@ -57,13 +54,6 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     cargo build --locked --release -p wamn-host \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
 
-FROM root-source AS build-executor
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-executor,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-executor \
- && install -D -m 0755 target/release/wamn-run-worker /native-output/wamn-run-worker
-
 FROM root-source AS build-scenario-worker
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
@@ -79,20 +69,6 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
  && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops
-
-FROM root-source AS build-dispatcher
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-dispatcher,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-dispatcher \
- && install -D -m 0755 target/release/wamn-dispatcher /native-output/wamn-dispatcher
-
-FROM root-source AS build-waker
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-waker,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-waker \
- && install -D -m 0755 target/release/wamn-waker /native-output/wamn-waker
 
 FROM root-source AS build-cdc-reader
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
@@ -149,19 +125,12 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
         "/component-output/${artifact}.wasm"; \
     done
 
-# ---- washlet image: host only ----------------------------------------------
+# ---- combined HTTP and durable-queue host image ----------------------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-host /native-output/wamn-host /usr/local/bin/wamn-host
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
-
-# ---- component+wiring router queue executor --------------------------------
-FROM debian:trixie-slim AS executor
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-executor /native-output/wamn-run-worker /usr/local/bin/wamn-run-worker
-ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
 
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 # NOTE pg_dump and pg_restore are NOT installed (parity with the pre-split
@@ -172,13 +141,6 @@ COPY --from=build-ctl /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 COPY --from=build-ctl /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
-
-# ---- dispatcher image: the shared trigger dispatcher service (SR9) ----------
-FROM debian:trixie-slim AS dispatcher
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-dispatcher /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
-ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-dispatcher"]
 
 # ---- scenario-worker image: authoring management service -------------------
 FROM debian:trixie-slim AS scenario-worker
@@ -193,15 +155,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build-cdc-reader /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-cdc-reader"]
-
-# ---- waker image: the scale-to-zero wake actuator (fqg.12, POC-F3) ----------
-# Watches the doorbell and scales a parked runner Deployment 0->1 via the k8s
-# API. The ONE component granted k8s scale privilege (deploy/platform/waker.yaml).
-FROM debian:trixie-slim AS waker
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-waker /native-output/wamn-waker /usr/local/bin/wamn-waker
-ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-waker"]
 
 # ---- identity image: separate signing authority and public JWKS ------------
 FROM debian:trixie-slim AS identity
@@ -221,9 +174,6 @@ COPY --from=build-ctl /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 # Reader-inclusive gates exercise the native CDC service through its executable
 # boundary; the gates package does not link the service crate.
 COPY --from=build-cdc-reader /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
-# Dispatcher gates drive stepped and lifecycle behavior through the executable
-# boundary; the gates package does not link the deployable service crate.
-COPY --from=build-dispatcher /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
 # Test fixtures baked in so the retained gates run with no volume plumbing.
 COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm

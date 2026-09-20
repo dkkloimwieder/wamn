@@ -8,6 +8,28 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 
+/// Decode percent escapes in a database password for test-log redaction.
+pub fn decoded_password(value: &str) -> anyhow::Result<String> {
+    let mut input = value.bytes();
+    let mut output = Vec::new();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let pair = [
+                input
+                    .next()
+                    .context("password escape lacks its first digit")?,
+                input
+                    .next()
+                    .context("password escape lacks its second digit")?,
+            ];
+            output.extend(hex::decode(pair).context("password escape has invalid digits")?);
+        } else {
+            output.push(byte);
+        }
+    }
+    String::from_utf8(output).context("password text is invalid")
+}
+
 /// The credential files and database endpoint declared by the caller.
 #[derive(Debug, Clone)]
 pub struct HostSecretsInput {

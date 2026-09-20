@@ -32,8 +32,6 @@ pub struct DeployRequest {
     pub http_workload: Option<String>,
     /// Existing rendered native Kubernetes Deployment JSON for the host.
     pub host_deployment: PathBuf,
-    /// Required when the qualified candidate includes an executor image.
-    pub executor_deployment: Option<PathBuf>,
     pub identity_deployment: Option<PathBuf>,
     pub principal: String,
     /// A released POST route reached through this deployment's ingress.
@@ -147,18 +145,11 @@ pub async fn deploy_release(
         &qualification.candidate.host_image,
         "host",
     )?];
-    for (role, image, path) in [
-        (
-            "executor",
-            &qualification.candidate.executor_image,
-            &request.executor_deployment,
-        ),
-        (
-            "identity",
-            &qualification.candidate.identity_image,
-            &request.identity_deployment,
-        ),
-    ] {
+    for (role, image, path) in [(
+        "identity",
+        &qualification.candidate.identity_image,
+        &request.identity_deployment,
+    )] {
         match (image, path) {
             (Some(image), Some(path)) => documents.push(deployment_document(
                 &qualification,
@@ -533,31 +524,6 @@ fn deployment_document(
             ensure!(
                 argument(arguments, flag)?.as_deref() == Some(expected),
                 "host release flag differs from the qualified artifact"
-            );
-        }
-    } else if role == "executor" {
-        let environment = container["env"]
-            .as_array()
-            .context("executor deployment requires release environment entries")?;
-        for (name, expected) in [
-            (
-                "WAMN_RELEASE_ARTIFACT_BASE",
-                snapshot.carrier.artifact_base.as_str(),
-            ),
-            (
-                "WAMN_RELEASE_MANIFEST_DIGEST",
-                snapshot.carrier.manifest_digest.as_str(),
-            ),
-        ] {
-            let values = environment
-                .iter()
-                .filter(|entry| entry["name"] == name)
-                .collect::<Vec<_>>();
-            ensure!(
-                values.len() == 1
-                    && values[0]["value"] == expected
-                    && values[0].get("valueFrom").is_none(),
-                "executor release environment differs from the qualified artifact"
             );
         }
     }

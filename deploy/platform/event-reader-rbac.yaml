@@ -8,7 +8,7 @@
 # whole surface is the per-env replication connection (WAMN_CDC_URL), the
 # system DB (WAMN_SYSTEM_URL), and evt-nats. No Role/RoleBinding exists for
 # this ServiceAccount, and pods must set automountServiceAccountToken: false
-# (the dispatcher precedent); the named account exists so the reader runs as a
+# The named account exists so the reader runs as a
 # distinct auditable identity rather than `default`, and so a future grant
 # (none planned — D22 coordination is a system-DB lease, NOT a k8s Lease)
 # would have exactly one place to land and be reviewed.

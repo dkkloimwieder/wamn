@@ -22,10 +22,7 @@
 #   * host pods trust `/runtime-cert/ca.crt`, the `ca.crt` key of the
 #     chart-rendered `wasmcloud-runtime-tls` Secret
 #     (deploy/platform/values-host-default.yaml `ociCaPaths`);
-#   * the executor is hand-written, not chart-rendered, so it projects
-#     `wasmcloud-ca`'s `tls.crt` itself at `/etc/wamn/registry-ca/ca.crt`
-#     (deploy/platform/executor.yaml).
-# Both are the same CA certificate bytes, so one Issuer serves both.
+# The combined host uses that chart-mounted CA for all native component pulls.
 #
 # APPLY ORDER. Each step exists because the next one cannot be admitted or
 # cannot start without it:

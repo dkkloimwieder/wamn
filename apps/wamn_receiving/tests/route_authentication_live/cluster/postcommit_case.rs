@@ -83,7 +83,6 @@ pub(super) async fn run_selected(
 
 async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
-    super::candidate_executor(cluster, &carrier).await?;
     let replication_password = uuid::Uuid::new_v4().simple().to_string();
     let reader = cdc::configure(
         &cluster.inputs,

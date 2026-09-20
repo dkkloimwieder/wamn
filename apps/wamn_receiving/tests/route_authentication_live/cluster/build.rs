@@ -77,8 +77,6 @@ pub(super) async fn components_and_tools(
             "wamn-cdc-reader",
             "-p",
             "wamn-scenario-worker",
-            "-p",
-            "wamn-executor",
         ]);
         run_build(
             &mut tools,
@@ -93,7 +91,6 @@ pub(super) async fn components_and_tools(
             "wamn-identity",
             "wamn-cdc-reader",
             "wamn-scenario-worker",
-            "wamn-run-worker",
         ] {
             let path = target.join("debug").join(name);
             let metadata = fs::metadata(&path)

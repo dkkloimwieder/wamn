@@ -30,7 +30,6 @@ pub struct PrepareReleaseRequest {
     pub host_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
-    pub executor_image: Option<String>,
     pub native_registry_endpoint: Option<String>,
     pub native_registry_insecure: bool,
     pub deployment_files: Vec<PathBuf>,
@@ -59,7 +58,6 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
         host_image: request.host_image,
         gates_image: request.gates_image,
         identity_image: request.identity_image,
-        executor_image: request.executor_image,
         deployment_files: request.deployment_files,
         native_registry_endpoint: request.native_registry_endpoint,
         native_registry_insecure: request.native_registry_insecure,
@@ -86,7 +84,6 @@ pub struct Candidate {
     pub host_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
-    pub executor_image: Option<String>,
     #[serde(default)]
     pub deployment_files: Vec<PathBuf>,
     #[serde(default)]
@@ -115,7 +112,6 @@ impl Candidate {
         for image in std::iter::once(&candidate.host_image)
             .chain(candidate.gates_image.iter())
             .chain(candidate.identity_image.iter())
-            .chain(candidate.executor_image.iter())
         {
             require_pinned_image(image)?;
         }
@@ -144,12 +140,7 @@ impl Candidate {
                 self.host_image.split('/').next() == Some(host.registry()),
                 "an explicit native registry endpoint requires an explicit image registry authority"
             );
-            for image in self
-                .gates_image
-                .iter()
-                .chain(self.identity_image.iter())
-                .chain(self.executor_image.iter())
-            {
+            for image in self.gates_image.iter().chain(self.identity_image.iter()) {
                 ensure!(
                     image.parse::<oci_client::Reference>()?.registry() == host.registry()
                         && image.split('/').next() == Some(host.registry()),
@@ -190,7 +181,6 @@ impl Candidate {
         for image in std::iter::once(&self.host_image)
             .chain(self.gates_image.iter())
             .chain(self.identity_image.iter())
-            .chain(self.executor_image.iter())
         {
             require_pinned_image(image)?;
         }
@@ -228,7 +218,6 @@ impl Candidate {
             "wamn-identity",
             "wamn-cdc-reader",
             "wamn-scenario-worker",
-            "wamn-run-worker",
         ] {
             for profile in ["debug", "release"] {
                 let path = self.target_directory.join(profile).join(name);
@@ -402,7 +391,6 @@ mod tests {
             host_image: format!("localhost:5000/host@sha256:{}", "a".repeat(64)),
             gates_image: None,
             identity_image: None,
-            executor_image: None,
             deployment_files: Vec::new(),
             native_registry_endpoint: None,
             native_registry_insecure: true,
@@ -418,14 +406,14 @@ mod tests {
         }
         candidate.native_registry_endpoint = Some("owned-registry:5000".to_owned());
         assert!(candidate.validate_registry().is_ok());
-        candidate.executor_image = Some(format!("another.test/executor@sha256:{}", "a".repeat(64)));
+        candidate.identity_image = Some(format!("another.test/identity@sha256:{}", "a".repeat(64)));
         assert!(candidate.validate_registry().is_err());
-        candidate.executor_image = None;
+        candidate.identity_image = None;
         candidate.host_image = format!("acme/host@sha256:{}", "a".repeat(64));
         assert!(candidate.validate_registry().is_err());
         candidate.host_image = format!("docker.io/acme/host@sha256:{}", "a".repeat(64));
         assert!(candidate.validate_registry().is_ok());
-        candidate.executor_image = Some(format!("acme/executor@sha256:{}", "a".repeat(64)));
+        candidate.identity_image = Some(format!("acme/identity@sha256:{}", "a".repeat(64)));
         assert!(candidate.validate_registry().is_err());
     }
 
