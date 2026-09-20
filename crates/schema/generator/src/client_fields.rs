@@ -10,6 +10,7 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         type_name,
         required,
         nullable,
+        revision: false,
         values: Vec::new(),
         children: Vec::new(),
         minimum: None,
@@ -94,6 +95,10 @@ pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
                 .unwrap_or(false),
         );
         leaf.values = values(declared.get("values"));
+        leaf.revision = declared
+            .get("revision")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         insert(&mut tree, leaf, &path.split('.').collect::<Vec<_>>(), "");
     }
     tree
@@ -133,6 +138,10 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                     .unwrap_or(false),
             );
             declared.values = values(member.get("values"));
+            declared.revision = member
+                .get("revision")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             tree.push(declared);
         }
     }
@@ -308,6 +317,7 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
             result.values = values(schema.get("enum"));
             if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
                 result.nullable &= hint.nullable;
+                result.revision = hint.revision;
                 if !hint.values.is_empty() {
                     if result.values.is_empty() {
                         result.values.clone_from(&hint.values);

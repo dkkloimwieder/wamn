@@ -9,8 +9,8 @@ interface approve-inspection {
   }
 
   record concurrency-conflict-detail {
-    expected-row-version: string,
-    observed-row-version: string,
+    expected-row-version: s64,
+    observed-row-version: s64,
   }
 
   record invalid-input-detail {

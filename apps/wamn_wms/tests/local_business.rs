@@ -67,14 +67,16 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     .await?;
     let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
-    crate::business_fixture::seed_fixture(&admin).await?;
+    let initial_revision = 9_007_199_254_740_993_i64;
+    crate::business_fixture::seed_fixture(&admin, initial_revision).await?;
     let runtime = crate::business_fixture::runtime_phase(application.endpoint.clone());
     let route = crate::wms_runtime_live::Route::local(
         application.endpoint.clone(),
         application.route_host.clone(),
         application.bearer.clone(),
     );
-    crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime).await?;
+    crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
+        .await?;
     crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
     drop(admin);
     connection.abort();

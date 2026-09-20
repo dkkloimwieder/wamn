@@ -407,7 +407,7 @@ mod tests {
                 .is_err()
         );
         for value in ["", "1.0", "9223372036854775808"] {
-            let input = serde_json::json!([{"request_id":"x","id":"00000000-0000-0000-0000-000000000001","after_position":value,"limit":"1"}]);
+            let input = serde_json::json!([{"request_id":"x","id":"00000000-0000-0000-0000-000000000001","after_position":value,"limit":1}]);
             assert!(
                 super::receiving_load_purchase_order_history::decode(&input.to_string()).unwrap()
                     [0]

@@ -785,7 +785,7 @@ async fn receiving_release_journey(
         Some(&route.token),
         &denied_history_parent,
         Bytes::from_static(
-            br#"[{"request_id":"history-permission-denied","id":"00000000-0000-0000-0000-000000000302","after_position":"0","limit":"100"}]"#,
+            br#"[{"request_id":"history-permission-denied","id":"00000000-0000-0000-0000-000000000302","after_position":0,"limit":100}]"#,
         ),
     )
     .await?;
@@ -1124,7 +1124,7 @@ async fn assert_route_history_read(
         Some(token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"purchase-order-history","id":"00000000-0000-0000-0000-000000000302","after_position":"0","limit":"100"}]"#,
+            br#"[{"request_id":"purchase-order-history","id":"00000000-0000-0000-0000-000000000302","after_position":0,"limit":100}]"#,
         ),
     )
     .await?;

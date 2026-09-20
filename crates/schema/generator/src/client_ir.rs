@@ -196,6 +196,9 @@ pub struct FieldIr {
     pub nullable: bool,
     /// Whether the property must be present, independently of its null value.
     pub required: bool,
+    /// Whether this signed integer is a revision serialized as a decimal JSON string.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revision: bool,
     /// Object members or repeated item members, ordered by path.
     pub children: Vec<FieldIr>,
     /// Declared repeated-item bounds.
@@ -319,10 +322,7 @@ pub fn revision_inputs(operation: &OperationIr) -> Vec<&str> {
         paths.extend(guards.values().filter_map(Value::as_str));
     }
     for field in leaf_fields(&operation.input_fields) {
-        if matches!(
-            field.path.as_str(),
-            "expected_row_version" | "value.expected_row_version"
-        ) {
+        if field.revision {
             paths.insert(field.path.as_str());
         }
     }
@@ -932,12 +932,9 @@ fn build_operation(
         || idempotent_by
             .as_ref()
             .is_some_and(|value| value.get("state").is_some())
-        || leaf_fields(&input_fields).iter().any(|field| {
-            matches!(
-                field.path.as_str(),
-                "expected_row_version" | "value.expected_row_version"
-            )
-        });
+        || leaf_fields(&input_fields)
+            .iter()
+            .any(|field| field.revision);
     Ok(Some(OperationIr {
         name: name.to_owned(),
         kind,
@@ -1351,6 +1348,7 @@ mod tests {
         assert!(!by_path("id").nullable);
         assert_eq!(by_path("expected_row_version").type_name, "int64");
         assert!(!by_path("expected_row_version").nullable);
+        assert!(by_path("expected_row_version").revision);
         assert_eq!(by_path("change.supplier_id").type_name, "uuid");
         assert!(!by_path("change.supplier_id").required);
         assert!(

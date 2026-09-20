@@ -201,8 +201,8 @@
                   "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
                 "expected_row_version": {
-                  "type": "integer",
-                  "minimum": 1
+                  "type": "string",
+                  "pattern": "^-?(0|[1-9][0-9]*)$"
                 },
                 "occurred_at": {
                   "type": "string",
@@ -293,8 +293,8 @@
                   "minLength": 1
                 },
                 "expected_row_version": {
-                  "type": "integer",
-                  "minimum": 1
+                  "type": "string",
+                  "pattern": "^-?(0|[1-9][0-9]*)$"
                 },
                 "occurred_at": {
                   "type": "string",
@@ -367,8 +367,8 @@
                   "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
                 "expected_row_version": {
-                  "type": "integer",
-                  "minimum": 1
+                  "type": "string",
+                  "pattern": "^-?(0|[1-9][0-9]*)$"
                 },
                 "occurred_at": {
                   "type": "string",
@@ -464,8 +464,8 @@
                   "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
                 "expected_row_version": {
-                  "type": "integer",
-                  "minimum": 1
+                  "type": "string",
+                  "pattern": "^-?(0|[1-9][0-9]*)$"
                 },
                 "occurred_at": {
                   "type": "string",

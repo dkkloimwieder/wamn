@@ -11,8 +11,8 @@ use tokio_postgres::Client;
 use wamn_gate_harness::journey::{JourneyDocument, RuntimePhase};
 
 use crate::wms_runtime_live::{
-    assert_committed_move_after_label_failure, assert_committed_rows, assert_contention_and_replay,
-    assert_remaining_operations, assert_single_label, write_result,
+    assert_committed_move_after_label_failure, assert_committed_rows,
+    assert_label_delivery_and_replay, assert_single_label, write_result,
 };
 
 use crate::business_fixture::{LOCATION_A_ID, seed_fixture};
@@ -71,7 +71,7 @@ pub(super) async fn prepare_application(
     )
     .await?;
     let (project, task) = wamn_control::dev::environment::connect(&route.database_url).await?;
-    let seeded = seed_fixture(project.as_ref()).await;
+    let seeded = seed_fixture(project.as_ref(), 1).await;
     drop(project);
     task.abort();
     seeded?;
@@ -234,10 +234,8 @@ pub(super) async fn released_routes(
         .as_ref()
         .context("the WMS route is ready")?;
     let route = crate::wms_runtime_live::Route::from_document(document, runtime)?;
-    let contention = assert_contention_and_replay(&route, runtime).await?;
-    write_result(evidence, "wms-contention-result.json", &contention)?;
-    let operations = assert_remaining_operations(&route, runtime).await?;
-    write_result(evidence, "wms-operations-result.json", &operations)?;
+    let delivery = assert_label_delivery_and_replay(&route, runtime).await?;
+    write_result(evidence, "wms-label-delivery-result.json", &delivery)?;
 
     let prefix = object_store::path::Path::from("wms");
     let objects = store
@@ -254,9 +252,9 @@ pub(super) async fn released_routes(
             })
         })
         .collect::<Vec<_>>();
-    let movement = contention["movement_id"]
+    let movement = delivery["movement_id"]
         .as_str()
-        .context("the contention result has a movement id")?;
+        .context("the label delivery result has a movement id")?;
     assert_single_label(&objects, movement)?;
     write_result(evidence, "labels-objects.json", &Value::Array(objects))?;
     Ok(())

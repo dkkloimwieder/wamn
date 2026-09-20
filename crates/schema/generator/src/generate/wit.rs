@@ -337,6 +337,7 @@ fn emit_update_codec(
             column.name(),
             column.column_type(),
             column.nullable(),
+            operation.revision_field.as_deref() == Some(column.name()),
         );
     }
     source.push_str(UPDATE_CODEC_ERROR_PREFIX);
@@ -773,7 +774,14 @@ fn emit_json_row(
 
 fn emit_json_row_fields(source: &mut String, fields: &[ContractFieldDeclaration], carrier: &str) {
     for column in fields {
-        emit_codec_result_field_for(source, &column.path, column.ty, column.nullable, carrier);
+        emit_codec_result_field_for(
+            source,
+            &column.path,
+            column.ty,
+            column.nullable,
+            column.revision,
+            carrier,
+        );
     }
 }
 
@@ -878,6 +886,12 @@ impl<'de> Deserialize<'de> for JsonInt64 {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
         value.parse().map(Self).map_err(serde::de::Error::custom)
+    }
+}
+
+impl serde::Serialize for JsonInt64 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0.to_string())
     }
 }
 
@@ -1348,11 +1362,11 @@ fn detail_type(key: OperationErrorDetailKey) -> &'static str {
     match key {
         OperationErrorDetailKey::Minimum
         | OperationErrorDetailKey::Maximum
-        | OperationErrorDetailKey::Observed => "s64",
+        | OperationErrorDetailKey::Observed
+        | OperationErrorDetailKey::ExpectedRowVersion
+        | OperationErrorDetailKey::ObservedRowVersion => "s64",
         OperationErrorDetailKey::Field
         | OperationErrorDetailKey::Id
-        | OperationErrorDetailKey::ExpectedRowVersion
-        | OperationErrorDetailKey::ObservedRowVersion
         | OperationErrorDetailKey::Constraint
         | OperationErrorDetailKey::Operation => "string",
     }
@@ -1432,13 +1446,27 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     if result.class == ResultClass::BoundedList {
         source.push_str("{ \"rows\": value.rows.iter().map(|row| json!({\n");
         for field in &result.fields {
-            emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
+            emit_codec_result_field_for(
+                &mut source,
+                &field.path,
+                field.ty,
+                field.nullable,
+                field.revision,
+                "row",
+            );
         }
         source.push_str("                })).collect::<Vec<_>>() }\n");
     } else if result.class == ResultClass::OptionalOne {
         source.push_str("value.value.as_ref().map(|row| json!({\n");
         for field in &result.fields {
-            emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
+            emit_codec_result_field_for(
+                &mut source,
+                &field.path,
+                field.ty,
+                field.nullable,
+                field.revision,
+                "row",
+            );
         }
         source.push_str("                }))\n");
     } else {
@@ -1447,7 +1475,13 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             if field.path.contains("[]") || field.path.contains('.') {
                 continue;
             }
-            emit_codec_result_field(&mut source, &field.path, field.ty, field.nullable);
+            emit_codec_result_field(
+                &mut source,
+                &field.path,
+                field.ty,
+                field.nullable,
+                field.revision,
+            );
         }
         source.push_str("                }\n");
     }
@@ -1603,7 +1637,7 @@ fn emit_json_tree_fields(source: &mut String, fields: &[FieldIr], root: &str) {
         )
         .unwrap();
         let mut ty = if field.children.is_empty() {
-            codec_ir_rust_type(&field.type_name)
+            codec_ir_rust_type(&field.type_name, field.revision)
         } else {
             format!(
                 "Json{}",
@@ -1620,14 +1654,15 @@ fn emit_json_tree_fields(source: &mut String, fields: &[FieldIr], root: &str) {
     }
 }
 
-fn codec_ir_rust_type(type_name: &str) -> String {
-    match type_name {
-        "boolean" => "bool",
-        "int32" => "i32",
-        "int64" => "JsonInt64",
-        "float64" => "f64",
-        "bytes" => "Vec<u8>",
-        "json" => "serde_json::Value",
+fn codec_ir_rust_type(type_name: &str, revision: bool) -> String {
+    match (type_name, revision) {
+        ("int64", true) => "JsonInt64",
+        ("int64", false) => "i64",
+        ("boolean", _) => "bool",
+        ("int32", _) => "i32",
+        ("float64", _) => "f64",
+        ("bytes", _) => "Vec<u8>",
+        ("json", _) => "serde_json::Value",
         _ => "String",
     }
     .to_owned()
@@ -1653,11 +1688,11 @@ fn emit_contract_tree_assignments(
         )
         .unwrap();
         if field.children.is_empty() {
-            let conversion = match (field.type_name.as_str(), field.nullable) {
-                ("int64", true) => ".map(|value| value.0)",
-                ("int64", false) => ".0",
-                ("json", true) => ".map(|value| value.to_string())",
-                ("json", false) => ".to_string()",
+            let conversion = match (field.type_name.as_str(), field.nullable, field.revision) {
+                ("int64", true, true) => ".map(|value| value.0)",
+                ("int64", false, true) => ".0",
+                ("json", true, _) => ".map(|value| value.to_string())",
+                ("json", false, _) => ".to_string()",
                 _ => "",
             };
             writeln!(source, "{indent}{member}: {access}.{member}{conversion},")
@@ -1854,23 +1889,50 @@ fn emit_codec_error_arm(
     source.push_str("            let mut detail = Map::new();\n");
     for key in &detail.required {
         let name = detail_name(*key).replace('-', "_");
-        writeln!(
-            source,
-            "            detail.insert({name:?}.to_owned(), json!(value.{name}));"
-        )
-        .expect("writing to a String cannot fail");
+        if matches!(
+            key,
+            OperationErrorDetailKey::ExpectedRowVersion
+                | OperationErrorDetailKey::ObservedRowVersion
+        ) {
+            writeln!(
+                source,
+                "            detail.insert({name:?}.to_owned(), json!(JsonInt64(value.{name})));"
+            )
+            .expect("writing to a String cannot fail");
+        } else {
+            writeln!(
+                source,
+                "            detail.insert({name:?}.to_owned(), json!(value.{name}));"
+            )
+            .expect("writing to a String cannot fail");
+        }
     }
     for key in &detail.optional {
         let name = detail_name(*key).replace('-', "_");
-        writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(detail_value)); }}")
-            .expect("writing to a String cannot fail");
+        if matches!(
+            key,
+            OperationErrorDetailKey::ExpectedRowVersion
+                | OperationErrorDetailKey::ObservedRowVersion
+        ) {
+            writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(JsonInt64(*detail_value))); }}")
+                .expect("writing to a String cannot fail");
+        } else {
+            writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(detail_value)); }}")
+                .expect("writing to a String cannot fail");
+        }
     }
     writeln!(source, "            ({literal:?}, detail)\n        }}")
         .expect("writing to a String cannot fail");
 }
 
-fn emit_codec_result_field(source: &mut String, field: &str, ty: ColumnType, nullable: bool) {
-    emit_codec_result_field_for(source, field, ty, nullable, "value");
+fn emit_codec_result_field(
+    source: &mut String,
+    field: &str,
+    ty: ColumnType,
+    nullable: bool,
+    revision: bool,
+) {
+    emit_codec_result_field_for(source, field, ty, nullable, revision, "value");
 }
 
 fn emit_codec_result_field_for(
@@ -1878,6 +1940,7 @@ fn emit_codec_result_field_for(
     field: &str,
     ty: ColumnType,
     nullable: bool,
+    revision: bool,
     carrier: &str,
 ) {
     let name = rust_identifier(field).expect("validated result field has a Rust name");
@@ -1896,8 +1959,8 @@ fn emit_codec_result_field_for(
         return;
     }
     let conversion = match (ty, nullable) {
-        (ColumnType::Int64, true) => ".map(|value| value.to_string())",
-        (ColumnType::Int64, false) => ".to_string()",
+        (ColumnType::Int64, true) if revision => ".map(|value| value.to_string())",
+        (ColumnType::Int64, false) if revision => ".to_string()",
         _ => "",
     };
     writeln!(

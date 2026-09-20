@@ -99,9 +99,6 @@ If you set `CARGO_TARGET_DIR`, use that directory for both workspace build outpu
 
 Run the local business assertions:
 
-The Receiving transfer passes. WMS currently exposes the integer JSON mismatch tracked in `wamn-dr5z.4`.
-WMS keeps its deployed business assertions until that local test passes.
-
 ```bash
 WAMN_APPLICATION_COMPONENTS="$PWD/target/virtualized/std-empty-environment" \
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \

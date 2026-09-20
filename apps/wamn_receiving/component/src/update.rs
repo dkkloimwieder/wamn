@@ -88,8 +88,8 @@ mod tests {
             request_id: "conflict".to_owned(),
             outcome: Err(contract::UpdateError::ConcurrencyConflict(
                 contract::ConcurrencyConflictDetail {
-                    expected_row_version: i64::MAX.to_string(),
-                    observed_row_version: "4294967297".to_owned(),
+                    expected_row_version: i64::MAX,
+                    observed_row_version: 4_294_967_297,
                 },
             )),
         }];

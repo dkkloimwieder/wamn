@@ -1,5 +1,5 @@
 //! `[WMS-RUNTIME-LIVE]` — the two assertions structure cannot make, over the
-//! released composed route, from this machine.
+//! local business route or released label route.
 //!
 //! ONE. Two moves of the same pallet, in flight together, yield EXACTLY ONE
 //! `concurrency_conflict`. Not at least one: two would mean neither moved.
@@ -8,7 +8,7 @@
 //! one request never arriving gives one success and zero conflicts -- so the
 //! two are fired behind one barrier and the SURVIVOR is asserted to have
 //! moved the stock from its own response: `location_id` is the target and
-//! `row_version` advanced to 2, while the loser's detail observed that 2.
+//! `row_version` advanced once, while the loser observed that exact revision.
 //!
 //! TWO. The winner's exact body replayed returns the same `movement_id` --
 //! by construction (command-identity-from-claim), not by an early-return
@@ -102,14 +102,19 @@ impl Route {
     }
 }
 
-fn move_body(request_id: &str, idempotency_key: &str, runtime: &RuntimePhase) -> Value {
+fn move_body(
+    request_id: &str,
+    idempotency_key: &str,
+    runtime: &RuntimePhase,
+    expected_revision: i64,
+) -> Value {
     json!([{
         "request_id": request_id,
         "value": {
             "idempotency_key": idempotency_key,
             "pallet_id": runtime.pallet_id,
             "to_location_id": runtime.to_location_id,
-            "expected_row_version": 1,
+            "expected_row_version": expected_revision.to_string(),
             "occurred_at": OCCURRED_AT,
         }
     }])
@@ -137,6 +142,7 @@ fn item<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
 pub(crate) async fn assert_contention_and_replay(
     route: &Route,
     runtime: &RuntimePhase,
+    initial_revision: i64,
 ) -> anyhow::Result<Value> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -144,8 +150,8 @@ pub(crate) async fn assert_contention_and_replay(
         .context("build the route client")?;
 
     // ONE. Both requests are built before either is sent, then sent together.
-    let a = move_body(REQUEST_ID_A, "contention-a-key", runtime);
-    let b = move_body(REQUEST_ID_B, "contention-b-key", runtime);
+    let a = move_body(REQUEST_ID_A, "contention-a-key", runtime, initial_revision);
+    let b = move_body(REQUEST_ID_B, "contention-b-key", runtime, initial_revision);
     let (answer_a, answer_b) = tokio::join!(
         route.post(&client, "/inventory/move", &a),
         route.post(&client, "/inventory/move", &b)
@@ -173,6 +179,8 @@ pub(crate) async fn assert_contention_and_replay(
     );
     let (_, winner, winning_body) = winners[0];
     let (_, loser, _) = conflicts[0];
+    let expected_revision = initial_revision.to_string();
+    let next_revision = (initial_revision + 1).to_string();
 
     // The survivor MOVED THE STOCK, from its own response: the count above can
     // coincide with a request that never arrived; this cannot.
@@ -182,8 +190,8 @@ pub(crate) async fn assert_contention_and_replay(
         "the winner's pallet is at the target location: {value}"
     );
     anyhow::ensure!(
-        value["row_version"] == 2,
-        "the winner advanced the pallet's row_version to 2: {value}"
+        value["row_version"].as_str() == Some(next_revision.as_str()),
+        "the winner advanced the pallet's row_version from {initial_revision}: {value}"
     );
     anyhow::ensure!(
         value["pallet_id"] == runtime.pallet_id.as_str(),
@@ -196,9 +204,12 @@ pub(crate) async fn assert_contention_and_replay(
         .to_owned();
     // And the loser lost to THAT version, not to something else.
     anyhow::ensure!(
-        loser["error"]["detail"]["expected_row_version"] == 1
-            && loser["error"]["detail"]["observed_row_version"] == 2,
-        "the loser's conflict names expected 1 / observed 2: {loser}"
+        loser["error"]["detail"]["expected_row_version"].as_str()
+            == Some(expected_revision.as_str())
+            && loser["error"]["detail"]["observed_row_version"].as_str()
+                == Some(next_revision.as_str()),
+        "the loser's conflict names expected {initial_revision} / observed {}: {loser}",
+        initial_revision + 1
     );
 
     // TWO. The winner's exact body, again, with a fresh request id: the same
@@ -212,10 +223,41 @@ pub(crate) async fn assert_contention_and_replay(
         "a replay returns the same movement_id {movement_id}: {replayed}"
     );
     anyhow::ensure!(
-        replayed["value"]["row_version"] == 2,
+        replayed["value"]["row_version"].as_str() == Some(next_revision.as_str()),
         "a replay returns the original result, not a second move: {replayed}"
     );
 
+    Ok(json!({"movement_id": movement_id}))
+}
+
+/// Exercise the deployed composed move and require replay to return its exact result.
+pub(crate) async fn assert_label_delivery_and_replay(
+    route: &Route,
+    runtime: &RuntimePhase,
+) -> anyhow::Result<Value> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .context("build the route client")?;
+    let body = move_body("label-move", "label-move-key", runtime, 1);
+    let answer = route.post(&client, "/inventory/move", &body).await?;
+    let moved = value(&answer, "label-move")?;
+    anyhow::ensure!(
+        moved["pallet_id"] == runtime.pallet_id.as_str()
+            && moved["location_id"] == runtime.to_location_id.as_str()
+            && moved["row_version"] == "2",
+        "the composed route returns the committed move: {moved}"
+    );
+    let movement_id = uuid(&moved["movement_id"])?;
+
+    let mut replay = body;
+    replay[0]["request_id"] = json!("label-replay");
+    let answer = route.post(&client, "/inventory/move", &replay).await?;
+    let replayed = value(&answer, "label-replay")?;
+    anyhow::ensure!(
+        replayed == moved,
+        "the composed route replay returns the original move {movement_id}: {replayed}"
+    );
     Ok(json!({"movement_id": movement_id}))
 }
 
@@ -246,6 +288,13 @@ fn quantity(value: &Value) -> anyhow::Result<f64> {
         .as_str()
         .and_then(|text| text.parse::<f64>().ok())
         .with_context(|| format!("a numeric crosses the wire as a decimal string: {value}"))
+}
+
+fn revision(value: &Value) -> anyhow::Result<i64> {
+    value
+        .as_str()
+        .and_then(|text| text.parse::<i64>().ok())
+        .with_context(|| format!("a revision crosses the wire as an exact decimal string: {value}"))
 }
 
 fn uuid(value: &Value) -> anyhow::Result<String> {
@@ -281,9 +330,7 @@ pub(crate) async fn assert_remaining_operations(
         pallet["status"] == "available",
         "the fixture pallet is live: {pallet}"
     );
-    let version = pallet["row_version"]
-        .as_i64()
-        .with_context(|| format!("row_version is an integer: {pallet}"))?;
+    let version = revision(&pallet["row_version"])?;
     let location = uuid(&pallet["location_id"])?;
 
     let answer = route
@@ -312,13 +359,14 @@ pub(crate) async fn assert_remaining_operations(
         .post(&client, "/inventory/adjust", &json!([{"request_id": "ops-adjust", "value": {
             "idempotency_key": "ops-adjust-key", "pallet_id": pallet_id, "product_id": product_id,
             "status": "available", "quantity": "7", "reason_code": "cycle-count",
-            "expected_row_version": version, "occurred_at": OCCURRED_AT,
+            "expected_row_version": version.to_string(), "occurred_at": OCCURRED_AT,
         }}]))
         .await?;
     let adjusted = value(&answer, "ops-adjust")?;
+    let adjusted_revision = (version + 1).to_string();
     anyhow::ensure!(
         (quantity(&adjusted["adjusted_quantity"])? - 7.0).abs() < f64::EPSILON
-            && adjusted["row_version"] == version + 1
+            && adjusted["row_version"].as_str() == Some(adjusted_revision.as_str())
             && adjusted["pallet_status"] == "available",
         "the adjust counted 7 and advanced the revision from {version} (held {held}): {adjusted}"
     );
@@ -329,12 +377,14 @@ pub(crate) async fn assert_remaining_operations(
     let split = json!([{"request_id": "ops-split", "value": {
         "idempotency_key": "ops-split-key", "source_pallet_id": pallet_id, "product_id": product_id,
         "status": "available", "quantity": "3", "new_pallet_code": "PAL-302",
-        "to_location_id": location, "expected_row_version": version + 1, "occurred_at": OCCURRED_AT,
+        "to_location_id": location, "expected_row_version": (version + 1).to_string(), "occurred_at": OCCURRED_AT,
     }}]);
     let answer = route.post(&client, "/inventory/split", &split).await?;
     let first = value(&answer, "ops-split")?;
+    let split_revision = (version + 2).to_string();
     anyhow::ensure!(
-        first["row_version"] == version + 2 && first["source_status"] == "available",
+        first["row_version"].as_str() == Some(split_revision.as_str())
+            && first["source_status"] == "available",
         "the split advanced the source: {first}"
     );
     let new_pallet_id = uuid(&first["new_pallet_id"])?;
@@ -346,7 +396,7 @@ pub(crate) async fn assert_remaining_operations(
     anyhow::ensure!(
         replayed["new_pallet_id"] == new_pallet_id.as_str()
             && replayed["movement_id"] == split_movement_id.as_str()
-            && replayed["row_version"] == version + 2,
+            && replayed["row_version"].as_str() == Some(split_revision.as_str()),
         "a replayed split returns the same new pallet {new_pallet_id}, not a second one: {replayed}"
     );
     // And a split asking for more than the row holds is refused with what it
@@ -359,14 +409,13 @@ pub(crate) async fn assert_remaining_operations(
                 "idempotency_key": "ops-split-too-much-key", "source_pallet_id": pallet_id,
                 "product_id": product_id, "status": "available", "quantity": "100",
                 "new_pallet_code": "PAL-303", "to_location_id": location,
-                "expected_row_version": version + 2, "occurred_at": OCCURRED_AT,
+                "expected_row_version": (version + 2).to_string(), "occurred_at": OCCURRED_AT,
             }}]),
         )
         .await?;
     let detail = refusal(&answer, "ops-split-too-much", "insufficient_quantity")?;
     anyhow::ensure!(
-        detail["field"] == "value.quantity"
-            && (quantity(&detail["observed"])? - 4.0).abs() < f64::EPSILON,
+        detail["field"] == "value.quantity" && detail["observed"] == 4,
         "the refusal names the field and what the row holds: {detail}"
     );
 
@@ -378,14 +427,15 @@ pub(crate) async fn assert_remaining_operations(
             "/inventory/merge",
             &json!([{"request_id": "ops-merge", "value": {
                 "idempotency_key": "ops-merge-key", "source_pallet_id": new_pallet_id,
-                "target_pallet_id": pallet_id, "expected_row_version": version + 2,
+                "target_pallet_id": pallet_id, "expected_row_version": (version + 2).to_string(),
                 "occurred_at": OCCURRED_AT,
             }}]),
         )
         .await?;
     let merged = value(&answer, "ops-merge")?;
+    let merged_revision = (version + 3).to_string();
     anyhow::ensure!(
-        merged["row_version"] == version + 3
+        merged["row_version"].as_str() == Some(merged_revision.as_str())
             && merged["target_status"] == "available"
             && merged["target_pallet_id"] == pallet_id
             && merged["source_pallet_id"] == new_pallet_id.as_str(),
@@ -409,7 +459,7 @@ pub(crate) async fn assert_remaining_operations(
             "/inventory/merge",
             &json!([{"request_id": "ops-merge-self", "value": {
                 "idempotency_key": "ops-merge-self-key", "source_pallet_id": pallet_id,
-                "target_pallet_id": pallet_id, "expected_row_version": version + 3,
+                "target_pallet_id": pallet_id, "expected_row_version": (version + 3).to_string(),
                 "occurred_at": OCCURRED_AT,
             }}]),
         )
@@ -514,9 +564,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         )
         .await?;
     let before = value(&before, "partial-before")?;
-    let revision = before["row_version"]
-        .as_i64()
-        .context("the pallet has a numeric revision")?;
+    let revision = revision(&before["row_version"])?;
     anyhow::ensure!(
         before["location_id"] != runtime.to_location_id,
         "the partial test must move to a different location"
@@ -527,7 +575,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         "idempotency_key":key,
         "pallet_id":runtime.pallet_id,
         "to_location_id":runtime.to_location_id,
-        "expected_row_version":revision,
+        "expected_row_version":revision.to_string(),
         "occurred_at":OCCURRED_AT
     }}]);
     // Send this composed command once. Claim replay does not make its label effect safe to repeat.
@@ -563,7 +611,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         "pallet_id":runtime.pallet_id,
         "location_id":runtime.to_location_id,
         "pallet_status":before["status"],
-        "row_version":revision+1
+        "row_version":(revision+1).to_string()
     });
     anyhow::ensure!(
         committed["value"] == expected,
@@ -619,7 +667,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         json!({
             "request_id":request_id,"idempotency_key":key,"movement_id":movement_id,
             "pallet_id":runtime.pallet_id,"location_id":runtime.to_location_id,
-            "row_version":revision+1,"pallet_status":before["status"],
+            "row_version":(revision+1).to_string(),"pallet_status":before["status"],
             "command_requests":1,"effect_outcome":failure["effect_outcome"]
         }),
     ))
@@ -673,6 +721,7 @@ pub(crate) async fn assert_committed_rows(
         .await
         .context("read the committed WMS rows")?;
     let observed: Value = row.get(0);
+    let expected_row_version = revision(&expected["row_version"])?;
     anyhow::ensure!(
         observed["command_count"] == 1
             && observed["movement_count"] == 1
@@ -680,7 +729,7 @@ pub(crate) async fn assert_committed_rows(
             && observed["command"]["movement_id"] == expected["movement_id"]
             && observed["command"]["pallet_id"] == expected["pallet_id"]
             && observed["command"]["pallet_status"] == expected["pallet_status"]
-            && observed["command"]["row_version"] == expected["row_version"]
+            && observed["command"]["row_version"].as_i64() == Some(expected_row_version)
             && observed["movement"]["idempotency_key"] == expected["idempotency_key"]
             && observed["movement"]["pallet_id"] == expected["pallet_id"]
             && observed["movement"]["to_location_id"] == expected["location_id"]
@@ -689,7 +738,7 @@ pub(crate) async fn assert_committed_rows(
             && observed["pallet"]["id"] == expected["pallet_id"]
             && observed["pallet"]["location_id"] == expected["location_id"]
             && observed["pallet"]["status"] == expected["pallet_status"]
-            && observed["pallet"]["row_version"] == expected["row_version"],
+            && observed["pallet"]["row_version"].as_i64() == Some(expected_row_version),
         "the WMS committed rows disagree with the response: {observed}"
     );
     Ok(observed)
@@ -717,7 +766,7 @@ mod shape {
 
     #[test]
     fn a_move_body_is_the_array_envelope_the_route_admits() {
-        let body = move_body("r", "k", &runtime());
+        let body = move_body("r", "k", &runtime(), 1);
         let items = body.as_array().expect("array envelope");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["request_id"], "r");
@@ -731,7 +780,7 @@ mod shape {
         ] {
             assert!(value.get(key).is_some(), "value carries {key}");
         }
-        assert_eq!(value["expected_row_version"], 1);
+        assert_eq!(value["expected_row_version"], "1");
         assert_eq!(
             value.as_object().expect("object").len(),
             5,

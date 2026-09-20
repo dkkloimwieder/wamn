@@ -1017,12 +1017,14 @@ fn emit_operation_contracts(
     ) {
         record.insert("key_input".to_owned(), json!("id"));
     }
+    if let Some(revision) = operation.revision_field.as_deref() {
+        record.insert("revision_field".to_owned(), json!(revision));
+    }
     if matches!(action, CrudAction::Update | CrudAction::Delete) {
         let revision = operation
             .revision_field
             .as_deref()
             .expect("mutation validation requires a revision field");
-        record.insert("revision_field".to_owned(), json!(revision));
         record.insert(
             "revision_input".to_owned(),
             json!(format!("expected_{revision}")),
@@ -1114,6 +1116,9 @@ fn crud_result_contract(
                 path: column.name.clone(),
                 ty: column.ty,
                 nullable: column.nullable,
+                revision: model.operations.values().any(|operation| {
+                    operation.revision_field.as_deref() == Some(column.name.as_str())
+                }),
                 values: if action == CrudAction::Delete && column.name == "outcome" {
                     vec![sql::OUTCOME_DELETED.to_owned()]
                 } else {
@@ -1205,6 +1210,7 @@ fn input_contract(
                         "field": revision,
                         "type": "int64",
                         "required": true,
+                        "revision": true,
                     }),
                 );
             merge_json(common, &mutation)

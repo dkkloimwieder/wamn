@@ -260,7 +260,7 @@ fn validate_operation(
         }
         CrudAction::Query => {
             require_result(&context, operation.result, &[ResultClass::Page])?;
-            if !operation.writable_fields.is_empty() || operation.revision_field.is_some() {
+            if !operation.writable_fields.is_empty() {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
                     format!("{context} query cannot declare mutation fields"),
@@ -361,7 +361,6 @@ fn require_read_shape(
     allow_query_fields: bool,
 ) -> Result<(), GenerateError> {
     if !operation.writable_fields.is_empty()
-        || operation.revision_field.is_some()
         || (!allow_query_fields
             && (!operation.filters.is_empty()
                 || operation.sort.is_some()

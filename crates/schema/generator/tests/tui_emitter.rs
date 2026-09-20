@@ -512,10 +512,14 @@ fn platform_and_revision_inputs_come_only_from_exact_declared_paths() {
         "value.transfer_id",
     ]
     .into_iter()
-    .map(|path| wamn_schema_generator::client_ir::FieldIr {
-        path: path.into(),
-        children: Vec::new(),
-        ..template.clone()
+    .map(|path| {
+        let revision = matches!(path, "expected_row_version" | "value.expected_row_version");
+        wamn_schema_generator::client_ir::FieldIr {
+            path: path.into(),
+            revision,
+            children: Vec::new(),
+            ..template.clone()
+        }
     })
     .collect();
     let files = emit_tui(&ir, "example", None, "../../../..").unwrap();

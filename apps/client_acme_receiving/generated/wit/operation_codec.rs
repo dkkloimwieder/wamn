@@ -23,6 +23,12 @@ impl<'de> Deserialize<'de> for JsonInt64 {
     }
 }
 
+impl serde::Serialize for JsonInt64 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct CodecError(&'static str);
 

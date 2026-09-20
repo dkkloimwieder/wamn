@@ -462,7 +462,8 @@
           {
             "path": "row_version",
             "type": "int64",
-            "nullable": false
+            "nullable": false,
+            "revision": true
           }
         ]
       },
@@ -980,7 +981,8 @@
           {
             "path": "row_version",
             "type": "int64",
-            "nullable": false
+            "nullable": false,
+            "revision": true
           },
           {
             "path": "line_id",

@@ -9,9 +9,9 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
-    after_position: JsonInt64,
+    after_position: i64,
     id: String,
-    limit: JsonInt64,
+    limit: i64,
 }
 
 pub(crate) fn decode(
@@ -22,9 +22,9 @@ pub(crate) fn decode(
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::LoadPurchaseOrderHistoryRequest {
-                    after_position: request.after_position.0,
+                    after_position: request.after_position,
                     id: request.id,
-                    limit: request.limit.0,
+                    limit: request.limit,
                 })
                 .map_err(|_| invalid("input"));
             Ok(contract::LoadPurchaseOrderHistoryItem { request_id, input })
@@ -45,16 +45,16 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderHistoryOutcome]) -> St
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": { "rows": value.rows.iter().map(|row| json!({
-                    "position": row.position.to_string(),
+                    "position": row.position,
                     "kind": row.kind,
                     "operation": row.operation,
                     "changed_by": row.changed_by,
                     "changed_at": row.changed_at,
-                    "transaction_id": row.transaction_id.to_string(),
+                    "transaction_id": row.transaction_id,
                     "before": row.before,
                     "after": row.after,
                     "current": row.current,
-                    "head_position": row.head_position.to_string(),
+                    "head_position": row.head_position,
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({

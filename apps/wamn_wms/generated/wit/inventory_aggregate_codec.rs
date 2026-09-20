@@ -42,7 +42,7 @@ pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
                     "location_id": row.location_id,
                     "status": row.status,
                     "quantity": row.quantity,
-                    "pallet_count": row.pallet_count.to_string(),
+                    "pallet_count": row.pallet_count,
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({

@@ -8,7 +8,7 @@ See [database tests](database-tests.md) for state and authority observations.
 The [owned delivery tests](../operations/delivery.md#owned-application-acceptance) invoke the same application cases with supplied release artifacts.
 Those cases compare the freshly minted manifest with the exact candidate before publication.
 They report success only after application assertions and owned resource cleanup pass.
-Receiving retains baseline overlay compatibility, while WMS runs its released routes.
+Receiving retains baseline overlay compatibility, while WMS retains composed label delivery and partial-completion cases.
 
 The [local saved-edit case](../operations/running-tests.md#local-saved-edit-acceptance) runs the existing Receiving developer command against owned services.
 It keeps an authenticated mutation through code and SQL edits, and it observes the changed application response.
@@ -42,6 +42,13 @@ Their required observations are:
 
 Use a [deliberate business defect](mutation.md) to establish that the intended assertion detects it.
 Contention controls must retain other constraints that still protect the business rule.
+
+## WMS operations
+
+The [local WMS test](../../apps/wamn_wms/tests/local_business.rs) runs the existing operation and replay assertions with real components, authenticated HTTP, and disposable PostgreSQL.
+It retains contention, conflict, exact replay, adjust, split, merge, and aggregate assertions.
+Its initial revision exceeds JavaScript’s safe-integer limit, so inputs, results, and conflict details must preserve exact decimal strings.
+The deployed case retains label delivery and committed results after a label failure.
 
 ## Fresh overlay compatibility
 

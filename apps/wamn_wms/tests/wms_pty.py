@@ -192,7 +192,7 @@ def drive(session, relay, db, evidence, ids, mode):
     command = request[0]["value"]
     require(set(command) == {"idempotency_key", "occurred_at", "pallet_id", "to_location_id", "expected_row_version"}
             and command["pallet_id"] == ids.pallet and command["to_location_id"] == ids.destination
-            and command["expected_row_version"] == 1, "move body differs from the bound read and entered destination")
+            and command["expected_row_version"] == "1", "move body differs from the bound read and entered destination")
     response = json.loads(move["response_body"])
     answer = response if mode == "success" else response["committed_result"]
     require(len(answer) == 1 and answer[0]["request_id"] == request[0]["request_id"],
@@ -200,7 +200,7 @@ def drive(session, relay, db, evidence, ids, mode):
     value = answer[0]["value"]
     movement_id = str(uuid.UUID(value["movement_id"]))
     committed = {"movement_id": movement_id, "pallet_id": ids.pallet,
-                 "location_id": ids.destination, "pallet_status": "available", "row_version": 2}
+                 "location_id": ids.destination, "pallet_status": "available", "row_version": "2"}
     if mode == "success":
         require(move["status"] == 200 and set(value) == set(committed) | {"zpl", "stored"},
                 "successful move did not return the declared enriched result")

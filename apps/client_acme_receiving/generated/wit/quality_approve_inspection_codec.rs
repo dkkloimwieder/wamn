@@ -74,11 +74,11 @@ fn error_value(error: &contract::ApproveInspectionError) -> Value {
             let mut detail = Map::new();
             detail.insert(
                 "expected_row_version".to_owned(),
-                json!(value.expected_row_version),
+                json!(JsonInt64(value.expected_row_version)),
             );
             detail.insert(
                 "observed_row_version".to_owned(),
-                json!(value.observed_row_version),
+                json!(JsonInt64(value.observed_row_version)),
             );
             ("concurrency_conflict", detail)
         }
@@ -175,10 +175,14 @@ pub(crate) fn map_error(
             contract::ApproveInspectionError::NotFound(contract::NotFoundDetail { field, id })
         }
         "concurrency_conflict" => {
-            let Some(expected_row_version) = detail("expected_row_version") else {
+            let Some(expected_row_version) =
+                detail("expected_row_version").and_then(|value| value.parse::<i64>().ok())
+            else {
                 return contract::ApproveInspectionError::InternalError;
             };
-            let Some(observed_row_version) = detail("observed_row_version") else {
+            let Some(observed_row_version) =
+                detail("observed_row_version").and_then(|value| value.parse::<i64>().ok())
+            else {
                 return contract::ApproveInspectionError::InternalError;
             };
             contract::ApproveInspectionError::ConcurrencyConflict(

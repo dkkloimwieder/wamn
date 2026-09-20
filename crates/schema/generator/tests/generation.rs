@@ -294,7 +294,7 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     );
     assert_eq!(
         input["expected_row_version"],
-        json!({"field": "row_version", "type": "int64", "required": true})
+        json!({"field": "row_version", "type": "int64", "required": true, "revision": true})
     );
     assert_eq!(input["writable_fields"][0]["field"], "supplier_id");
     assert_eq!(
@@ -315,6 +315,7 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     assert!(wit.contains("interface update"));
     assert!(wit.contains("supplier-id: option<option<string>>"));
     assert!(wit.contains("expected-row-version: s64"));
+    assert!(wit.contains("observed-row-version: s64"));
     assert!(wit.contains("input: result<update-request, invalid-input-detail>"));
     for field in [
         "created-at",
@@ -326,6 +327,15 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     ] {
         assert!(wit.contains(&format!("    {field}:")));
     }
+    let codec = std::str::from_utf8(
+        package
+            .file("generated/wit/purchase_order_update_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(codec.contains("json!(JsonInt64(value.expected_row_version))"));
+    assert!(codec.contains("value.parse::<i64>().ok()"));
 }
 
 #[test]
@@ -1383,7 +1393,7 @@ fn typed_crud_contracts_follow_a_non_receiving_model_declaration() {
     );
     assert_eq!(
         delete["expected_sequence_number"],
-        json!({"field": "sequence_number", "type": "int64", "required": true})
+        json!({"field": "sequence_number", "type": "int64", "required": true, "revision": true})
     );
     compile_inventory_item_component(&package);
 }

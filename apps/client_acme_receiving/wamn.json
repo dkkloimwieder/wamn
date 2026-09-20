@@ -231,7 +231,8 @@
           {
             "path": "row_version",
             "type": "int64",
-            "nullable": false
+            "nullable": false,
+            "revision": true
           }
         ]
       },
@@ -368,7 +369,8 @@
           {
             "path": "row_version",
             "type": "int64",
-            "nullable": false
+            "nullable": false,
+            "revision": true
           },
           {
             "path": "acme_inspection_required",
@@ -516,7 +518,8 @@
           {
             "path": "expected_row_version",
             "type": "int64",
-            "nullable": false
+            "nullable": false,
+            "revision": true
           }
         ]
       },
@@ -539,7 +542,8 @@
           {
             "path": "row_version",
             "type": "int64",
-            "nullable": false
+            "nullable": false,
+            "revision": true
           },
           {
             "path": "purchase_order_id",
@@ -549,7 +553,8 @@
           {
             "path": "purchase_order_row_version",
             "type": "int64",
-            "nullable": false
+            "nullable": false,
+            "revision": true
           }
         ]
       },

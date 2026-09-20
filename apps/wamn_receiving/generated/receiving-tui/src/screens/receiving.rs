@@ -9,7 +9,7 @@ pub static LOAD_PURCHASE_ORDER_HISTORY_SPEC: screen::ScreenSpec = screen::Screen
     kind: "projection",
     input: crate::receiving::RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"after_position\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"limit\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\",\"id\",\"after_position\",\"limit\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"after_position\":{\"type\":\"integer\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\",\"id\",\"after_position\",\"limit\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),

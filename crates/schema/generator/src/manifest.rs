@@ -238,6 +238,8 @@ pub struct ContractFieldDeclaration {
     #[serde(rename = "type")]
     pub ty: wamn_schema_introspection::ir::ColumnType,
     pub nullable: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revision: bool,
     #[serde(default)]
     pub values: Vec<String>,
 }
@@ -1262,6 +1264,15 @@ fn validate_contract_fields(
                 GenerateErrorKind::InvalidOperation,
                 format!(
                     "{operation_name} {contract} field {} has invalid closed text values",
+                    field.path
+                ),
+            ));
+        }
+        if field.revision && field.ty != wamn_schema_introspection::ir::ColumnType::Int64 {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation_name} {contract} field {} marks a non-int64 revision",
                     field.path
                 ),
             ));

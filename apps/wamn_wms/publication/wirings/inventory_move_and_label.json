@@ -93,7 +93,8 @@
                 ]
               },
               "row_version": {
-                "type": "integer"
+                "type": "string",
+                "pattern": "^-?(0|[1-9][0-9]*)$"
               },
               "zpl": {
                 "type": "string"

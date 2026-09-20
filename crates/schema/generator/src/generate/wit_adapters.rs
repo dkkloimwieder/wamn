@@ -63,6 +63,8 @@ pub(super) fn emit_error_mapper<'a>(
                 OperationErrorDetailKey::Minimum
                     | OperationErrorDetailKey::Maximum
                     | OperationErrorDetailKey::Observed
+                    | OperationErrorDetailKey::ExpectedRowVersion
+                    | OperationErrorDetailKey::ObservedRowVersion
             );
             if required {
                 let value = if numeric {
