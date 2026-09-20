@@ -9,8 +9,16 @@ use wamn_schema_introspection::ir::{
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
+#[path = "support/platform_claim.rs"]
+mod platform_claim;
 #[path = "support/platform_descriptors.rs"]
 mod platform_descriptors;
+
+#[path = "support/platform_wit.rs"]
+mod platform_wit;
+
+#[path = "support/platform_client_ir.rs"]
+mod platform_client_ir;
 
 #[path = "support/platform_errors.rs"]
 mod platform_errors;
@@ -773,7 +781,7 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
 
 #[test]
 fn authored_claims_emit_the_law_and_require_exact_finalization() {
-    let manifest = fixture::claim_manifest();
+    let manifest = platform_claim::manifest();
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
     let contract = artifact(
         &package,

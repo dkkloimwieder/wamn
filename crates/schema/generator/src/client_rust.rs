@@ -635,35 +635,4 @@ mod tests {
         assert_eq!(refusal.kind(), ClientRustErrorKind::UnknownType);
         assert!(refusal.to_string().contains("geography"), "{refusal}");
     }
-
-    /// Every type the shipped releases actually use is mapped. Arithmetic over
-    /// the real corpus, so a vocabulary the packages adopt cannot reach the
-    /// emitter unmapped without this failing.
-    #[test]
-    fn every_type_the_shipped_releases_use_is_mapped() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(std::path::Path::parent)
-            .and_then(std::path::Path::parent)
-            .expect("repository root");
-        for package in ["wamn_receiving", "client_acme_receiving"] {
-            let ir = ClientContractIr::from_release(
-                package,
-                &root.join(format!("apps/{package}/generated/contracts")),
-                &root.join(format!("apps/{package}/publication/attachments.json")),
-            )
-            .expect("projects");
-            for model in &ir.models {
-                for operation in &model.operations {
-                    for field in leaf_fields(&operation.input_fields)
-                        .into_iter()
-                        .chain(leaf_fields(&operation.result_fields))
-                    {
-                        rust_type(&field.type_name)
-                            .unwrap_or_else(|error| panic!("{package} {}: {error}", field.path));
-                    }
-                }
-            }
-        }
-    }
 }

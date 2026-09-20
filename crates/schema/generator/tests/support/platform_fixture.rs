@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
+use wamn_schema_generator::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
 use wamn_schema_generator::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance,
     StatementTransactionality, generate,
@@ -74,6 +75,44 @@ pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>>
         .collect()
 }
 
+pub(crate) fn client_release() -> ClientContractIr {
+    let package = generate_fixture();
+    let contracts = contracts(&package);
+    let routes = ["archive", "create", "delete", "get", "query", "update"]
+        .into_iter()
+        .map(|name| {
+            let identity = format!("platform-fixture:widget/{name}@1.0.0");
+            (
+                identity.clone(),
+                RouteIr {
+                    method: "POST".to_owned(),
+                    template: format!("/widget/{name}"),
+                    input_schema: (name == "update").then(|| {
+                        json!({
+                            "type": "array",
+                            "items": {"type": "object", "properties": {"change": {
+                            "type": "object", "properties": {"note": {
+                                "type": ["string", "null"],
+                                "x-wamn-explicit-null": "accepted"
+                            }, "code": {
+                                "type": ["string", "null"],
+                                "x-wamn-explicit-null": "invalid_input"
+                            }}
+                            }}}
+                        })
+                    }),
+                    terminal_operation: Some(identity),
+                    direct: true,
+                    response: ResponseIr::default(),
+                    replay: (name == "archive").then_some(ReplayIr::State),
+                },
+            )
+        })
+        .collect();
+    ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
+        .expect("platform fixture projects as a release")
+}
+
 pub(crate) fn catalog() -> CatalogIr {
     let widget = Table::new(
         "inventory",
@@ -106,6 +145,11 @@ pub(crate) fn catalog() -> CatalogIr {
         vec![
             Constraint::primary_key("widget_pkey", ["id"]).expect("valid primary key"),
             Constraint::unique("widget_code_key", ["code"]).expect("valid unique constraint"),
+            Constraint::check(
+                "widget_code_check",
+                "code = ANY (ARRAY['priority'::text, 'standard'::text])",
+            )
+            .expect("valid check constraint"),
         ],
         Vec::new(),
     );
@@ -147,6 +191,7 @@ pub(crate) fn manifest() -> Value {
                 "table": "widget",
                 "owner": "platform_fixture",
                 "server_owned_fields": ["id", "edit_version", "created_at"],
+                "enum_fields": {"code": ["priority", "standard"]},
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "delete_mode": "hard",
                 "operations": {
@@ -267,78 +312,4 @@ pub(crate) fn manifest() -> Value {
         "connections": ["postgres"],
         "components": {"fixture": {"connections": ["postgres"]}}
     })
-}
-
-pub(crate) fn claim_manifest() -> Value {
-    let mut value = manifest();
-    value["custom_operations"]["widget.archive"] = json!({
-        "kind": "command",
-        "visibility": "public",
-        "permission": "widget.archive",
-        "connection": "postgres",
-        "transaction": "explicit_per_input",
-        "automatic_retry": false,
-        "idempotent_by": "claim",
-        "claim": {
-            "table": "widget_command",
-            "identities": {"id": "widget_id"},
-            "claim": "claim",
-            "replay": "replay",
-            "finalize": "finalize"
-        },
-        "canonicalization": {"excluded_fields": ["idempotency_key"]},
-        "input": {"fields": [
-            {"path": "idempotency_key", "type": "text", "nullable": false},
-            {"path": "payload", "type": "text", "nullable": false}
-        ]},
-        "result": {"class": "one", "fields": [
-            {"path": "id", "type": "uuid", "nullable": false}
-        ]},
-        "errors": [
-            "invalid_input", "idempotency_conflict", "retry", "timeout",
-            "permission_denied", "internal_error"
-        ],
-        "error_details": {"idempotency_conflict": {"required": ["field"]}},
-        "constraint_errors": {},
-        "relations": [{
-            "schema": "inventory",
-            "table": "widget_command",
-            "select_fields": ["canonical_command", "idempotency_key", "widget_id"],
-            "insert_fields": ["canonical_command", "idempotency_key"],
-            "update_fields": [],
-            "lock": false,
-            "constraints": ["widget_command_pkey", "widget_command_widget_id_key"]
-        }],
-        "statements": {
-            "claim": {
-                "path": "command/widget/claim.sql",
-                "fetch": "optional_one",
-                "parameters": [
-                    {"name": "canonical_command", "type": "bytes", "nullable": false},
-                    {"name": "idempotency_key", "type": "text", "nullable": false}
-                ],
-                "row": [{"name": "widget_id", "type": "uuid", "nullable": false}]
-            },
-            "replay": {
-                "path": "command/widget/replay.sql",
-                "fetch": "optional_one",
-                "parameters": [
-                    {"name": "idempotency_key", "type": "text", "nullable": false}
-                ],
-                "row": [
-                    {"name": "canonical_command", "type": "bytes", "nullable": false},
-                    {"name": "widget_id", "type": "uuid", "nullable": false}
-                ]
-            },
-            "finalize": {
-                "path": "command/widget/finalize.sql",
-                "fetch": "one",
-                "parameters": [
-                    {"name": "idempotency_key", "type": "text", "nullable": false}
-                ],
-                "row": [{"name": "widget_id", "type": "uuid", "nullable": false}]
-            }
-        }
-    });
-    value
 }

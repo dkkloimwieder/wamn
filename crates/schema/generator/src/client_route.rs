@@ -241,8 +241,7 @@ fn unreadable(path: &Path, error: &std::io::Error) -> ClientIrError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use serde_json::{Value, json};
@@ -284,18 +283,21 @@ mod tests {
         }
     }
 
-    fn package_attachment(package: &str, id: &str) -> (PathBuf, ServingAttachment) {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../apps")
-            .join(package)
-            .join("publication/attachments.json");
-        let attachments: BTreeMap<String, ServingAttachment> =
-            serde_json::from_slice(&std::fs::read(&path).expect("read shipped attachments"))
-                .expect("parse shipped attachments");
-        (
-            path,
-            attachments.get(id).expect("shipped attachment").clone(),
-        )
+    fn attachment(id: &str, wiring_id: &str, operation: &str) -> ServingAttachment {
+        serde_json::from_value(json!({
+            "package-id": "platform_fixture",
+            "kind": "http",
+            "wiring-id": wiring_id,
+            "wiring-version": 1,
+            "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "registered-operation": operation,
+            "definition": {
+                "route": {"method": "POST", "path": format!("/{id}")},
+                "input-schema": {"type": "array"}
+            },
+            "auth-policy": {"modes": ["pat"]}
+        }))
+        .expect("valid platform attachment")
     }
 
     fn direct_wiring(attachment: &ServingAttachment) -> Value {
@@ -305,7 +307,7 @@ mod tests {
             "version": attachment.wiring_version,
             "entry": "operation",
             "nodes": {"operation": {
-                "component": "receiving",
+                "component": "fixture",
                 "interface-version": "0.1.0",
                 "operation": attachment.registered_operation,
                 "terminal": "respond"
@@ -313,11 +315,27 @@ mod tests {
         })
     }
 
+    fn platform_attachment() -> ServingAttachment {
+        attachment(
+            "widget-archive-http",
+            "widget-archive",
+            "platform-fixture:widget/archive@1.0.0",
+        )
+    }
+
     #[test]
-    fn receiving_claim_route_has_a_direct_declared_response() {
-        let (path, attachment) =
-            package_attachment("wamn_receiving", "receiving-record-receipt-http");
-        let result = evidence(&path, &attachment).expect("read direct publication evidence");
+    fn direct_route_has_its_declared_response() {
+        let attachment = attachment(
+            "widget-archive-http",
+            "widget-archive",
+            "platform-fixture:widget/archive@1.0.0",
+        );
+        let fixture = Publication::new();
+        let mut wiring = direct_wiring(&attachment);
+        wiring["response"] = json!({"node": "operation", "schema": {"type": "array"}});
+        fixture.write("wirings/widget-archive.json", &wiring);
+        let result = evidence(&fixture.attachments(), &attachment)
+            .expect("read direct publication evidence");
         assert!(result.direct);
         assert_eq!(result.terminal_operation, attachment.registered_operation);
         assert_eq!(
@@ -328,9 +346,66 @@ mod tests {
     }
 
     #[test]
-    fn wms_move_response_belongs_to_the_terminal_store() {
-        let (path, attachment) = package_attachment("wamn_wms", "inventory-move-http");
-        let result = evidence(&path, &attachment).expect("read composed publication evidence");
+    fn composed_response_belongs_to_the_terminal_store() {
+        let attachment = attachment(
+            "widget-store-http",
+            "widget-store",
+            "platform-fixture:widget/store@1.0.0",
+        );
+        let operation = attachment.registered_operation.as_deref().unwrap();
+        let fixture = Publication::new();
+        fixture.write(
+            "wirings/widget-store.json",
+            &json!({
+                "format-version": "0.1",
+                "wiring-id": attachment.wiring_id,
+                "version": attachment.wiring_version,
+                "entry": "operation",
+                "nodes": {
+                    "operation": {
+                        "component": "fixture",
+                        "interface-version": "1.0.0",
+                        "operation": attachment.registered_operation
+                    },
+                    "store": {
+                        "component": "store",
+                        "interface-version": "0.1.0",
+                        "operation": "wamn:node/async-handler@0.1.0",
+                        "terminal": "respond"
+                    }
+                },
+                "edges": [{"from": "operation", "to": "store"}],
+                "response": {"node": "store", "committed-result": "operation", "schema": {
+                    "type": "array",
+                    "items": {"properties": {"value": {"properties": {"stored": {
+                        "properties": {"key": {"type": "string"}}
+                    }}}}}
+                }}
+            }),
+        );
+        fixture.write(
+            "components/fixture.json.in",
+            &json!({
+                "scope": {"tenant-id": "tenant-a", "package-id": "platform_fixture",
+                    "package-version": "1.0.0"},
+                "component": "fixture",
+                "interface-version": "1.0.0",
+                "operations": {(operation): {
+                    "registered-operation": operation,
+                    "input-ports": [],
+                    "output-ports": [],
+                    "parameters": [],
+                    "committed-result-schema": {
+                        "type": "array", "items": {"properties": {
+                            "value": {"properties": {"movement_id": {"type": "string"}}}
+                        }}
+                    }
+                }},
+                "connections": []
+            }),
+        );
+        let result = evidence(&fixture.attachments(), &attachment)
+            .expect("read composed publication evidence");
         assert!(!result.direct);
         assert_eq!(
             result.terminal_operation.as_deref(),
@@ -356,11 +431,15 @@ mod tests {
 
     #[test]
     fn wiring_selection_uses_declared_identity_and_version() {
-        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
+        let attachment = attachment(
+            "widget-archive-http",
+            "widget-archive",
+            "platform-fixture:widget/archive@1.0.0",
+        );
         let fixture = Publication::new();
         let mut unrelated = direct_wiring(&attachment);
         unrelated["version"] = json!(attachment.wiring_version + 1);
-        fixture.write("wirings/receiving_record_receipt.json", &unrelated);
+        fixture.write("wirings/widget_archive_other_version.json", &unrelated);
         fixture.write(
             "wirings/unrelated-file-name.json",
             &direct_wiring(&attachment),
@@ -374,7 +453,7 @@ mod tests {
 
     #[test]
     fn missing_wiring_preserves_input_without_inventing_response_evidence() {
-        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
+        let attachment = platform_attachment();
         let fixture = Publication::new();
         let result =
             evidence(&fixture.attachments(), &attachment).expect("missing wiring is unknown");
@@ -389,8 +468,7 @@ mod tests {
 
     #[test]
     fn malformed_schema_and_wiring_are_contextual_refusals() {
-        let (_, mut attachment) =
-            package_attachment("wamn_receiving", "receiving-record-receipt-http");
+        let mut attachment = platform_attachment();
         let fixture = Publication::new();
         attachment.definition["input-schema"] = json!([]);
         let error =
@@ -409,7 +487,7 @@ mod tests {
 
     #[test]
     fn response_selection_follows_reachability_and_refuses_ambiguous_terminals() {
-        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
+        let attachment = platform_attachment();
         let mut wiring = direct_wiring(&attachment);
         wiring["nodes"]["other"] = wiring["nodes"]["operation"].clone();
         let parsed = WiringDocument::parse(&wiring).expect("parse unreachable terminal");
@@ -424,7 +502,7 @@ mod tests {
 
     #[test]
     fn response_schema_requires_matching_publication_identity_and_preserves_opaque_arrays() {
-        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
+        let attachment = platform_attachment();
         let fixture = Publication::new();
         fixture.write("wirings/route.json", &direct_wiring(&attachment));
         let operation = attachment
@@ -433,7 +511,7 @@ mod tests {
             .expect("registered operation");
         let mut declaration = json!({
             "scope": {"tenant-id": "tenant-a", "package-id": "other", "package-version": "1.0.0"},
-            "component": "receiving",
+            "component": "fixture",
             "interface-version": "0.1.0",
             "operations": {(operation): {
                 "registered-operation": operation,
@@ -456,11 +534,36 @@ mod tests {
 
     #[test]
     fn partial_projection_requires_one_exact_committed_component_declaration() {
-        let (path, attachment) = package_attachment("wamn_wms", "inventory-move-http");
-        let publication = path.parent().unwrap();
-        let wiring =
-            super::read_json(&publication.join("wirings/inventory_move_and_label.json")).unwrap();
-        let declaration = super::read_json(&publication.join("components/wms.json.in")).unwrap();
+        let attachment = attachment(
+            "widget-store-http",
+            "widget-store",
+            "platform-fixture:widget/store@1.0.0",
+        );
+        let operation = attachment.registered_operation.as_deref().unwrap();
+        let wiring = json!({
+            "format-version": "0.1", "wiring-id": attachment.wiring_id,
+            "version": attachment.wiring_version, "entry": "operation",
+            "nodes": {
+                "operation": {"component": "fixture", "interface-version": "1.0.0",
+                    "operation": attachment.registered_operation},
+                "store": {"component": "store", "interface-version": "0.1.0",
+                    "operation": "wamn:node/async-handler@0.1.0", "terminal": "respond"}
+            },
+            "edges": [{"from": "operation", "to": "store"}],
+            "response": {"node": "store", "committed-result": "operation",
+                "schema": {"type": "array"}}
+        });
+        let declaration = json!({
+            "scope": {"tenant-id": "tenant-a", "package-id": attachment.package_id,
+                "package-version": "1.0.0"},
+            "component": "fixture", "interface-version": "1.0.0",
+            "operations": {(operation): {
+                "registered-operation": operation,
+                "input-ports": [], "output-ports": [], "parameters": [],
+                "committed-result-schema": {"type": "array"}
+            }},
+            "connections": []
+        });
         let fixture = Publication::new();
         fixture.write("wirings/composed.json", &wiring);
         let result = evidence(&fixture.attachments(), &attachment).unwrap();
@@ -469,7 +572,7 @@ mod tests {
             result.partial_schema.is_none(),
             "a wiring selector alone reports no commit"
         );
-        fixture.write("components/wms.json.in", &declaration);
+        fixture.write("components/fixture.json.in", &declaration);
         assert!(
             evidence(&fixture.attachments(), &attachment)
                 .unwrap()
@@ -486,11 +589,11 @@ mod tests {
             if field == "package-id" {
                 unrelated["scope"][field] = json!("other");
             } else if field == "registered-operation" {
-                unrelated["operations"]["wamn-wms:inventory/move@1.0.0"][field] = json!("other");
+                unrelated["operations"][operation][field] = json!("other");
             } else {
                 unrelated[field] = json!("other");
             }
-            fixture.write("components/wms.json.in", &unrelated);
+            fixture.write("components/fixture.json.in", &unrelated);
             assert!(
                 evidence(&fixture.attachments(), &attachment)
                     .unwrap()
@@ -511,7 +614,7 @@ mod tests {
         fixture.write("wirings/composed.json", &unreachable);
         assert!(evidence(&fixture.attachments(), &attachment).is_err());
         fixture.write("wirings/composed.json", &wiring);
-        fixture.write("components/wms.json.in", &declaration);
+        fixture.write("components/fixture.json.in", &declaration);
         fixture.write("components/duplicate.json.in", &declaration);
         assert!(
             evidence(&fixture.attachments(), &attachment)

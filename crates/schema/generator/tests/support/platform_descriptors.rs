@@ -1,18 +1,10 @@
-use std::collections::BTreeMap;
-
 use wamn_schema_generator::client_ir::{ClientContractIr, leaf_fields};
 
 use super::fixture;
 
 #[test]
 fn platform_fixture_generates_client_descriptors() {
-    let package = fixture::generate_fixture();
-    let client = ClientContractIr::from_release_contracts(
-        "platform_fixture",
-        &fixture::contracts(&package),
-        &BTreeMap::new(),
-    )
-    .expect("generated contracts project into client descriptors");
+    let client: ClientContractIr = fixture::client_release();
 
     let widget = client
         .models

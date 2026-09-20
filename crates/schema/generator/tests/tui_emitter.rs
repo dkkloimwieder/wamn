@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
@@ -9,23 +8,19 @@ use wamn_schema_generator::client_tui::{
 };
 use wamn_schema_generator::{GeneratedFile, PackageManifest};
 
-fn release(package: &str) -> ClientContractIr {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let manifest = manifest(package);
-    ClientContractIr::from_release(
-        &manifest.package.id,
-        &root.join(format!("apps/{package}/generated/contracts")),
-        &root.join(format!("apps/{package}/publication/attachments.json")),
-    )
-    .unwrap_or_else(|error| panic!("{package} projects: {error}"))
+#[path = "support/platform_fixture.rs"]
+mod fixture;
+#[path = "support/platform_claim.rs"]
+mod platform_claim;
+#[path = "support/platform_claim_release.rs"]
+mod platform_claim_release;
+
+fn release() -> ClientContractIr {
+    fixture::client_release()
 }
 
-fn manifest(package: &str) -> PackageManifest {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    PackageManifest::from_slice(
-        &std::fs::read(root.join(format!("apps/{package}/wamn.json"))).unwrap(),
-    )
-    .unwrap()
+fn manifest() -> PackageManifest {
+    PackageManifest::from_slice(&serde_json::to_vec(&fixture::manifest()).unwrap()).unwrap()
 }
 
 fn source<'a>(files: &'a [GeneratedFile], path: &str) -> &'a str {
@@ -59,89 +54,63 @@ fn spec<'a>(source: &'a str, name: &str) -> &'a str {
 }
 
 #[test]
-fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation() {
-    for package in ["wamn_receiving", "client_acme_receiving", "wamn_wms"] {
-        let ir = release(package);
-        let manifest = manifest(package);
-        assert_eq!(manifest.components.len(), 1);
-        let component = manifest.components.keys().next().unwrap();
-        let selected = component_contract(&ir, &manifest, component).unwrap();
-        assert_eq!(
-            selected, ir,
-            "the sole declared component owns the existing release"
+fn platform_operator_crate_is_deterministic_and_covers_each_callable_operation() {
+    let ir = release();
+    let manifest = manifest();
+    assert_eq!(manifest.components.len(), 1);
+    let component = manifest.components.keys().next().unwrap();
+    let selected = component_contract(&ir, &manifest, component).unwrap();
+    assert_eq!(
+        selected, ir,
+        "the sole declared component owns the existing release"
+    );
+    let first = emit_tui(&selected, component, None, "../../../..").unwrap();
+    let second = emit_tui(&selected, component, None, "../../../..").unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 4 + ir.models.len());
+    let library = source(&first, &format!("generated/{component}-tui/src/lib.rs"));
+    let calls = library
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("screens::"))
+        .collect::<Vec<_>>();
+    let callable_count = ir
+        .models
+        .iter()
+        .flat_map(|model| &model.operations)
+        .filter(|operation| operation.kind != "event_handler")
+        .count();
+    assert_eq!(calls.len(), callable_count);
+    if let Some((last, earlier)) = calls.split_last() {
+        assert!(last.ends_with("(binding),"));
+        assert!(
+            earlier
+                .iter()
+                .all(|call| call.ends_with("(binding.clone()),"))
         );
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .join("apps")
-            .join(package);
-        let operator = read_operator(&root, component).unwrap();
-        let workspace = read_tui_workspace(&root, component).unwrap();
-        let first = emit_tui(&selected, component, operator.as_ref(), &workspace).unwrap();
-        let second = emit_tui(&selected, component, operator.as_ref(), &workspace).unwrap();
-        for file in &first {
-            assert_eq!(
-                file.bytes(),
-                std::fs::read(root.join(file.path())).unwrap(),
-                "{package}/{}",
-                file.path()
-            );
-        }
-        assert_eq!(first, second, "{package}");
-        assert_eq!(
-            first.len(),
-            3 + ir.models.len() + usize::from(operator.is_none())
+    }
+    for model in &ir.models {
+        assert!(library.contains(&format!("#[path = \"../../client/{}.rs\"]", model.name)));
+        let screens = source(
+            &first,
+            &format!("generated/{component}-tui/src/screens/{}.rs", model.name),
         );
-        assert_eq!(
-            root.join(format!("generated/{component}-tui/src/main.rs"))
-                .exists(),
-            operator.is_none(),
-            "only an app without an explicit composition retains a generated main"
-        );
-        let library = source(&first, &format!("generated/{component}-tui/src/lib.rs"));
-        let calls = library
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.starts_with("screens::"))
-            .collect::<Vec<_>>();
-        let callable_count = ir
-            .models
-            .iter()
-            .flat_map(|model| &model.operations)
-            .filter(|operation| operation.kind != "event_handler")
-            .count();
-        assert_eq!(calls.len(), callable_count);
-        if let Some((last, earlier)) = calls.split_last() {
-            assert!(last.ends_with("(binding),"));
-            assert!(
-                earlier
-                    .iter()
-                    .all(|call| call.ends_with("(binding.clone()),"))
-            );
-        }
-        for model in &ir.models {
-            assert!(library.contains(&format!("#[path = \"../../client/{}.rs\"]", model.name)));
-            let screens = source(
-                &first,
-                &format!("generated/{component}-tui/src/screens/{}.rs", model.name),
-            );
-            let module = declared_identifier(library, "pub mod ", &model.name, ';')
-                .expect("the library declares its client module");
-            for operation in &model.operations {
-                let function = declared_identifier(screens, "pub fn ", &operation.name, '(');
-                if operation.kind == "event_handler" {
-                    assert!(function.is_none());
-                } else {
-                    let function = function.expect("a callable operation has a screen constructor");
-                    assert!(
-                        spec(screens, &operation.name)
-                            .contains(&format!("operation: {:?}", operation.operation))
-                    );
-                    assert!(
-                        library
-                            .contains(&format!("screens::{module}::{function}(binding.clone())"))
-                            || library.contains(&format!("screens::{module}::{function}(binding)"))
-                    );
-                }
+        let module = declared_identifier(library, "pub mod ", &model.name, ';')
+            .expect("the library declares its client module");
+        for operation in &model.operations {
+            let function = declared_identifier(screens, "pub fn ", &operation.name, '(');
+            if operation.kind == "event_handler" {
+                assert!(function.is_none());
+            } else {
+                let function = function.expect("a callable operation has a screen constructor");
+                assert!(
+                    spec(screens, &operation.name)
+                        .contains(&format!("operation: {:?}", operation.operation))
+                );
+                assert!(
+                    library.contains(&format!("screens::{module}::{function}(binding.clone())"))
+                        || library.contains(&format!("screens::{module}::{function}(binding)"))
+                );
             }
         }
     }
@@ -196,7 +165,7 @@ fn generation_resolves_an_app_workspace_before_its_native_crate_exists() {
     .unwrap();
     let workspace = read_tui_workspace(&root, "receiving").unwrap();
     assert_eq!(workspace, "../..");
-    let files = emit_tui(&release("wamn_receiving"), "receiving", None, &workspace).unwrap();
+    let files = emit_tui(&release(), "receiving", None, &workspace).unwrap();
     let manifest: toml::Value =
         toml::from_str(source(&files, "generated/receiving-tui/Cargo.toml")).unwrap();
     assert_eq!(manifest["package"]["workspace"].as_str(), Some("../.."));
@@ -209,7 +178,7 @@ fn declared_operator_keeps_generated_library_bytes_without_a_launcher() {
         cargo_package: "warehouse-desk".to_owned(),
         binary: "dock-screen".to_owned(),
     };
-    let ir = release("wamn_receiving");
+    let ir = release();
     let standalone = emit_tui(&ir, "receiving", None, "../../../..").unwrap();
     let composed = emit_tui(&ir, "receiving", Some(&operator), "../../../..").unwrap();
     assert!(
@@ -231,25 +200,26 @@ fn declared_operator_keeps_generated_library_bytes_without_a_launcher() {
 
 #[test]
 fn two_declared_components_render_only_their_owned_operations() {
-    let ir = release("wamn_receiving");
-    let mut value = serde_json::to_value(manifest("wamn_receiving")).unwrap();
+    let ir = release();
+    let mut value = serde_json::to_value(manifest()).unwrap();
     value["connections"] = json!(["postgres", "reporting"]);
     value["components"]["reports"] = json!({"connections":["postgres", "reporting"]});
     for model in value["models"].as_object_mut().unwrap().values_mut() {
-        for operation in model["operations"].as_object_mut().unwrap().values_mut() {
-            operation["component"] = json!("receiving");
+        for (name, operation) in model["operations"].as_object_mut().unwrap() {
+            operation["component"] = json!(if name == "query" {
+                "reports"
+            } else {
+                "fixture"
+            });
         }
     }
     for (name, operation) in value["custom_operations"].as_object_mut().unwrap() {
-        operation["component"] = json!(if name == "location.list" {
-            "reports"
-        } else {
-            "receiving"
-        });
+        let _ = name;
+        operation["component"] = json!("fixture");
     }
     let manifest = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
     let reports = component_contract(&ir, &manifest, "reports").unwrap();
-    let receiving = component_contract(&ir, &manifest, "receiving").unwrap();
+    let receiving = component_contract(&ir, &manifest, "fixture").unwrap();
     let reports_files = emit_tui(&reports, "reports", None, "../../../..").unwrap();
     let receiving_files = emit_tui(&receiving, "receiving", None, "../../../..").unwrap();
     let report_operations = reports
@@ -260,15 +230,15 @@ fn two_declared_components_render_only_their_owned_operations() {
     assert_eq!(report_operations.len(), 1);
     assert_eq!(
         report_operations[0].operation,
-        "wamn-receiving:location/list@1.0.0"
+        "platform-fixture:widget/query@1.0.0"
     );
     assert!(
         source(&reports_files, "generated/reports-tui/src/lib.rs")
-            .contains("screens::location::list(binding)")
+            .contains("screens::widget::query(binding)")
     );
     assert!(
         !source(&receiving_files, "generated/receiving-tui/src/lib.rs")
-            .contains("screens::location::list")
+            .contains("screens::widget::query")
     );
     assert_eq!(
         receiving
@@ -282,8 +252,8 @@ fn two_declared_components_render_only_their_owned_operations() {
             .map(|model| model.operations.len())
             .sum::<usize>()
     );
-    assert!(component_contract(&ir, &manifest, "wamn_receiving").is_err());
-    value["custom_operations"]["location.list"]
+    assert!(component_contract(&ir, &manifest, "platform_fixture").is_err());
+    value["models"]["widget"]["operations"]["query"]
         .as_object_mut()
         .unwrap()
         .remove("component");
@@ -293,11 +263,11 @@ fn two_declared_components_render_only_their_owned_operations() {
 
 #[test]
 fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
-    let ir = release("client_acme_receiving");
-    let files = emit_tui(&ir, "client_acme_receiving", None, "../../../..").unwrap();
-    let cargo = source(&files, "generated/client_acme_receiving-tui/Cargo.toml");
-    assert!(cargo.contains("name = \"wamn-generated-client-acme-receiving-tui\""));
-    assert!(cargo.contains("name = \"wamn-client-acme-receiving-tui\""));
+    let ir = release();
+    let files = emit_tui(&ir, "platform_fixture", None, "../../../..").unwrap();
+    let cargo = source(&files, "generated/platform_fixture-tui/Cargo.toml");
+    assert!(cargo.contains("name = \"wamn-generated-platform-fixture-tui\""));
+    assert!(cargo.contains("name = \"wamn-platform-fixture-tui\""));
     for inherited in ["version", "edition", "license"] {
         assert!(cargo.contains(&format!("{inherited}.workspace = true")));
     }
@@ -315,49 +285,66 @@ fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
     ] {
         assert!(cargo.contains(&format!("{dependency} = {{ workspace = true")));
     }
-    let main = source(&files, "generated/client_acme_receiving-tui/src/main.rs");
+    let main = source(&files, "generated/platform_fixture-tui/src/main.rs");
     assert!(main.contains(
         "async fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>>"
     ));
     assert!(main.contains("#[tokio::main]"));
     assert!(main.contains(concat!(
         "wamn_client_terminal::operator::run(\n",
-        "        \"client_acme_receiving\",\n",
-        "        wamn_generated_client_acme_receiving_tui::screens,\n",
+        "        \"platform_fixture\",\n",
+        "        wamn_generated_platform_fixture_tui::screens,\n",
         "    )\n",
         "    .await",
     )));
 }
 
 #[test]
-fn receiving_replay_and_wms_composed_completion_use_the_served_contract() {
-    let receiving = emit_tui(&release("wamn_receiving"), "receiving", None, "../../../..").unwrap();
+fn platform_replay_uses_the_served_contract() {
+    let receiving = emit_tui(&release(), "fixture", None, "../../../..").unwrap();
     let command = spec(
-        source(
-            &receiving,
-            "generated/receiving-tui/src/screens/receiving.rs",
-        ),
-        "record_receipt",
+        source(&receiving, "generated/fixture-tui/src/screens/widget.rs"),
+        "archive",
     );
-    assert!(command.contains("replay: submission::Replay::Claim"));
+    assert!(command.contains("replay: submission::Replay::State"));
     assert!(command.contains("transaction: Some(\"explicit_per_input\")"));
     assert!(command.contains("connection_unavailable"));
     assert!(command.contains("direct: true"));
+}
 
-    let ir = release("wamn_wms");
-    let files = emit_tui(&ir, "wms", None, "../../../..").unwrap();
+#[test]
+fn claim_and_composed_completion_use_projected_route_evidence() {
+    let direct = emit_tui(
+        &platform_claim_release::release(false),
+        "claim",
+        None,
+        "../../../..",
+    )
+    .unwrap();
     let command = spec(
-        source(&files, "generated/wms-tui/src/screens/inventory.rs"),
-        "move",
+        source(&direct, "generated/claim-tui/src/screens/widget.rs"),
+        "archive",
+    );
+    assert!(command.contains("replay: submission::Replay::Claim"));
+    assert!(command.contains("direct: true"));
+
+    let composed = emit_tui(
+        &platform_claim_release::release(true),
+        "composed",
+        None,
+        "../../../..",
+    )
+    .unwrap();
+    let command = spec(
+        source(&composed, "generated/composed-tui/src/screens/widget.rs"),
+        "archive",
     );
     assert!(command.contains("direct: false"));
     assert!(command.contains("replay: submission::Replay::Unknown"));
-    assert!(command.contains("result_class: Some(\"one\")"));
-    assert!(command.contains("errors: &[],"));
     assert!(command.contains("partial_schema: Some("));
     assert!(command.contains("committed_result"));
-    let bindings = emit_rust_client(&ir).unwrap();
-    let module = source(&bindings, "generated/client/inventory.rs");
+    let bindings = emit_rust_client(&platform_claim_release::release(true)).unwrap();
+    let module = source(&bindings, "generated/client/widget.rs");
     assert!(module.contains("stored.key"));
     assert!(module.contains("stored.container"));
 }

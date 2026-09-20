@@ -195,7 +195,7 @@ fn custom_visibility_permissions_and_components_remain_closed() {
 
 #[test]
 fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
-    let mut manifest = fixture::claim_manifest();
+    let mut manifest = super::platform_claim::manifest();
     manifest["custom_operations"]["widget.archive"]["pre_commit"] = json!({"fields": [
         {"path": "widget_id", "type": "uuid", "nullable": false}
     ]});

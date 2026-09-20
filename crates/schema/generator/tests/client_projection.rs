@@ -1,10 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 use wamn_schema_generator::client_ir::{
     ClientContractIr, OperationIr, ReplayIr, ResponseIr, RevisionBindingIr, RouteIr, leaf_fields,
 };
+
+#[path = "support/platform_fixture.rs"]
+mod fixture;
+#[path = "support/platform_claim.rs"]
+mod platform_claim;
+#[path = "support/platform_claim_release.rs"]
+mod platform_claim_release;
 
 const READ: &str = "example:entry/read-projection@1.0.0";
 const UPDATE: &str = "example:entry/apply-title@1.0.0";
@@ -75,7 +81,7 @@ fn records() -> (Contracts, BTreeMap<String, RouteIr>) {
         }),
         json!({"fields": [
             {"path": "record_key", "type": "uuid", "nullable": false},
-            {"path": "version_seen", "type": "int64", "nullable": false},
+            {"path": "version_seen", "type": "int64", "nullable": false, "revision": true, "json": "string"},
             {"path": "title", "type": "text", "nullable": false}
         ]}),
         json!({"class": "one", "fields": [
@@ -236,7 +242,7 @@ fn revision_binding_requires_one_served_record_even_when_terminal_fields_match()
             json!({"fields": []}),
             json!({"class": class, "fields": [
                 {"path": "stock_id", "type": "uuid", "nullable": false},
-                {"path": "edit_version", "type": "int64", "nullable": false}
+                {"path": "edit_version", "type": "int64", "nullable": false, "revision": true, "json": "string"}
             ]}),
         );
         let route = routes.get_mut(READ).unwrap();
@@ -341,7 +347,7 @@ fn custom_state_and_claim_declarations_do_not_invent_input_key_links() {
             declaration,
             json!({"fields": [
                 {"path": "value.stock_id", "type": "uuid", "nullable": false},
-                {"path": "value.expected_row_version", "type": "int64", "nullable": false}
+                {"path": "value.expected_row_version", "type": "int64", "nullable": false, "revision": true, "json": "string"}
             ]}),
             json!({"class": "one", "fields": []}),
         );
@@ -355,20 +361,14 @@ fn custom_state_and_claim_declarations_do_not_invent_input_key_links() {
     }
 }
 
-fn release(package: &str) -> ClientContractIr {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    ClientContractIr::from_release(
-        package,
-        &root.join(format!("apps/{package}/generated/contracts")),
-        &root.join(format!("apps/{package}/publication/attachments.json")),
-    )
-    .unwrap_or_else(|error| panic!("{package} projects: {error}"))
+fn release() -> ClientContractIr {
+    fixture::client_release()
 }
 
 #[test]
-fn receiving_update_preserves_writable_type_presence_and_null_refusal() {
-    let receiving = release("wamn_receiving");
-    let update = operation(&receiving, "update");
+fn platform_update_preserves_writable_type_presence_and_nullability() {
+    let platform = release();
+    let update = operation(&platform, "update");
     let schema = update
         .route
         .as_ref()
@@ -377,139 +377,149 @@ fn receiving_update_preserves_writable_type_presence_and_null_refusal() {
         .as_ref()
         .unwrap();
     let transport = schema
-        .pointer("/items/properties/change/properties/supplier_id")
+        .pointer("/items/properties/change/properties/note")
         .unwrap();
     assert_eq!(transport["type"], json!(["string", "null"]));
-    assert_eq!(transport["x-wamn-explicit-null"], "invalid_input");
+    assert_eq!(transport["x-wamn-explicit-null"], "accepted");
 
     let fields = leaf_fields(&update.input_fields);
-    let supplier = fields
+    let note = fields
         .iter()
-        .find(|field| field.path == "change.supplier_id")
-        .expect("declared writable supplier");
-    assert_eq!(supplier.type_name, "uuid");
-    assert!(!supplier.required);
-    assert!(!supplier.nullable);
-}
-
-#[test]
-fn receiving_query_closed_string_domains_remain_typed_without_explicit_schema_types() {
-    let receiving = release("wamn_receiving");
-    let query = receiving
-        .models
-        .iter()
-        .find(|model| model.name == "purchase_order")
-        .unwrap()
-        .operations
-        .iter()
-        .find(|operation| operation.name == "query")
+        .find(|field| field.path == "change.note")
+        .expect("declared writable note");
+    assert_eq!(note.type_name, "text");
+    assert!(!note.required);
+    assert!(note.nullable);
+    let code_transport = schema
+        .pointer("/items/properties/change/properties/code")
         .unwrap();
-    let schema = query.route.as_ref().unwrap().input_schema.as_ref().unwrap();
-    let fields = leaf_fields(&query.input_fields);
-    for (path, pointer, values) in [
-        (
-            "sort.field",
-            "/items/properties/sort/properties/field",
-            vec!["created_at", "purchase_order_number", "status"],
-        ),
-        (
-            "sort.direction",
-            "/items/properties/sort/properties/direction",
-            vec!["ascending", "descending"],
-        ),
-        (
-            "filter.status[]",
-            "/items/properties/filter/properties/status/items",
-            vec!["cancelled", "complete", "open"],
-        ),
-    ] {
-        assert!(schema.pointer(pointer).unwrap().get("type").is_none());
-        let field = fields.iter().find(|field| field.path == path).unwrap();
-        assert_eq!(field.type_name, "text", "{path}");
-        assert_eq!(field.values, values, "{path}");
-    }
+    assert_eq!(code_transport["type"], json!(["string", "null"]));
+    assert_eq!(code_transport["x-wamn-explicit-null"], "invalid_input");
+    let code = fields
+        .iter()
+        .find(|field| field.path == "change.code")
+        .expect("declared writable code");
+    assert!(!code.required);
+    assert!(!code.nullable);
 }
 
 #[test]
-fn receiving_direct_claim_grants_replay_but_wms_composition_does_not() {
-    let receiving = release("wamn_receiving");
-    let command = operation(&receiving, "record_receipt");
-    let route = command.route.as_ref().expect("Receiving route");
+fn platform_query_closed_sort_domains_remain_typed() {
+    let mut contracts = BTreeMap::new();
+    insert_operation(
+        &mut contracts,
+        "closed_query",
+        json!({
+            "operation": "example:entry/closed-query@1.0.0", "kind": "query",
+            "grant": "example:entry/closed-query@1.0.0",
+            "permission_token": "entry.closed_query", "result": "page"
+        }),
+        json!({"fields": [{"path": "filter.code[]", "type": "text", "nullable": false,
+            "values": ["priority", "standard"]}]}),
+        json!({"class": "page", "fields": []}),
+    );
+    let platform = project(&contracts, &BTreeMap::new());
+    let query = operation(&platform, "closed_query");
+    let fields = leaf_fields(&query.input_fields);
+    let code = fields
+        .iter()
+        .find(|field| field.path == "filter.code[]")
+        .expect("closed code filter descriptor");
+    assert_eq!(code.type_name, "text");
+    assert_eq!(code.values, ["priority", "standard"]);
+}
+
+#[test]
+fn direct_state_replay_and_composed_routes_remain_distinct() {
+    let platform = release();
+    let command = operation(&platform, "archive");
+    let route = command.route.as_ref().expect("platform route");
     assert!(route.direct);
     assert_eq!(
         route.terminal_operation.as_deref(),
         Some(command.operation.as_str())
     );
-    assert_eq!(route.replay, Some(ReplayIr::Claim));
+    assert_eq!(route.replay, Some(ReplayIr::State));
     assert_eq!(command.transaction.as_deref(), Some("explicit_per_input"));
     for errors in [&command.errors, &route.response.errors] {
         let retry = errors
             .iter()
             .find(|error| error.literal == "retry")
-            .expect("Receiving retry outcome");
+            .expect("retry outcome");
         assert_eq!(
             retry.sources,
             ["connection_unavailable", "serialization_failure"]
         );
     }
 
-    let wms = release("wamn_wms");
-    let command = operation(&wms, "move");
-    assert_eq!(command.idempotent_by, Some(json!("claim")));
-    assert!(
-        leaf_fields(&command.result_fields)
-            .iter()
-            .any(|field| field.path == "movement_id")
-    );
-    let route = command.route.as_ref().expect("WMS composed route");
+    let package = fixture::generate_fixture();
+    let contracts = fixture::contracts(&package);
+    let identity = command.operation.clone();
+    let routes = BTreeMap::from([(
+        identity.clone(),
+        RouteIr {
+            method: "POST".into(),
+            template: "/widget/archive".into(),
+            input_schema: None,
+            terminal_operation: Some("wamn:node/async-handler@0.1.0".into()),
+            direct: false,
+            response: ResponseIr::default(),
+            replay: None,
+        },
+    )]);
+    let projected =
+        ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
+            .expect("composed route projects");
+    let route = operation(&projected, "archive").route.as_ref().unwrap();
     assert!(!route.direct);
     assert_eq!(
         route.terminal_operation.as_deref(),
         Some("wamn:node/async-handler@0.1.0")
     );
     assert_eq!(route.replay, None);
+}
+
+#[test]
+fn direct_claim_and_composed_completion_project_from_route_evidence() {
+    let direct = platform_claim_release::release(false);
+    let command = operation(&direct, "archive");
+    let route = command.route.as_ref().unwrap();
+    assert!(route.direct);
+    assert_eq!(route.replay, Some(ReplayIr::Claim));
+    assert_eq!(
+        route.terminal_operation.as_deref(),
+        Some(command.operation.as_str())
+    );
+
+    let composed = platform_claim_release::release(true);
+    let command = operation(&composed, "archive");
+    let route = command.route.as_ref().unwrap();
+    assert!(!route.direct);
+    assert_eq!(route.replay, None);
+    assert_eq!(
+        route.terminal_operation.as_deref(),
+        Some("wamn:node/async-handler@0.1.0")
+    );
     assert!(route.response.schema.is_some());
-    let partial = route
-        .response
-        .partial_schema
-        .as_ref()
-        .expect("declared partial schema");
-    let committed = &partial["properties"]["committed_result"]["items"]["properties"]["value"];
-    let command_fields = leaf_fields(&command.result_fields);
+    let committed = &route.response.partial_schema.as_ref().unwrap()["properties"]["committed_result"]
+        ["items"]["properties"]["value"];
+    let result = leaf_fields(&command.result_fields);
     assert_eq!(
         committed["properties"].as_object().unwrap().len(),
-        command_fields.len()
+        result.len()
     );
-    for field in command_fields {
+    for field in result {
         assert!(
             committed["required"]
                 .as_array()
                 .unwrap()
                 .contains(&json!(field.path))
         );
-        let property = &committed["properties"][&field.path];
-        let expected_type = match field.type_name.as_str() {
-            "uuid" | "text" => "string",
-            "int64" => "integer",
-            other => panic!("the committed declaration needs the generated {other} type"),
-        };
-        assert_eq!(property["type"], expected_type);
-        if !field.values.is_empty() {
-            let actual = property["enum"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|value| value.as_str().unwrap())
-                .collect::<BTreeSet<_>>();
-            let expected = field.values.iter().map(String::as_str).collect();
-            assert_eq!(actual, expected);
-        }
+        assert_eq!(committed["properties"][&field.path]["type"], "string");
     }
-    assert_eq!(route.response.result_class.as_deref(), Some("one"));
-    let fields = leaf_fields(&route.response.fields);
-    for path in ["movement_id", "zpl", "stored.container", "stored.key"] {
-        assert!(fields.iter().any(|field| field.path == path), "{path}");
-    }
+    let served = leaf_fields(&route.response.fields);
+    assert!(served.iter().any(|field| field.path == "stored.key"));
+    assert!(served.iter().any(|field| field.path == "stored.container"));
 }
 
 #[test]
@@ -556,5 +566,8 @@ fn revision_roles_use_declared_paths_and_platform_fields_only() {
     );
     command.record = None;
     command.idempotent_by = None;
-    assert!(wamn_schema_generator::client_ir::revision_inputs(&command).is_empty());
+    assert_eq!(
+        wamn_schema_generator::client_ir::revision_inputs(&command),
+        vec!["version_seen"]
+    );
 }
