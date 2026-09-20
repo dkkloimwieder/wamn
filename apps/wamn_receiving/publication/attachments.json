@@ -439,7 +439,7 @@
     "package-id": "wamn_receiving",
     "wiring-id": "receiving_load_purchase_order_history",
     "wiring-version": 1,
-    "definition-hash": "sha256:9046f7eaf06b326a102fcba03e9e1d69b5de810c168b40d547e80050eabc264f",
+    "definition-hash": "sha256:1834c65d23b0c7ee1e177fb2f50528165f6ca44e494b5389bff87cf81b82e0c1",
     "definition": {
       "id": "receiving-load-purchase-order-history-http",
       "kind": "http",
