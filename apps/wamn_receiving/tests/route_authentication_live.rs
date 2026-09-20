@@ -3,10 +3,9 @@
 mod cluster;
 #[path = "receiving_command_histories_live.rs"]
 mod command_histories;
-#[path = "../../../tests/integration/src/route_authentication_live/fresh_only.rs"]
 mod fresh_only;
-mod startup_burst;
 use command_histories::database::{FIXTURE_PRINCIPAL, bind_fixture_principal};
+use wamn_integration_tests::startup_burst;
 mod delivery;
 mod dev;
 mod environment;
@@ -14,13 +13,10 @@ mod local_business;
 mod materializer;
 #[path = "../../client_acme_receiving/tests/overlay_compatibility.rs"]
 mod overlay_compatibility;
-#[path = "../../../tests/integration/src/route_authentication_live/p3_shell.rs"]
-mod p3_shell;
 #[path = "postcommit.rs"]
 mod postcommit;
 mod routes;
 mod runtime;
-#[path = "../../../tests/integration/src/route_authentication_live/session_client.rs"]
 mod session_client;
 mod sessions;
 
@@ -102,8 +98,8 @@ use runtime::{
     assert_invocation_identity, assert_native_nested_acquisition,
     assert_nested_permission_denial_trace, assert_nested_record_receipt_trace,
     assert_no_component_trace, assert_postgres_descendants, build_journey_runtime,
-    invoke_journey_request, invoke_journey_route, journey_trace, span_attribute,
-    span_descends_from, successful_value, trace_component_invocations,
+    invoke_journey_route, journey_trace, span_attribute, span_descends_from, successful_value,
+    trace_component_invocations,
 };
 use sessions::{assert_operation_refusal, nested_receipt_state};
 use wamn_control::dev::environment::{

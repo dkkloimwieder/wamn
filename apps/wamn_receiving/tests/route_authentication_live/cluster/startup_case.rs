@@ -2,22 +2,11 @@
 
 use std::fmt::Write as _;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs::{self, DirBuilder};
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::Path;
 use std::time::Duration;
-
-/// Every observed span, keyed by its (trace, span) identity, with its body
-/// and the name the protocol recorded it under.
-type ObservedSpans = BTreeMap<(String, String), (Value, String)>;
-
-/// Seconds as whole nanoseconds. `Duration` carries the conversion, so the
-/// width change is not an `as` cast; a negative value reports zero.
-fn whole_nanos(seconds: f64) -> u64 {
-    Duration::try_from_secs_f64(seconds.max(0.0))
-        .map_or(0, |span| u64::try_from(span.as_nanos()).unwrap_or(u64::MAX))
-}
 
 use anyhow::{Context as _, ensure};
 use base64::Engine as _;
@@ -25,6 +14,10 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::process::Child;
 use wamn_control::print_release_env::ReleaseCarrier;
+use wamn_integration_tests::startup_burst::{
+    ObservedSpans, normalize_tempo_trace_id, parse_time_nanos, reduce_startup_phases,
+    span_attribute,
+};
 
 use super::{ReceivingCluster, checked, kubectl, write_private};
 
@@ -95,7 +88,7 @@ pub(super) async fn assert_startup(
         let protocol: Value = serde_json::from_slice(&fs::read(evidence.join("protocol.json"))?)?;
         ensure!(protocol["verdict"] == "protocol-pass-awaiting-trace-exposure", "the native startup protocol did not pass");
         let spans = collect(cluster, &inputs.test_id, &protocol, &evidence, &redactions).await?;
-        final_result["phases"] = phases(&protocol, &spans, limit)?;
+        final_result["phases"] = reduce_startup_phases(&protocol, &spans, limit)?;
         let raw = fs::read(private.join("host.raw.log"))?;
         let raw = strip_ansi(&String::from_utf8_lossy(&raw));
         let marker = format!("max_concurrent_starts={limit}");
@@ -104,7 +97,7 @@ pub(super) async fn assert_startup(
             "the native host log did not confirm the declared start limit");
         for name in ["cache_scope","phase_attribution","host_ready_seconds"] { final_result[name] = protocol[name].clone(); }
         final_result["first_success_since_process_start_seconds"] = json!(
-            Duration::from_nanos(number(&protocol["cold"]["started_unix_ns"])? - number(&protocol["process_started_unix_ns"])?).as_secs_f64()
+            Duration::from_nanos(parse_time_nanos(&protocol["cold"]["started_unix_ns"])? - parse_time_nanos(&protocol["process_started_unix_ns"])?).as_secs_f64()
                 + protocol["cold"]["first_success_seconds"].as_f64().context("cold progress has a first success time")?);
         final_result["occupancy_limit"] = json!("workload_start begins before the permit; overlap shows queued demand, not active permit occupancy or CPU-core use");
         final_result["comparison_limit"] = json!("Distinct from a herd of different cold digests; local host cgroup and new native probe semantics differ from historical in-cluster timings. Existing performance modes are unchanged.");
@@ -424,7 +417,7 @@ async fn collect(
     protocol: &Value,
     evidence: &Path,
     redactions: &[String],
-) -> anyhow::Result<BTreeMap<(String, String), (Value, String)>> {
+) -> anyhow::Result<ObservedSpans> {
     let expected = protocol["owned_workloads"]
         .as_array()
         .context("the startup protocol names its owned workloads")?
@@ -453,7 +446,7 @@ async fn collect(
         search.query().context("the trace query is present")?
     );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    let mut spans = BTreeMap::new();
+    let mut spans = ObservedSpans::new();
     let mut attempt = 0;
     loop {
         attempt += 1;
@@ -465,7 +458,7 @@ async fn collect(
         )
         .await?;
         for trace in found["traces"].as_array().into_iter().flatten() {
-            let id = trace_id(
+            let id = normalize_tempo_trace_id(
                 trace["traceID"]
                     .as_str()
                     .context("Tempo returned a trace ID")?,
@@ -510,7 +503,7 @@ async fn collect(
         let observed = spans
             .values()
             .filter(|(span, _)| span["name"] == "workload_start")
-            .filter_map(|(span, _)| attribute(span, "workload_id"))
+            .filter_map(|(span, _)| span_attribute(span, "workload_id"))
             .map(str::to_owned)
             .collect::<BTreeSet<_>>();
         if expected.is_subset(&observed) {
@@ -540,143 +533,6 @@ async fn capture(
     Ok(serde_json::from_str(&text)?)
 }
 
-fn phases(
-    protocol: &Value,
-    spans: &BTreeMap<(String, String), (Value, String)>,
-    limit: usize,
-) -> anyhow::Result<Value> {
-    let mut output = serde_json::Map::new();
-    for phase in ["cold", "warm"] {
-        let ids = protocol[phase]["starts"]
-            .as_array()
-            .context("the startup phase names its starts")?
-            .iter()
-            .map(|entry| {
-                entry["id"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .context("the startup request names its ID")
-            })
-            .collect::<anyhow::Result<BTreeSet<_>>>()?;
-        let mut starts = Vec::new();
-        for ((trace, id), (span, file)) in spans {
-            if span["name"] != "workload_start" {
-                continue;
-            }
-            let Some(workload) = attribute(span, "workload_id") else {
-                continue;
-            };
-            if !ids.contains(workload) {
-                continue;
-            }
-            let start = number(&span["startTimeUnixNano"])?;
-            let end = number(&span["endTimeUnixNano"])?;
-            ensure!(end > start, "native start span has no positive duration");
-            starts.push(json!({"id":workload,"trace_id":trace,"span_id":id,"source_file":file,"start_ns":start,"end_ns":end}));
-        }
-        ensure!(
-            starts.len() == ids.len()
-                && starts
-                    .iter()
-                    .map(|span| span["id"].as_str())
-                    .collect::<BTreeSet<_>>()
-                    .len()
-                    == ids.len(),
-            "native start span identity is missing or duplicated"
-        );
-        let mut events = Vec::new();
-        for span in &starts {
-            events.push((number(&span["start_ns"])?, 1i64));
-            events.push((number(&span["end_ns"])?, -1i64));
-        }
-        events.sort_unstable();
-        let (mut active, mut maximum) = (0i64, 0i64);
-        for (_, change) in events {
-            active += change;
-            maximum = maximum.max(active);
-        }
-        ensure!(
-            maximum > i64::try_from(limit).unwrap_or(i64::MAX),
-            "insufficient measured native queued-start exposure"
-        );
-        starts.sort_by_key(|span| span["start_ns"].as_u64());
-        let mut intervals: Vec<(u64, u64)> = Vec::new();
-        for span in &starts {
-            let start = number(&span["start_ns"])?;
-            let end = number(&span["end_ns"])?;
-            match intervals.last_mut() {
-                Some(last) if start <= last.1 => last.1 = last.1.max(end),
-                _ => intervals.push((start, end)),
-            }
-        }
-        let origin = number(&protocol[phase]["started_unix_ns"])?;
-        let mut progress = 0;
-        for observation in protocol[phase]["observations"]
-            .as_array()
-            .context("the startup protocol has progress observations")?
-        {
-            let start = origin
-                + whole_nanos(
-                    observation["started_seconds"]
-                        .as_f64()
-                        .context("progress has a start time")?,
-                );
-            let end = origin
-                + whole_nanos(
-                    observation["finished_seconds"]
-                        .as_f64()
-                        .context("progress has an end time")?,
-                );
-            if intervals
-                .iter()
-                .any(|&(first, last)| first <= start && end <= last)
-                && observation["native_live_status"] == 200
-                && observation["native_ready_status"] == 200
-                && (phase == "cold" || observation["application"]["status"] == 200)
-            {
-                progress += 1;
-            }
-        }
-        ensure!(
-            progress > 0,
-            "no measured native serving progress during server start intervals"
-        );
-        output.insert(phase.into(),json!({"native_starts":starts,"max_overlapping_start_handlers":maximum,
-            "complete_progress_observations_within_continuous_start_intervals":progress,"continuous_start_intervals_ns":intervals,
-            "first_success_seconds":protocol[phase]["first_success_seconds"],"all_running_seconds":protocol[phase]["all_running_seconds"]}));
-    }
-    Ok(Value::Object(output))
-}
-
-fn number(value: &Value) -> anyhow::Result<u64> {
-    value.as_u64().map_or_else(
-        || {
-            value
-                .as_str()
-                .context("a time value is numeric text")?
-                .parse()
-                .context("a time value is valid")
-        },
-        Ok,
-    )
-}
-fn attribute<'a>(span: &'a Value, name: &str) -> Option<&'a str> {
-    span["attributes"]
-        .as_array()?
-        .iter()
-        .find(|entry| entry["key"] == name)?["value"]["stringValue"]
-        .as_str()
-}
-fn trace_id(value: &str) -> anyhow::Result<String> {
-    ensure!(
-        !value.is_empty()
-            && value.len() <= 32
-            && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-            && value.bytes().any(|byte| byte != b'0'),
-        "Tempo returned an invalid trace identity"
-    );
-    Ok(format!("{:0>32}", value.to_ascii_lowercase()))
-}
 fn redact(text: &str, values: &[String]) -> String {
     let mut text = text.to_owned();
     for value in values {
@@ -794,79 +650,5 @@ mod tests {
         assert!(scheduler_volume_patch(&deployment).is_err());
         deployment["spec"]["template"]["spec"]["volumes"] = json!([]);
         assert!(scheduler_volume_patch(&deployment).is_err());
-    }
-
-    fn observed() -> (Value, ObservedSpans) {
-        let mut spans = BTreeMap::new();
-        let mut protocol = json!({});
-        for (phase, origin) in [("cold", 100u64), ("warm", 1_000)] {
-            let ids = [format!("{phase}-one"), format!("{phase}-two")];
-            protocol[phase] = json!({"starts":[{"id":ids[0]},{"id":ids[1]}],"started_unix_ns":origin.to_string(),
-                "observations":[{"started_seconds":0.000_000_030,"finished_seconds":0.000_000_040,
-                    "native_live_status":200,"native_ready_status":200,"application":{"status":200}}],
-                "first_success_seconds":0.000_000_040,"all_running_seconds":0.000_000_080});
-            for (id, start, end) in [
-                (&ids[0], origin + 10, origin + 60),
-                (&ids[1], origin + 20, origin + 80),
-            ] {
-                spans.insert(
-                    (phase.to_owned(), id.clone()),
-                    (
-                        json!({"name":"workload_start",
-                    "startTimeUnixNano":start.to_string(),"endTimeUnixNano":end.to_string(),
-                    "attributes":[{"key":"workload_id","value":{"stringValue":id}}]}),
-                        format!("{id}.json"),
-                    ),
-                );
-            }
-        }
-        (protocol, spans)
-    }
-
-    #[test]
-    fn requires_progress_inside_measured_overlapping_starts() {
-        let (mut protocol, spans) = observed();
-        let result =
-            phases(&protocol, &spans, 1).expect("overlapping starts and enclosed progress");
-        assert_eq!(result["cold"]["max_overlapping_start_handlers"], 2);
-        assert_eq!(
-            result["warm"]["complete_progress_observations_within_continuous_start_intervals"],
-            1
-        );
-        protocol["warm"]["observations"][0]["started_seconds"] = json!(0.000_000_100);
-        protocol["warm"]["observations"][0]["finished_seconds"] = json!(0.000_000_110);
-        assert!(phases(&protocol, &spans, 1).is_err());
-    }
-
-    #[test]
-    fn rejects_missing_duplicate_and_nonpositive_start_spans() {
-        let (protocol, spans) = observed();
-        let key = spans.keys().next().expect("one start").clone();
-        let mut missing = spans.clone();
-        missing.remove(&key);
-        assert!(phases(&protocol, &missing, 1).is_err());
-        let mut duplicate = spans.clone();
-        duplicate.insert(("duplicate".into(), "span".into()), spans[&key].clone());
-        assert!(phases(&protocol, &duplicate, 1).is_err());
-        let mut empty = spans.clone();
-        let span = &mut empty.get_mut(&key).expect("one start").0;
-        span["endTimeUnixNano"] = span["startTimeUnixNano"].clone();
-        assert!(phases(&protocol, &empty, 1).is_err());
-    }
-
-    #[test]
-    fn requires_queued_demand_beyond_the_declared_limit_and_live_warm_route() {
-        let (mut protocol, spans) = observed();
-        assert!(phases(&protocol, &spans, 2).is_err());
-        protocol["warm"]["observations"][0]["application"]["status"] = json!(503);
-        assert!(phases(&protocol, &spans, 1).is_err());
-    }
-
-    #[test]
-    fn preserves_tempo_trace_id_normalization_and_refusals() {
-        assert_eq!(trace_id("aB").unwrap(), "000000000000000000000000000000ab");
-        for invalid in ["", "0", "000000", "g", "000000000000000000000000000000001"] {
-            assert!(trace_id(invalid).is_err());
-        }
     }
 }

@@ -241,6 +241,7 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
                 "version": BASE_PACKAGE_VERSION,
                 "digest": wamn_runtime::component_admission::component_digest(bytes),
                 "operation": BASE_RECORD_RECEIPT,
+                "participant": "client-acme-receiving:receiving/record-receipt-participant@3.0.0",
             }]),
         );
     }

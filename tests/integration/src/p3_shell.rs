@@ -1,4 +1,4 @@
-//! P3 protocol cases over the shipped Receiving HTTP component.
+//! P3 protocol cases over a supplied application read route.
 
 use std::sync::Arc;
 use std::task::Poll;
@@ -17,25 +17,30 @@ use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
-use super::{RAW_BODY_LIMIT, invoke_journey_request, successful_value};
+use crate::local_application::{LocalInvocation, invoke_request};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
-const PATH: &str = "/purchase_order/get";
-const REQUEST_ID: &str = "p3-protocol";
-const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
-const PAYLOAD: &[u8] =
-    br#"[{"request_id":"p3-protocol","id":"00000000-0000-0000-0000-000000000301"}]"#;
 
-pub(super) async fn assert_p3_route(
+/// Application-owned read request used to exercise the HTTP protocol shell.
+#[derive(Debug)]
+pub struct ReadProbe<'a> {
+    pub path: &'a str,
+    pub payload: &'a [u8],
+    pub body_limit: usize,
+    pub validate_response: fn(&hyper::Response<Bytes>) -> anyhow::Result<()>,
+}
+
+pub async fn assert_p3_route(
     engine: &Engine,
     flow_http: &Component,
     routing: Arc<FlowHttpRouting>,
     bridge: Arc<RouterDeliveryBridge>,
     route_host: &str,
     bearer: &str,
+    probe: &ReadProbe<'_>,
 ) -> anyhow::Result<()> {
     let invoke = |request| {
-        invoke_journey_request(
+        invoke_checked(
             engine,
             flow_http,
             Arc::clone(&routing),
@@ -47,22 +52,20 @@ pub(super) async fn assert_p3_route(
         TIMEOUT,
         invoke(request(
             route_host,
-            PATH,
+            probe.path,
             Some(bearer),
-            buffered(Bytes::from_static(PAYLOAD)),
+            buffered(Bytes::copy_from_slice(probe.payload)),
         )?),
     )
     .await
     .context("P3 protocol case origin-form-host timed out")??;
-    anyhow::ensure!(
-        successful_value(&response, REQUEST_ID)?["id"] == PURCHASE_ORDER_ID,
-        "P3 protocol case origin-form-host returned another purchase order"
-    );
+    (probe.validate_response)(&response)
+        .context("P3 protocol case origin-form-host returned another record")?;
 
     for (case, path, token, status, code) in [
         (
             "stalled-body-missing-auth",
-            PATH,
+            probe.path,
             None,
             StatusCode::UNAUTHORIZED,
             "unauthorized",
@@ -91,30 +94,28 @@ pub(super) async fn assert_p3_route(
         );
     }
 
-    let mut padded = PAYLOAD.to_vec();
-    padded.resize(RAW_BODY_LIMIT, b' ');
+    let mut padded = probe.payload.to_vec();
+    padded.resize(probe.body_limit, b' ');
     let response = tokio::time::timeout(
         TIMEOUT,
         invoke(request(
             route_host,
-            PATH,
+            probe.path,
             Some(bearer),
             buffered(Bytes::from(padded.clone())),
         )?),
     )
     .await
     .context("P3 protocol case exact-1mib timed out")??;
-    anyhow::ensure!(
-        successful_value(&response, REQUEST_ID)?["id"] == PURCHASE_ORDER_ID,
-        "P3 protocol case exact-1mib did not execute the valid read"
-    );
+    (probe.validate_response)(&response)
+        .context("P3 protocol case exact-1mib did not execute the valid read")?;
 
     padded.push(b' ');
     let response = tokio::time::timeout(
         TIMEOUT,
         invoke(request(
             route_host,
-            PATH,
+            probe.path,
             Some(bearer),
             buffered(Bytes::from(padded)),
         )?),
@@ -127,18 +128,19 @@ pub(super) async fn assert_p3_route(
                 .headers()
                 .get(hyper::header::CONTENT_TYPE)
                 .is_some_and(|value| value == "text/plain; charset=utf-8")
-            && response.body().as_ref() == b"request body exceeds 1048576-byte limit\n",
+            && response.body().as_ref()
+                == format!("request body exceeds {}-byte limit\n", probe.body_limit).as_bytes(),
         "P3 protocol case 1mib-plus-one lost the typed 413 contract"
     );
 
     let body = StreamBody::new(stream::iter([
-        Ok(Frame::data(Bytes::from_static(PAYLOAD))),
+        Ok(Frame::data(Bytes::copy_from_slice(probe.payload))),
         Err(ErrorCode::ConnectionTerminated),
     ]))
     .boxed_unsync();
     let response = tokio::time::timeout(
         TIMEOUT,
-        invoke(request(route_host, PATH, Some(bearer), body)?),
+        invoke(request(route_host, probe.path, Some(bearer), body)?),
     )
     .await
     .context("P3 protocol case transport-error-after-json timed out")??;
@@ -151,16 +153,22 @@ pub(super) async fn assert_p3_route(
     let stalled = Arc::new(Notify::new());
     let observed = Arc::clone(&stalled);
     let body = StreamBody::new(
-        stream::iter([Ok(Frame::data(Bytes::from_static(PAYLOAD)))]).chain(stream::poll_fn(
-            move |_| {
+        stream::iter([Ok(Frame::data(Bytes::copy_from_slice(probe.payload)))]).chain(
+            stream::poll_fn(move |_| {
                 observed.notify_one();
                 Poll::<Option<Result<Frame<Bytes>, ErrorCode>>>::Pending
-            },
-        )),
+            }),
+        ),
     )
     .boxed_unsync();
     {
-        let invocation = invoke(request(route_host, PATH, Some(bearer), body)?);
+        let invocation = invoke_request(
+            engine,
+            flow_http,
+            Arc::clone(&routing),
+            Arc::clone(&bridge),
+            request(route_host, probe.path, Some(bearer), body)?,
+        );
         tokio::pin!(invocation);
         tokio::select! {
             biased;
@@ -168,7 +176,7 @@ pub(super) async fn assert_p3_route(
                 let response = response.context("P3 protocol case pending-body-cancellation failed before cancellation")?;
                 anyhow::bail!(
                     "P3 protocol case pending-body-cancellation completed early with {}",
-                    response.status()
+                    response.response.status()
                 );
             }
             () = stalled.notified() => {}
@@ -189,23 +197,50 @@ pub(super) async fn assert_p3_route(
         TIMEOUT,
         invoke(request(
             route_host,
-            PATH,
+            probe.path,
             Some(bearer),
-            buffered(Bytes::from_static(PAYLOAD)),
+            buffered(Bytes::copy_from_slice(probe.payload)),
         )?),
     )
     .await
     .context("P3 protocol case recovery-after-cancellation timed out")??;
-    anyhow::ensure!(
-        successful_value(&response, REQUEST_ID)?["id"] == PURCHASE_ORDER_ID,
-        "P3 protocol case recovery-after-cancellation did not execute the next valid request"
-    );
+    (probe.validate_response)(&response).context(
+        "P3 protocol case recovery-after-cancellation did not execute the next valid request",
+    )?;
     println!(
         "P3 protocol cases passed: origin-form-host, stalled-body-missing-auth, \
          stalled-body-unknown-route, exact-1mib, 1mib-plus-one, transport-error-after-json, \
          pending-body-cancellation, recovery-after-cancellation"
     );
     Ok(())
+}
+
+async fn invoke_checked<B>(
+    engine: &Engine,
+    flow_http: &Component,
+    routing: Arc<FlowHttpRouting>,
+    bridge: Arc<RouterDeliveryBridge>,
+    request: Request<B>,
+) -> anyhow::Result<hyper::Response<Bytes>>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<ErrorCode>,
+{
+    let LocalInvocation {
+        response,
+        shell_bytes,
+        in_use_before_drop,
+        ..
+    } = invoke_request(engine, flow_http, routing, bridge, request).await?;
+    anyhow::ensure!(
+        in_use_before_drop == shell_bytes,
+        "P3 protocol invocation retained memory outside its flow-http store"
+    );
+    anyhow::ensure!(
+        engine.guest_memory().in_use() == 0,
+        "P3 protocol invocation retained guest memory after its stores dropped"
+    );
+    Ok(response)
 }
 
 fn buffered(bytes: Bytes) -> UnsyncBoxBody<Bytes, ErrorCode> {

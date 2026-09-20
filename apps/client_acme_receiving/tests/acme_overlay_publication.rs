@@ -60,7 +60,7 @@ const DIRECT_OPERATIONS: [DirectOperation; 5] = [
 ];
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 fn package_root() -> PathBuf {

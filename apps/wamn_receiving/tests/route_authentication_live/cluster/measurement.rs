@@ -91,7 +91,7 @@ pub(super) async fn cold_host(state: &ReceivingCluster) -> anyhow::Result<ColdHo
         pods.len() == 1,
         "startup measurement requires exactly one host pod"
     );
-    assert_host_restart(&pods[0], None, 0)?;
+    wamn_integration_tests::operator_recovery::assert_host_restart(&pods[0], None, 0)?;
     let pod = pods[0]["metadata"]["name"]
         .as_str()
         .context("cold host has a pod name")?
@@ -198,7 +198,7 @@ async fn requests(
     .await?;
     let warm = object(cluster, work, "pod", &cold.pod).await?;
     write_result(evidence, "host-warm.json", &warm)?;
-    assert_host_restart(&warm, Some(&cold.uid), 1)?;
+    wamn_integration_tests::operator_recovery::assert_host_restart(&warm, Some(&cold.uid), 1)?;
     let restarted_ms = startup_time(cluster, work, &cold.pod, evidence, "host-warm.log").await?;
     fs::write(
         evidence.join("host-cold-previous.log"),
@@ -772,24 +772,6 @@ fn assert_native_probes(deployment: &Value) -> anyhow::Result<()> {
             .iter()
             .any(|port| port["name"] == "probes" && port["containerPort"] == 8081)),
         "native probes must keep port 8081"
-    );
-    Ok(())
-}
-
-fn assert_host_restart(pod: &Value, uid: Option<&str>, restarts: u64) -> anyhow::Result<()> {
-    ensure!(
-        uid.is_none_or(|uid| pod["metadata"]["uid"] == uid),
-        "host restart replaced the measured pod"
-    );
-    ensure!(
-        pod["status"]["containerStatuses"]
-            .as_array()
-            .is_some_and(
-                |statuses| statuses.iter().any(|status| status["name"] == "host"
-                    && status["ready"] == true
-                    && status["restartCount"].as_u64() == Some(restarts))
-            ),
-        "measured host must be ready with the exact restart count"
     );
     Ok(())
 }
@@ -1486,17 +1468,5 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
         assert!(assert_response(&result, "another-request", true).is_err());
         result["status"] = json!("503");
         assert!(assert_response(&result, "startup-restart-first", true).is_err());
-    }
-
-    #[test]
-    fn restarting_a_replaced_or_unready_pod_does_not_pass() {
-        let mut pod = json!({"metadata":{"uid":"same"},"status":{"containerStatuses":[{"name":"host","ready":true,"restartCount":1}]}});
-        assert!(assert_host_restart(&pod, Some("same"), 1).is_ok());
-        assert!(assert_host_restart(&pod, Some("different"), 1).is_err());
-        pod["status"]["containerStatuses"][0]["restartCount"] = json!(2);
-        assert!(assert_host_restart(&pod, Some("same"), 1).is_err());
-        pod["status"]["containerStatuses"][0]["restartCount"] = json!(1);
-        pod["status"]["containerStatuses"][0]["ready"] = json!(false);
-        assert!(assert_host_restart(&pod, Some("same"), 1).is_err());
     }
 }

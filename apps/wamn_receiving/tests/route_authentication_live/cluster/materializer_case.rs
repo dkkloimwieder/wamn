@@ -133,7 +133,12 @@ async fn ready(cluster: &ReceivingCluster, name: &str, endpoint: &str) -> anyhow
                     let timed_out = error.is_timeout();
                     let error = anyhow::Error::new(error);
                     attempts.push(json!({"attempt":attempt,"failure":format!("{error:#}")}));
-                    if attempt == 15 || !(timed_out || connection_refused(&error)) {
+                    if attempt == 15
+                        || !(timed_out
+                            || wamn_integration_tests::operator_recovery::connection_refused(
+                                &error,
+                            ))
+                    {
                         return Err(error);
                     }
                 }
@@ -155,14 +160,6 @@ async fn ready(cluster: &ReceivingCluster, name: &str, endpoint: &str) -> anyhow
             "passed":result.is_ok(),"failure":result.as_ref().err().map(|error| format!("{error:#}"))}))?,
     )?;
     result
-}
-
-fn connection_refused(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
-    })
 }
 
 fn validate_response(status: u16, content_type: &str, body: &[u8]) -> anyhow::Result<()> {
@@ -275,15 +272,5 @@ mod tests {
         assert!(
             validate_response(404, "application/json", br#"{"error":{"code":"other"}}"#).is_err()
         );
-    }
-
-    #[test]
-    fn readiness_does_not_retry_other_connection_errors() {
-        let refused =
-            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
-                .context("connect to the allocated NodePort");
-        assert!(connection_refused(&refused));
-        let denied = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
-        assert!(!connection_refused(&denied));
     }
 }

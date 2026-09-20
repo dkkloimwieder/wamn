@@ -2,6 +2,19 @@
 
 use super::*;
 
+const P3_REQUEST_ID: &str = "p3-protocol";
+const P3_PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
+const P3_PAYLOAD: &[u8] =
+    br#"[{"request_id":"p3-protocol","id":"00000000-0000-0000-0000-000000000301"}]"#;
+
+fn validate_p3_read(response: &hyper::Response<Bytes>) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        successful_value(response, P3_REQUEST_ID)?["id"] == P3_PURCHASE_ORDER_ID,
+        "P3 protocol read returned another purchase order"
+    );
+    Ok(())
+}
+
 pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
@@ -889,13 +902,19 @@ async fn receiving_release_journey(
         String::from_utf8_lossy(oversized.body())
     );
 
-    p3_shell::assert_p3_route(
+    wamn_integration_tests::p3_shell::assert_p3_route(
         &engine,
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
         &inputs.route_host,
         &route.token,
+        &wamn_integration_tests::p3_shell::ReadProbe {
+            path: "/purchase_order/get",
+            payload: P3_PAYLOAD,
+            body_limit: RAW_BODY_LIMIT,
+            validate_response: validate_p3_read,
+        },
     )
     .await?;
 

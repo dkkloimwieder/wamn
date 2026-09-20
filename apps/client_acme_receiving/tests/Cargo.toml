@@ -11,6 +11,10 @@ autotests = false
 path = "lib.rs"
 
 [dev-dependencies]
+serde_json = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-control = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wamn-schema-generator = { workspace = true }
 
 [lints]

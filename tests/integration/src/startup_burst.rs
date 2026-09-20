@@ -1,9 +1,10 @@
-//! Native start bursts on one fresh, real WAMN host using the Receiving fixture.
+//! Native start bursts on one fresh host with a caller-supplied release and read probe.
 //!
 //! This is a herd of replicas of one production digest. Native compilation is
 //! deduplicated; it is not a herd of distinct cold components. The journey's
 //! trace reducer separately requires observed overlapping native start handlers.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::net::TcpListener;
@@ -26,44 +27,197 @@ use wamn_runtime::registry_credentials::read_registry_credentials;
 use wamn_test_infrastructure::event_broker::Credentials;
 use wash_runtime::washlet::{OPERATOR_API_PREFIX, rpc_subject, types::v2};
 
-// Existing Receiving host-availability and recovery budgets, not new latency gates.
+// Existing host-availability and recovery budgets.
 const STARTUP_BUDGET: Duration = Duration::from_secs(120);
 const CONTROL_BUDGET: Duration = Duration::from_secs(5);
 
-#[derive(Deserialize)]
+/// Every observed span, keyed by its (trace, span) identity, with its body
+/// and the name the protocol recorded it under.
+pub type ObservedSpans = BTreeMap<(String, String), (Value, String)>;
+
+/// Return a string attribute from an OTLP JSON span.
+pub fn span_attribute<'a>(span: &'a Value, name: &str) -> Option<&'a str> {
+    span["attributes"]
+        .as_array()?
+        .iter()
+        .find(|entry| entry["key"] == name)?["value"]["stringValue"]
+        .as_str()
+}
+
+/// Validate and normalize a Tempo trace identity to 32 lowercase hex digits.
+pub fn normalize_tempo_trace_id(value: &str) -> Result<String> {
+    ensure!(
+        !value.is_empty()
+            && value.len() <= 32
+            && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && value.bytes().any(|byte| byte != b'0'),
+        "Tempo returned an invalid trace identity"
+    );
+    Ok(format!("{:0>32}", value.to_ascii_lowercase()))
+}
+
+/// Reduce startup protocol observations and matching spans into phase evidence.
+pub fn reduce_startup_phases(
+    protocol: &Value,
+    spans: &ObservedSpans,
+    limit: usize,
+) -> Result<Value> {
+    let mut output = serde_json::Map::new();
+    for phase in ["cold", "warm"] {
+        let ids = protocol[phase]["starts"]
+            .as_array()
+            .context("the startup phase names its starts")?
+            .iter()
+            .map(|entry| {
+                entry["id"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .context("the startup request names its ID")
+            })
+            .collect::<Result<BTreeSet<_>>>()?;
+        let mut starts = Vec::new();
+        for ((trace, id), (span, file)) in spans {
+            if span["name"] != "workload_start" {
+                continue;
+            }
+            let Some(workload) = span_attribute(span, "workload_id") else {
+                continue;
+            };
+            if !ids.contains(workload) {
+                continue;
+            }
+            let start = parse_time_nanos(&span["startTimeUnixNano"])?;
+            let end = parse_time_nanos(&span["endTimeUnixNano"])?;
+            ensure!(end > start, "native start span has no positive duration");
+            starts.push(json!({"id":workload,"trace_id":trace,"span_id":id,"source_file":file,"start_ns":start,"end_ns":end}));
+        }
+        ensure!(
+            starts.len() == ids.len()
+                && starts
+                    .iter()
+                    .map(|span| span["id"].as_str())
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == ids.len(),
+            "native start span identity is missing or duplicated"
+        );
+        let mut events = Vec::new();
+        for span in &starts {
+            events.push((parse_time_nanos(&span["start_ns"])?, 1i64));
+            events.push((parse_time_nanos(&span["end_ns"])?, -1i64));
+        }
+        events.sort_unstable();
+        let (mut active, mut maximum) = (0i64, 0i64);
+        for (_, change) in events {
+            active += change;
+            maximum = maximum.max(active);
+        }
+        ensure!(
+            maximum > i64::try_from(limit).unwrap_or(i64::MAX),
+            "insufficient measured native queued-start exposure"
+        );
+        starts.sort_by_key(|span| span["start_ns"].as_u64());
+        let mut intervals: Vec<(u64, u64)> = Vec::new();
+        for span in &starts {
+            let start = parse_time_nanos(&span["start_ns"])?;
+            let end = parse_time_nanos(&span["end_ns"])?;
+            match intervals.last_mut() {
+                Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                _ => intervals.push((start, end)),
+            }
+        }
+        let origin = parse_time_nanos(&protocol[phase]["started_unix_ns"])?;
+        let mut progress = 0;
+        for observation in protocol[phase]["observations"]
+            .as_array()
+            .context("the startup protocol has progress observations")?
+        {
+            let start = origin
+                + whole_nanos(
+                    observation["started_seconds"]
+                        .as_f64()
+                        .context("progress has a start time")?,
+                );
+            let end = origin
+                + whole_nanos(
+                    observation["finished_seconds"]
+                        .as_f64()
+                        .context("progress has an end time")?,
+                );
+            if intervals
+                .iter()
+                .any(|&(first, last)| first <= start && end <= last)
+                && observation["native_live_status"] == 200
+                && observation["native_ready_status"] == 200
+                && (phase == "cold" || observation["application"]["status"] == 200)
+            {
+                progress += 1;
+            }
+        }
+        ensure!(
+            progress > 0,
+            "no measured native serving progress during server start intervals"
+        );
+        output.insert(phase.into(),json!({"native_starts":starts,"max_overlapping_start_handlers":maximum,
+            "complete_progress_observations_within_continuous_start_intervals":progress,"continuous_start_intervals_ns":intervals,
+            "first_success_seconds":protocol[phase]["first_success_seconds"],"all_running_seconds":protocol[phase]["all_running_seconds"]}));
+    }
+    Ok(Value::Object(output))
+}
+
+fn whole_nanos(seconds: f64) -> u64 {
+    Duration::try_from_secs_f64(seconds.max(0.0))
+        .map_or(0, |span| u64::try_from(span.as_nanos()).unwrap_or(u64::MAX))
+}
+
+/// Parse a JSON nanosecond timestamp represented as a number or numeric text.
+pub fn parse_time_nanos(value: &Value) -> Result<u64> {
+    value.as_u64().map_or_else(
+        || {
+            value
+                .as_str()
+                .context("a time value is numeric text")?
+                .parse()
+                .context("a time value is valid")
+        },
+        Ok,
+    )
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Inputs {
-    pub(crate) source: String,
-    pub(crate) host_binary: PathBuf,
-    pub(crate) host_secrets: PathBuf,
-    pub(crate) registry_auth: PathBuf,
-    pub(crate) workload: PathBuf,
-    pub(crate) pat_secret: PathBuf,
-    pub(crate) private_dir: PathBuf,
-    pub(crate) evidence_dir: PathBuf,
-    pub(crate) nats_url: String,
-    pub(crate) scheduler_nats_url: String,
-    pub(crate) scheduler_nats_tls_ca: PathBuf,
-    pub(crate) scheduler_nats_tls_cert: PathBuf,
-    pub(crate) scheduler_nats_tls_key: PathBuf,
-    pub(crate) scheduler_client_tls_cert: PathBuf,
-    pub(crate) scheduler_client_tls_key: PathBuf,
-    pub(crate) otlp_endpoint: String,
-    pub(crate) test_id: String,
-    pub(crate) component_artifact_base: String,
-    pub(crate) release_artifact_base: String,
-    pub(crate) manifest_digest: String,
-    pub(crate) session_issuer: String,
-    pub(crate) session_instance: String,
-    pub(crate) session_ca: PathBuf,
-    pub(crate) org: String,
-    pub(crate) project: String,
-    pub(crate) schema: String,
-    pub(crate) environment: String,
-    pub(crate) route_host: String,
-    pub(crate) route_path: String,
-    pub(crate) probe_body: Value,
-    pub(crate) max_concurrent_starts: usize,
+pub struct Inputs {
+    pub source: String,
+    pub host_binary: PathBuf,
+    pub host_secrets: PathBuf,
+    pub registry_auth: PathBuf,
+    pub workload: PathBuf,
+    pub pat_secret: PathBuf,
+    pub private_dir: PathBuf,
+    pub evidence_dir: PathBuf,
+    pub nats_url: String,
+    pub scheduler_nats_url: String,
+    pub scheduler_nats_tls_ca: PathBuf,
+    pub scheduler_nats_tls_cert: PathBuf,
+    pub scheduler_nats_tls_key: PathBuf,
+    pub scheduler_client_tls_cert: PathBuf,
+    pub scheduler_client_tls_key: PathBuf,
+    pub otlp_endpoint: String,
+    pub test_id: String,
+    pub component_artifact_base: String,
+    pub release_artifact_base: String,
+    pub manifest_digest: String,
+    pub session_issuer: String,
+    pub session_instance: String,
+    pub session_ca: PathBuf,
+    pub org: String,
+    pub project: String,
+    pub schema: String,
+    pub environment: String,
+    pub route_host: String,
+    pub route_path: String,
+    pub probe_body: Value,
+    pub max_concurrent_starts: usize,
 }
 
 fn read_json(path: &Path) -> Result<Value> {
@@ -176,7 +330,7 @@ async fn application_request(
                 && value[0]["request_id"] == id
                 && value[0].get("error").is_none()
                 && value[0]["value"]["id"] == inputs.probe_body["id"],
-            "the production read did not return the requested Receiving record"
+            "the production read did not return the requested record"
         );
     } else {
         ensure!(
@@ -322,7 +476,7 @@ async fn stop_child(child: &mut Child) -> Result<Value> {
     }
 }
 
-pub(crate) async fn assert_startup(
+pub async fn assert_startup(
     inputs: &Inputs,
     credentials: &Credentials,
     scope: &Triple,
@@ -610,4 +764,86 @@ pub(crate) async fn assert_startup(
         "startup burst cleanup failed"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn observed() -> (Value, ObservedSpans) {
+        let mut spans = BTreeMap::new();
+        let mut protocol = json!({});
+        for (phase, origin) in [("cold", 100u64), ("warm", 1_000)] {
+            let ids = [format!("{phase}-one"), format!("{phase}-two")];
+            protocol[phase] = json!({"starts":[{"id":ids[0]},{"id":ids[1]}],"started_unix_ns":origin.to_string(),
+                "observations":[{"started_seconds":0.000_000_030,"finished_seconds":0.000_000_040,
+                    "native_live_status":200,"native_ready_status":200,"application":{"status":200}}],
+                "first_success_seconds":0.000_000_040,"all_running_seconds":0.000_000_080});
+            for (id, start, end) in [
+                (&ids[0], origin + 10, origin + 60),
+                (&ids[1], origin + 20, origin + 80),
+            ] {
+                spans.insert(
+                    (phase.to_owned(), id.clone()),
+                    (
+                        json!({"name":"workload_start",
+                    "startTimeUnixNano":start.to_string(),"endTimeUnixNano":end.to_string(),
+                    "attributes":[{"key":"workload_id","value":{"stringValue":id}}]}),
+                        format!("{id}.json"),
+                    ),
+                );
+            }
+        }
+        (protocol, spans)
+    }
+
+    #[test]
+    fn requires_progress_inside_measured_overlapping_starts() {
+        let (mut protocol, spans) = observed();
+        let result = reduce_startup_phases(&protocol, &spans, 1)
+            .expect("overlapping starts and enclosed progress");
+        assert_eq!(result["cold"]["max_overlapping_start_handlers"], 2);
+        assert_eq!(
+            result["warm"]["complete_progress_observations_within_continuous_start_intervals"],
+            1
+        );
+        protocol["warm"]["observations"][0]["started_seconds"] = json!(0.000_000_100);
+        protocol["warm"]["observations"][0]["finished_seconds"] = json!(0.000_000_110);
+        assert!(reduce_startup_phases(&protocol, &spans, 1).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_duplicate_and_nonpositive_start_spans() {
+        let (protocol, spans) = observed();
+        let key = spans.keys().next().expect("one start").clone();
+        let mut missing = spans.clone();
+        missing.remove(&key);
+        assert!(reduce_startup_phases(&protocol, &missing, 1).is_err());
+        let mut duplicate = spans.clone();
+        duplicate.insert(("duplicate".into(), "span".into()), spans[&key].clone());
+        assert!(reduce_startup_phases(&protocol, &duplicate, 1).is_err());
+        let mut empty = spans.clone();
+        let span = &mut empty.get_mut(&key).expect("one start").0;
+        span["endTimeUnixNano"] = span["startTimeUnixNano"].clone();
+        assert!(reduce_startup_phases(&protocol, &empty, 1).is_err());
+    }
+
+    #[test]
+    fn requires_queued_demand_beyond_the_declared_limit_and_live_warm_route() {
+        let (mut protocol, spans) = observed();
+        assert!(reduce_startup_phases(&protocol, &spans, 2).is_err());
+        protocol["warm"]["observations"][0]["application"]["status"] = json!(503);
+        assert!(reduce_startup_phases(&protocol, &spans, 1).is_err());
+    }
+
+    #[test]
+    fn preserves_tempo_trace_id_normalization_and_refusals() {
+        assert_eq!(
+            normalize_tempo_trace_id("aB").unwrap(),
+            "000000000000000000000000000000ab"
+        );
+        for invalid in ["", "0", "000000", "g", "000000000000000000000000000000001"] {
+            assert!(normalize_tempo_trace_id(invalid).is_err());
+        }
+    }
 }

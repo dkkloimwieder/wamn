@@ -4,9 +4,6 @@
 
 pub use wamn_test_infrastructure::ctl_process;
 
-#[cfg(test)]
-#[path = "../../../apps/client_acme_receiving/tests/acme_overlay_publication.rs"]
-mod acme_overlay_publication;
 pub mod agent_pilot;
 mod cdc_reader_process;
 pub mod cdcbench;
@@ -21,6 +18,8 @@ pub mod local_application;
 pub mod measure;
 mod measurement_schema;
 pub mod membership_test;
+pub mod operator_recovery;
+pub mod p3_shell;
 pub mod rc;
 pub mod readerbench;
 #[cfg(test)]
@@ -28,6 +27,7 @@ mod reconcile_live;
 #[cfg(test)]
 mod route_authentication_live;
 mod router_tap_live;
+pub mod startup_burst;
 pub mod streambench;
 pub mod throughput_bench;
 pub mod trusted_http_route;

@@ -1,5 +1,8 @@
 //! Application integration tests.
 
+#[cfg(test)]
+mod acme_overlay_publication;
+
 #[test]
 fn committed_sqlx_metadata_compiles_offline() {
     wamn_schema_generator::verify_sqlx_metadata(

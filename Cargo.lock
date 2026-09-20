@@ -5652,6 +5652,10 @@ dependencies = [
 name = "wamn-client-acme-receiving-tests"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "wamn-catalog",
+ "wamn-control",
+ "wamn-execution-contract",
  "wamn-schema-generator",
 ]
 
