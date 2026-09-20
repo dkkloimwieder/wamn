@@ -1139,8 +1139,8 @@ async fn assert_route_history_read(
             .with_context(|| format!("the history row carries no text {field}: {row}"))
     };
     let int64 = |row: &Value, field: &str| -> anyhow::Result<i64> {
-        text(row, field)?
-            .parse()
+        row[field]
+            .as_i64()
             .with_context(|| format!("the history row carries no int64 {field}: {row}"))
     };
     let mut fields = Vec::with_capacity(served.len());
