@@ -63,7 +63,6 @@ wamn-client-tui = { workspace = true }
 wamn-receiving-tui = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-schema-generator = { workspace = true }
-wamn-schema-introspection = { workspace = true }
 wat = "=1.252.0"
 http-body-util = { workspace = true }
 hyper = { workspace = true }
@@ -74,10 +73,6 @@ wamn-authoring-model = { workspace = true }
 [[test]]
 name = "receiving_sqlx_verifier"
 path = "receiving_sqlx_verifier.rs"
-
-[[test]]
-name = "generation"
-path = "generation.rs"
 
 [lints]
 workspace = true

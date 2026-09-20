@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use wamn_schema_generator::client_ir::{ClientContractIr, leaf_fields};
 
-#[path = "support/platform_fixture.rs"]
-mod fixture;
+use super::fixture;
 
 #[test]
 fn platform_fixture_generates_client_descriptors() {

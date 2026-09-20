@@ -14,24 +14,52 @@ const QUERY_SQL: &[u8] =
 const QUERY_DESCENDING_SQL: &[u8] =
     b"SELECT id, code, note, edit_version, created_at FROM widget ORDER BY created_at DESC, id DESC;\n";
 const ARCHIVE_SQL: &[u8] = b"SELECT id, edit_version FROM widget WHERE id = $1 FOR UPDATE;\n";
+const CLAIM_SQL: &[u8] = b"INSERT INTO widget_command (canonical_command, idempotency_key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING widget_id;\n";
+const REPLAY_SQL: &[u8] =
+    b"SELECT canonical_command, widget_id FROM widget_command WHERE idempotency_key = $1;\n";
+const FINALIZE_SQL: &[u8] = b"SELECT widget_id FROM widget_command WHERE idempotency_key = $1;\n";
 
 pub(crate) fn generate_fixture() -> GeneratedPackage {
-    let manifest = serde_json::to_vec(&manifest()).expect("serialize platform fixture manifest");
+    generate_with(&catalog(), &manifest())
+}
+
+pub(crate) fn generate_with(catalog: &CatalogIr, value: &Value) -> GeneratedPackage {
+    try_generate_with(catalog, value).expect("the platform-owned generator fixture generates")
+}
+
+pub(crate) fn try_generate_with(
+    catalog: &CatalogIr,
+    value: &Value,
+) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+    let manifest = serde_json::to_vec(value).expect("serialize platform fixture manifest");
+    let sources = [
+        AuthoredSql::new("query/widget.sql", QUERY_SQL),
+        AuthoredSql::new(
+            "query/widget_by_created_at_descending.sql",
+            QUERY_DESCENDING_SQL,
+        ),
+        AuthoredSql::new("command/widget/archive.sql", ARCHIVE_SQL),
+        AuthoredSql::new("command/widget/claim.sql", CLAIM_SQL),
+        AuthoredSql::new("command/widget/replay.sql", REPLAY_SQL),
+        AuthoredSql::new("command/widget/finalize.sql", FINALIZE_SQL),
+    ]
+    .into_iter()
+    .filter(|source| {
+        value["models"]["widget"]["operations"]["query"]["authored_sql"]
+            .to_string()
+            .contains(source.path())
+            || value["custom_operations"]
+                .to_string()
+                .contains(source.path())
+    })
+    .collect::<Vec<_>>();
     generate(&GenerationInput::new(
-        &catalog(),
+        catalog,
         &manifest,
-        &[
-            AuthoredSql::new("query/widget.sql", QUERY_SQL),
-            AuthoredSql::new(
-                "query/widget_by_created_at_descending.sql",
-                QUERY_DESCENDING_SQL,
-            ),
-            AuthoredSql::new("command/widget/archive.sql", ARCHIVE_SQL),
-        ],
+        &sources,
         GenerationProvenance::new("wamn-schema-generator/0.1.0", "platform-fixture"),
         &StatementTransactionality::default(),
     ))
-    .expect("the platform-owned generator fixture generates")
 }
 
 pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>> {
@@ -46,7 +74,7 @@ pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>>
         .collect()
 }
 
-fn catalog() -> CatalogIr {
+pub(crate) fn catalog() -> CatalogIr {
     let widget = Table::new(
         "inventory",
         "widget",
@@ -106,7 +134,7 @@ fn catalog() -> CatalogIr {
     CatalogIr::new(vec![widget, command])
 }
 
-fn manifest() -> Value {
+pub(crate) fn manifest() -> Value {
     json!({
         "package": {"id": "platform_fixture", "version": "1.0.0"},
         "required_platform_policy_contract": {
@@ -239,4 +267,78 @@ fn manifest() -> Value {
         "connections": ["postgres"],
         "components": {"fixture": {"connections": ["postgres"]}}
     })
+}
+
+pub(crate) fn claim_manifest() -> Value {
+    let mut value = manifest();
+    value["custom_operations"]["widget.archive"] = json!({
+        "kind": "command",
+        "visibility": "public",
+        "permission": "widget.archive",
+        "connection": "postgres",
+        "transaction": "explicit_per_input",
+        "automatic_retry": false,
+        "idempotent_by": "claim",
+        "claim": {
+            "table": "widget_command",
+            "identities": {"id": "widget_id"},
+            "claim": "claim",
+            "replay": "replay",
+            "finalize": "finalize"
+        },
+        "canonicalization": {"excluded_fields": ["idempotency_key"]},
+        "input": {"fields": [
+            {"path": "idempotency_key", "type": "text", "nullable": false},
+            {"path": "payload", "type": "text", "nullable": false}
+        ]},
+        "result": {"class": "one", "fields": [
+            {"path": "id", "type": "uuid", "nullable": false}
+        ]},
+        "errors": [
+            "invalid_input", "idempotency_conflict", "retry", "timeout",
+            "permission_denied", "internal_error"
+        ],
+        "error_details": {"idempotency_conflict": {"required": ["field"]}},
+        "constraint_errors": {},
+        "relations": [{
+            "schema": "inventory",
+            "table": "widget_command",
+            "select_fields": ["canonical_command", "idempotency_key", "widget_id"],
+            "insert_fields": ["canonical_command", "idempotency_key"],
+            "update_fields": [],
+            "lock": false,
+            "constraints": ["widget_command_pkey", "widget_command_widget_id_key"]
+        }],
+        "statements": {
+            "claim": {
+                "path": "command/widget/claim.sql",
+                "fetch": "optional_one",
+                "parameters": [
+                    {"name": "canonical_command", "type": "bytes", "nullable": false},
+                    {"name": "idempotency_key", "type": "text", "nullable": false}
+                ],
+                "row": [{"name": "widget_id", "type": "uuid", "nullable": false}]
+            },
+            "replay": {
+                "path": "command/widget/replay.sql",
+                "fetch": "optional_one",
+                "parameters": [
+                    {"name": "idempotency_key", "type": "text", "nullable": false}
+                ],
+                "row": [
+                    {"name": "canonical_command", "type": "bytes", "nullable": false},
+                    {"name": "widget_id", "type": "uuid", "nullable": false}
+                ]
+            },
+            "finalize": {
+                "path": "command/widget/finalize.sql",
+                "fetch": "one",
+                "parameters": [
+                    {"name": "idempotency_key", "type": "text", "nullable": false}
+                ],
+                "row": [{"name": "widget_id", "type": "uuid", "nullable": false}]
+            }
+        }
+    });
+    value
 }

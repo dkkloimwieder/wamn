@@ -57,7 +57,7 @@ cargo test --locked --offline -p <package> <test> -- --ignored --test-threads=1
 The following commands select individual test targets:
 
 ```bash
-cargo test --locked --offline -p wamn-receiving-tests --test generation
+cargo test --locked --offline -p wamn-schema-generator --test platform_generation
 cargo test --locked --offline -p wamn-receiving-tui
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
