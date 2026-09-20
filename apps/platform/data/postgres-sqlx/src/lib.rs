@@ -1104,55 +1104,45 @@ pub struct WamnTransactionManager;
 impl TransactionManager for WamnTransactionManager {
     type Database = WamnPostgres;
 
-    fn begin(
+    async fn begin(
         connection: &mut WamnConnection,
         statement: Option<SqlStr>,
-    ) -> impl Future<Output = Result<(), Error>> + Send + '_ {
-        async move {
-            if statement.is_some() {
-                Err(Error::InvalidArgument(
-                    "custom transaction statements are unsupported".to_owned(),
-                ))
-            } else if connection.transaction.is_some() {
-                Err(Error::InvalidArgument(
-                    "nested transactions and savepoints are unsupported".to_owned(),
-                ))
-            } else {
-                connection
-                    .capability
-                    .begin()
-                    .await
-                    .map(|transaction| connection.transaction = Some(transaction))
-                    .map_err(database_error)
-            }
+    ) -> Result<(), Error> {
+        if statement.is_some() {
+            Err(Error::InvalidArgument(
+                "custom transaction statements are unsupported".to_owned(),
+            ))
+        } else if connection.transaction.is_some() {
+            Err(Error::InvalidArgument(
+                "nested transactions and savepoints are unsupported".to_owned(),
+            ))
+        } else {
+            connection
+                .capability
+                .begin()
+                .await
+                .map(|transaction| connection.transaction = Some(transaction))
+                .map_err(database_error)
         }
     }
 
-    fn commit(
-        connection: &mut WamnConnection,
-    ) -> impl Future<Output = Result<(), Error>> + Send + '_ {
-        async move {
-            if let Some(mut transaction) = connection.transaction.take() {
-                transaction.commit().await.map_err(database_error)
-            } else {
-                Err(Error::InvalidArgument(
-                    "no transaction to commit".to_owned(),
-                ))
-            }
+    async fn commit(connection: &mut WamnConnection) -> Result<(), Error> {
+        if let Some(mut transaction) = connection.transaction.take() {
+            transaction.commit().await.map_err(database_error)
+        } else {
+            Err(Error::InvalidArgument(
+                "no transaction to commit".to_owned(),
+            ))
         }
     }
 
-    fn rollback(
-        connection: &mut WamnConnection,
-    ) -> impl Future<Output = Result<(), Error>> + Send + '_ {
-        async move {
-            if let Some(mut transaction) = connection.transaction.take() {
-                transaction.rollback().await.map_err(database_error)
-            } else {
-                Err(Error::InvalidArgument(
-                    "no transaction to roll back".to_owned(),
-                ))
-            }
+    async fn rollback(connection: &mut WamnConnection) -> Result<(), Error> {
+        if let Some(mut transaction) = connection.transaction.take() {
+            transaction.rollback().await.map_err(database_error)
+        } else {
+            Err(Error::InvalidArgument(
+                "no transaction to roll back".to_owned(),
+            ))
         }
     }
 

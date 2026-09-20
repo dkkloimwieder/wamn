@@ -84,6 +84,10 @@ impl Backend for FakeBackend {
             .ok_or(ProviderError)
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "record fixture effects when the asynchronous call is polled"
+    )]
     async fn authenticate(
         &mut self,
         attachment_id: &str,
@@ -124,6 +128,10 @@ impl Backend for FakeBackend {
         format!("{id:032x}")
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "record fixture effects when the asynchronous call is polled"
+    )]
     async fn deliver(
         &mut self,
         request: DeliveryRequest<Self::AuthenticatedCaller>,

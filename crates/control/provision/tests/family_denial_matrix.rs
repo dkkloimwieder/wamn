@@ -164,7 +164,7 @@ struct FamilyReach {
 /// different plane. `wamn_scenario_author` is absent because it is a host group,
 /// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
 /// principal from.
-const MATRIX: [FamilyReach; 10] = [
+const MATRIX: [FamilyReach; 9] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[

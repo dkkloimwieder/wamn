@@ -493,7 +493,7 @@ Release qualification runs this comparison against a fresh database for each ver
 To run that check without a candidate, run:
 
 ```bash
-cargo test --locked --offline -p wamn-ctl --lib \
+cargo test --locked --offline -p wamn-control --lib \
   delivery::qualification::tests::sqlx_metadata_check_reaches_fresh_receiving_and_acme_databases \
   -- --exact --ignored --nocapture
 ```

@@ -1,9 +1,5 @@
 //! Exercises SQLx queries and explicit transactions over `wamn:postgres`.
 
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
-)]
 mod bindings {
     wit_bindgen::generate!({
         world: "sqlx-command",

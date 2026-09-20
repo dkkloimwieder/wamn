@@ -6,7 +6,6 @@
 //! One package-grain component exporting every Receiving operation.
 
 use exports::wamn_receiving::receiving::record_receipt as contract;
-#[cfg(test)]
 use wamn::node::types::NodeError;
 use wamn_receiving_data_access::record_receipt as receipt;
 
@@ -169,7 +168,6 @@ async fn record_receipt_execute_with_context(
 
 fn map_participant_error(error: wamn::node::types::NodeError) -> receipt::RecordReceiptError {
     use receipt::RecordReceiptErrorKind as Kind;
-    use wamn::node::types::NodeError;
 
     match error {
         NodeError::InvalidInput(detail) => {
@@ -241,14 +239,18 @@ mod tests {
         ))
         .unwrap();
         let mut state = ();
-        let mut call = std::pin::pin!(receipt_codec::run(input, &mut state, async |_, request| {
-            Ok(contract::RecordReceiptResult {
-                receipt_id: "00000000-0000-0000-0000-000000000006".to_owned(),
-                purchase_order_id: request.purchase_order_id,
-                purchase_order_status: "open".to_owned(),
-                row_version: 1,
-            })
-        }));
+        let mut call = std::pin::pin!(receipt_codec::run(
+            input,
+            &mut state,
+            async |(), request| {
+                Ok(contract::RecordReceiptResult {
+                    receipt_id: "00000000-0000-0000-0000-000000000006".to_owned(),
+                    purchase_order_id: request.purchase_order_id,
+                    purchase_order_status: "open".to_owned(),
+                    row_version: 1,
+                })
+            }
+        ));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         let std::task::Poll::Ready(output) = std::future::Future::poll(call.as_mut(), &mut context)
         else {
