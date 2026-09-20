@@ -1551,7 +1551,6 @@ mod tests {
             .await
         });
         operation_started.notified().await;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         task.abort();
         assert!(
             task.await
@@ -1587,7 +1586,8 @@ mod tests {
             .await
             .expect("normal transaction completion");
         assert_eq!(destroyed.load(std::sync::atomic::Ordering::Relaxed), 1);
-        pool.get().await.expect("completed connection was repooled");
+        assert_eq!(pool.status().available, 1);
+        drop(pool.get().await.expect("completed connection was repooled"));
     }
 
     /// The invocation the router driver binds before the pooled instance runs.
