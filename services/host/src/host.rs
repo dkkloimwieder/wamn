@@ -510,6 +510,19 @@ fn demanded_http_admitter_url(pat_routes: bool, configured_url: Option<String>) 
     if pat_routes { configured_url } else { None }
 }
 
+fn require_queue_admission(
+    released: bool,
+    guest_url: Option<&str>,
+    executor_platform_url: Option<&str>,
+) -> anyhow::Result<bool> {
+    let complete = guest_url.is_some() && executor_platform_url.is_some();
+    anyhow::ensure!(
+        !released || complete,
+        "a released host requires both WAMN_PG_URL and WAMN_EXECUTOR_PLATFORM_PG_URL for durable queue admission"
+    );
+    Ok(complete)
+}
+
 fn session_verifier(
     args: &HostArgs,
     environment: &str,
@@ -771,7 +784,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let guest_url = std::env::var("WAMN_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
-    let queue_credentials_complete = guest_url.is_some() && executor_platform_url.is_some();
+    let queue_credentials_complete = require_queue_admission(
+        release.is_some(),
+        guest_url.as_deref(),
+        executor_platform_url.as_deref(),
+    )?;
     let postgres_credentials = if guest_url.is_some()
         || executor_platform_url.is_some()
         || http_admitter_url.is_some()
@@ -1363,6 +1380,14 @@ mod tests {
     const RELEASE_BASE: &str = "registry.invalid/wamn/releases";
     const RELEASE_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn queue_admission_is_hard_for_released_hosts_only() {
+        assert!(require_queue_admission(false, None, None).is_ok());
+        assert!(require_queue_admission(true, Some("guest"), Some("platform")).is_ok());
+        assert!(require_queue_admission(true, Some("guest"), None).is_err());
+        assert!(require_queue_admission(true, None, Some("platform")).is_err());
+    }
 
     #[derive(Debug, clap::Parser)]
     struct TestCli {
