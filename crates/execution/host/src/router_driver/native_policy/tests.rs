@@ -61,8 +61,8 @@ const CHILD_MARKER: &str = "WAMN_NATIVE_POLICY_CHILD";
 const BUDGET: Duration = Duration::from_millis(200);
 const CLEANUP: Duration = Duration::from_secs(2);
 
-// The structural types and indirect forwarding follow the existing real node
-// fixture in route_authentication_live/fresh_only.rs. No scalar substitute is used.
+// The structural types and indirect forwarding match the native async
+// participation fixtures below. No scalar substitute is used.
 const NODE_TYPES: &str = r#"
       (import "wamn:node/types@0.1.0" (instance $node
         (type $json' string)
@@ -122,7 +122,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
           (export "node-context" (type (eq $context)))
           (export "node-error" (type (eq $error)))
           (export "emission" (type (eq $emission)))
-          (export "run" (func (param "ctx" $context) (param "input" $json)
+          (export "run" (func async (param "ctx" $context) (param "input" $json)
             (result (result $emission (error $error)))))))"#
         )
     } else {
@@ -153,11 +153,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
         Case::NestedRefusal => "local.get $input i32.const 256 call $nested",
         Case::RunDeadline | Case::Cancellation => "(loop br 0)",
         Case::Trap => "unreachable",
-        Case::Success | Case::StartDeadline | Case::PostgresImport => {
-            r"
-          i32.const 264 local.get $input i32.load offset=96 i32.store
-          i32.const 268 local.get $input i32.load offset=100 i32.store"
-        }
+        Case::Success | Case::StartDeadline | Case::PostgresImport => "",
         Case::TransactionOwner | Case::TransactionParticipant => unreachable!(),
     };
     wat::parse_str(format!(
@@ -181,23 +177,31 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
           end local.get $new))
       (core instance $memory (instantiate $memory))
       (core func $observe (canon lower (func $observe "record")))
+      (core func $return (canon task.return (result (result $emission (error $error)))
+        (memory $memory "memory")))
       {lower}
       (core module $main
         (import "memory" "memory" (memory 16))
         (import "host" "observe" (func $observe (param i32)))
+        (import "host" "return" (func $return
+          (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
         {core_import}
+        (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
         (func $start i32.const 0 call $observe {start})
         (start $start)
         (func (export "run") (param $input i32) (result i32)
           i32.const 1 call $observe
           {body}
-          i32.const 256))
+          i32.const 0 local.get $input i32.load offset=96 local.get $input i32.load offset=100
+          i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 0 i64.const 0
+          call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
-        (with "host" (instance (export "observe" (func $observe)) {core_binding}))))
-      (func $run (param "ctx" $context) (param "input" $json)
+        (with "host" (instance (export "observe" (func $observe))
+          (export "return" (func $return)) {core_binding}))))
+      (func $run async (param "ctx" $context) (param "input" $json)
         (result (result $emission (error $error)))
         (canon lift (core func $main "run") (memory $memory "memory")
-          (realloc (func $memory "realloc"))))
+          (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
       (instance $handler
         (export "json" (type $json)) (export "node-context" (type $context))
         (export "node-error" (type $error)) (export "emission" (type $emission))
