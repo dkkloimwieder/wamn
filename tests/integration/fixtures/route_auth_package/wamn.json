@@ -1,0 +1,40 @@
+{
+  "package": {
+    "id": "route_auth_fixture",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "route_auth_fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "item": {
+      "schema": "receiving",
+      "table": "route_auth_fixture_item",
+      "owner": "route_auth_fixture",
+      "server_owned_fields": [
+        "id"
+      ],
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "item.get",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "route_auth_fixture": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

@@ -35,10 +35,12 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 const OTHER_PROJECT: &str = "other";
 const OTHER_ENVIRONMENT: &str = "prod";
 const ROUTE_CALLER_ROLE: &str = "route-caller";
-const ATTACHMENT_ID: &str = "receiving-purchase-order-get";
-const OPERATION: &str = "wamn-receiving:purchase-order/get@1.0.0";
-const BASE_COMPONENT: &str = "receiving";
-const RESIDUE: &str = "wamn-receiving:obsolete/operation@1.0.0";
+const FIXTURE_PACKAGE_ID: &str = "route_auth_fixture";
+const FIXTURE_PACKAGE_VERSION: &str = "1.0.0";
+const ATTACHMENT_ID: &str = "route-auth-item-get";
+const OPERATION: &str = "route-auth-fixture:item/get@1.0.0";
+const FIXTURE_COMPONENT: &str = "route_auth_fixture";
+const RESIDUE: &str = "route-auth-fixture:obsolete/operation@1.0.0";
 /// The test principal that the project fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
@@ -79,7 +81,7 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
 }
 
 fn package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/route_auth_package")
 }
 
 async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<String>> {
@@ -151,9 +153,9 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     };
     apply_package::apply_package(args())
         .await
-        .context("apply the Receiving package")?;
+        .context("apply the route-authentication fixture package")?;
     let expected = wamn_control_provision::operation_grants::operation_grant_tokens(
-        include_bytes!("../../../apps/wamn_receiving/wamn.json"),
+        include_bytes!("../fixtures/route_auth_package/wamn.json"),
     )
     .context("derive the strict manifest's operation tokens")?;
     let observed = project
@@ -171,11 +173,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         observed, expected,
         "the real reconciler must author the manifest set"
     );
-    assert_eq!(
-        observed.len(),
-        9,
-        "Receiving declares exactly nine operations"
-    );
+    assert_eq!(observed, BTreeSet::from([OPERATION.to_owned()]));
     assert!(
         !observed.contains(RESIDUE),
         "coordinate residue survived reconcile"
@@ -184,7 +182,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     let before = permission_write_identity(project).await?;
     apply_package::apply_package(args())
         .await
-        .context("replay the converged Receiving package")?;
+        .context("replay the converged route-authentication fixture package")?;
     assert_eq!(permission_write_identity(project).await?, before);
     Ok(())
 }
@@ -206,11 +204,11 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             "tenant-id": TENANT,
             "effective-release-id": 1,
             "environment": ENVIRONMENT,
-            "packages": [{"package-id": "wamn_receiving", "package-version": "1.0.0"}]
+            "packages": [{"package-id": FIXTURE_PACKAGE_ID, "package-version": FIXTURE_PACKAGE_VERSION}]
         },
         "components": [{
-            "package-id": "wamn_receiving",
-            "component": BASE_COMPONENT,
+            "package-id": FIXTURE_PACKAGE_ID,
+            "component": FIXTURE_COMPONENT,
             "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)),
             "operations": {
@@ -218,16 +216,16 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             }
         }],
         "wirings": [{
-            "package-id": "wamn_receiving",
-            "wiring-id": "purchase-order-get",
+            "package-id": FIXTURE_PACKAGE_ID,
+            "wiring-id": "item-get",
             "wiring-version": 1,
             "graph-hash": format!("sha256:{}", "b".repeat(64))
         }],
         "attachments": {
             (ATTACHMENT_ID): {
                 "kind": "http",
-                "package-id": "wamn_receiving",
-                "wiring-id": "purchase-order-get",
+                "package-id": FIXTURE_PACKAGE_ID,
+                "wiring-id": "item-get",
                 "wiring-version": 1,
                 "definition-hash": definition_hash,
                 "definition": definition,
@@ -714,7 +712,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .expect("connect project database");
     install_project_and_reconcile(&project, &route.database_url)
         .await
-        .expect("install and reconcile Receiving");
+        .expect("install and reconcile the route-authentication fixture");
 
     let identity_secret = root.join("identity-reader.json");
     provision_project_env::run_workload_action(&generation_args(
