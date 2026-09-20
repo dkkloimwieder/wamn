@@ -180,24 +180,26 @@ fn a_refusal_keeps_what_the_operator_typed() {
 }
 
 #[test]
-fn a_recorded_receipt_clears_the_entry_and_returns_to_the_list() {
+fn a_recorded_receipt_clears_the_entry_and_shows_the_committed_result() {
     let mut app = ready();
     let action = submit(&mut app);
     let request = app
         .prepare(action, Some(&intent("receipt")))
         .expect("receipt");
     reply(&mut app, request, recorded());
-    assert_eq!(app.panel(), Panel::Orders);
+    assert_eq!(app.panel(), Panel::Receipt);
     assert!(matches!(
         app.screen(Panel::Receipt).submission().state(),
         State::Succeeded { .. }
     ));
     assert!(render(&app).contains(RECEIPT));
-    assert!(render(&app).contains("PO-1"));
+    assert!(render(&app).contains(ORDER));
     assert!(
         matches!(app.next_action(), Action::None),
         "success must not schedule another command"
     );
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.panel(), Panel::Orders);
     key(&mut app, KeyCode::Enter);
     assert!(
         app.screen(Panel::Receipt)
@@ -315,6 +317,140 @@ fn a_retry_of_one_action_reuses_its_idempotency_key() {
         .prepare(action, None)
         .expect("claim-backed captured retry");
     assert_eq!(retry.body.body(), original);
+}
+
+#[test]
+fn acme_uncertainty_does_not_offer_an_unsafe_retry() {
+    let mut app = acme_ready();
+    let action = submit(&mut app);
+    let request = app
+        .prepare(action, Some(&intent("acme-receipt")))
+        .expect("acme receipt");
+    app.resolve(
+        request.screen,
+        request.attempt,
+        Err(ClientError::Transport {
+            detail: "response lost".into(),
+        }),
+    );
+    assert!(matches!(
+        app.screen(Panel::Receipt).submission().state(),
+        State::Uncertain { .. }
+    ));
+    let _ = key(&mut app, KeyCode::F(7));
+    assert!(
+        app.prepare(
+            Action::Send {
+                screen: Panel::Receipt as usize,
+                retry: true,
+                delete_confirmed: false,
+            },
+            None,
+        )
+        .is_err(),
+        "the Acme route has no captured replay contract"
+    );
+}
+
+#[test]
+fn committed_receipt_optional_reads_preserve_success_and_do_not_repost() {
+    let mut app = ready();
+    let action = submit(&mut app);
+    let command = app
+        .prepare(action, Some(&intent("receipt")))
+        .expect("receipt");
+    reply(&mut app, command, recorded());
+    assert_eq!(app.panel(), Panel::Receipt);
+    assert!(matches!(submit(&mut app), Action::None));
+    assert!(render(&app).contains("already recorded"));
+
+    assert!(matches!(key(&mut app, KeyCode::Char('d')), Action::None));
+    let action = app.next_action();
+    let details = app
+        .prepare(action, Some(&intent("details")))
+        .expect("base receipt details");
+    assert_eq!(details.route.template, "/receipt/get");
+    assert_eq!(details.body.item()["id"], RECEIPT);
+    refuse(
+        &mut app,
+        details,
+        json!({"code":"permission_denied", "detail":{"operation":"receipt.get"}}),
+    );
+    assert_eq!(app.panel(), Panel::Details);
+    assert!(render(&app).contains(RECEIPT));
+    assert!(render(&app).contains("permission_denied"));
+    assert!(matches!(app.next_action(), Action::None));
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.panel(), Panel::Receipt);
+
+    assert!(matches!(key(&mut app, KeyCode::Char('h')), Action::None));
+    let action = app.next_action();
+    let history = app
+        .prepare(action, Some(&intent("history")))
+        .expect("committed order history");
+    assert_eq!(
+        history.route.template,
+        "/receiving/load_purchase_order_history"
+    );
+    assert_eq!(history.body.item()["id"], ORDER);
+    app.resolve(
+        history.screen,
+        history.attempt,
+        Err(ClientError::Transport {
+            detail: "history unavailable".into(),
+        }),
+    );
+    assert_eq!(app.panel(), Panel::History);
+    assert!(render(&app).contains(RECEIPT));
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.panel(), Panel::Receipt);
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.panel(), Panel::Orders);
+}
+
+#[test]
+fn acme_uses_its_record_route_qc_refusal_and_local_details() {
+    let mut refused = acme_ready();
+    let action = submit(&mut refused);
+    let request = refused
+        .prepare(action, Some(&intent("acme-refusal")))
+        .expect("acme receipt");
+    assert!(request.route.template.contains("acme"));
+    refuse(
+        &mut refused,
+        request,
+        json!({"code":"invalid_input", "detail":{"field":"value.purchase_order_id"}}),
+    );
+    assert!(matches!(
+        refused.screen(Panel::Receipt).submission().state(),
+        State::Refused { .. }
+    ));
+    let displayed = render(&refused);
+    assert!(displayed.contains("Refused"));
+    assert!(displayed.contains("invalid_input"));
+    assert!(!displayed.contains("Outcome unknown"));
+    assert!(refused.committed_result().is_none());
+    assert_eq!(
+        refused.screen(Panel::Receipt).draft().item()["value"]["receipt_reference"],
+        "R1"
+    );
+
+    let mut app = acme_ready();
+    let action = submit(&mut app);
+    let command = app
+        .prepare(action, Some(&intent("acme-success")))
+        .expect("acme receipt");
+    reply(&mut app, command, recorded());
+    assert!(matches!(key(&mut app, KeyCode::Char('d')), Action::None));
+    let action = app.next_action();
+    let details = app
+        .prepare(action, Some(&intent("acme-details")))
+        .expect("Acme local details");
+    assert_eq!(
+        details.route.template,
+        "/acme/quality/load_purchase_order_detail"
+    );
+    assert_eq!(details.body.item()["purchase_order_id"], ORDER);
 }
 
 #[test]

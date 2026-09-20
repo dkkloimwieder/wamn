@@ -105,6 +105,12 @@ Use the [projection tests](../../crates/schema/generator/tests/client_projection
 The [request tests](../../crates/client/core/tests/request.rs) and [draft tests](../../crates/client/tui/tests/draft.rs) inspect typed inputs and outgoing bytes.
 The [submission tests](../../crates/client/tui/tests/submission.rs) and [screen tests](../../crates/client/tui/tests/screen.rs) own shared outcome behavior.
 
+The [Receiving UI tests](../../apps/wamn_receiving/ui/tests/) drive production events, requests, reducers, and rendered state in-process.
+They cover Receiving and Acme posting, separate optional reads, QC refusal, and route-specific recovery.
+The existing local component/PostgreSQL journey sends one Acme receipt through the real operator client.
+It reuses the backend fixture and its QC, rollback, and replay assertions.
+Process tests retain terminal restoration, signals, and password masking.
+
 Retain these observations through generated and application-owned operator code:
 
 - Identical generation inputs produce byte-identical output.

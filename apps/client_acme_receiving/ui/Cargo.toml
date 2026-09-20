@@ -1,0 +1,20 @@
+[package]
+workspace = "../../.."
+name = "wamn-client-acme-receiving-tui"
+description = "The Acme Receiving operator terminal over the shared Receiving runtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wamn-client-acme-receiving"
+path = "src/main.rs"
+
+[dependencies]
+wamn-client-terminal = { workspace = true }
+wamn-generated-client-acme-receiving-tui = { workspace = true }
+wamn-receiving-tui = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

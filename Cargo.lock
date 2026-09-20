@@ -5658,6 +5658,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-client-acme-receiving-tui"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "wamn-client-terminal",
+ "wamn-generated-client-acme-receiving-tui",
+ "wamn-receiving-tui",
+]
+
+[[package]]
 name = "wamn-client-terminal"
 version = "0.1.0"
 dependencies = [
@@ -6155,6 +6165,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
+ "crossterm",
  "futures-util",
  "hex",
  "http-body-util",
@@ -6181,6 +6192,8 @@ dependencies = [
  "wamn-catalog",
  "wamn-cdc-reader",
  "wamn-client",
+ "wamn-client-terminal",
+ "wamn-client-tui",
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6218,6 +6231,7 @@ dependencies = [
  "wamn-client",
  "wamn-client-terminal",
  "wamn-client-tui",
+ "wamn-generated-client-acme-receiving-tui",
  "wamn-generated-receiving-tui",
  "wamn-record-history",
 ]

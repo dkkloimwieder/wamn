@@ -67,8 +67,12 @@ The field editor starts with the existing value. Backspace removes characters fr
 Esc cancels the field edit. It keeps the previous value.
 While a field editor is open, finish or cancel it before using navigation shortcuts.
 
-Success returns you to the order list. The list does not refresh automatically after submission.
-Press F5 to reload it before selecting the next order.
+Success shows the committed receipt identifier, purchase order status, and revision immediately.
+Press `d` for optional details or `h` for purchase order history.
+A failed optional read does not undo the receipt or send it again.
+Press Esc from either read to return to the committed result.
+Press Esc again to return to the order list.
+Press F5 to reload the order list before selecting the next order.
 To refresh lines inside an open receipt, leave the receipt and reopen the order.
 
 ## Keyboard reference
@@ -93,6 +97,8 @@ Function keys require a terminal that passes those keys to Receiving.
 | F5 in the order list | Refresh the order list |
 | F8 in the order list | Load the next available page |
 | `h` in the order list | Open the selected purchase order's history |
+| `d` after success | Read optional receipt details or Acme quality details |
+| `h` after success | Read the committed purchase order's history |
 | Esc | Leave the current view or request draft cancellation |
 | `q` | Quit, with a confirmation when required |
 
@@ -111,6 +117,10 @@ While a request is pending, wait for its result.
 Quitting the client does not cancel server work.
 Do not assume that closing the terminal reverses a delivery.
 
+Acme uses the same entry screens and sends its receipt through the Acme operation.
+Acme applies its inspection policy before the receipt commits.
+A QC refusal appears as `Refused`, separately from a committed receipt or an unknown outcome.
+
 If the screen reports `Refused`, read the reason before changing the receipt.
 Correct the relevant input or contact your administrator for an access refusal.
 If the quantities are stale, leave the receipt and reopen the order to load current lines.
@@ -121,6 +131,8 @@ Follow the recovery instruction on the screen.
 When it offers a retry of the captured command, press F9, then F7.
 A captured command is the exact request that Receiving previously sent.
 This retry preserves that request instead of creating a new delivery.
+The direct Receiving route supports captured retry. The Acme route does not offer this retry.
+Follow the route's recovery instruction. Do not repeat the whole command automatically.
 If retry is unavailable or refused, ask your administrator to establish the result before resubmitting.
 
 If the screen reports `Partially completed`, committed work remains.

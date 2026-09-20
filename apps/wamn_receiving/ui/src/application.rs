@@ -8,15 +8,28 @@ use serde_json::{Value, json};
 use wamn_client::{ClientError, HttpResponse};
 use wamn_client_terminal::operator::{Action, Application, GeneratedApplication, PreparedRequest};
 use wamn_client_tui::draft::FieldState;
-use wamn_client_tui::screen::{IntentValues, Screen};
-use wamn_client_tui::submission::{Attempt, SessionBinding, State};
+use wamn_client_tui::screen::{IntentValues, Screen, ScreenSpec};
+use wamn_client_tui::submission::{Attempt, ResponseContract, SessionBinding, State};
+use wamn_generated_client_acme_receiving_tui as acme_generated;
 use wamn_generated_receiving_tui as generated;
 use wamn_record_history::{HistoryRow, RowState, state_at};
+
+// Acme forwards the base command's outcomes without work after its commit.
+// Compose that transaction contract while retaining Acme's route and replay policy.
+static ACME_RECEIPT: ScreenSpec = ScreenSpec {
+    response: ResponseContract {
+        transaction: generated::screens::receiving::RECORD_RECEIPT_SPEC
+            .response
+            .transaction,
+        ..acme_generated::screens::receiving::RECORD_RECEIPT_SPEC.response
+    },
+    ..acme_generated::screens::receiving::RECORD_RECEIPT_SPEC
+};
 
 /// The largest page that one purchase order history request asks for.
 const HISTORY_PAGE: i64 = 100;
 
-/// The five generated screens in the Receiving workflow.
+/// Generated screens in the Receiving workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
 pub enum Panel {
@@ -25,6 +38,7 @@ pub enum Panel {
     Locations,
     Receipt,
     History,
+    Details,
 }
 
 /// The rows of every page of one purchase order history read.
@@ -40,6 +54,7 @@ struct History {
 #[derive(Debug)]
 pub struct ReceivingApplication {
     generated: GeneratedApplication,
+    acme: bool,
     queued_read: Option<Panel>,
     order: Option<String>,
     location: Option<usize>,
@@ -51,19 +66,41 @@ impl ReceivingApplication {
     /// Start with a queued purchase-order read on the supplied activation.
     #[must_use]
     pub fn new(label: &str, binding: SessionBinding) -> Self {
+        Self::compose(label, binding, false)
+    }
+
+    /// Use Acme posting and quality details with the existing Receiving selection screens.
+    #[must_use]
+    pub fn acme(label: &str, binding: SessionBinding) -> Self {
+        Self::compose(label, binding, true)
+    }
+
+    fn compose(label: &str, binding: SessionBinding, acme: bool) -> Self {
+        let receipt = if acme {
+            Screen::new(&ACME_RECEIPT, binding.clone())
+        } else {
+            generated::screens::receiving::record_receipt(binding.clone())
+        };
+        let details = if acme {
+            acme_generated::screens::quality::load_purchase_order_detail(binding.clone())
+        } else {
+            generated::screens::receipt::get(binding.clone())
+        };
         let mut generated = GeneratedApplication::new(
             label,
             vec![
                 generated::screens::purchase_order::query(binding.clone()),
                 generated::screens::receiving::load_receipt_screen(binding.clone()),
                 generated::screens::location::list(binding.clone()),
-                generated::screens::receiving::record_receipt(binding.clone()),
+                receipt,
                 generated::screens::receiving::load_purchase_order_history(binding),
+                details,
             ],
         );
         generated.open_screen(Panel::Orders as usize);
         Self {
             generated,
+            acme,
             queued_read: Some(Panel::Orders),
             order: None,
             location: None,
@@ -86,6 +123,7 @@ impl ReceivingApplication {
             Some(2) => Panel::Locations,
             Some(3) => Panel::Receipt,
             Some(4) => Panel::History,
+            Some(5) => Panel::Details,
             _ => Panel::Orders,
         }
     }
@@ -161,16 +199,23 @@ impl ReceivingApplication {
     }
 
     fn open_history(&mut self) -> Result<(), String> {
-        let orders = self.screen(Panel::Orders);
-        if !matches!(orders.submission().state(), State::Succeeded { .. }) {
-            return Err("Load the purchase orders before opening a history.".into());
-        }
-        let id = orders
-            .rows()
-            .get(self.selected_row(Panel::Orders))
-            .and_then(|row| row["id"].as_str())
-            .ok_or("Select a purchase order.")?
-            .to_owned();
+        let id = if self.order.is_some() && self.committed_result().is_some() {
+            self.committed_result()
+                .and_then(|value| value["purchase_order_id"].as_str())
+                .ok_or("The committed receipt has no purchase order identifier.")?
+                .to_owned()
+        } else {
+            let orders = self.screen(Panel::Orders);
+            if !matches!(orders.submission().state(), State::Succeeded { .. }) {
+                return Err("Load the purchase orders before opening a history.".into());
+            }
+            orders
+                .rows()
+                .get(self.selected_row(Panel::Orders))
+                .and_then(|row| row["id"].as_str())
+                .ok_or("Select a purchase order.")?
+                .to_owned()
+        };
         self.screen_mut(Panel::History)
             .new_command()
             .map_err(|error| error.to_string())?;
@@ -245,7 +290,15 @@ impl ReceivingApplication {
 
     fn history_key(&mut self, key: KeyEvent) -> Option<Action> {
         match key.code {
-            KeyCode::Esc => self.return_to_orders(),
+            KeyCode::Esc => {
+                if self.order.is_some() && self.committed_result().is_some() {
+                    self.history = None;
+                    self.show(Panel::Receipt);
+                    self.generated.select_results(Panel::Receipt as usize);
+                } else {
+                    self.return_to_orders();
+                }
+            }
             KeyCode::Up => {
                 if let Some(history) = &mut self.history {
                     history.selected = history.selected.saturating_sub(1);
@@ -395,6 +448,38 @@ impl ReceivingApplication {
             .map_err(|error| error.to_string())
     }
 
+    /// The command result, independent of any later optional read.
+    #[must_use]
+    pub fn committed_result(&self) -> Option<&Value> {
+        match self.screen(Panel::Receipt).submission().state() {
+            State::Succeeded { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
+    fn open_details(&mut self) -> Result<(), String> {
+        let result = self
+            .committed_result()
+            .ok_or("No committed receipt is available.")?;
+        let (pointer, key) = if self.acme {
+            ("/purchase_order_id", "purchase_order_id")
+        } else {
+            ("/id", "receipt_id")
+        };
+        let id = result[key]
+            .as_str()
+            .ok_or("The committed result has no detail identifier.")?
+            .to_owned();
+        let screen = self.screen_mut(Panel::Details);
+        screen.new_command().map_err(|error| error.to_string())?;
+        screen
+            .bind(pointer, json!(id))
+            .map_err(|error| error.to_string())?;
+        self.queued_read = Some(Panel::Details);
+        self.show(Panel::Details);
+        Ok(())
+    }
+
     fn return_to_orders(&mut self) {
         self.order = None;
         self.location = None;
@@ -408,6 +493,27 @@ impl ReceivingApplication {
         let panel = self.panel();
         if panel == Panel::History {
             return Ok(self.history_key(key));
+        }
+        if self.order.is_some() && self.committed_result().is_some() {
+            match key.code {
+                KeyCode::Char('d') => self.open_details()?,
+                KeyCode::Char('h') => self.open_history()?,
+                KeyCode::Esc if panel == Panel::Details => {
+                    self.generated.select_results(Panel::Receipt as usize);
+                }
+                KeyCode::Esc => self.return_to_orders(),
+                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.generated.set_message(
+                        "This receipt is already recorded. It will not be posted again.".into(),
+                    );
+                }
+                KeyCode::F(2 | 3 | 4 | 6 | 9) => {
+                    self.generated
+                        .set_message("Press Esc to select an order for a new receipt.".into());
+                }
+                _ => return Ok(None),
+            }
+            return Ok(Some(Action::None));
         }
         if key.code == KeyCode::Esc && panel != Panel::Orders {
             // The command owns the dirty draft and any uncertain submission.
@@ -470,16 +576,44 @@ impl Application for ReceivingApplication {
         if area.height == 0 {
             return;
         }
+        let confirmed = self
+            .order
+            .is_some()
+            .then(|| self.committed_result())
+            .flatten();
+        let banner_height = if confirmed.is_some() {
+            area.height.saturating_sub(1).min(3)
+        } else {
+            0
+        };
+        if let Some(value) = confirmed {
+            let text = format!(
+                "Recorded receipt {}.\nPurchase order {}: {}, revision {}.\nDetails and history are optional reads. Posting is complete.",
+                value["receipt_id"].as_str().unwrap_or(""),
+                value["purchase_order_id"].as_str().unwrap_or(""),
+                value["purchase_order_status"].as_str().unwrap_or(""),
+                value["row_version"]
+                    .as_str()
+                    .map_or_else(|| value["row_version"].to_string(), str::to_owned),
+            );
+            Paragraph::new(text)
+                .render(Rect::new(area.x, area.y, area.width, banner_height), buffer);
+        }
         let body = Rect {
-            height: area.height - 1,
+            y: area.y + banner_height,
+            height: area.height - 1 - banner_height,
             ..area
         };
         match &self.history {
-            Some(history) if history.complete => self.render_history(history, body, buffer),
+            Some(history) if history.complete && self.panel() == Panel::History => {
+                self.render_history(history, body, buffer);
+            }
             _ => self.generated.render(body, buffer),
         }
         let help = if self.history.is_some() {
             "Up/Down entry  Esc back  q quit"
+        } else if confirmed.is_some() {
+            "d optional details  h optional history  Esc back  q quit"
         } else if self.order.is_some() {
             "F2 lines / Enter quantity  F3 reference  F4 locations / l cycle  Ctrl-S send  Esc back"
         } else {
@@ -581,16 +715,9 @@ impl Application for ReceivingApplication {
                 self.generated.set_message(error);
             }
         } else if screen == Panel::Receipt as usize {
-            let receipt = self
-                .screen(Panel::Receipt)
-                .rows()
-                .first()
-                .and_then(|row| row["receipt_id"].as_str())
-                .unwrap_or("")
-                .to_owned();
-            self.return_to_orders();
+            self.generated.select_results(Panel::Receipt as usize);
             self.generated
-                .set_message(format!("Recorded receipt {receipt}."));
+                .set_message("Receipt recorded. Optional reads do not change this result.".into());
         }
     }
 

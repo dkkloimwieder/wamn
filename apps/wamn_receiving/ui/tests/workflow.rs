@@ -142,9 +142,55 @@ async fn the_receipt_entry_workflow_runs_end_to_end() {
         command.body,
         br#"[{"request_id":"receipt","value":{"idempotency_key":"idem-receipt","line":[{"location_id":"22222222-0000-0000-0000-000000000002","purchase_order_line_id":"11111111-0000-0000-0000-000000000001","quantity":"4.0000"}],"occurred_at":"2026-09-03T10:15:00.000000Z","purchase_order_id":"00000000-0000-0000-0000-000000000001","receipt_reference":"GRN7"}}]"#,
     );
-    assert_eq!(app.panel(), Panel::Orders);
+    assert_eq!(app.panel(), Panel::Receipt);
     assert!(render(&app).contains(RECEIPT));
     assert!(matches!(app.next_action(), Action::None));
+}
+
+#[tokio::test]
+async fn acme_posts_to_its_route_then_reads_quality_details_locally() {
+    let deployment = Arc::new(Deployment::default());
+    deployment.answer(
+        "/acme/receiving/record_receipt",
+        200,
+        json!({"value":recorded()}),
+    );
+    deployment.answer(
+        "/acme/quality/load_purchase_order_detail",
+        200,
+        json!({"value":{
+            "id": ORDER,
+            "purchase_order_number": "PO-1",
+            "supplier_id": "aaaaaaaa-0000-0000-0000-000000000001",
+            "status": "open",
+            "row_version": 5,
+            "acme_inspection_required": false,
+            "acme_quality_status": "approved"
+        }}),
+    );
+    let client = deployment.client();
+    let mut app = acme_ready();
+    let action = submit(&mut app);
+    dispatch(&mut app, &client, action, "acme-receipt").await;
+    assert_eq!(app.panel(), Panel::Receipt);
+    assert!(render(&app).contains(RECEIPT));
+
+    assert!(matches!(key(&mut app, KeyCode::Char('d')), Action::None));
+    let action = app.next_action();
+    dispatch(&mut app, &client, action, "acme-details").await;
+    assert_eq!(app.panel(), Panel::Details);
+    let displayed = render(&app);
+    assert!(displayed.contains("approved"), "{displayed}");
+    assert!(displayed.contains(RECEIPT), "{displayed}");
+
+    let sent = deployment.sent.lock().expect("sent");
+    assert_eq!(sent.len(), 2);
+    assert!(sent[0].url.ends_with("/acme/receiving/record_receipt"));
+    assert!(
+        sent[1]
+            .url
+            .ends_with("/acme/quality/load_purchase_order_detail")
+    );
 }
 
 #[tokio::test]

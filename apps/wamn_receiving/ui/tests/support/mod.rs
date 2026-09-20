@@ -26,6 +26,17 @@ pub fn application() -> ReceivingApplication {
     )
 }
 
+pub fn acme_application() -> ReceivingApplication {
+    ReceivingApplication::acme(
+        "Acme Receiving",
+        SessionBinding {
+            url: "http://receiving.test".into(),
+            host: Some("receiving.localhost".into()),
+            target_instance: "activation-acme".into(),
+        },
+    )
+}
+
 pub fn intent(id: &str) -> IntentValues {
     IntentValues {
         request_id: id.into(),
@@ -139,6 +150,19 @@ pub fn loaded() -> ReceivingApplication {
 
 pub fn ready() -> ReceivingApplication {
     let mut app = loaded();
+    key(&mut app, KeyCode::Enter);
+    type_text(&mut app, "3");
+    key(&mut app, KeyCode::F(3));
+    type_text(&mut app, "R1");
+    app
+}
+
+pub fn acme_ready() -> ReceivingApplication {
+    let mut app = acme_application();
+    read(&mut app, "orders", orders(&[1, 2], None));
+    key(&mut app, KeyCode::Enter);
+    read(&mut app, "projection", projection());
+    read(&mut app, "locations", locations());
     key(&mut app, KeyCode::Enter);
     type_text(&mut app, "3");
     key(&mut app, KeyCode::F(3));

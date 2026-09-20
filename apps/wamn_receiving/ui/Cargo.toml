@@ -19,6 +19,7 @@ serde_json = { workspace = true }
 wamn-client = { workspace = true }
 wamn-client-terminal = { workspace = true }
 wamn-client-tui = { workspace = true }
+wamn-generated-client-acme-receiving-tui = { workspace = true }
 wamn-generated-receiving-tui = { workspace = true }
 wamn-record-history = { workspace = true }
 crossterm = { workspace = true }

@@ -19,6 +19,7 @@ ring = { workspace = true }
 sha2 = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
+crossterm = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true, features = ["rustls", "json"] }
 rust_decimal = { workspace = true, features = ["std"] }
@@ -57,6 +58,8 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 async-trait = { workspace = true }
 wamn-client = { workspace = true }
+wamn-client-terminal = { workspace = true }
+wamn-client-tui = { workspace = true }
 wamn-receiving-tui = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-schema-generator = { workspace = true }

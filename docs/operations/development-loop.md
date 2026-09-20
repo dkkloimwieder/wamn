@@ -185,7 +185,14 @@ Restart the loop with the same configuration after reset.
 It takes the arguments and result rules of the [change checks](delivery.md#change-checks).
 Local reuse does not establish [release qualification](delivery.md#candidate-qualification).
 
-The local Receiving terminal test uses an HTTP fixture and requires its built operator:
+Receiving and Acme screen tests run in-process through production events, submissions, and rendering:
+
+```bash
+cargo test --locked --offline -p wamn-receiving-tui
+```
+
+The local Receiving process test retains terminal restoration and signal assertions.
+It uses an HTTP fixture and requires its built operator:
 
 ```bash
 cargo build --locked --offline -p wamn-receiving-tui
@@ -197,6 +204,8 @@ python3 apps/wamn_receiving/tests/operator_pty.py --binary "$CARGO_TARGET_DIR/de
 The [Receiving operator guide](../../apps/wamn_receiving/operator-guide.md) covers sign-in, receipt entry, keyboard controls, history, recovery, and logout.
 
 Build `wamn-receiving` before starting the terminal.
+For Acme, build package `wamn-client-acme-receiving-tui` and start binary `wamn-client-acme-receiving`.
+Both launchers use the same connection and login variables.
 Configure `WAMN_BASE_URL`, `WAMN_HOST` when needed, and `WAMN_TARGET_INSTANCE` for the selected deployment.
 Set `WAMN_SESSION_ISSUER` to its HTTPS identity issuer and `WAMN_SESSION_AUDIENCE` to the exact provisioned environment audience.
 For a private issuer CA, set `WAMN_SESSION_CA` to its certificate bundle.

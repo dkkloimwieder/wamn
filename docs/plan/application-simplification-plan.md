@@ -25,7 +25,11 @@ Generate typed WIT request/result/error contracts and Rust bindings from the exi
 
 Return base receipt results unchanged. Delete `receiving_record_receipt_result` enrichment and unused helpers. Update the declared result and generated clients with the server contract. Preserve per-item refusals and uncertainty when posting itself is unconfirmed.
 
-Owner direction: defer UI changes until simplification steps 1–4 are complete. Then reassess receipt confirmation against the settled contracts. Read details separately. Failure or denial leaves “Receipt posted; additional details unavailable.” Never repost or widen permissions. UI design does not block simplification.
+The owner deferred UI changes until simplification steps 1–4 completed.
+Follow-up `wamn-hcvl` composes Receiving and Acme posting with existing generated screens and the shared submission layer.
+The committed receipt appears immediately. Optional details and history use separate reads.
+Read failure or denial preserves the committed result. It never triggers reposting or wider permissions.
+Screen assertions run in-process. Process tests retain password masking, terminal restoration, and signals.
 
 Update build/admission consumers with the real native-call and PostgreSQL path. Working async calls and removed adapters establish completion—not WIT spelling or an assumed speedup. Report concrete API blockers; do not add another executor.
 

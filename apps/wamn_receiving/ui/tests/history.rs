@@ -51,10 +51,7 @@ fn history(pages: &[Value]) -> (ReceivingApplication, Vec<Value>) {
             .prepare(action, Some(&intent(&format!("history-{index}"))))
             .expect("a valid history page request");
         let item = request.body.item();
-        assert_eq!(
-            (&item["id"], &item["limit"]),
-            (&json!(ORDER), &json!("100"))
-        );
+        assert_eq!((&item["id"], &item["limit"]), (&json!(ORDER), &json!(100)));
         requested.push(item["after_position"].clone());
         reply(&mut app, request, json!({ "rows": rows }));
     }
@@ -91,7 +88,7 @@ fn a_present_row_shows_its_columns_at_each_entry() {
             2
         ),
     ])]);
-    assert_eq!(requested, [json!("0")]);
+    assert_eq!(requested, [json!(0)]);
     assert_eq!(present(&app)[1], ("row_version".to_owned(), "2".to_owned()));
     let displayed = render(&app);
     assert!(displayed.contains("State: present"), "{displayed}");
@@ -118,7 +115,7 @@ fn a_deleted_row_is_absent_after_its_delete() {
 #[test]
 fn a_row_with_no_retained_entries_is_unavailable() {
     let (app, requested) = history(&[json!([])]);
-    assert_eq!(requested, [json!("0")]);
+    assert_eq!(requested, [json!(0)]);
     assert_eq!(app.history_state(), Ok(RowState::Unavailable));
     assert!(render(&app).contains("State: unavailable"));
 }
@@ -155,7 +152,7 @@ fn a_head_change_between_pages_reads_the_history_again() {
             ),
         ]),
     ]);
-    assert_eq!(requested, [json!("0"), json!("1"), json!("0")]);
+    assert_eq!(requested, [json!(0), json!(1), json!(0)]);
     assert_eq!(present(&app)[1], ("row_version".to_owned(), "3".to_owned()));
     assert!(render(&app).contains("State: present"));
 }
@@ -166,7 +163,7 @@ fn rows_that_do_not_fold_show_the_refusal() {
         json!([entry(1, "insert", "{}", INSERTED, CURRENT, 2)]),
         json!([]),
     ]);
-    assert_eq!(requested, [json!("0"), json!("1")]);
+    assert_eq!(requested, [json!(0), json!(1)]);
     let refusal = app
         .history_state()
         .expect_err("a read that ends before its head does not fold");

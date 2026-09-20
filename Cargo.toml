@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/postgres", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "apps/wamn_receiving/ui", "apps/wamn_receiving/tests", "apps/client_acme_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "apps/wamn_receiving/generated/receiving-tui", "apps/wamn_wms/generated/wms-tui", "apps/client_acme_receiving/generated/client_acme_receiving-tui"]
+members = ["services/host", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/postgres", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "apps/wamn_receiving/ui", "apps/client_acme_receiving/ui", "apps/wamn_receiving/tests", "apps/client_acme_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "apps/wamn_receiving/generated/receiving-tui", "apps/wamn_wms/generated/wms-tui", "apps/client_acme_receiving/generated/client_acme_receiving-tui"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
   "crates/client/core",
   "apps/wamn_receiving/ui",
+  "apps/client_acme_receiving/ui",
   "crates/client/terminal",
   "crates/client/tui",
   "crates/execution/host",
@@ -200,6 +201,7 @@ wamn-client-tui = { path = "crates/client/tui", version = "0.1.0" }
 wamn-generated-client-acme-receiving-tui = { path = "apps/client_acme_receiving/generated/client_acme_receiving-tui", version = "0.1.0" }
 wamn-generated-receiving-tui = { path = "apps/wamn_receiving/generated/receiving-tui", version = "0.1.0" }
 wamn-generated-wms-tui = { path = "apps/wamn_wms/generated/wms-tui", version = "0.1.0" }
+wamn-client-acme-receiving-tui = { path = "apps/client_acme_receiving/ui", version = "0.1.0" }
 wamn-receiving-tui = { path = "apps/wamn_receiving/ui", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }

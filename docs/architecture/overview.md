@@ -23,9 +23,10 @@ The repository root owns the native Cargo workspace, including native applicatio
 The separate `apps/platform/no-std/` workspace isolates its dependency features.
 Cargo owns membership, dependencies, features, and targets. Application manifests own component declarations.
 
-The Receiving operator combines generated screens with application-owned Rust.
-Its UI crate owns the entrypoint, and its generated crate supplies a library.
-The generator creates no second Receiving launcher.
+Receiving and Acme combine generated screens with the same application-owned Rust workflow.
+Each UI crate owns its entrypoint. Its generated crate supplies a library.
+Both launchers use the Receiving runtime for login and transport.
+The generator creates no second launcher for either application.
 WMS still declares `wamn-wms-tui` in its generated UI crate.
 The development command selects the operator from its Cargo declaration.
 
