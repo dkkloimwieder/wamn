@@ -1,20 +1,8 @@
-//! Executes the emitted claim contract tests against a live PostgreSQL server.
+//! Tests claim replay against the SQL named by an operation contract.
 //!
-//! The generator emits `generated/contracts/<module>/<operation>.claim-tests.json`
-//! beside `<operation>.operation.json`. The first file names the cases. The
-//! second names, for every statement a case runs, the file that holds the SQL
-//! and the binds that statement takes. This module reads both files, runs the
-//! emitted SQL on a real database, and checks what the case declares.
-//!
-//! A test that compares generated text to generated text moves with a mutant,
-//! so it can never catch one. These cases run the SQL, so a mutant changes the
-//! answer the server gives and the case fails.
-//!
-//! The law is `command-identity-from-claim`. The claim row is keyed by the
-//! idempotency key and pre-generates every id the command hands out. The
-//! runner tests the law by construction: it binds the id the claim statement
-//! returned into the rest of the first call, then asserts a replay returns
-//! that same id without writing.
+//! The runner owns the two claim-law cases. The generated operation contract
+//! supplies the claim, finalization, and replay statements with their binds.
+//! Both cases execute the actual SQL against PostgreSQL and observe writes.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -93,12 +81,12 @@ pub struct Statement {
     pub binds: Vec<String>,
 }
 
-/// One emitted case.
+/// One claim-law case.
 #[derive(Clone, Debug)]
 pub struct Case {
-    /// The case id in the emitted file.
+    /// The case id.
     pub id: String,
-    /// The sentence the emitted file states the case with.
+    /// The request that the case repeats.
     pub given: String,
     first_call: Vec<String>,
     second_call: Vec<String>,
@@ -109,14 +97,14 @@ pub struct Case {
     refusal: Option<String>,
 }
 
-/// The emitted claim contract for one operation.
+/// An operation contract and its claim-law cases.
 #[derive(Clone, Debug)]
 pub struct ClaimContract {
     /// The operation the cases belong to.
     pub operation: String,
     /// The law the cases test.
     pub law: String,
-    /// The emitted cases, in file order.
+    /// The replay and changed-request cases.
     pub cases: Vec<Case>,
     statements: BTreeMap<String, Statement>,
 }
@@ -152,27 +140,24 @@ pub trait CommandFixture {
     fn bind(&self, statement: &str, bind: &str, claim: Option<&Row>) -> Result<BindValue>;
 }
 
-/// Read the emitted claim contract and every statement its operation names.
+/// Read a claim-bearing operation and every statement it names.
 ///
-/// `claim_tests` is relative to `package_root`, for example
-/// `generated/contracts/inventory/move.claim-tests.json`.
+/// `operation_path` is relative to `package_root`.
 ///
 /// # Errors
 ///
-/// When a file is missing, is not the shape the generator emits, or names a
-/// law this runner does not check.
-pub fn load(package_root: &Path, claim_tests: &Path) -> Result<ClaimContract> {
-    let claim_tests_text = claim_tests
-        .to_str()
-        .context("the claim-tests path is not UTF-8")?;
-    let stem = claim_tests_text
-        .strip_suffix(".claim-tests.json")
-        .context("the claim-tests path must end in .claim-tests.json")?;
-    let contract = read_json(&package_root.join(claim_tests))?;
-    let operation_document = read_json(&package_root.join(format!("{stem}.operation.json")))?;
-
-    let law = text(&contract, "law")?;
-    ensure!(law == LAW, "this runner checks {LAW}, not {law}");
+/// Returns an error for a missing or malformed contract, SQL file, or claim.
+pub fn load(package_root: &Path, operation_path: &Path) -> Result<ClaimContract> {
+    let operation_document = read_json(&package_root.join(operation_path))?;
+    ensure!(
+        text(&operation_document, "idempotent_by")? == "claim",
+        "the operation must use claim idempotence"
+    );
+    let claim = operation_document
+        .get("claim")
+        .context("the operation carries a claim")?;
+    let first_call = vec![text(claim, "claim")?, text(claim, "finalize")?];
+    let second_call = vec![text(claim, "claim")?, text(claim, "replay")?];
 
     let mut statements = BTreeMap::new();
     for entry in array(&operation_document, "statements")? {
@@ -195,34 +180,34 @@ pub fn load(package_root: &Path, claim_tests: &Path) -> Result<ClaimContract> {
         );
     }
 
-    let mut cases = Vec::new();
-    for entry in array(&contract, "cases")? {
-        let expect = entry
-            .get("expect")
-            .context("an emitted case carries an expect block")?;
-        cases.push(Case {
-            id: text(entry, "id")?,
-            given: text(entry, "given")?,
-            first_call: names(entry, "first_call")?,
-            second_call: names(entry, "second_call")?,
-            canonical_command: text(expect, "canonical_command")?,
-            claim: text(expect, "claim")?,
-            writes: text(expect, "writes")?,
-            result: expect
-                .get("result")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            refusal: expect
-                .get("refusal")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-        });
-    }
-    ensure!(!cases.is_empty(), "the emitted contract names no cases");
+    let cases = vec![
+        Case {
+            id: "replay_returns_the_immutable_original".to_owned(),
+            given: "the same idempotency_key with the same canonical_command".to_owned(),
+            first_call: first_call.clone(),
+            second_call: second_call.clone(),
+            canonical_command: "equal".to_owned(),
+            claim: "no_row".to_owned(),
+            writes: "none".to_owned(),
+            result: Some("identical_to_the_first_call".to_owned()),
+            refusal: None,
+        },
+        Case {
+            id: "changed_request_under_a_live_key_refuses".to_owned(),
+            given: "the same idempotency_key with a changed canonical_command".to_owned(),
+            first_call,
+            second_call,
+            canonical_command: "differs".to_owned(),
+            claim: "no_row".to_owned(),
+            writes: "none".to_owned(),
+            result: None,
+            refusal: Some("idempotency_conflict".to_owned()),
+        },
+    ];
 
     Ok(ClaimContract {
-        operation: text(&contract, "operation")?,
-        law,
+        operation: text(&operation_document, "operation")?,
+        law: LAW.to_owned(),
         cases,
         statements,
     })
@@ -233,12 +218,12 @@ impl ClaimContract {
     ///
     /// # Errors
     ///
-    /// When the emitted contract names no such case.
+    /// When the runner defines no such case.
     pub fn case(&self, id: &str) -> Result<&Case> {
         self.cases
             .iter()
             .find(|case| case.id == id)
-            .with_context(|| format!("the emitted contract names no case {id}"))
+            .with_context(|| format!("the runner defines no case {id}"))
     }
 
     /// Replace one exact fragment of one statement's SQL.
@@ -266,7 +251,7 @@ impl ClaimContract {
         Ok(())
     }
 
-    /// Run one emitted case against a live database.
+    /// Run one claim-law case against a live database.
     ///
     /// The caller owns the schema and the fixture rows. `original_command` and
     /// `changed_command` are the canonical command bytes for the same
@@ -274,7 +259,7 @@ impl ClaimContract {
     ///
     /// # Errors
     ///
-    /// When the database refuses a statement, or when the emitted expectation
+    /// When the database refuses a statement, or when the case expectation
     /// does not hold.
     pub async fn run_case(
         &self,
@@ -563,16 +548,4 @@ fn array<'a>(value: &'a Value, key: &str) -> Result<&'a [Value]> {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .with_context(|| format!("the emitted artifact carries an array at {key}"))
-}
-
-fn names(value: &Value, key: &str) -> Result<Vec<String>> {
-    array(value, key)?
-        .iter()
-        .map(|entry| {
-            entry
-                .as_str()
-                .map(str::to_owned)
-                .with_context(|| format!("{key} names statements as strings"))
-        })
-        .collect()
 }

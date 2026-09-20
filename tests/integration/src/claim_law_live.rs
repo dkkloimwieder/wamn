@@ -1,18 +1,7 @@
-//! `[CLAIM-LAW-LIVE]` — the emitted claim contract tests, executed.
+//! Runs the claim-law cases against the WMS move SQL and disposable PostgreSQL.
 //!
-//! The generator emits `move.claim-tests.json` next to the SQL it emits, and
-//! until now nothing ran it. A test emitted by the pass that emits the SQL
-//! moves with a mutant, so it can only catch one by running the SQL against a
-//! real server. These tests do that.
-//!
-//! The first consumer is `wamn-wms:inventory/move@1.0.0`. It is create-shaped:
-//! the claim row mints `movement_id`, and every later caller depends on that
-//! id being the same one after a replay. The claim table carries no
-//! foreign key to the pallet, so the two cases need the migration and nothing
-//! else.
-//!
-//! The live tests take a database of their own from the private PostgreSQL 18
-//! server of the test process.
+//! The operation contract supplies the statement paths and binds. The shared
+//! runner checks replay, changed-request refusal, and the absence of writes.
 
 use std::path::Path;
 
@@ -26,7 +15,7 @@ use wamn_gate_harness::claim_law::{self, BindValue, ClaimContract, CommandFixtur
 use wamn_test_infrastructure::postgres::Database;
 
 const PACKAGE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/wamn_wms");
-const CLAIM_TESTS: &str = "generated/contracts/inventory/move.claim-tests.json";
+const OPERATION_CONTRACT: &str = "generated/contracts/inventory/move.operation.json";
 const OPERATION: &str = "wamn-wms:inventory/move@1.0.0";
 const MIGRATION: &str = include_str!("../../../apps/wamn_wms/migrations/0001_initial.sql");
 
@@ -67,30 +56,6 @@ impl CommandFixture for MoveFixture {
             _ => bail!("the fixture has no value for {statement}.{bind}"),
         }
     }
-}
-
-#[test]
-fn the_emitted_contract_names_the_two_cases_the_live_tests_execute() -> Result<()> {
-    let contract = contract()?;
-    ensure!(
-        contract.operation == OPERATION,
-        "the emitted contract names {}, not {OPERATION}",
-        contract.operation
-    );
-    ensure!(
-        contract.law == claim_law::LAW,
-        "the emitted contract establishes {}, not {}",
-        contract.law,
-        claim_law::LAW
-    );
-    ensure!(
-        contract.cases.len() == 2,
-        "the emitted contract names {} cases, and the live tests execute two",
-        contract.cases.len()
-    );
-    contract.case(REPLAY_CASE)?;
-    contract.case(CONFLICT_CASE)?;
-    Ok(())
 }
 
 #[tokio::test]
@@ -153,7 +118,7 @@ async fn a_changed_request_under_a_live_key_refuses_with_idempotency_conflict() 
 /// the changed request as if it had always been the original. Both emitted
 /// cases must go red, and this test fails if either one still passes.
 #[tokio::test]
-async fn a_claim_that_updates_on_conflict_fails_both_emitted_cases() -> Result<()> {
+async fn a_claim_that_updates_on_conflict_fails_both_claim_law_cases() -> Result<()> {
     let mut mutant = contract()?;
     mutant.mutate(
         "claim_command",
@@ -186,7 +151,12 @@ async fn a_claim_that_updates_on_conflict_fails_both_emitted_cases() -> Result<(
 }
 
 fn contract() -> Result<ClaimContract> {
-    claim_law::load(Path::new(PACKAGE_ROOT), Path::new(CLAIM_TESTS))
+    let contract = claim_law::load(Path::new(PACKAGE_ROOT), Path::new(OPERATION_CONTRACT))?;
+    ensure!(
+        contract.operation == OPERATION,
+        "the contract must name {OPERATION}"
+    );
+    Ok(contract)
 }
 
 /// The canonical command bytes for one move, built the way

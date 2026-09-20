@@ -22,14 +22,13 @@ use wamn_schema_introspection::ir::{
 };
 
 use crate::manifest::{
-    AccessOperationErrorLiteral, AuthoredSqlDeclaration, CommandIdempotence,
-    ContractFieldDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration,
-    CustomOperationKind, CustomOperationResultDeclaration, DeleteMode, InheritedClaimDeclaration,
-    ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest,
-    PolicyContractRequirement, PolicyContractState, RecordHistoryColumn, ResultClass,
-    SortDeclaration, StateGuardDeclaration, StaticSqlFetch, TombstoneColumn,
-    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
-    validate_identifier, validate_operation_vocabulary,
+    AccessOperationErrorLiteral, AuthoredSqlDeclaration, ContractFieldDeclaration, CrudAction,
+    CursorDirection, CustomOperationDeclaration, CustomOperationKind,
+    CustomOperationResultDeclaration, DeleteMode, ModelDeclaration, OperationDeclaration,
+    OperationErrorDetailDeclaration, PackageManifest, PolicyContractRequirement,
+    PolicyContractState, RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch,
+    TombstoneColumn, canonical_operation_identity, custom_artifact_stem, rust_identifier,
+    rust_type_identifier, validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;

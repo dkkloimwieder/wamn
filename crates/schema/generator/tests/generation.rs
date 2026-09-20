@@ -7,7 +7,7 @@ use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, GenerateErrorKind, GeneratedPackage,
     GeneratedPackageMetadata, PackageManifest, canonical_operation_identity,
-    canonical_operation_prefix, corpus_sha256, validate_operation_vocabulary, validate_parity_json,
+    canonical_operation_prefix, corpus_sha256, validate_operation_vocabulary,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
@@ -17,7 +17,7 @@ use wamn_schema_introspection::ir::{
 #[path = "support/generation.rs"]
 mod support;
 use support::{
-    QUERY_SOURCES, accessor_bind, artifact_json, assert_native_fixtures_match_parity, catalog,
+    QUERY_SOURCES, accessor_bind, artifact_json, assert_native_fixtures_match_wamn_api, catalog,
     manifest, object_named, parsed_manifest, projection_operation, rebuilt_table, replacing_table,
     run, statement_digest, table,
 };
@@ -419,10 +419,6 @@ fn generation_is_byte_stable_and_emits_both_projection_siblings() {
     first.file("generated/wamn/purchase_order.rs").unwrap();
     assert!(first.file("query/open_purchase_order.sql").is_none());
 
-    let parity_file = first.file("generated/parity/purchase_order.json").unwrap();
-    validate_parity_json(parity_file.bytes()).unwrap();
-    let parity: Value = serde_json::from_slice(parity_file.bytes()).unwrap();
-    assert_eq!(parity["rule"], "same_sql_file_two_projection_structs");
     let source_map = artifact_json(&first, "generated/source-map/purchase_order.json");
     assert_eq!(
         source_map["relation"],
@@ -764,7 +760,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
         }])
     );
 
-    assert_native_fixtures_match_parity(&package, "purchase_order");
+    assert_native_fixtures_match_wamn_api(&package, "purchase_order");
 }
 
 #[test]
@@ -1523,76 +1519,6 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
     );
 }
 
-/// EXIT GATE: every create-shaped command CARRIES the two claim contract
-/// tests, so no package author writes them and none can omit them.
-///
-/// The whole artifact is frozen. An added, removed or renamed field fails here,
-/// because a runner reads this file and a silent rename would make it skip a
-/// case rather than refuse.
-///
-/// D7, wamn-10yt.19. The cases are emitted, not executed. Executing them needs
-/// a live database, which is wamn-f89v.
-#[test]
-fn every_generated_create_carries_the_two_claim_contract_tests() {
-    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
-
-    assert_eq!(
-        artifact_json(
-            &package,
-            "generated/contracts/purchase_order/create.claim-tests.json"
-        ),
-        json!({
-            "operation": "wamn-receiving:purchase-order/create@1.0.0",
-            "law": "command-identity-from-claim",
-            "cases": [
-                {
-                    "id": "replay_returns_the_created_row",
-                    "given": "the same idempotency_key with the same canonical_command",
-                    "first_call": ["create_claim", "create"],
-                    "second_call": ["create_claim", "create_replay"],
-                    "expect": {
-                        "claim": "no_row",
-                        "canonical_command": "equal",
-                        "result": "current_row_the_first_call_created",
-                        "writes": "none",
-                        "identity_source": "claim",
-                    },
-                },
-                {
-                    "id": "changed_request_under_a_live_key_refuses",
-                    "given": "the same idempotency_key with a changed canonical_command",
-                    "first_call": ["create_claim", "create"],
-                    "second_call": ["create_claim", "create_replay"],
-                    "expect": {
-                        "claim": "no_row",
-                        "canonical_command": "differs",
-                        "writes": "none",
-                        "refusal": "idempotency_conflict",
-                    },
-                },
-            ],
-        })
-    );
-}
-
-/// EXIT GATE: a command that is not a create carries no claim tests, so the
-/// artifact never appears where the law does not apply.
-#[test]
-fn only_a_create_carries_claim_contract_tests() {
-    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
-
-    for action in ["get", "query", "update", "delete"] {
-        assert!(
-            package
-                .file(&format!(
-                    "generated/contracts/purchase_order/{action}.claim-tests.json"
-                ))
-                .is_none(),
-            "{action} carries claim tests"
-        );
-    }
-}
-
 /// EXIT GATE: the claim's shape reaches the required-schema contract and the
 /// data-access overlay, so nothing the emitted SQL names is left unpinned.
 #[test]
@@ -2330,15 +2256,6 @@ fn selected_stamp_columns_become_server_owned() {
             "updated_by"
         ])
     );
-    let model = artifact_json(&package, "generated/models/purchase_order.json");
-    for field in model["fields"].as_array().unwrap() {
-        if field["name"].as_str().unwrap().starts_with("created_")
-            || field["name"].as_str().unwrap().starts_with("updated_")
-        {
-            assert_eq!(field["server_owned"], json!(true), "{}", field["name"]);
-        }
-    }
-
     // An overlay declares nothing, and the base stamp columns are server-owned.
     let overlay = run(&all_stamps_catalog(), &overlay_manifest(), &QUERY_SOURCES)
         .expect("an overlay inherits the owner's declaration");

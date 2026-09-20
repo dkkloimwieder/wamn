@@ -251,19 +251,32 @@ No WIT registry or second interface-description system is introduced.
 
 ### B10. Decide what generated application output remains committed
 
-At the reviewed snapshot there are 295 files under `apps/*/generated/`.
+The audit started with 295 committed files under `apps/*/generated/`.
+It removed 75 files and retained 220 files with existing consumers.
+No deletion quota determined the result.
 
-Do **not** begin with a deletion target.
+The retained files have these owners:
 
-After B2–B9:
+- 28 client/TUI files: Cargo, application launchers, and UI scaffolding.
+- 35 WIT/codec files: component bindings and application Rust imports.
+- 93 operation/input/result/error/cursor contracts: client generation, UI scaffolding, component publication, and release acceptance.
+- 17 Wamn projections: application data-access imports.
+- 17 native projections and 17 source maps: the shared SQLx verifier.
+- Seven SQL files: generated accessors, admission, and exact SQL qualification.
+- Three policy files: package reconciliation and database authority.
+- Three package-weld files: component publication, release sources, and development freshness.
 
-1. enumerate every remaining reader of committed generated output;
-2. classify it as build input, publication/distribution contract, offline evidence, or obsolete;
-3. keep generated artifacts that must be available without regeneration for a real build/publish/distribution reason;
-4. move reproducible intermediates to build output where no real consumer requires them committed;
-5. update clean-checkout build and publication paths before untracking anything.
+The generator no longer emits unused model descriptions, parity descriptions, or projections for models without operations.
+Those model declarations still contribute to the required schema and database authority.
+Composition metadata remains in the operation contract instead of an unused source map.
+The claim-law runner reads the operation contract directly and retains its PostgreSQL replay, refusal, and write assertions.
+Generated claim/state/inherited case descriptions no longer form a second test specification.
 
-Preserve `.sqlx` metadata or other offline evidence where the owning tool still requires committed input.
+All retained generated files keep their existing materialization path.
+The audit leaves their bytes unchanged.
+The 68 committed `.sqlx` files remain offline compilation evidence outside this count.
+The shared verifier still consumes the exact SQL corpus and its bind/result types.
+
 
 ### Acceptance for Increment B
 

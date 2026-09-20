@@ -27,7 +27,6 @@ mod error;
 mod generate;
 mod manifest;
 mod materialize;
-mod parity;
 mod rustfmt;
 mod sql;
 mod sql_lex;
@@ -68,7 +67,6 @@ pub use materialize::{
     MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,
     materialize_package_verified, materialize_package_verified_with_catalog,
 };
-pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
 pub use sqlx_metadata::{
     SqlxMetadataMode, SqlxVerifier, package_database_url, stage_sqlx_verifier, verify_sqlx_metadata,
 };

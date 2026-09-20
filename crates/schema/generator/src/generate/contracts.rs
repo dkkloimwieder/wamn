@@ -1,26 +1,24 @@
 //! Operation contracts, schema contracts, and their SQL output.
 
 use super::rust::{
-    emit_parity, emit_projection, emit_static_sql_parity, emit_static_sql_projection,
-    native_bind_fixtures, operation_result_rows, static_sql_accessors,
-    static_sql_native_bind_fixtures, static_sql_rows, wamn_api,
+    emit_projection, emit_static_sql_projection, native_bind_fixtures, operation_result_rows,
+    static_sql_accessors, static_sql_native_bind_fixtures, static_sql_rows, wamn_api,
 };
 use super::validation::resolve_claim;
 use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, BTreeSet, CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN,
     CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT, CREATE_STATEMENT, CREATE_STATEMENTS,
-    CURSOR_VERSION, CatalogIr, ColumnType, CommandIdempotence, ConstraintKind,
-    ContractFieldDeclaration, CrudAction, CustomOperationDeclaration, CustomOperationKind,
-    CustomOperationResultDeclaration, DeleteMode, GenerateError, GenerateErrorKind,
-    InheritedClaimDeclaration, ModelDeclaration, OperationDeclaration,
+    CURSOR_VERSION, CatalogIr, ColumnType, ConstraintKind, ContractFieldDeclaration, CrudAction,
+    CustomOperationDeclaration, CustomOperationKind, CustomOperationResultDeclaration, DeleteMode,
+    GenerateError, GenerateErrorKind, ModelDeclaration, OperationDeclaration,
     OperationErrorDetailDeclaration, PackageManifest, Projection, ProjectionContents,
     RequiredConstraint, RequiredField, RequiredSchemaContract, RequiredTable, ResultClass,
-    StateGuardDeclaration, StatementContract, StatementTransactionality, StatementValueContract,
-    Table, Value, WamnApi, canonical_operation_identity, column, constraint_error,
-    constraint_error_code, custom_artifact_stem, custom_operation_constraint_origin, insert_bytes,
-    insert_json, insert_json_line, json, operation_constraints, operation_exclusions,
-    query_variants, relation, rust_type_identifier, server_owned_fields, sha256, sql,
+    StatementContract, StatementTransactionality, StatementValueContract, Table, Value, WamnApi,
+    canonical_operation_identity, column, constraint_error, constraint_error_code,
+    custom_artifact_stem, custom_operation_constraint_origin, insert_bytes, insert_json,
+    insert_json_line, json, operation_constraints, operation_exclusions, query_variants, relation,
+    rust_type_identifier, server_owned_fields, sha256, sql,
 };
 use wamn_record_history::HISTORY_COLUMNS;
 
@@ -38,7 +36,9 @@ pub(super) fn emit_model(
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
-    emit_model_contract(files, model_name, model, table)?;
+    if model.operations.is_empty() {
+        return Ok(());
+    }
 
     let claim = model.operations.get(&CrudAction::Create).map(|operation| {
         resolve_claim(
@@ -95,7 +95,6 @@ pub(super) fn emit_model(
     }
     emit_model_wit(files, catalog, manifest, model_name, model, table)?;
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
-    emit_parity(files, model_name, table, &wamn_api)?;
     emit_projection(
         files,
         sql_corpus,
@@ -149,35 +148,7 @@ pub(super) fn emit_custom_operation(
         operation,
     )?;
     if operation.statements.is_empty() {
-        let (alias, dependency) = manifest
-            .base_dependencies
-            .iter()
-            .find(|(_, dependency)| {
-                dependency
-                    .operations
-                    .iter()
-                    .any(|candidate| candidate == operation_name)
-            })
-            .expect("validated composition-only command has one exact dependency");
-        return insert_json(
-            files,
-            &format!(
-                "generated/source-map/{}.json",
-                custom_artifact_stem(operation_name)
-            ),
-            &json!({
-                "operation": operation_name,
-                "kind": operation.kind(),
-                "manifest": format!("wamn.json#/custom_operations/{operation_name}"),
-                "composition": {
-                    "alias": alias,
-                    "package": dependency.package,
-                    "version": dependency.version,
-                    "digest": dependency.digest,
-                    "operation": operation_name,
-                },
-            }),
-        );
+        return Ok(());
     }
 
     let module_name = custom_artifact_stem(operation_name);
@@ -186,7 +157,6 @@ pub(super) fn emit_custom_operation(
     let accessors = static_sql_accessors(operation);
     let bind_fixtures = static_sql_native_bind_fixtures(&accessors);
 
-    emit_static_sql_parity(files, &module_name, operation, &accessors)?;
     emit_static_sql_projection(
         files,
         sql_corpus,
@@ -398,42 +368,6 @@ fn emit_custom_operation_contracts(
         &custom_operation_error_contract(catalog, operation),
     )?;
     emit_custom_operation_wit(files, manifest, operation_name, operation)?;
-    // One artifact per declared shape, named for the shape it holds. A runner
-    // reads the shape off the file name and never guesses which cases apply.
-    match &operation.idempotent_by {
-        Some(CommandIdempotence::Claim) => {
-            let claim = operation
-                .claim
-                .as_ref()
-                .expect("idempotent_by claim was validated to carry a claim");
-            insert_json(
-                files,
-                &format!("{root}.claim-tests.json"),
-                &claim_contract_tests(
-                    &operation_id,
-                    ClaimReplay::ImmutableOriginal,
-                    &claim.claim,
-                    &claim.finalize,
-                    &claim.replay,
-                ),
-            )?;
-        }
-        Some(CommandIdempotence::State(state)) => {
-            insert_json(
-                files,
-                &format!("{root}.state-tests.json"),
-                &state_contract_test(&operation_id, operation, state),
-            )?;
-        }
-        Some(CommandIdempotence::Inherited(inherited)) => {
-            insert_json(
-                files,
-                &format!("{root}.inherited-tests.json"),
-                &inherited_contract_test(manifest, &operation_id, inherited),
-            )?;
-        }
-        None => {}
-    }
     Ok(())
 }
 
@@ -500,189 +434,6 @@ fn idempotency_contract(claim: &sql::Claim<'_>) -> Value {
             "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
         },
         "atomicity": "claim_and_insert_commit_together",
-    })
-}
-
-/// What the replay statement of a claim returns on a second call.
-#[derive(Clone, Copy)]
-enum ClaimReplay {
-    /// An authored command: the replay returns the first call's result unchanged.
-    ImmutableOriginal,
-    /// A generated create: the replay returns the current state of the row the
-    /// first call created. The id is the same and nothing is inserted twice.
-    CreatedRow,
-}
-
-/// The two contract tests every claim-bearing command carries.
-///
-/// The claim law is a property of the emitted statements, so its tests belong
-/// to the command rather than to whoever writes the package. A generated create
-/// and an authored command each get both by construction, and a package author
-/// writes neither.
-///
-/// Each case names the statements in the order a caller runs them. The first
-/// call mints the claim and finishes it. The second call re-runs the claim
-/// statement, which returns no row under the claim's primary key. The caller
-/// then reads back through the replay statement. Case one asserts what that
-/// replay returns, with no write, as [`ClaimReplay`] states it. Case two asserts
-/// the typed refusal when the claim was minted for another request.
-///
-/// Binds are not repeated here. The input contract states the request shape and
-/// the operation contract states each statement's binds and columns.
-///
-/// EXECUTING these cases needs a live database. That runner is `wamn-f89v`,
-/// and it opens on its first consumer. What this emits is the case list.
-fn claim_contract_tests(
-    operation_id: &str,
-    replay_returns: ClaimReplay,
-    claim: &str,
-    finalize: &str,
-    replay: &str,
-) -> Value {
-    let (replay_case, replay_result) = match replay_returns {
-        ClaimReplay::ImmutableOriginal => (
-            "replay_returns_the_immutable_original",
-            "identical_to_the_first_call",
-        ),
-        ClaimReplay::CreatedRow => (
-            "replay_returns_the_created_row",
-            "current_row_the_first_call_created",
-        ),
-    };
-    json!({
-        "operation": operation_id,
-        "law": "command-identity-from-claim",
-        "cases": [
-            {
-                "id": replay_case,
-                "given": "the same idempotency_key with the same canonical_command",
-                "first_call": [claim, finalize],
-                "second_call": [claim, replay],
-                "expect": {
-                    "claim": "no_row",
-                    "canonical_command": "equal",
-                    "result": replay_result,
-                    "writes": "none",
-                    "identity_source": "claim",
-                },
-            },
-            {
-                "id": "changed_request_under_a_live_key_refuses",
-                "given": "the same idempotency_key with a changed canonical_command",
-                "first_call": [claim, finalize],
-                "second_call": [claim, replay],
-                "expect": {
-                    "claim": "no_row",
-                    "canonical_command": "differs",
-                    "writes": "none",
-                    "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
-                },
-            },
-        ],
-    })
-}
-
-/// The one contract test every state-idempotent command carries.
-///
-/// This command mints nothing, so there is no id to return twice. What a repeat
-/// must never do is write a second time in silence. A repeat after the first
-/// call succeeded sees a moved version and gets `concurrency_conflict`. A repeat
-/// that still matches the version finds the work already done and writes
-/// nothing.
-///
-/// Both outcomes are admitted, and a second write is admitted under neither.
-/// That is what makes the command idempotent by state rather than by a claim.
-///
-/// `guards` names each protected relation, schema qualified, beside the input
-/// field carrying its expected version. A reader sees WHICH row the guard
-/// protects, which a command guarding two rows would otherwise leave open.
-///
-/// EXECUTING this case needs a live database. That runner is `wamn-f89v`,
-/// and it opens on its first consumer. What this emits is the case list.
-fn state_contract_test(
-    operation_id: &str,
-    operation: &CustomOperationDeclaration,
-    state: &StateGuardDeclaration,
-) -> Value {
-    let guards = state
-        .guards
-        .iter()
-        .map(|(table, field)| {
-            let relation = operation
-                .relations
-                .iter()
-                .find(|candidate| candidate.table == *table)
-                .expect("state guard was validated against a declared relation");
-            json!({
-                "relation": format!("{}.{}", relation.schema, relation.table),
-                "expected_version": field,
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "operation": operation_id,
-        "law": "command-idempotence-from-state",
-        "guards": guards,
-        "cases": [
-            {
-                "id": "a_repeat_is_a_no_op_or_a_typed_conflict",
-                "given": "the same request sent again after the first call succeeded",
-                "expect": {
-                    "writes": "none",
-                    "outcome": "unchanged_original_or_refusal",
-                    "refusal": AccessOperationErrorLiteral::ConcurrencyConflict,
-                    "second_write": "never",
-                    "identity_minted": "none",
-                },
-            },
-        ],
-    })
-}
-
-/// The one contract test every command riding a base claim carries.
-///
-/// The identity in this command's result was minted by the BASE command's
-/// claim. This command adds no claim of its own, because a second claim over
-/// one identity is the defect the law names. This test must show that its
-/// replay hands back the base's original result and not a fresh one.
-///
-/// The base is named here, digest included, so a reader sees which command's
-/// claim this one rides without opening the base package.
-///
-/// EXECUTING this case needs a live database. That runner is `wamn-f89v`,
-/// and it opens on its first consumer. What this emits is the case list.
-fn inherited_contract_test(
-    manifest: &PackageManifest,
-    operation_id: &str,
-    inherited: &InheritedClaimDeclaration,
-) -> Value {
-    let dependency = manifest
-        .base_dependencies
-        .get(&inherited.base)
-        .expect("inherited idempotence was validated against a declared base dependency");
-    json!({
-        "operation": operation_id,
-        "law": "command-identity-from-claim",
-        "inherits": {
-            "alias": inherited.base,
-            "package": dependency.package,
-            "version": dependency.version,
-            "digest": dependency.digest,
-            "operation": inherited.operation,
-        },
-        "cases": [
-            {
-                "id": "replay_returns_the_base_original",
-                "given": "the same idempotency_key with the same canonical_command",
-                "expect": {
-                    "identity_source": "base_claim",
-                    "base_result": "identical_to_the_base_first_call",
-                    "result": "the_base_original_under_this_command_decoration",
-                    "writes": "none",
-                    "claim": "none_of_its_own",
-                },
-            },
-        ],
     })
 }
 
@@ -833,39 +584,6 @@ pub(super) fn emit_cursor_contract(
             ],
             "refusal": "invalid_input",
             "fallback_to_first_page": false,
-        }),
-    )
-}
-
-fn emit_model_contract(
-    files: &mut BTreeMap<String, Vec<u8>>,
-    model_name: &str,
-    model: &ModelDeclaration,
-    table: &Table,
-) -> Result<(), GenerateError> {
-    let server_owned = server_owned_fields(model, table);
-    let fields = table
-        .columns()
-        .iter()
-        .map(|column| {
-            json!({
-                "name": column.name(),
-                "type": column.column_type().as_str(),
-                "nullable": column.nullable(),
-                "server_owned": server_owned.contains(&column.name()),
-                "enum_values": model.enum_fields.get(column.name()),
-            })
-        })
-        .collect::<Vec<_>>();
-    insert_json(
-        files,
-        &format!("generated/models/{model_name}.json"),
-        &json!({
-            "model": model_name,
-            "schema": model.schema,
-            "table": model.table,
-            "owner": model.owner,
-            "fields": fields,
         }),
     )
 }
@@ -1097,19 +815,6 @@ fn emit_operation_contracts(
         &format!("{root}.errors.json"),
         &error_contract(catalog, table, action, operation, model.delete_mode),
     )?;
-    if claim.is_some() && action == CrudAction::Create {
-        insert_json(
-            files,
-            &format!("{root}.claim-tests.json"),
-            &claim_contract_tests(
-                &operation_id,
-                ClaimReplay::CreatedRow,
-                CREATE_CLAIM_STATEMENT,
-                CREATE_STATEMENT,
-                CREATE_REPLAY_STATEMENT,
-            ),
-        )?;
-    }
     Ok(())
 }
 

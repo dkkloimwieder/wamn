@@ -1,4 +1,4 @@
-//! Rust projections, accessors, and parity output.
+//! Rust projections and accessors.
 
 use std::fmt::Write as _;
 
@@ -9,8 +9,8 @@ use super::{
     DeleteMode, GenerateError, ModelDeclaration, MutationConstraintNames, NativeBindFixture,
     OperationDeclaration, Projection, ProjectionContents, RustMember, RustRow, RustVisibility,
     StaticSqlAccessor, StaticSqlFetch, Table, WamnAccessor, WamnApi, column, insert_bytes,
-    insert_json, json, operation_constraints, operation_exclusions, query_variants,
-    rust_identifier, rust_type_identifier, sha256, sql,
+    operation_constraints, operation_exclusions, query_variants, rust_identifier,
+    rust_type_identifier, sha256, sql,
 };
 
 /// Clippy's default `too-many-arguments-threshold`. The repository declares no
@@ -87,55 +87,6 @@ pub(super) fn static_sql_native_bind_fixtures(
             })
         })
         .collect()
-}
-
-pub(super) fn emit_static_sql_parity(
-    files: &mut BTreeMap<String, Vec<u8>>,
-    module_name: &str,
-    operation: &CustomOperationDeclaration,
-    accessors: &[StaticSqlAccessor],
-) -> Result<(), GenerateError> {
-    let fields = operation
-        .statements
-        .iter()
-        .flat_map(|(statement, declaration)| {
-            declaration.row.iter().map(move |field| {
-                json!({
-                    "field": format!("{statement}.{}", field.name),
-                    "postgres": sql::postgres_type(field.ty),
-                    "wamn_sql_value": field.ty.as_str(),
-                    "native_rust": projected_rust_type(field.ty, Projection::Native, field.nullable),
-                    "wamn_rust": projected_rust_type(field.ty, Projection::Wamn, field.nullable),
-                    "nullable": field.nullable,
-                })
-            })
-        })
-        .collect::<Vec<_>>();
-    let accessor_binds = accessors
-        .iter()
-        .flat_map(|accessor| {
-            accessor.binds.iter().map(|bind| {
-                json!({
-                    "accessor": accessor.name,
-                    "parameter": bind.parameter,
-                    "postgres": bind.postgres,
-                    "nullable": bind.nullable,
-                    "native_rust": bind.native_rust,
-                    "wamn_rust": bind.wamn_rust,
-                })
-            })
-        })
-        .collect::<Vec<_>>();
-    insert_json(
-        files,
-        &format!("generated/parity/{module_name}.json"),
-        &json!({
-            "model": module_name,
-            "rule": "same_sql_file_two_projection_structs",
-            "fields": fields,
-            "accessor_binds": accessor_binds,
-        }),
-    )
 }
 
 pub(super) fn emit_static_sql_projection(
@@ -354,54 +305,6 @@ fn static_sql_accessor_result_type(accessor: &StaticSqlAccessor) -> String {
         StaticSqlFetch::BoundedList => format!("Vec<{}>", accessor.row),
         StaticSqlFetch::One => accessor.row.clone(),
     }
-}
-
-pub(super) fn emit_parity(
-    files: &mut BTreeMap<String, Vec<u8>>,
-    model_name: &str,
-    table: &Table,
-    wamn_api: &WamnApi,
-) -> Result<(), GenerateError> {
-    let fields = table
-        .columns()
-        .iter()
-        .map(|column| {
-            json!({
-                "field": column.name(),
-                "postgres": sql::postgres_type(column.column_type()),
-                "wamn_sql_value": column.column_type().as_str(),
-                "native_rust": rust_type(column, Projection::Native),
-                "wamn_rust": rust_type(column, Projection::Wamn),
-                "nullable": column.nullable(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let accessor_binds = wamn_api
-        .accessors
-        .iter()
-        .flat_map(|accessor| {
-            accessor.binds.iter().map(|bind| {
-                json!({
-                    "accessor": accessor.name,
-                    "parameter": bind.parameter,
-                    "postgres": bind.postgres,
-                    "nullable": bind.nullable,
-                    "native_rust": bind.native_rust,
-                    "wamn_rust": bind.wamn_rust,
-                })
-            })
-        })
-        .collect::<Vec<_>>();
-    insert_json(
-        files,
-        &format!("generated/parity/{model_name}.json"),
-        &json!({
-            "model": model_name,
-            "rule": "same_sql_file_two_projection_structs",
-            "fields": fields,
-            "accessor_binds": accessor_binds,
-        }),
-    )
 }
 
 pub(super) fn wamn_api(

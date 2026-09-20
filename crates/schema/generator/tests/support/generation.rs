@@ -291,14 +291,22 @@ pub(super) fn accessor_bind(
     })
 }
 
-pub(super) fn assert_native_fixtures_match_parity(package: &GeneratedPackage, model: &str) {
+pub(super) fn assert_native_fixtures_match_wamn_api(package: &GeneratedPackage, model: &str) {
     let source_map = artifact_json(package, &format!("generated/source-map/{model}.json"));
-    let parity = artifact_json(package, &format!("generated/parity/{model}.json"));
-    let parity_binds = parity["accessor_binds"].as_array().unwrap();
+    let accessors = source_map["wamn_api"]["accessors"].as_array().unwrap();
+    let accessor_binds = accessors
+        .iter()
+        .flat_map(|accessor| {
+            accessor["binds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(move |bind| (accessor["name"].as_str().unwrap(), bind))
+        })
+        .collect::<Vec<_>>();
     let fixtures = source_map["native_bind_fixtures"].as_array().unwrap();
-    assert_eq!(fixtures.len(), parity_binds.len());
-    for bind in parity_binds {
-        let accessor = bind["accessor"].as_str().unwrap();
+    assert_eq!(fixtures.len(), accessor_binds.len());
+    for (accessor, bind) in accessor_binds {
         let parameter = bind["parameter"].as_str().unwrap();
         let fixture = fixtures
             .iter()

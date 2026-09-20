@@ -1,7 +1,5 @@
 use serde_json::{Value, json};
-use wamn_schema_generator::{
-    GenerateErrorKind, PackageManifest, validate_operation_vocabulary, validate_parity_json,
-};
+use wamn_schema_generator::{GenerateErrorKind, PackageManifest, validate_operation_vocabulary};
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnType, Exclusion, ExclusionAccessMethod, ExclusionElement,
     ExclusionKey, Table,
@@ -133,38 +131,7 @@ fn authored_sql_access_must_match_declared_reads_and_row_locks() {
 }
 
 #[test]
-fn state_idempotence_carries_its_contract_and_requires_its_exact_shape() {
-    let package = fixture::generate_fixture();
-    assert!(
-        fixture::contracts(&package).contains_key("widget/archive.state-tests.json"),
-        "the state contract is available to descriptor consumers"
-    );
-    assert_eq!(
-        artifact(
-            &package,
-            "generated/contracts/widget/archive.state-tests.json"
-        ),
-        json!({
-            "operation": "platform-fixture:widget/archive@1.0.0",
-            "law": "command-idempotence-from-state",
-            "guards": [{
-                "relation": "inventory.widget",
-                "expected_version": "expected_edit_version"
-            }],
-            "cases": [{
-                "id": "a_repeat_is_a_no_op_or_a_typed_conflict",
-                "given": "the same request sent again after the first call succeeded",
-                "expect": {
-                    "writes": "none",
-                    "outcome": "unchanged_original_or_refusal",
-                    "refusal": "concurrency_conflict",
-                    "second_write": "never",
-                    "identity_minted": "none"
-                }
-            }]
-        })
-    );
-
+fn state_idempotence_requires_its_exact_shape() {
     for guards in [
         json!({}),
         json!({"missing": "expected_edit_version"}),
@@ -209,9 +176,10 @@ fn state_idempotence_carries_its_contract_and_requires_its_exact_shape() {
 #[test]
 fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
     let package = fixture::generate_fixture();
+    assert!(package.file("generated/wamn/widget_command.rs").is_none());
     assert!(
         package
-            .file("generated/models/widget_command.json")
+            .file("generated/native-verifier/widget_command.rs")
             .is_none()
     );
 
@@ -361,10 +329,19 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
         .unwrap()
         .remove("create");
     let package = fixture::generate_with(&fixture::catalog(), &ownership_only);
+    assert!(package.file("generated/wamn/command_state.rs").is_none());
     assert!(
         package
-            .file("generated/models/command_state.json")
-            .is_some()
+            .file("generated/native-verifier/command_state.rs")
+            .is_none()
+    );
+    let metadata = artifact(&package, "generated/package-weld.json");
+    assert!(
+        metadata["required_schema_contract"]["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|table| table["table"] == "widget_command")
     );
     for action in ["get", "query", "create", "update", "delete"] {
         assert!(
@@ -479,17 +456,9 @@ fn event_registration_and_line_profiles_are_closed() {
 }
 
 #[test]
-fn custom_statement_declarations_drive_parity_and_require_unique_paths() {
+fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
     let package = fixture::generate_fixture();
     let source_map = artifact(&package, "generated/source-map/widget_archive.json");
-    let parity = artifact(&package, "generated/parity/widget_archive.json");
-    validate_parity_json(
-        package
-            .file("generated/parity/widget_archive.json")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
     let statement = &source_map["statements"]["archive"];
     let accessor = &source_map["wamn_accessors"][0];
     let operation = artifact(
@@ -525,8 +494,20 @@ fn custom_statement_declarations_drive_parity_and_require_unique_paths() {
             .len(),
         2
     );
-    assert_eq!(parity["fields"].as_array().unwrap().len(), 2);
-    assert_eq!(parity["accessor_binds"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        source_map["native_rows"][0]["fields"],
+        json!([
+            {"name": "id", "type": "uuid::Uuid"},
+            {"name": "edit_version", "type": "i64"}
+        ])
+    );
+    assert_eq!(
+        source_map["wamn_rows"][0]["fields"],
+        json!([
+            {"name": "id", "type": "wamn_postgres_statements::Uuid"},
+            {"name": "edit_version", "type": "i64"}
+        ])
+    );
     assert_eq!(contract_statement["path"], statement["path"]);
     assert_eq!(contract_statement["binds"], statement["parameters"]);
     assert_eq!(contract_statement["columns"], statement["row"]);
@@ -536,53 +517,23 @@ fn custom_statement_declarations_drive_parity_and_require_unique_paths() {
             .unwrap()
             .starts_with("sha256:")
     );
-    for declared in statement["row"].as_array().unwrap() {
-        let name = declared["name"].as_str().unwrap();
-        let identity = format!("archive.{name}");
-        let parity_field = parity["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|field| field["field"] == identity)
-            .unwrap();
-        for rows in [&source_map["native_rows"], &source_map["wamn_rows"]] {
-            let field = rows[0]["fields"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|field| field["name"] == name)
-                .unwrap();
-            let expected = if rows == &source_map["native_rows"] {
-                &parity_field["native_rust"]
-            } else {
-                &parity_field["wamn_rust"]
-            };
-            assert_eq!(&field["type"], expected);
-        }
-        assert_eq!(parity_field["nullable"], declared["nullable"]);
-    }
     for declared in statement["parameters"].as_array().unwrap() {
         let name = declared["name"].as_str().unwrap();
-        let parity_bind = parity["accessor_binds"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|bind| bind["accessor"] == "archive" && bind["parameter"] == name)
-            .unwrap();
         let emitted = accessor["binds"]
             .as_array()
             .unwrap()
             .iter()
             .find(|bind| bind["parameter"] == name)
             .unwrap();
-        assert_eq!(emitted["native_rust"], parity_bind["native_rust"]);
-        assert_eq!(emitted["wamn_rust"], parity_bind["wamn_rust"]);
+        let fixture = source_map["native_bind_fixtures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|fixture| fixture["accessor"] == "archive" && fixture["parameter"] == name)
+            .unwrap();
+        assert_eq!(fixture["type"], emitted["native_rust"]);
         assert_eq!(emitted["nullable"], declared["nullable"]);
     }
-    assert_eq!(
-        source_map["native_bind_fixtures"][0]["type"],
-        parity["accessor_binds"][0]["native_rust"]
-    );
 
     let mut renamed = fixture::manifest();
     renamed["custom_operations"]["widget.archive"]["statements"]["archive"]["parameters"][0] =
@@ -660,7 +611,7 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
     for path in [
         "generated/native-verifier/widget_archive.rs",
         "generated/wamn/widget_archive.rs",
-        "generated/parity/widget_archive.json",
+        "generated/source-map/widget_archive.json",
     ] {
         assert!(
             composed.file(path).is_none(),
@@ -668,15 +619,14 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
         );
     }
     assert_eq!(
-        artifact(&composed, "generated/source-map/widget_archive.json")["composition"]["alias"],
+        artifact(
+            &composed,
+            "generated/contracts/widget/archive.operation.json"
+        )["dependency"]["alias"],
         "base"
     );
 
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let inherited = artifact(
-        &package,
-        "generated/contracts/widget/archive.inherited-tests.json",
-    );
     for (field, value, kind) in [
         (
             "field_owners",
@@ -708,33 +658,6 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
             kind
         );
     }
-    assert_eq!(
-        inherited,
-        json!({
-            "operation": "decorator-fixture:widget/archive@1.0.0",
-            "law": "command-identity-from-claim",
-            "inherits": {
-                "alias": "base",
-                "package": "platform_fixture",
-                "version": "1.0.0",
-                "digest": format!("sha256:{}", "a".repeat(64)),
-                "operation": "widget.archive",
-            },
-            "cases": [
-                {
-                    "id": "replay_returns_the_base_original",
-                    "given": "the same idempotency_key with the same canonical_command",
-                    "expect": {
-                        "identity_source": "base_claim",
-                        "base_result": "identical_to_the_base_first_call",
-                        "result": "the_base_original_under_this_command_decoration",
-                        "writes": "none",
-                        "claim": "none_of_its_own",
-                    },
-                },
-            ],
-        })
-    );
     assert_eq!(
         artifact(
             &package,
@@ -786,48 +709,18 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
 }
 
 #[test]
-fn authored_claims_emit_the_law_and_require_exact_finalization() {
+fn authored_claims_require_exact_finalization() {
     let manifest = platform_claim::manifest();
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let contract = artifact(
+    let operation = artifact(
         &package,
-        "generated/contracts/widget/archive.claim-tests.json",
+        "generated/contracts/widget/archive.operation.json",
     );
+    assert_eq!(operation["idempotent_by"], "claim");
     assert_eq!(
-        contract,
-        json!({
-            "operation": "platform-fixture:widget/archive@1.0.0",
-            "law": "command-identity-from-claim",
-            "cases": [
-                {
-                    "id": "replay_returns_the_immutable_original",
-                    "given": "the same idempotency_key with the same canonical_command",
-                    "first_call": ["claim", "finalize"],
-                    "second_call": ["claim", "replay"],
-                    "expect": {
-                        "claim": "no_row",
-                        "canonical_command": "equal",
-                        "result": "identical_to_the_first_call",
-                        "writes": "none",
-                        "identity_source": "claim",
-                    },
-                },
-                {
-                    "id": "changed_request_under_a_live_key_refuses",
-                    "given": "the same idempotency_key with a changed canonical_command",
-                    "first_call": ["claim", "finalize"],
-                    "second_call": ["claim", "replay"],
-                    "expect": {
-                        "claim": "no_row",
-                        "canonical_command": "differs",
-                        "writes": "none",
-                        "refusal": "idempotency_conflict",
-                    },
-                },
-            ],
-        })
+        operation["claim"],
+        manifest["custom_operations"]["widget.archive"]["claim"]
     );
-
     for fetch in ["optional_one", "bounded_list"] {
         let mut invalid = manifest.clone();
         invalid["custom_operations"]["widget.archive"]["statements"]["finalize"]["fetch"] =
