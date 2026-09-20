@@ -25,8 +25,9 @@ use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
 use wamn_control_registry::Triple;
 use wamn_execution_host::{
-    ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
-    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+    DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, ROUTER_DELIVERY_ID,
+    RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV,
+    WiringCacheCapacity,
 };
 use wamn_platform_identity::route_caller_subject;
 use wamn_runtime::component_artifact_source::{
@@ -111,6 +112,10 @@ pub struct HostArgs {
     /// chart value is a pod IP and is not a valid runner identity.
     #[arg(long, env = "WAMN_RUNNER")]
     pub runner: Option<String>,
+
+    /// Duration of a durable queue claim before another replica may recover it.
+    #[arg(long, env = "WAMN_QUEUE_LEASE_TTL_MS", default_value_t = DEFAULT_QUEUE_LEASE_TTL_MS)]
+    pub queue_lease_ttl_ms: u64,
 
     /// Environment advertised in heartbeats (chart passes the pod namespace)
     #[arg(long = "environment", env = "WASMCLOUD_HOST_ENVIRONMENT")]
@@ -712,11 +717,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     )
     .await
     .context("failed to connect to scheduler NATS")?;
-    // l5i9.17: the wamn:jetstream doorbell rides the SAME control-plane
-    // connection (the dispatcher publishes and the run-worker subscribes on the
-    // shared execution-target doorbell subject) — no second connection.
-    let doorbell_client = scheduler_nats_client.clone();
-
     let host_memory = host_memory(&args)?;
     let engine = Arc::new(
         if let Some(compilation_cache_dir) = args.wasmtime_cache_dir.as_deref() {
@@ -771,14 +771,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let guest_url = std::env::var("WAMN_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
+    let queue_credentials_complete = guest_url.is_some() && executor_platform_url.is_some();
     let postgres_credentials = if guest_url.is_some()
         || executor_platform_url.is_some()
         || http_admitter_url.is_some()
         || event_materializer_url.is_some()
     {
         Some(host_credentials(
-            guest_url,
-            executor_platform_url,
+            guest_url.clone(),
+            executor_platform_url.clone(),
             http_admitter_url,
             event_materializer_url,
         ))
@@ -853,7 +854,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         args.component_pool_size,
                         args.component_reclaim_window_seconds,
                     )?,
-                    owner_prefix: router_owner,
+                    owner_prefix: router_owner.clone(),
                     project: args.project.clone(),
                     schema: args.schema.clone(),
                     cache_capacity: args.wiring_cache_capacity,
@@ -894,11 +895,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let jetstream = Arc::new(
-        WamnJetstream::from_env()
-            .with_doorbell(doorbell_client)
-            .with_release(release.clone()),
-    );
+    let jetstream = Arc::new(WamnJetstream::from_env().with_release(release.clone()));
     jetstream
         .activate_events()
         .await
@@ -951,7 +948,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
         // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
         // the plugin still links and returns connection-unavailable on use.
-        postgres,
+        Arc::clone(&postgres),
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
         // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
@@ -985,6 +982,26 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_metrics(&global::meter(ROUTER_DELIVERY_ID)),
         ));
     }
+
+    let queue = match (&router_driver, &release) {
+        (Some(driver), Some(release)) if queue_credentials_complete => Some(
+            QueueService::bind(
+                Arc::clone(driver),
+                Arc::clone(&postgres),
+                Arc::clone(&jetstream),
+                release,
+                QueueServiceConfig {
+                    project: args.project.clone(),
+                    schema: args.schema.clone(),
+                    runner: router_owner,
+                    lease_ttl_ms: args.queue_lease_ttl_ms,
+                },
+            )
+            .await
+            .context("bind durable queue execution")?,
+        ),
+        _ => None,
+    };
 
     let native_event_bindings = if let Some(path) = &args.materializer_nats_binding_file {
         let bytes = tokio::fs::read(path)
@@ -1121,6 +1138,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         cleanup_budget_secs = cleanup_budget.as_secs(),
         "wamn-host runtime startup completed"
     );
+    let (stop_queue, stopping) = tokio::sync::watch::channel(false);
+    let queue_serving = async {
+        match queue.as_ref() {
+            Some(queue) => queue.serve(stopping).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(queue_serving);
 
     // Polling cleanup requests shutdown. Observe the retained native state instead.
     let stopped = async {
@@ -1132,16 +1157,39 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             };
             connection.failure().await
         };
-        tokio::select! {
+        let queue_failure = async {
+            let Some(queue) = queue.as_ref() else {
+                return std::future::pending::<anyhow::Error>().await;
+            };
+            let liveness = queue.liveness();
+            wamn_runtime::lifecycle::watch_liveness(
+                &liveness,
+                &probe_state,
+                Duration::from_millis(args.queue_lease_ttl_ms).saturating_mul(3),
+            )
+            .await
+        };
+        let result = tokio::select! {
             signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
             _ = sigterm.recv() => Ok(()),
             error = identity_failure => Err(error),
+            error = queue_failure => Err(error),
             error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => Err(error),
             () = ingress_stopped(ingress_connections.as_ref()) => anyhow::bail!("native HTTP ingress stopped unexpectedly"),
             task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
                 Err(probe_listener_failure(task.as_ref()))
             }
-        }
+            result = &mut queue_serving => result.and(Err(anyhow::anyhow!(
+                "durable queue loop stopped unexpectedly"
+            ))),
+        };
+        let _ = stop_queue.send(true);
+        let queue_cleanup = wamn_runtime::lifecycle::bounded_cleanup(
+            wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
+            &mut queue_serving,
+        )
+        .await;
+        result.and(queue_cleanup)
     };
     let result = stop_after(
         stopped,
@@ -1151,6 +1199,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         cleanup_budget,
     )
     .await;
+    if let Some(queue) = &queue {
+        queue.revoke();
+    }
     // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
     let identity_result = wamn_runtime::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         if let Some(mut connection) = identity_connection.take() {
