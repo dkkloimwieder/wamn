@@ -1,6 +1,6 @@
 # Testing stabilization and repository qualification
 
-**Status:** draft 0.4 for epic/issue decomposition
+**Status:** revision 0.5 for developer-path verification and final local qualification
 
 **Basis:** current repository behavior and test ownership on `main`, especially `docs/testing/*`, `docs/operations/running-tests.md`, existing application test owners, generator/control-plane tests, and current delivery/test tooling.
 
@@ -81,7 +81,7 @@ Include the existing owners for:
 List the retained deployed tests and their prerequisites without running them.
 Carry existing deployed-test results forward only as prior evidence for planning.
 Keep known failures and limitations named, including `wamn-h6lm`.
-Do not claim a new deployed result until Increment E.
+Do not claim a new deployed result until Increment D.
 
 Classify every non-green result as exactly one of:
 
@@ -291,92 +291,80 @@ The shared verifier still consumes the exact SQL corpus and its bind/result type
 - WIT has one authority/materialization path per package and no copy-coherence tests remain solely to police editable duplicates.
 - The committed generated-output set has an explicit remaining consumer for every retained artifact class.
 
-## 5. Increment C — audit UI/process coverage
+## 5. Increment C — verify the developer path
 
-Ordinary application UI behavior should run in-process through existing reducers/event handlers and Ratatui test surfaces.
+The generator, SQLx, WIT, and generated-output ownership cleanup is complete.
+Reopen those owners only for a concrete defect.
+Use the existing tools and test owners. Do not introduce another test framework.
 
-Audit remaining PTY/process cases and classify each as:
+Keep existing PTY and UI tests unless they are broken, obsolete, or directly block qualification.
+Do not migrate tests merely to change their architectural location.
+Preserve terminal restoration, signals, password handling, and application behavior.
 
-- **process behavior** — keep;
-- **application state/rendering behavior** — move to or confirm equivalent in-process coverage, then delete the duplicate process assertion.
+### Change selection and required cases
 
-Retain process-level coverage for behavior such as:
+Use the existing conformance cases for `tools/test-changes` and `tools/require-test-result`.
+Make sure that selection reaches owning packages and the correct dependents.
+Include shared non-Cargo inputs where Cargo metadata cannot determine ownership.
+Platform fixtures must select their platform owners.
+Application edits must not select unrelated suites through retired fixture dependencies.
 
-- terminal initialization/restoration;
-- signal/shutdown handling;
-- password echo suppression;
-- actual binary/process startup where the process boundary is the property.
+Make sure that selected commands execute and that required selections reject zero executed cases.
+Ignored, skipped, and missing-prerequisite cases do not count as passing evidence.
+An intentional documentation-only dry run remains a planning result.
 
-In-process coverage should continue to own:
+### SQLx through the owning path
 
-- navigation and editing;
-- request construction;
-- absent/null/value behavior;
-- double-submit prevention;
-- success/refusal/partial-completion/uncertain states;
-- safe captured retry rules;
-- target replacement/session reset;
-- late-response isolation;
-- rendered application state.
+Make sure that Rust-only edits use committed `.sqlx` metadata without SQLx preparation or database setup.
+Use the existing application and delivery paths for SQL, migration, and effective-schema changes.
+Make sure that these paths refresh metadata when requested and reject stale or missing metadata during qualification.
+Check-only qualification must use a fresh schema without first rewriting the tracked metadata.
+Preserve exact SQL-corpus, bind, result, and nullability coverage.
 
-### Acceptance
+### Disposable PostgreSQL and prerequisites
 
-- Every retained PTY/process assertion proves a process property.
-- Application-state assertions have an in-process owner.
-- No frontend behavior is weakened to remove a process test.
+Use `wamn-test-postgres` and the existing isolation assertions.
+Make sure that tests use disposable databases and preserve server-wide mutation isolation.
+Ordinary tests must not use interactive databases or user-supplied PostgreSQL URLs.
+Required commands must fail with the name of each missing prerequisite.
+Preserve cleanup behavior after success, failure, and interruption.
 
-## 6. Increment D — confirm the normal developer test path
+### Documentation and bounded repairs
 
-Complete this increment before deployed qualification.
-Treat the landed developer-loop mechanisms as requirements to verify, not new architecture to build.
+Update stale test and documentation references caused by the completed cleanup.
+Keep current commands in `docs/operations/running-tests.md` and link to their owning recipes.
+Repair concrete regressions and stale tests in their existing owners.
+Retain valid UI and PTY tests. Do not perform a broad TUI refactor.
+Run only affected tests during these repairs.
 
-### Change selection
+## 6. Final local qualification and review
 
-Confirm:
+This gate belongs to Increment C and follows developer-path verification.
+Run the final local qualification once after the bounded repairs settle.
+Use the retained local owners from §3 and the existing repository commands.
+Record the source revision, exact commands, executed cases, failures, and cleanup results in Beads.
+Keep command output in the existing local result locations.
 
-- `tools/test-changes dry-run` selects the expected owning packages and dependents;
-- `tools/test-changes run` executes the selected commands;
-- a named/required test matching zero cases is rejected;
-- non-Cargo inputs read indirectly by packages have explicit selection ownership where Cargo metadata cannot infer it.
-
-The B1/B8 fixture changes must not accidentally cause ordinary application edits to select unrelated platform suites.
-
-### PostgreSQL isolation
-
-Confirm:
-
-- database-backed tests use `wamn-test-postgres` or the documented owning fixture;
-- tests do not read user-supplied PostgreSQL URLs for ordinary execution;
-- tests that mutate server-wide roles/settings hold the documented lock or own a separate server;
-- interactive development databases are never used by tests.
-
-### SQLx
-
-Confirm after B5:
-
-- ordinary Rust-only builds/tests compile from committed `.sqlx` metadata with PostgreSQL unavailable;
-- SQL, migration, effective-schema, or verifier-input changes refresh metadata through the owning application/delivery command;
-- check-only qualification verifies metadata against a fresh schema and does not rewrite tracked metadata first;
-- stale/missing metadata is rejected;
-- removal of application-specific verifier test targets did not reduce the SQL corpus being checked.
-
-### Required-test behavior
-
-Confirm:
-
-- missing prerequisites fail by name;
-- ignored or skipped tests never count as executed evidence;
-- qualification commands require real executed cases.
+Carry every unresolved local failure forward into this gate, including existing stale tests and strict Clippy failures.
+After a failure, fix its cause and rerun the failed or materially affected cases.
+Do not repeat passing suites without a changed dependency or a concrete concern.
+A historical pass does not establish the new baseline.
 
 ### Acceptance
 
-- One Rust-only application edit reaches focused feedback without SQLx preparation or cluster setup.
-- One SQL edit refreshes/checks metadata through the normal path.
-- One application business edit runs its selected local application/database coverage.
-- Platform fixture edits select their owning platform tests rather than unrelated application tests.
-- The full qualification path remains available separately.
+- Rust-only edits reach focused feedback without SQLx preparation or cluster setup.
+- SQL/schema edits refresh and check metadata through the owning path.
+- Selected application and platform edits reach the correct test owners and dependents.
+- Required cases execute, and missing prerequisites fail by name.
+- Disposable PostgreSQL preserves database and server-wide isolation.
+- Formatting, lint, compilation, and retained local tests form a reproducible green baseline.
+- Current documentation describes the normal edit/test loop without retired references.
 
-## 7. Increment E — qualify the real external boundaries once
+Only after local green, prepare the separate deployed gate with its retained cases, prerequisites, and known failures.
+Stop at this epic boundary for owner review before deployed execution.
+No new feature work opens before the final stabilization review.
+
+## 7. Increment D — qualify the real external boundaries once
 
 After cleanup and final local qualification settle, run the retained deployment/runtime layer once against the resulting topology.
 
@@ -463,9 +451,9 @@ local baseline
 → B8 control-plane fixture cleanup
 → B9 WIT ownership
 → B10 generated-output decision
-→ UI/process audit
-→ developer-path verification
+→ developer-path verification and bounded repairs
 → final local qualification
+→ owner review
 → one deployed qualification
 → owner review
 ```
@@ -492,7 +480,7 @@ Testing stabilization is complete when:
 3. Generator/control-plane/runtime tests do not depend on shipped application files merely as generic fixtures.
 4. Ordinary application business behavior runs without cluster/image/broker setup where those boundaries are irrelevant.
 5. Cluster/deployment tests contain only assertions that genuinely require those boundaries.
-6. UI application behavior is owned in-process; retained PTY/process tests prove actual process behavior.
+6. Existing UI and PTY tests remain unless a concrete defect or obsolete assertion requires a change.
 7. SQLx offline compilation, fresh-schema verification, disposable PostgreSQL, and change-based test selection are the normal documented paths.
 8. SQLx verification still covers the exact application SQL corpus after verifier ownership is cleaned up.
 9. Required tests cannot report green by skipping, matching zero cases, or silently lacking prerequisites.
