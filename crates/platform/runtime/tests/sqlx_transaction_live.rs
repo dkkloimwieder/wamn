@@ -24,7 +24,7 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
 use wasmtime_wasi::WasiCtxBuilder;
-use wasmtime_wasi::p2::bindings::CommandPre;
+use wasmtime_wasi::p3::bindings::Command;
 
 const COMPONENT_ENV: &str = "WAMN_SQLX_TRANSACTION_COMPONENT";
 const COMPONENT_ID: &str = "sqlx-command-live";
@@ -171,8 +171,8 @@ async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Resu
         .map_err(|error| anyhow::anyhow!("compile sqlx-command component: {error}"))?;
     let mut linker: Linker<SharedCtx> = Linker::new(raw);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    wasmtime_wasi::p3::add_to_linker(&mut linker)?;
     wamn_postgres::add_to_linker(&mut linker)?;
-    let pre = CommandPre::new(linker.instantiate_pre(&component)?)?;
 
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(WAMN_POSTGRES_ID, postgres);
@@ -192,15 +192,13 @@ async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Resu
     store.set_epoch_deadline(u64::MAX / 2);
 
     let traces = TraceHarness::install();
-    let command = pre
-        .instantiate_async(&mut store)
+    let command = Command::instantiate_async(&mut store, &component, &linker)
         .await
         .map_err(|error| anyhow::anyhow!("instantiate sqlx-command: {error}"))?;
-    let outcome = command
-        .wasi_cli_run()
-        .call_run(&mut store)
+    let outcome = store
+        .run_concurrent(async move |accessor| command.wasi_cli_run().call_run(accessor).await)
         .await
-        .map_err(|error| anyhow::anyhow!("run sqlx-command: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("run sqlx-command: {error}"))??;
     ensure!(outcome.is_ok(), "sqlx-command returned an error status");
     drop(store);
     traces.spans()
