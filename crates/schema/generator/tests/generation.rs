@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, GenerateErrorKind, GeneratedPackage,
@@ -1191,6 +1193,123 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
     (CatalogIr::new(vec![model, claim]), manifest)
 }
 
+fn compile_inventory_item_component(package: &GeneratedPackage) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .expect("the generator sits three levels below the repository root");
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    let scratch = target.join("generator-fixtures/typed-crud-contracts");
+    let fixture_target = target.join("generator-fixture-build");
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(scratch.join("src")).expect("create fixture source directory");
+    std::fs::create_dir_all(scratch.join("wit")).expect("create fixture WIT directory");
+
+    for (source, target) in [
+        (
+            "generated/wit/deps/wamn-inventory-inventory-item/package.wit",
+            "wit/package.wit",
+        ),
+        (
+            "generated/wit/inventory_item_create_codec.rs",
+            "src/create_codec.rs",
+        ),
+        (
+            "generated/wit/inventory_item_update_codec.rs",
+            "src/update_codec.rs",
+        ),
+        (
+            "generated/wit/inventory_item_delete_codec.rs",
+            "src/delete_codec.rs",
+        ),
+        ("generated/wit/operation_codec.rs", "src/operation_codec.rs"),
+    ] {
+        std::fs::write(
+            scratch.join(target),
+            package
+                .file(source)
+                .unwrap_or_else(|| panic!("missing {source}"))
+                .bytes(),
+        )
+        .unwrap_or_else(|error| panic!("write {target}: {error}"));
+    }
+
+    std::fs::write(
+        scratch.join("Cargo.toml"),
+        "[package]\nname = \"typed-crud-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+         \n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n\
+         uuid = \"1\"\nwit-bindgen = { version = \"0.61\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }\n\
+         \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
+    )
+    .expect("write fixture manifest");
+    let node = root.join("apps/wamn_wms/data/wit/deps/wamn-node");
+    let lib = format!(
+        r##"wit_bindgen::generate!({{
+    world: "wamn:inventory-fixture/component@1.0.0",
+    inline: r#"
+        package wamn:inventory-fixture@1.0.0;
+        world component {{
+          export wamn-inventory:inventory-item/create@1.0.0;
+          export wamn-inventory:inventory-item/update@1.0.0;
+          export wamn-inventory:inventory-item/delete@1.0.0;
+        }}
+    "#,
+    path: ["{}", "{}"],
+    generate_all,
+    async: true,
+}});
+
+struct Component;
+
+macro_rules! operation {{
+    ($module:ident, $contract:ident, $handler:ident, $request:ident, $result:ident, $error:ident) => {{
+        mod $module {{
+            use crate::exports::wamn_inventory::inventory_item::$contract as contract;
+            include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/", stringify!($module), ".rs"));
+        }}
+        async fn $handler(
+            _state: &mut (),
+            _request: exports::wamn_inventory::inventory_item::$contract::$request,
+        ) -> Result<
+            exports::wamn_inventory::inventory_item::$contract::$result,
+            exports::wamn_inventory::inventory_item::$contract::$error,
+        > {{
+            unreachable!()
+        }}
+    }};
+}}
+"##,
+        node.display(),
+        scratch.join("wit").display()
+    );
+    let lib = format!(
+        "{lib}\noperation!(create_codec, create, create_handler, CreateRequest, CreateResult, CreateError);\n\
+         operation!(update_codec, update, update_handler, UpdateRequest, UpdateResult, UpdateError);\n\
+         operation!(delete_codec, delete, delete_handler, DeleteRequest, DeleteResult, DeleteError);\n\n\
+         create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, (), create_handler, create_codec);\n\
+         update_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, (), update_handler, update_codec);\n\
+         delete_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, (), delete_handler, delete_codec);\n\n\
+         export!(Component);\n"
+    );
+    std::fs::write(scratch.join("src/lib.rs"), lib).expect("write fixture component");
+
+    let output = Command::new(env!("CARGO"))
+        .args(["check", "--offline", "--quiet"])
+        .env("CARGO_TARGET_DIR", fixture_target)
+        .current_dir(&scratch)
+        .output()
+        .expect("cargo check runs for the typed CRUD fixture");
+    assert!(
+        output.status.success(),
+        "the generated typed CRUD component does not compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
 #[test]
 fn typed_crud_contracts_follow_a_non_receiving_model_declaration() {
     let (catalog, manifest) = inventory_item_fixture();
@@ -1267,6 +1386,7 @@ fn typed_crud_contracts_follow_a_non_receiving_model_declaration() {
         delete["expected_sequence_number"],
         json!({"field": "sequence_number", "type": "int64", "required": true})
     );
+    compile_inventory_item_component(&package);
 }
 
 fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
