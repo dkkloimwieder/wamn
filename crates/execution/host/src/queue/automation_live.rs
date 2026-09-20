@@ -1,6 +1,6 @@
 //! Operator admission through the real queue, router, and scoped database roles.
 
-use super::{QUEUE_CLAIM_SCOPE, QueueScope, drain_one};
+use super::{QUEUE_CLAIM_SCOPE, QueueScope, QueueService, QueueServiceConfig, drain_one};
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -266,14 +266,14 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         &wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default(),
     )?;
     let logging = Arc::new(logging);
-    let driver = RouterDriver::new(
+    let driver = Arc::new(RouterDriver::new(
         Arc::clone(&engine),
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new()?),
         Arc::new(WamnCredentials::empty()),
         Arc::clone(&logging),
         Arc::from([]),
-        release,
+        Arc::clone(&release),
         ComponentArtifactSource::local(scratch.path().to_owned()),
         RouterDriverConfig {
             warm_reuse: crate::warm_reuse::WarmReuse::default(),
@@ -282,14 +282,14 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
             schema: Some("wamn_run".to_owned()),
             cache_capacity: WiringCacheCapacity::default(),
         },
-    )?;
+    )?);
     let scope = QueueScope {
         tenant_id: TENANT.to_owned(),
         project: "default".to_owned(),
         package_ids: vec!["automation".to_owned()],
         environment: "test".to_owned(),
     };
-    let jetstream = WamnJetstream::from_env();
+    let jetstream = Arc::new(WamnJetstream::from_env());
     let liveness = Liveness::new(Duration::from_secs(90));
     let mut request = EnqueueRun {
         tenant: TENANT.to_owned(),
@@ -319,12 +319,69 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         )
         .await;
     }
+    let first = QueueService::bind(
+        Arc::clone(&driver),
+        Arc::clone(&postgres),
+        Arc::clone(&jetstream),
+        &release,
+        QueueServiceConfig {
+            project: "default".to_owned(),
+            schema: Some("wamn_run".to_owned()),
+            runner: "automation-live-first".to_owned(),
+            lease_ttl_ms: 30_000,
+        },
+    )
+    .await?;
     let run = enqueue(&mut admin, &schema, &request).await?;
     assert_eq!(enqueue(&mut admin, &schema, &request).await?, run);
     request.input = json!({"different":true});
     assert!(enqueue(&mut admin, &schema, &request).await.is_err());
     request.input = json!({"queued":true});
-    assert!(drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
+    let (_stop_first, stopped_first) = tokio::sync::watch::channel(true);
+    first.serve(stopped_first).await?;
+    first.revoke();
+    drop(first);
+
+    let second = QueueService::bind(
+        Arc::clone(&driver),
+        Arc::clone(&postgres),
+        Arc::clone(&jetstream),
+        &release,
+        QueueServiceConfig {
+            project: "default".to_owned(),
+            schema: Some("wamn_run".to_owned()),
+            runner: "automation-live-second".to_owned(),
+            lease_ttl_ms: 30_000,
+        },
+    )
+    .await?;
+    let (stop_second, stopping_second) = tokio::sync::watch::channel(false);
+    let serving_second = second.serve(stopping_second);
+    tokio::pin!(serving_second);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            tokio::select! {
+                result = &mut serving_second => {
+                    panic!("restarted queue service stopped before completing durable work: {result:?}")
+                }
+                () = tokio::time::sleep(Duration::from_millis(10)) => {
+                    let status: String = admin.query_one(
+                        "SELECT status FROM wamn_run.runs WHERE run_id=$1",
+                        &[&run],
+                    ).await?.get(0);
+                    if status == "completed" {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+                }
+            }
+        }
+    })
+    .await
+    .expect("restarted queue service completes pending run")?;
+    stop_second.send(true)?;
+    tokio::time::timeout(Duration::from_secs(1), &mut serving_second)
+        .await
+        .expect("restarted queue service drains")?;
     let row = admin.query_one("SELECT status,result_json::text,service_principal_id::text,deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
     assert_eq!(row.get::<_, String>(0), "completed");
     assert_eq!(
@@ -408,5 +465,6 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     admin.execute("UPDATE app_system.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",&[&TENANT,&SERVICE]).await?;
     request.idempotency_key = "inactive".to_owned();
     assert!(enqueue(&mut admin, &schema, &request).await.is_err());
+    second.revoke();
     Ok(())
 }
