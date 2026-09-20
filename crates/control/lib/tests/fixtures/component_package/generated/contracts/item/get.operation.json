@@ -1,0 +1,1 @@
+{"fresh_only":false,"operation":"source-fixture:item/get@1.0.0","statements":[{"binds":[{"name":"id","nullable":false,"type":"uuid"}],"columns":[{"name":"id","nullable":false,"type":"uuid"}],"digest":"sha256:9a8104aad8cb498360b7b2838d46fe293e9e9e26f3a70ee63341674a58b569fd","name":"get","path":"generated/sql/item/get.sql","transactional":false}]}

@@ -2548,18 +2548,18 @@ mod tests {
 
     #[test]
     fn local_schema_inputs_separate_contract_and_sql_changes_from_migrations() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/dev_package");
         let directory = apply_package::read_package_directory(&root).unwrap();
         let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
         let original = package_schema_inputs(&manifest, &directory);
         manifest
             .models
-            .get_mut("purchase_order")
+            .get_mut("record")
             .unwrap()
             .operations
             .get_mut(&wamn_schema_generator::CrudAction::Get)
             .unwrap()
-            .permission = "purchase_order.changed".to_owned();
+            .permission = "record.changed".to_owned();
         manifest.custom_operations.clear();
         assert_eq!(package_schema_inputs(&manifest, &directory), original);
         let mut changed = directory.clone();
@@ -2567,7 +2567,7 @@ mod tests {
             .bytes
             .extend_from_slice(b"\n-- schema changed\n");
         assert_ne!(package_schema_inputs(&manifest, &changed), original);
-        manifest.models.get_mut("purchase_order").unwrap().table = "replacement".to_owned();
+        manifest.models.get_mut("record").unwrap().table = "replacement".to_owned();
         assert_ne!(package_schema_inputs(&manifest, &directory), original);
     }
 
@@ -2580,7 +2580,7 @@ mod tests {
             AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration,
         };
 
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/dev_package");
         let directory = apply_package::read_package_directory(&root).unwrap();
         let manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
         let plan = wamn_schema_control::plan_package_migrations(&directory, None).unwrap();
@@ -2618,7 +2618,7 @@ mod tests {
         let mut appended = directory.clone();
         appended.migrations.push(MigrationSource {
             relative_path: "migrations/0002_location_description.sql".to_owned(),
-            bytes: b"ALTER TABLE receiving.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';".to_vec(),
+            bytes: b"ALTER TABLE platform_fixture.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';".to_vec(),
         });
         assert!(keeps(&manifest, &appended), "an appended migration keeps");
         assert_ne!(
@@ -2637,11 +2637,11 @@ mod tests {
                 edit(|manifest| {
                     manifest
                         .models
-                        .get_mut("purchase_order")
+                        .get_mut("record")
                         .unwrap()
                         .enum_fields
                         .insert(
-                            "status".to_owned(),
+                            "state".to_owned(),
                             vec!["open".to_owned(), "held".to_owned()],
                         );
                 }),
@@ -2651,7 +2651,7 @@ mod tests {
                 edit(|manifest| {
                     manifest
                         .models
-                        .get_mut("purchase_order")
+                        .get_mut("record")
                         .unwrap()
                         .server_owned_fields
                         .pop();
@@ -2679,10 +2679,10 @@ mod tests {
                 edit(|manifest| {
                     manifest
                         .models
-                        .get_mut("purchase_order")
+                        .get_mut("record")
                         .unwrap()
                         .field_owners
-                        .insert("status".to_owned(), "wamn_receiving".to_owned());
+                        .insert("state".to_owned(), "platform_records".to_owned());
                 }),
             ),
             (
@@ -2690,12 +2690,12 @@ mod tests {
                 edit(|manifest| {
                     manifest
                         .models
-                        .get_mut("purchase_order")
+                        .get_mut("record")
                         .unwrap()
                         .constraint_owners
                         .insert(
-                            "purchase_order_status_check".to_owned(),
-                            "wamn_receiving".to_owned(),
+                            "record_state_check".to_owned(),
+                            "platform_records".to_owned(),
                         );
                 }),
             ),
@@ -2704,7 +2704,7 @@ mod tests {
                 edit(|manifest| {
                     manifest
                         .models
-                        .get_mut("purchase_order")
+                        .get_mut("record")
                         .unwrap()
                         .client_field_extensible = false;
                 }),
@@ -2754,7 +2754,7 @@ mod tests {
         let package = PackageInput {
             root: root.clone(),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../../apps/wamn_receiving/wamn.json"
+                "../../tests/support/dev_package/wamn.json"
             ))
             .unwrap(),
         };
@@ -2783,9 +2783,10 @@ mod tests {
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         let package = root.join("apps/demo");
-        let weld = include_bytes!("../../../../../apps/wamn_receiving/generated/package-weld.json");
+        let weld = include_bytes!("../../tests/support/dev_package/package-weld.json");
+        let weld = weld.strip_suffix(b"\n").unwrap_or(weld);
         for (path, bytes) in [
-            (package.join(PACKAGE_WELD), weld.as_slice()),
+            (package.join(PACKAGE_WELD), weld),
             (package.join("component/src/lib.rs"), b"pub fn value() {}"),
             (
                 root.join(RECORD_HISTORY_SQL),
@@ -2863,31 +2864,31 @@ mod tests {
     #[test]
     fn package_catalog_projection_keeps_base_contract_additive() {
         let base = PackageInput {
-            root: PathBuf::from("/apps/wamn_receiving"),
+            root: PathBuf::from("/fixtures/catalog_base"),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../../apps/wamn_receiving/wamn.json"
+                "../../tests/support/catalog_base/wamn.json"
             ))
-            .expect("parse shipped base manifest"),
+            .expect("parse base fixture manifest"),
         };
         let mut overlay = PackageInput {
-            root: PathBuf::from("/apps/client_acme_receiving"),
+            root: PathBuf::from("/fixtures/catalog_overlay"),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../../apps/client_acme_receiving/wamn.json"
+                "../../tests/support/catalog_overlay/wamn.json"
             ))
-            .expect("parse shipped overlay manifest"),
+            .expect("parse overlay fixture manifest"),
         };
         overlay
             .manifest
             .models
-            .get_mut("purchase_order")
-            .expect("overlay extends the base purchase order")
+            .get_mut("record")
+            .expect("overlay extends the base record")
             .constraint_owners
             .insert(
-                "purchase_order_acme_quality_status_excl".to_owned(),
-                "client_acme_receiving".to_owned(),
+                "record_review_state_excl".to_owned(),
+                "platform_catalog_overlay".to_owned(),
             );
         let base_exclusion = Exclusion::new(
-            "purchase_order_supplier_id_excl",
+            "record_supplier_id_excl",
             ExclusionAccessMethod::Gist,
             vec![ExclusionKey::new(
                 ExclusionElement::column("supplier_id"),
@@ -2897,19 +2898,19 @@ mod tests {
         )
         .expect("base exclusion");
         let overlay_exclusion = Exclusion::new(
-            "purchase_order_acme_quality_status_excl",
+            "record_review_state_excl",
             ExclusionAccessMethod::Gist,
             vec![ExclusionKey::new(
-                ExclusionElement::column("acme_quality_status"),
+                ExclusionElement::column("review_state"),
                 "=",
             )],
-            ["acme_quality_status"],
+            ["review_state"],
         )
         .expect("overlay exclusion");
         let catalog = CatalogIr::new(vec![
             Table::new(
-                "receiving",
-                "purchase_order",
+                "platform_fixture",
+                "record",
                 vec![
                     Column::new("id", ColumnType::Uuid, false, None, None),
                     Column::new("supplier_id", ColumnType::Uuid, false, None, None),
@@ -2918,14 +2919,14 @@ mod tests {
                     Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
                     Column::new("updated_by", ColumnType::Uuid, false, None, None),
                     Column::new(
-                        "acme_inspection_required",
+                        "review_required",
                         ColumnType::Boolean,
                         false,
                         Some(ColumnDefault::boolean(false)),
                         None,
                     ),
                     Column::new(
-                        "acme_quality_status",
+                        "review_state",
                         ColumnType::Text,
                         false,
                         Some(ColumnDefault::text("not_required")),
@@ -2933,11 +2934,11 @@ mod tests {
                     ),
                 ],
                 vec![
-                    Constraint::primary_key("purchase_order_id_pkey", ["id"])
+                    Constraint::primary_key("record_id_pkey", ["id"])
                         .expect("base primary key"),
                     Constraint::check(
-                        "purchase_order_acme_quality_status_check",
-                        "acme_quality_status = ANY (ARRAY['not_required'::text, 'pending'::text, 'approved'::text])",
+                        "record_review_state_check",
+                        "review_state = ANY (ARRAY['not_required'::text, 'pending'::text, 'approved'::text])",
                     )
                     .expect("overlay quality constraint"),
                 ],
@@ -2945,17 +2946,17 @@ mod tests {
             )
             .with_exclusions(vec![base_exclusion.clone(), overlay_exclusion]),
             Table::new(
-                "receiving",
-                "quality_inspection",
+                "platform_fixture",
+                "inspection",
                 vec![Column::new(
-                    "receipt_id",
+                    "record_id",
                     ColumnType::Uuid,
                     false,
                     None,
                     None,
                 )],
                 vec![
-                    Constraint::primary_key("quality_inspection_receipt_id_pkey", ["receipt_id"])
+                    Constraint::primary_key("inspection_record_id_pkey", ["record_id"])
                         .expect("overlay primary key"),
                 ],
                 Vec::new(),
@@ -2966,10 +2967,10 @@ mod tests {
         let base_catalog = project_catalog_for_package(&catalog, &base.manifest, &installed)
             .expect("project base");
         assert_eq!(base_catalog.tables().len(), 1);
-        let base_purchase_order = &base_catalog.tables()[0];
-        assert_eq!(base_purchase_order.name(), "purchase_order");
+        let base_record = &base_catalog.tables()[0];
+        assert_eq!(base_record.name(), "record");
         assert_eq!(
-            base_purchase_order
+            base_record
                 .columns()
                 .iter()
                 .map(wamn_schema_introspection::ir::Column::name)
@@ -2984,37 +2985,37 @@ mod tests {
             ]
         );
         assert_eq!(
-            base_purchase_order
+            base_record
                 .constraints()
                 .iter()
                 .map(wamn_schema_introspection::ir::Constraint::name)
                 .collect::<Vec<_>>(),
-            ["purchase_order_id_pkey"]
+            ["record_id_pkey"]
         );
         assert_eq!(
-            base_purchase_order
+            base_record
                 .exclusions()
                 .iter()
                 .map(wamn_schema_introspection::ir::Exclusion::name)
                 .collect::<Vec<_>>(),
-            ["purchase_order_supplier_id_excl"]
+            ["record_supplier_id_excl"]
         );
 
         let overlay_catalog = project_catalog_for_package(&catalog, &overlay.manifest, &installed)
             .expect("project overlay");
         assert_eq!(overlay_catalog.tables().len(), 2);
-        let overlay_purchase_order = overlay_catalog
+        let overlay_record = overlay_catalog
             .tables()
             .iter()
-            .find(|table| table.name() == "purchase_order")
+            .find(|table| table.name() == "record")
             .expect("overlay includes the extended base relation");
-        assert_eq!(overlay_purchase_order.columns().len(), 8);
-        assert_eq!(overlay_purchase_order.constraints().len(), 2);
-        assert_eq!(overlay_purchase_order.exclusions().len(), 2);
+        assert_eq!(overlay_record.columns().len(), 8);
+        assert_eq!(overlay_record.constraints().len(), 2);
+        assert_eq!(overlay_record.exclusions().len(), 2);
         let clean_base = CatalogIr::new(vec![
             Table::new(
-                "receiving",
-                "purchase_order",
+                "platform_fixture",
+                "record",
                 vec![
                     Column::new("id", ColumnType::Uuid, false, None, None),
                     Column::new("supplier_id", ColumnType::Uuid, false, None, None),
@@ -3023,16 +3024,16 @@ mod tests {
                     Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
                     Column::new("updated_by", ColumnType::Uuid, false, None, None),
                 ],
-                vec![Constraint::primary_key("purchase_order_id_pkey", ["id"]).unwrap()],
+                vec![Constraint::primary_key("record_id_pkey", ["id"]).unwrap()],
                 Vec::new(),
             )
             .with_exclusions(vec![base_exclusion]),
         ]);
         let mut manifest = base.manifest.clone();
-        manifest.models.retain(|name, _| name == "purchase_order");
+        manifest.models.retain(|name, _| name == "record");
         manifest.custom_operations.clear();
         manifest.internal_relations.clear();
-        let model = manifest.models.get_mut("purchase_order").unwrap();
+        let model = manifest.models.get_mut("record").unwrap();
         model.server_owned_fields = vec!["id".to_owned()];
         model.enum_fields.clear();
         model
@@ -3064,31 +3065,31 @@ mod tests {
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&directory).expect("create fixture directory");
-        let base = directory.join("receiving.wasm");
-        let overlay = directory.join("client-acme-receiving.wasm");
+        let base = directory.join("inventory.wasm");
+        let overlay = directory.join("client-north-inventory.wasm");
         fs::write(&base, b"base").expect("write base fixture");
         fs::write(&overlay, b"overlay").expect("write overlay fixture");
         let plan = vec![
             ComponentArtifactPlan {
-                package: "client-acme-receiving".to_owned(),
+                package: "client-north-inventory".to_owned(),
                 output: overlay,
             },
             ComponentArtifactPlan {
-                package: "receiving".to_owned(),
+                package: "inventory".to_owned(),
                 output: base,
             },
         ];
         let selected = select_component_artifacts(
             &[
-                package("wamn_receiving", "1.0.0", "receiving"),
-                package("client_acme_receiving", "3.0.0", "client_acme_receiving"),
+                package("platform_inventory", "1.0.0", "inventory"),
+                package("client_north_inventory", "3.0.0", "client_north_inventory"),
             ],
             &plan,
         )
         .expect("canonical names select both artifacts");
         assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0].component.as_ref(), "receiving");
-        assert_eq!(selected[1].component.as_ref(), "client_acme_receiving");
+        assert_eq!(selected[0].component.as_ref(), "inventory");
+        assert_eq!(selected[1].component.as_ref(), "client_north_inventory");
         fs::remove_dir_all(directory).expect("remove fixture directory");
     }
 }

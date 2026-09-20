@@ -1,0 +1,20 @@
+{
+  "package": { "id": "platform_catalog_base", "version": "1.0.0" },
+  "required_platform_policy_contract": { "id": "fixture_data_access", "state": "satisfied" },
+  "models": {
+    "record": {
+      "schema": "platform_fixture",
+      "table": "record",
+      "owner": "platform_catalog_base",
+      "client_field_extensible": true,
+      "server_owned_fields": ["id"],
+      "field_owners": {},
+      "constraint_owners": {},
+      "enum_fields": {},
+      "audit_log": { "columns": ["created_at", "created_by", "updated_at", "updated_by"], "retention": "unlimited" },
+      "operations": { "get": { "permission": "record.get", "result": "one" } }
+    }
+  },
+  "connections": ["postgres"],
+  "components": { "catalog_base": { "connections": ["postgres"] } }
+}

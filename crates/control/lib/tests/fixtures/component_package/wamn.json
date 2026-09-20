@@ -1,0 +1,40 @@
+{
+  "package": {
+    "id": "source_fixture",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "item": {
+      "schema": "inventory",
+      "table": "item",
+      "owner": "source_fixture",
+      "server_owned_fields": [
+        "id"
+      ],
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "item.get",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "source_fixture": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

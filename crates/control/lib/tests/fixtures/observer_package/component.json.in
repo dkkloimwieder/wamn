@@ -1,0 +1,30 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "observer_fixture",
+    "package-version": "3.0.0"
+  },
+  "component": "observer_fixture",
+  "interface-version": "0.1.0",
+  "operations": {
+    "observer-fixture:audit/observe@3.0.0": {
+      "input-ports": [],
+      "output-ports": [],
+      "parameters": []
+    },
+    "observer-fixture:item/get@3.0.0": {
+      "dependencies": [
+        {
+          "package": "source_fixture",
+          "version": "1.0.0",
+          "digest": "__BASE_DIGEST__",
+          "operation": "source-fixture:item/get@1.0.0"
+        }
+      ],
+      "input-ports": [],
+      "output-ports": [],
+      "parameters": []
+    }
+  },
+  "connections": []
+}

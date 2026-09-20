@@ -1,0 +1,18 @@
+{
+  "scope": {
+    "tenant-id": "tenant-a",
+    "package-id": "source_fixture",
+    "package-version": "1.0.0"
+  },
+  "component": "source_fixture",
+  "interface-version": "0.1.0",
+  "operations": {
+    "source-fixture:item/get@1.0.0": {
+      "registered-operation": "source-fixture:item/get@1.0.0",
+      "input-ports": [],
+      "output-ports": [],
+      "parameters": []
+    }
+  },
+  "connections": []
+}

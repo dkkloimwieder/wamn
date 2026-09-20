@@ -1,0 +1,36 @@
+{
+  "package": { "id": "platform_records", "version": "1.0.0" },
+  "required_platform_policy_contract": { "id": "fixture_data_access", "state": "satisfied" },
+  "models": {
+    "record": {
+      "schema": "platform_fixture",
+      "table": "record",
+      "owner": "platform_records",
+      "client_field_extensible": true,
+      "server_owned_fields": ["id", "state"],
+      "enum_fields": { "state": ["open", "closed"] },
+      "audit_log": { "columns": ["created_at"], "retention": "unlimited" },
+      "operations": {
+        "get": { "permission": "record.get", "result": "one" }
+      }
+    },
+    "location": {
+      "schema": "platform_fixture",
+      "table": "location",
+      "owner": "platform_records",
+      "server_owned_fields": ["id"],
+      "enum_fields": {},
+      "audit_log": { "columns": [], "retention": "none" },
+      "operations": {}
+    }
+  },
+  "internal_relations": {
+    "record_claim": {
+      "schema": "platform_fixture",
+      "table": "record_claim",
+      "cdc": "excluded"
+    }
+  },
+  "connections": ["postgres"],
+  "components": { "records": { "connections": ["postgres"] } }
+}

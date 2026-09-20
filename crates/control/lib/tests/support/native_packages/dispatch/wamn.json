@@ -1,0 +1,7 @@
+{
+  "package": { "id": "platform_dispatch", "version": "1.0.0" },
+  "required_platform_policy_contract": { "id": "fixture_data_access", "state": "satisfied" },
+  "models": {},
+  "connections": ["postgres"],
+  "components": { "dispatch": { "connections": ["postgres"] } }
+}

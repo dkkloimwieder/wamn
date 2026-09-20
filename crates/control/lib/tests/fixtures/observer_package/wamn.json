@@ -1,0 +1,113 @@
+{
+  "package": {
+    "id": "observer_fixture",
+    "version": "3.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "item": {
+      "schema": "inventory",
+      "table": "observed_item",
+      "owner": "observer_fixture",
+      "server_owned_fields": [
+        "id"
+      ],
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "item.get",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "custom_operations": {
+    "audit.observe": {
+      "kind": "event_handler",
+      "visibility": "private",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "new.id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "internal_error"
+      ],
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "inventory",
+          "table": "item",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "read_item": {
+          "path": "command/read_item.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        }
+      },
+      "registration": {
+        "source_package": "source_fixture",
+        "entity": "item",
+        "ops": [
+          "insert"
+        ]
+      }
+    }
+  },
+  "base_dependencies": {
+    "source": {
+      "package": "source_fixture",
+      "version": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "operations": [
+        "item.get"
+      ]
+    }
+  },
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "observer_fixture": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

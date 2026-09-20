@@ -1,0 +1,40 @@
+{
+  "package": { "id": "platform_catalog_overlay", "version": "1.0.0" },
+  "required_platform_policy_contract": { "id": "fixture_data_access", "state": "satisfied" },
+  "base_dependencies": {
+    "base": {
+      "package": "platform_catalog_base",
+      "version": "1.0.0",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "operations": []
+    }
+  },
+  "models": {
+    "record": {
+      "schema": "platform_fixture",
+      "table": "record",
+      "owner": "platform_catalog_base",
+      "field_owners": {
+        "review_required": "platform_catalog_overlay",
+        "review_state": "platform_catalog_overlay"
+      },
+      "constraint_owners": {
+        "record_review_state_check": "platform_catalog_overlay"
+      },
+      "server_owned_fields": ["id"],
+      "enum_fields": {},
+      "operations": { "get": { "permission": "record.get", "result": "one" } }
+    },
+    "inspection": {
+      "schema": "platform_fixture",
+      "table": "inspection",
+      "owner": "platform_catalog_overlay",
+      "server_owned_fields": ["record_id"],
+      "enum_fields": {},
+      "audit_log": { "columns": [], "retention": "none" },
+      "operations": {}
+    }
+  },
+  "connections": ["postgres"],
+  "components": { "catalog_overlay": { "connections": ["postgres"] } }
+}

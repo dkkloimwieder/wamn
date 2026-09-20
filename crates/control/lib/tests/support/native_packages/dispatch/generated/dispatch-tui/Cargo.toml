@@ -1,0 +1,10 @@
+[package]
+name = "wamn-generated-dispatch-tui"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "dispatch-screen"
+path = "src/main.rs"
+
+[workspace]

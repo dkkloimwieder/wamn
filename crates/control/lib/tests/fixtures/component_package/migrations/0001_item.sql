@@ -1,0 +1,2 @@
+CREATE SCHEMA IF NOT EXISTS inventory;
+CREATE TABLE inventory.item (id UUID PRIMARY KEY);

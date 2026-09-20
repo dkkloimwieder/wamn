@@ -1,0 +1,13 @@
+[package]
+name = "inventory-console"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "inventory-console"
+path = "src/main.rs"
+
+[dependencies]
+screen = { package = "wamn-generated-inventory-tui", path = "../generated/inventory-tui" }
+
+[workspace]

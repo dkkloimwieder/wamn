@@ -1955,48 +1955,65 @@ mod tests {
     }
 
     #[test]
-    fn real_package_attachment_documents_merge_into_one_release() {
-        let base: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
-            "../../../../apps/wamn_receiving/publication/attachments.json"
-        ))
-        .expect("the Receiving package attachments have the serving wire shape");
-        let overlay: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
-            "../../../../apps/client_acme_receiving/publication/attachments.json"
-        ))
-        .expect("the Acme package attachments have the serving wire shape");
+    fn package_attachment_documents_merge_into_one_release() {
+        let base = BTreeMap::from([
+            (
+                "first".to_owned(),
+                package_http_attachment(
+                    "first",
+                    "source_fixture",
+                    "read",
+                    "source-fixture:item/get@1.0.0",
+                    "/items/get",
+                ),
+            ),
+            (
+                "second".to_owned(),
+                package_http_attachment(
+                    "second",
+                    "source_fixture",
+                    "list",
+                    "source-fixture:item/list@1.0.0",
+                    "/items/list",
+                ),
+            ),
+        ]);
+        let overlay = BTreeMap::from([(
+            "third".to_owned(),
+            package_http_attachment(
+                "third",
+                "observer_fixture",
+                "read",
+                "observer-fixture:item/get@3.0.0",
+                "/observed/get",
+            ),
+        )]);
         let authored = merge_package_attachment_documents(vec![
-            (
-                PathBuf::from("apps/wamn_receiving/publication/attachments.json"),
-                base,
-            ),
-            (
-                PathBuf::from("apps/client_acme_receiving/publication/attachments.json"),
-                overlay,
-            ),
+            (PathBuf::from("source/attachments.json"), base),
+            (PathBuf::from("observer/attachments.json"), overlay),
         ])
         .expect("distinct package attachment identities merge");
-
-        assert_eq!(authored.len(), 14);
+        assert_eq!(authored.len(), 3);
         assert_eq!(
             authored
                 .values()
-                .filter(|attachment| attachment.package_id == "wamn_receiving")
+                .filter(|attachment| attachment.package_id == "source_fixture")
                 .count(),
-            9
+            2
         );
         assert_eq!(
             authored
                 .values()
-                .filter(|attachment| attachment.package_id == "client_acme_receiving")
+                .filter(|attachment| attachment.package_id == "observer_fixture")
                 .count(),
-            5
+            1
         );
-        let resolved = resolve_route_host_overlay(&authored, Some("Receiving.Localhost"))
-            .expect("the merged package routes retain deployment-owned host binding");
+        let resolved = resolve_route_host_overlay(&authored, Some("Fixture.Localhost"))
+            .expect("merged routes retain deployment-owned host binding");
         assert!(
-            resolved.values().all(|attachment| {
-                attachment.definition["route"]["host"] == "receiving.localhost"
-            })
+            resolved
+                .values()
+                .all(|attachment| attachment.definition["route"]["host"] == "fixture.localhost")
         );
     }
 
@@ -2004,25 +2021,25 @@ mod tests {
     fn package_attachment_documents_refuse_duplicate_identity() {
         let base = package_http_attachment(
             "receiving-http",
-            "wamn_receiving",
+            "source_fixture",
             "receiving_record_receipt",
-            "wamn-receiving:receiving/record-receipt@1.0.0",
+            "source-fixture:receiving/record-receipt@1.0.0",
             "/receiving/record_receipt",
         );
         let overlay = package_http_attachment(
             "receiving-http",
-            "client_acme_receiving",
+            "observer_fixture",
             "receiving_record_receipt",
-            "client-acme-receiving:receiving/record-receipt@3.0.0",
+            "observer-fixture:receiving/record-receipt@3.0.0",
             "/acme/receiving/record_receipt",
         );
         let error = merge_package_attachment_documents(vec![
             (
-                PathBuf::from("apps/wamn_receiving/publication/attachments.json"),
+                PathBuf::from("apps/source_fixture/publication/attachments.json"),
                 BTreeMap::from([("receiving-http".to_owned(), base)]),
             ),
             (
-                PathBuf::from("apps/client_acme_receiving/publication/attachments.json"),
+                PathBuf::from("apps/observer_fixture/publication/attachments.json"),
                 BTreeMap::from([("receiving-http".to_owned(), overlay)]),
             ),
         ])
@@ -2031,33 +2048,33 @@ mod tests {
         assert_eq!(error.kind(), MintManifestErrorKind::DuplicateAttachmentId);
         assert_eq!(error.kind().as_str(), "duplicate-attachment-id");
         assert!(error.detail().contains("receiving-http"));
-        assert!(error.detail().contains("apps/wamn_receiving"));
-        assert!(error.detail().contains("apps/client_acme_receiving"));
+        assert!(error.detail().contains("apps/source_fixture"));
+        assert!(error.detail().contains("apps/observer_fixture"));
     }
 
     #[test]
     fn package_attachment_route_collisions_use_the_existing_governor() {
         let first = package_http_attachment(
             "first-http",
-            "wamn_receiving",
+            "source_fixture",
             "receipt_get",
-            "wamn-receiving:receipt/get@1.0.0",
+            "source-fixture:receipt/get@1.0.0",
             "/receipt/{id}",
         );
         let second = package_http_attachment(
             "second-http",
-            "client_acme_receiving",
+            "observer_fixture",
             "quality_load_purchase_order_detail",
-            "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+            "observer-fixture:quality/load-purchase-order-detail@3.0.0",
             "/receipt/{receipt_id}",
         );
         let authored = merge_package_attachment_documents(vec![
             (
-                PathBuf::from("apps/wamn_receiving/publication/attachments.json"),
+                PathBuf::from("apps/source_fixture/publication/attachments.json"),
                 BTreeMap::from([("first-http".to_owned(), first)]),
             ),
             (
-                PathBuf::from("apps/client_acme_receiving/publication/attachments.json"),
+                PathBuf::from("apps/observer_fixture/publication/attachments.json"),
                 BTreeMap::from([("second-http".to_owned(), second)]),
             ),
         ])
@@ -2079,14 +2096,14 @@ mod tests {
         let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
-            package_id: "wamn_receiving".to_owned(),
+            package_id: "source_fixture".to_owned(),
             wiring_id: "receipt_get".to_owned(),
             wiring_version: 1,
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("wamn-receiving:receipt/get@1.0.0".to_owned()),
+            registered_operation: Some("source-fixture:receipt/get@1.0.0".to_owned()),
         };
         let attachments = BTreeMap::from([("receiving-http".to_owned(), attachment.clone())]);
         validate_attachment_definition_hashes(&attachments)
@@ -2112,14 +2129,14 @@ mod tests {
         let authored_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
-            package_id: "wamn_receiving".to_owned(),
+            package_id: "source_fixture".to_owned(),
             wiring_id: "receipt_get".to_owned(),
             wiring_version: 1,
             definition_hash: wamn_catalog::DefinitionHash::parse(authored_hash.clone())
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("wamn-receiving:receipt/get@1.0.0".to_owned()),
+            registered_operation: Some("source-fixture:receipt/get@1.0.0".to_owned()),
         };
         let authored = BTreeMap::from([("receiving-http".to_owned(), attachment)]);
 
@@ -2318,9 +2335,10 @@ mod tests {
     }
 
     fn dependency_manifest(digest: &str) -> wamn_schema_generator::PackageManifest {
-        let mut document: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../apps/wamn_receiving/wamn.json"))
-                .expect("the repository package manifest parses as JSON");
+        let mut document: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/component_package/wamn.json"
+        ))
+        .expect("the repository package manifest parses as JSON");
         document["base_dependencies"] = serde_json::json!({
             "base": {
                 "package": "base",
@@ -2334,15 +2352,15 @@ mod tests {
 
     #[test]
     fn release_mint_consumes_package_metadata_and_refuses_unsatisfied_policy() {
-        let manifest_bytes = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
+        let manifest_bytes = include_bytes!("../tests/fixtures/component_package/wamn.json");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
-            .expect("the Receiving manifest is valid");
+            .expect("the fixture manifest is valid");
         let metadata_bytes =
-            include_bytes!("../../../../apps/wamn_receiving/generated/package-weld.json");
+            include_bytes!("../tests/fixtures/component_package/generated/package-weld.json");
         let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(metadata_bytes)
-            .expect("the Receiving metadata is canonical");
+            .expect("the fixture metadata is canonical");
         validate_package_metadata(&manifest, &metadata)
-            .expect("the Receiving manifest and metadata carry one satisfied policy fact");
+            .expect("the fixture manifest and metadata carry one satisfied policy fact");
 
         let mut unsatisfied_manifest: serde_json::Value =
             serde_json::from_slice(manifest_bytes).unwrap();
@@ -2368,7 +2386,7 @@ mod tests {
             refusal.kind(),
             MintManifestErrorKind::PolicyContractUnsatisfied
         );
-        assert!(refusal.detail().contains("receiving_data_access"));
+        assert!(refusal.detail().contains("fixture_data_access"));
         assert!(refusal.detail().contains("regenerate"));
 
         let mut mismatched_metadata: serde_json::Value =
@@ -2388,37 +2406,33 @@ mod tests {
     }
 
     fn handler_manifest() -> wamn_schema_generator::PackageManifest {
-        serde_json::from_str(include_str!(
-            "../../../../apps/client_acme_receiving/wamn.json"
-        ))
-        .expect("the repository handler manifest parses")
+        serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
+            .expect("the fixture handler manifest parses")
     }
 
     fn source_manifest() -> wamn_schema_generator::PackageManifest {
-        serde_json::from_str(include_str!("../../../../apps/wamn_receiving/wamn.json"))
-            .expect("the repository source manifest parses")
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/component_package/wamn.json"
+        ))
+        .expect("the fixture source manifest parses")
     }
 
     fn handler_manifest_with_entity(entity: &str) -> wamn_schema_generator::PackageManifest {
         let mut document = serde_json::to_value(handler_manifest())
-            .expect("the repository handler manifest serializes");
-        document["custom_operations"]["quality.create_inspection"]["registration"]["entity"] =
+            .expect("the fixture handler manifest serializes");
+        document["custom_operations"]["audit.observe"]["registration"]["entity"] =
             serde_json::Value::String(entity.to_owned());
         serde_json::from_value(document).expect("the mutated handler manifest parses")
     }
 
-    /// The shipped overlay declaration, rendered from its ONE authored digest.
-    ///
-    /// The template leaves every base dependency digest as a placeholder
-    /// (wamn-10yt.50), so a reader that fills only the tenant would carry the
-    /// placeholder into a dependency and resolve nothing.
-    fn repository_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
+    /// Render the fixture dependency from its authored digest.
+    fn fixture_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../apps/client_acme_receiving");
+            .join("tests/fixtures/observer_package");
         let base_digests = crate::component_declaration::authored_base_digests(&root)
-            .expect("the repository overlay manifest authors its base digest");
+            .expect("the fixture overlay manifest authors its base digest");
         let document = crate::component_declaration::render_declaration_document(
-            &root.join("publication/components/client_acme_receiving.json.in"),
+            &root.join("component.json.in"),
             "tenant-a",
             &base_digests,
         )
@@ -2427,14 +2441,14 @@ mod tests {
             .expect("the repository component declaration is structurally valid")
     }
 
-    fn resolve_repository_private_handler_entry() -> String {
-        let declaration = repository_overlay_declaration();
+    fn resolve_fixture_private_handler_entry() -> String {
+        let declaration = fixture_overlay_declaration();
         let document_value = serde_json::from_str(include_str!(
-            "../../../../apps/client_acme_receiving/publication/wirings/quality_create_inspection.json"
+            "../tests/fixtures/observer_package/wiring.json"
         ))
-        .expect("the repository handler wiring parses as JSON");
+        .expect("the fixture handler wiring parses as JSON");
         let document = WiringDocument::parse(&document_value)
-            .expect("the repository handler wiring is structurally valid");
+            .expect("the fixture handler wiring is structurally valid");
         let operation = document.nodes[&document.entry].operation.clone();
         let declared = declaration.operations[&operation].clone();
         assert!(
@@ -2489,28 +2503,25 @@ mod tests {
     fn serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring() {
         let manifest = handler_manifest();
         let manifests = BTreeMap::from([
-            ("client_acme_receiving".to_owned(), manifest),
-            ("wamn_receiving".to_owned(), source_manifest()),
+            ("observer_fixture".to_owned(), manifest),
+            ("source_fixture".to_owned(), source_manifest()),
         ]);
-        let operation = resolve_repository_private_handler_entry();
-        assert_eq!(
-            operation,
-            "client-acme-receiving:quality/create-inspection@3.0.0"
-        );
+        let operation = resolve_fixture_private_handler_entry();
+        assert_eq!(operation, "observer-fixture:audit/observe@3.0.0");
         let target = ReleaseWiringTarget {
-            package_id: "client_acme_receiving".to_owned(),
+            package_id: "observer_fixture".to_owned(),
             package_version: "3.0.0".to_owned(),
-            wiring_id: "quality_create_inspection".to_owned(),
+            wiring_id: "audit_observe".to_owned(),
             wiring_version: 1,
         };
         let targets = BTreeMap::from([(operation.clone(), vec![target.clone()])]);
         let registrations = derive_serving_registrations(&manifests, &targets)
             .expect("one entry wiring resolves the handler operation");
-        let registration = &registrations["client_acme_receiving::quality.create_inspection"];
-        assert_eq!(registration.package_id, "client_acme_receiving");
-        assert_eq!(registration.source_package_id, "wamn_receiving");
+        let registration = &registrations["observer_fixture::audit.observe"];
+        assert_eq!(registration.package_id, "observer_fixture");
+        assert_eq!(registration.source_package_id, "source_fixture");
         assert_eq!(registration.wiring_id, target.wiring_id);
-        assert_eq!(registration.entity, "receipt");
+        assert_eq!(registration.entity, "item");
         assert_eq!(registration.ops, BTreeSet::from(["insert".to_owned()]));
 
         for selected in [Vec::new(), vec![target.clone(), target]] {
@@ -2522,15 +2533,15 @@ mod tests {
 
         let manifests = BTreeMap::from([
             (
-                "client_acme_receiving".to_owned(),
+                "observer_fixture".to_owned(),
                 handler_manifest_with_entity("missing"),
             ),
-            ("wamn_receiving".to_owned(), source_manifest()),
+            ("source_fixture".to_owned(), source_manifest()),
         ]);
         let error = derive_serving_registrations(&manifests, &targets)
             .expect_err("a registration source entity absent from its package was accepted");
         assert_eq!(error.kind(), MintManifestErrorKind::Registration);
-        for fact in ["quality.create_inspection", "wamn_receiving", "missing"] {
+        for fact in ["audit.observe", "source_fixture", "missing"] {
             assert!(
                 error.detail().contains(fact),
                 "missing refusal fact {fact:?}"
@@ -2567,7 +2578,7 @@ mod tests {
     fn operation_dependency_resolves_the_exact_release_tuple_without_relabeling() {
         let owner = ComponentPackageScope {
             tenant_id: "tenant-a".to_owned(),
-            package_id: "wamn_receiving".to_owned(),
+            package_id: "source_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
         let mut base = closure_component(
@@ -2577,13 +2588,13 @@ mod tests {
         base.scope.package_id = "base".to_owned();
         let mut local_same_name = closure_component(
             "registered-component",
-            Some("wamn-receiving:receiving/record-receipt@1.0.0"),
+            Some("source-fixture:receiving/record-receipt@1.0.0"),
         );
         local_same_name.component_digest = format!("sha256:{}", "c".repeat(64));
         let facts = BTreeMap::from([
             (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
             (
-                ("wamn_receiving".to_owned(), "1.0.0".to_owned()),
+                ("source_fixture".to_owned(), "1.0.0".to_owned()),
                 vec![local_same_name],
             ),
         ]);
@@ -2605,7 +2616,7 @@ mod tests {
     fn operation_dependency_refuses_digest_and_release_membership_drift() {
         let owner = ComponentPackageScope {
             tenant_id: "tenant-a".to_owned(),
-            package_id: "wamn_receiving".to_owned(),
+            package_id: "source_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
         let mut base = closure_component(
@@ -2658,7 +2669,7 @@ mod tests {
     fn a_disposable_target_resolves_a_moved_base_digest_and_still_demands_membership() {
         let owner = ComponentPackageScope {
             tenant_id: "tenant-a".to_owned(),
-            package_id: "wamn_receiving".to_owned(),
+            package_id: "source_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
         let mut base = closure_component(
@@ -2818,26 +2829,23 @@ mod tests {
         assert!(closure.contains(&overlay));
     }
 
-    /// The one operation dependency declared in the tree, read from the
-    /// package that declares it. `client_acme_receiving` wraps
-    /// `wamn_receiving`'s `record-receipt`, which is the live instance of the
-    /// defect the effect-free dependency set closes.
-    fn repository_overlay_dependency() -> (
+    /// Read the fixture dependency used by effect-projection tests.
+    fn fixture_overlay_dependency() -> (
         wamn_catalog::ComponentDeclaration,
         wamn_catalog::ComponentOperationDependency,
     ) {
-        let declaration = repository_overlay_declaration();
+        let declaration = fixture_overlay_declaration();
         let mut declared = declaration
             .operations
             .values()
             .flat_map(|operation| operation.dependencies.iter());
         let dependency = declared
             .next()
-            .expect("the repository overlay declares an operation dependency")
+            .expect("the fixture overlay declares an operation dependency")
             .clone();
         assert!(
             declared.next().is_none(),
-            "the repository overlay declares exactly one operation dependency"
+            "the fixture overlay declares exactly one operation dependency"
         );
         (declaration, dependency)
     }
@@ -2867,7 +2875,7 @@ mod tests {
     /// in `wamn_runtime::component_admission`.
     #[test]
     fn a_dependency_admitted_with_no_effects_keeps_the_effect_free_case_path() {
-        let (declaration, dependency) = repository_overlay_dependency();
+        let (declaration, dependency) = fixture_overlay_dependency();
         let facts = dependency_facts(&dependency, Vec::new());
 
         let dependencies = effect_free_operation_dependencies(
@@ -2879,14 +2887,14 @@ mod tests {
         assert_eq!(dependencies, BTreeSet::from([dependency.operation]));
     }
 
-    /// The negative control, and the state of the tree today. The same
+    /// The negative control uses the same
     /// declaration and the same lookup, except the dependency's admitted row
     /// carries the effect it really holds. The caller returns no dependency, so the
     /// wrapper takes the dependency package into its own projection and loses
     /// the effect-free case path.
     #[test]
     fn a_dependency_admitted_with_one_effect_loses_the_effect_free_case_path() {
-        let (declaration, dependency) = repository_overlay_dependency();
+        let (declaration, dependency) = fixture_overlay_dependency();
         let facts = dependency_facts(
             &dependency,
             vec![AdmittedComponentEffect {
@@ -3105,19 +3113,19 @@ mod tests {
 
     #[test]
     fn package_and_wiring_coordinates_are_exact() {
-        let package = parse_package("wamn_receiving@1.0.0").unwrap();
-        assert_eq!(package.package_id(), "wamn_receiving");
+        let package = parse_package("source_fixture@1.0.0").unwrap();
+        assert_eq!(package.package_id(), "source_fixture");
         assert_eq!(package.package_version(), "1.0.0");
 
-        let wiring = "wamn_receiving@1.0.0::receiving=2"
+        let wiring = "source_fixture@1.0.0::receiving=2"
             .parse::<ReleaseWiringTarget>()
             .unwrap();
-        assert_eq!(wiring.package_id, "wamn_receiving");
+        assert_eq!(wiring.package_id, "source_fixture");
         assert_eq!(wiring.package_version, "1.0.0");
         assert_eq!(wiring.wiring_id, "receiving");
         assert_eq!(wiring.wiring_version, 2);
         assert!(
-            "wamn_receiving::receiving=2"
+            "source_fixture::receiving=2"
                 .parse::<ReleaseWiringTarget>()
                 .is_err()
         );

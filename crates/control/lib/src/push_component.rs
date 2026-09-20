@@ -2026,20 +2026,18 @@ mod tests {
         AdmittedComponent {
             scope: ComponentPackageScope {
                 tenant_id: "tenant-a".to_owned(),
-                package_id: "wamn_receiving".to_owned(),
+                package_id: "source_fixture".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
-            component: "receiving_data".to_owned(),
+            component: "source_fixture".to_owned(),
             interface_version: "0.1.0".to_owned(),
             operations: BTreeMap::from([(
-                "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
+                "source-fixture:item/get@1.0.0".to_owned(),
                 AdmittedComponentOperation {
                     pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
-                    registered_operation: Some(
-                        "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
-                    ),
+                    registered_operation: Some("source-fixture:item/get@1.0.0".to_owned()),
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
@@ -2054,14 +2052,14 @@ mod tests {
         }
     }
 
-    fn repository_receiving_component() -> AdmittedComponent {
+    fn fixture_component() -> AdmittedComponent {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../apps/wamn_receiving/publication/components/receiving.json.in"
+            "../tests/fixtures/component_package/component.json"
         ))
-        .expect("repository component declaration is JSON");
+        .expect("fixture component declaration is JSON");
         document["scope"]["tenant-id"] = serde_json::json!("tenant-a");
         let declaration: ComponentDeclaration =
-            serde_json::from_value(document).expect("repository component declaration parses");
+            serde_json::from_value(document).expect("fixture component declaration parses");
         AdmittedComponent {
             scope: declaration.scope,
             component: declaration.component,
@@ -2127,12 +2125,12 @@ mod tests {
     #[test]
     fn package_evidence_binds_exact_sql_to_each_manifest_operation() {
         let package_root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
-            "../../../../apps/wamn_receiving/wamn.json"
+            "../tests/fixtures/component_package/wamn.json"
         ))
-        .expect("repository package manifest parses");
-        let mut component = repository_receiving_component();
+        .expect("fixture package manifest parses");
+        let mut component = fixture_component();
 
         let statements = load_component_statement_facts(&package_root, &manifest, &component)
             .expect("generated operation contracts and package metadata agree");
@@ -2141,14 +2139,14 @@ mod tests {
         bind_component_statement_facts(&mut component, statements)
             .expect("manifest-backed facts bind to the exact exports");
 
-        let operation = "wamn-receiving:purchase-order/get@1.0.0";
+        let operation = "source-fixture:item/get@1.0.0";
         let statement = component.operations[operation]
             .statements
             .values()
             .next()
             .expect("get has one admitted statement");
         assert_eq!(statement.name, "get");
-        assert_eq!(statement.path, "generated/sql/purchase_order/get.sql");
+        assert_eq!(statement.path, "generated/sql/item/get.sql");
         assert_eq!(
             component.operations[operation]
                 .statement(&component_sql_digest(statement.sql.as_bytes())),
@@ -2159,23 +2157,23 @@ mod tests {
     #[test]
     fn fresh_only_requires_authored_component_and_generated_contract_agreement() {
         let package_root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
-        let operation = "wamn-receiving:purchase-order/get@1.0.0";
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
+        let operation = "source-fixture:item/get@1.0.0";
         let baseline = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
-            "../../../../apps/wamn_receiving/wamn.json"
+            "../tests/fixtures/component_package/wamn.json"
         ))
         .unwrap();
         for (authored, declared) in [(true, false), (false, true), (true, true)] {
             let mut manifest = baseline.clone();
             manifest
                 .models
-                .get_mut("purchase_order")
+                .get_mut("item")
                 .unwrap()
                 .operations
                 .get_mut(&wamn_schema_generator::CrudAction::Get)
                 .unwrap()
                 .fresh_only = authored;
-            let mut component = repository_receiving_component();
+            let mut component = fixture_component();
             component.operations.get_mut(operation).unwrap().fresh_only = declared;
             let expected = expected_operation_contracts(&manifest).unwrap();
             let assignment =
@@ -2211,7 +2209,7 @@ mod tests {
             serde_json::json!(1),
         ] {
             let contract = serde_json::json!({
-                "operation": "wamn-receiving:purchase-order/get@1.0.0",
+                "operation": "source-fixture:item/get@1.0.0",
                 "fresh_only": value,
                 "statements": []
             });
@@ -2222,7 +2220,7 @@ mod tests {
     #[test]
     fn unsafe_paths_and_digest_drift_are_typed_statement_refusals() {
         let package_root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
         let canonical_root = package_root.canonicalize().expect("package root resolves");
         let path_error = read_package_owned_file(
             &package_root,
@@ -2241,10 +2239,10 @@ mod tests {
         let digest_error = load_operation_statements(
             &package_root,
             &canonical_root,
-            "wamn-receiving:purchase-order/get@1.0.0",
+            "source-fixture:item/get@1.0.0",
             vec![GeneratedStatementContract {
                 name: "get".to_owned(),
-                path: "generated/sql/purchase_order/get.sql".to_owned(),
+                path: "generated/sql/item/get.sql".to_owned(),
                 digest: format!("sha256:{}", "f".repeat(64)),
                 binds: Vec::new(),
                 columns: Vec::new(),
@@ -2262,9 +2260,9 @@ mod tests {
     #[test]
     fn retired_sql_file_lists_are_not_an_alternate_statement_contract() {
         let contract = serde_json::json!({
-            "operation": "wamn-receiving:purchase-order/get@1.0.0",
+            "operation": "source-fixture:item/get@1.0.0",
             "statements": [],
-            "sql_files": ["generated/sql/purchase_order/get.sql"]
+            "sql_files": ["generated/sql/item/get.sql"]
         });
 
         assert!(serde_json::from_value::<GeneratedOperationContract>(contract).is_err());
@@ -2272,11 +2270,10 @@ mod tests {
 
     #[test]
     fn private_manifest_operation_cannot_cross_component_ownership() {
-        let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../apps/client_acme_receiving/wamn.json"
-        ))
-        .expect("repository overlay manifest is JSON");
-        let primary = "client_acme_receiving";
+        let mut document: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
+                .expect("fixture observer manifest is JSON");
+        let primary = "observer_fixture";
         for model in document["models"]
             .as_object_mut()
             .expect("models is an object")
@@ -2300,13 +2297,13 @@ mod tests {
         document["connections"] = serde_json::json!(["postgres", "secondary_only"]);
         document["components"]["secondary"] =
             serde_json::json!({"connections": ["postgres", "secondary_only"]});
-        document["custom_operations"]["quality.create_inspection"]["component"] =
+        document["custom_operations"]["audit.observe"]["component"] =
             serde_json::json!("secondary");
         let manifest: wamn_schema_generator::PackageManifest =
             serde_json::from_value(document).expect("two-component manifest parses");
         wamn_schema_generator::validate_operation_vocabulary(&manifest)
             .expect("the explicit component partition is valid");
-        let operation = "client-acme-receiving:quality/create-inspection@3.0.0".to_owned();
+        let operation = "observer-fixture:audit/observe@3.0.0".to_owned();
         let component = AdmittedComponent {
             scope: wamn_catalog::ComponentPackageScope {
                 tenant_id: "tenant-a".to_owned(),
@@ -2347,10 +2344,8 @@ mod tests {
     }
 
     fn overlay_manifest() -> wamn_schema_generator::PackageManifest {
-        serde_json::from_str(include_str!(
-            "../../../../apps/client_acme_receiving/wamn.json"
-        ))
-        .expect("repository overlay manifest parses")
+        serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
+            .expect("fixture observer manifest parses")
     }
 
     /// A component absent from the manifest, exporting one handler and
@@ -2485,7 +2480,7 @@ mod tests {
         );
 
         let mut with_statement = component;
-        let sql = "SELECT row_version FROM purchase_order WHERE id = $1";
+        let sql = "SELECT row_version FROM item WHERE id = $1";
         with_statement
             .operations
             .values_mut()
@@ -2496,7 +2491,7 @@ mod tests {
                 component_sql_digest(sql.as_bytes()),
                 ComponentSqlStatement {
                     name: "get".to_owned(),
-                    path: "generated/sql/purchase_order/get.sql".to_owned(),
+                    path: "generated/sql/item/get.sql".to_owned(),
                     sql: sql.to_owned(),
                     binds: Vec::new(),
                     columns: Vec::new(),
@@ -2552,10 +2547,10 @@ mod tests {
         let mut control = connect(&control_config).await;
 
         let package_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
         let directory = crate::apply_package::read_package_directory(&package_path)
-            .expect("read real Receiving package");
-        let package = plan_package_migrations(&directory, None).expect("plan real package");
+            .expect("read component fixture package");
+        let package = plan_package_migrations(&directory, None).expect("plan fixture package");
         let component_bytes = b"verification-project-component".to_vec();
         let mut component = projection_component();
         component.component_digest =
@@ -2892,10 +2887,10 @@ mod tests {
         let control = connect(&control_config).await;
 
         let package_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
         let directory = crate::apply_package::read_package_directory(&package_path)
-            .expect("read real Receiving package");
-        let package = plan_package_migrations(&directory, None).expect("plan real package");
+            .expect("read component fixture package");
+        let package = plan_package_migrations(&directory, None).expect("plan fixture package");
 
         // One coordinate, two byte revisions — the reformat this bead is about.
         let admitted = |marker: u8| {

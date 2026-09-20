@@ -570,11 +570,11 @@ mod tests {
     use super::*;
 
     fn roots() -> Vec<PathBuf> {
-        ["wamn_receiving", "client_acme_receiving"]
+        ["inventory", "dispatch"]
             .into_iter()
             .map(|name| {
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../apps")
+                    .join("tests/support/native_packages")
                     .join(name)
                     .canonicalize()
                     .expect("resolve source package root")
@@ -584,41 +584,27 @@ mod tests {
 
     #[tokio::test]
     async fn selection_uses_the_declared_component_and_emitter_spelling() {
-        let selected =
-            select_component(&roots(), "client_acme_receiving").expect("select exact component");
+        let selected = select_component(&roots(), "dispatch").expect("select exact component");
         let target = operator_target(
             &selected,
             &read_metadata(&selected.manifest_path, true).await.unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            target.cargo_package,
-            "wamn-generated-client-acme-receiving-tui"
-        );
-        assert_eq!(target.binary, "wamn-client-acme-receiving-tui");
+        assert_eq!(target.cargo_package, "wamn-generated-dispatch-tui");
+        assert_eq!(target.binary, "dispatch-screen");
         assert!(selected.manifest_path.starts_with(&roots()[1]));
-        let receiving =
-            select_component(&roots(), "receiving").expect("select Receiving composition");
+        let inventory =
+            select_component(&roots(), "inventory").expect("select inventory composition");
         let target = operator_target(
-            &receiving,
-            &read_metadata(&receiving.manifest_path, true).await.unwrap(),
+            &inventory,
+            &read_metadata(&inventory.manifest_path, true).await.unwrap(),
         )
         .unwrap();
-        assert_eq!(target.cargo_package, "wamn-receiving-tui");
-        assert_eq!(target.binary, "wamn-receiving");
-        let wms_root = roots()[0].parent().unwrap().join("wamn_wms");
-        let wms =
-            select_component(&[wms_root], "wms").expect("select WMS by its declared component");
-        let target = operator_target(
-            &wms,
-            &read_metadata(&wms.manifest_path, true).await.unwrap(),
-        )
-        .unwrap();
-        assert_eq!(target.cargo_package, "wamn-generated-wms-tui");
-        assert_eq!(target.binary, "wamn-wms-tui");
-        assert!(select_component(&roots(), "wamn_receiving").is_err());
-        assert!(select_component(&roots(), "../receiving").is_err());
-        assert!(select_component(&roots(), "client-acme-receiving").is_err());
+        assert_eq!(target.cargo_package, "inventory-console");
+        assert_eq!(target.binary, "inventory-console");
+        assert!(select_component(&roots(), "platform_inventory").is_err());
+        assert!(select_component(&roots(), "../inventory").is_err());
+        assert!(select_component(&roots(), "inventory-console").is_err());
     }
 
     #[test]
@@ -629,7 +615,7 @@ mod tests {
             &std::fs::read(roots()[0].join("wamn.json")).expect("read source manifest"),
         )
         .expect("parse source manifest");
-        for names in [vec!["receiving"], vec!["receiving", "dispatch"]] {
+        for names in [vec!["inventory"], vec!["inventory", "dispatch"]] {
             manifest["components"] = names
                 .iter()
                 .map(|name| ((*name).to_owned(), json!({"connections":["postgres"]})))
@@ -643,15 +629,15 @@ mod tests {
             let packages =
                 operator_packages(std::slice::from_ref(&root)).expect("read declared components");
             assert_eq!(packages.len(), names.len());
-            let selected = select_component(std::slice::from_ref(&root), "receiving").unwrap();
+            let selected = select_component(std::slice::from_ref(&root), "inventory").unwrap();
             assert_eq!(
                 selected.manifest_path,
-                root.join("generated/receiving-tui/Cargo.toml")
+                root.join("generated/inventory-tui/Cargo.toml")
             );
             assert!(selected.manifest_path.starts_with(&root));
             assert!(operator_packages(&[root.clone(), roots()[0].clone()]).is_err());
         }
-        for names in [vec!["Receiving"], vec!["1receiving"], vec!["../receiving"]] {
+        for names in [vec!["Inventory"], vec!["1inventory"], vec!["../inventory"]] {
             manifest["components"] = names
                 .iter()
                 .map(|name| ((*name).to_owned(), json!({"connections":["postgres"]})))
@@ -673,8 +659,8 @@ mod tests {
 
     fn artifact_targets() -> Vec<OperatorTarget> {
         [
-            ("receiving", "wamn-receiving"),
-            ("client_acme_receiving", "wamn-client-acme-receiving-tui"),
+            ("inventory", "inventory-console"),
+            ("dispatch", "dispatch-screen"),
         ]
         .into_iter()
         .map(|(component, binary)| OperatorTarget {
@@ -702,20 +688,20 @@ mod tests {
             json!({"reason":"compiler-message", "message":{"rendered":"a diagnostic"}}),
             artifact("unrelated", &json!("/elsewhere/unrelated")),
             artifact(
-                "wamn-receiving",
-                &json!("/custom-target/debug/wamn-receiving"),
+                "inventory-console",
+                &json!("/custom-target/debug/inventory-console"),
             ),
             artifact(
-                "wamn-client-acme-receiving-tui",
-                &json!("/custom-target/debug/wamn-client-acme-receiving-tui"),
+                "dispatch-screen",
+                &json!("/custom-target/debug/dispatch-screen"),
             ),
             json!({"reason":"build-finished", "success":true}),
         ];
         let found =
             artifact_paths(&packages, &lines(&messages)).expect("read all emitted binaries");
         assert_eq!(
-            found["receiving"],
-            Path::new("/custom-target/debug/wamn-receiving")
+            found["inventory"],
+            Path::new("/custom-target/debug/inventory-console")
         );
         assert_eq!(found.len(), 2);
         messages[3]["package_id"] = json!("unselected-package-with-the-same-binary");
@@ -731,14 +717,14 @@ mod tests {
             assert!(
                 artifact_paths(
                     &packages,
-                    &lines(&[artifact("wamn-receiving", &executable)])
+                    &lines(&[artifact("inventory-console", &executable)])
                 )
                 .is_err()
             );
         }
         let collision = [
-            artifact("wamn-receiving", &json!("/one/operator")),
-            artifact("wamn-receiving", &json!("/two/operator")),
+            artifact("inventory-console", &json!("/one/operator")),
+            artifact("inventory-console", &json!("/two/operator")),
         ];
         assert!(artifact_paths(&packages, &lines(&collision)).is_err());
         assert!(artifact_paths(&packages, b"not JSON\n").is_err());
@@ -748,8 +734,8 @@ mod tests {
         json!({
             "workspace_root":"/repo",
             "packages":[
-                {"id":"operator","name":"wamn-receiving-tui","manifest_path":"/repo/apps/wamn_receiving/ui/Cargo.toml"},
-                {"id":"app","name":"wamn-generated-receiving-tui","manifest_path":"/repo/apps/wamn_receiving/generated/receiving-tui/Cargo.toml"},
+                {"id":"operator","name":"inventory-console","manifest_path":"/repo/packages/inventory/ui/Cargo.toml"},
+                {"id":"app","name":"wamn-generated-inventory-tui","manifest_path":"/repo/packages/inventory/generated/inventory-tui/Cargo.toml"},
                 {"id":"client","name":"wamn-client","manifest_path":"/repo/crates/client/core/Cargo.toml"},
                 {"id":"build","name":"local-builder","manifest_path":"/repo/crates/build/Cargo.toml"},
                 {"id":"dev","name":"test-only","manifest_path":"/repo/test-support/test-only/Cargo.toml"},
@@ -784,11 +770,11 @@ mod tests {
         assert_eq!(
             inputs.directories,
             [
-                "/repo/apps/wamn_receiving/generated/receiving-tui",
-                "/repo/apps/wamn_receiving/ui",
                 "/repo/crates/build",
                 "/repo/crates/client/core",
-                "/repo/crates/local-patch"
+                "/repo/crates/local-patch",
+                "/repo/packages/inventory/generated/inventory-tui",
+                "/repo/packages/inventory/ui"
             ]
             .map(PathBuf::from)
         );
@@ -846,7 +832,7 @@ mod tests {
             std::env::temp_dir().join(format!("wamn-native-app-workspace-{}", std::process::id()));
         let app = root.join("different-directory");
         let ui = app.join("ui");
-        let generated = app.join("generated/receiving-tui");
+        let generated = app.join("generated/inventory-tui");
         std::fs::create_dir_all(ui.join("src")).unwrap();
         std::fs::create_dir_all(generated.join("src")).unwrap();
         std::fs::copy(roots()[0].join("wamn.json"), app.join("wamn.json")).unwrap();
@@ -857,7 +843,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             app.join("Cargo.toml"),
-            "[workspace]\nmembers = [\"ui\", \"generated/receiving-tui\"]\nresolver = \"3\"\n",
+            "[workspace]\nmembers = [\"ui\", \"generated/inventory-tui\"]\nresolver = \"3\"\n",
         )
         .unwrap();
         std::fs::write(
@@ -870,27 +856,27 @@ edition = "2024"
 name = "dock-screen"
 path = "src/main.rs"
 [dependencies]
-screens = { package = "wamn-generated-receiving-tui", path = "../generated/receiving-tui" }
+screens = { package = "wamn-generated-inventory-tui", path = "../generated/inventory-tui" }
 "#,
         )
         .unwrap();
-        std::fs::write(generated.join("Cargo.toml"), "[package]\nname = \"wamn-generated-receiving-tui\"\nversion = \"0.1.0\"\nedition = \"2024\"\n").unwrap();
+        std::fs::write(generated.join("Cargo.toml"), "[package]\nname = \"wamn-generated-inventory-tui\"\nversion = \"0.1.0\"\nedition = \"2024\"\n").unwrap();
         std::fs::write(ui.join("src/main.rs"), "fn main() {}\n").unwrap();
         std::fs::write(generated.join("src/lib.rs"), "pub fn screen() {}\n").unwrap();
         std::fs::write(
             app.join("Cargo.lock"),
             r#"version = 4
 [[package]]
-name = "wamn-generated-receiving-tui"
+name = "wamn-generated-inventory-tui"
 version = "0.1.0"
 [[package]]
 name = "warehouse-desk"
 version = "0.1.0"
-dependencies = ["wamn-generated-receiving-tui"]
+dependencies = ["wamn-generated-inventory-tui"]
 "#,
         )
         .unwrap();
-        let selected = select_component(std::slice::from_ref(&app), "receiving").unwrap();
+        let selected = select_component(std::slice::from_ref(&app), "inventory").unwrap();
         let metadata = read_metadata(&selected.manifest_path, false).await.unwrap();
         assert_eq!(metadata.workspace_root, app);
         let target = operator_target(&selected, &metadata).unwrap();
@@ -900,9 +886,9 @@ dependencies = ["wamn-generated-receiving-tui"]
         let executables = build(std::slice::from_ref(&app))
             .await
             .expect("build the independent app");
-        assert!(executables["receiving"].is_file());
+        assert!(executables["inventory"].is_file());
         assert!(
-            std::process::Command::new(&executables["receiving"])
+            std::process::Command::new(&executables["inventory"])
                 .status()
                 .unwrap()
                 .success()
