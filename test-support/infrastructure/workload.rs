@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::net::Ipv4Addr;
 use std::path::Path;
 use std::time::Duration;
 
@@ -10,6 +11,123 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 
 use crate::rendering::MaterializerInput;
+
+/// Read the owned container's IPv4 address from restricted Docker output.
+pub fn kind_address(settings: &Value) -> anyhow::Result<Ipv4Addr> {
+    let address: Ipv4Addr = settings["Networks"]["kind"]["IPAddress"]
+        .as_str()
+        .context("the owned container has a kind-network address")?
+        .parse()
+        .context("the owned container has an IPv4 kind-network address")?;
+    ensure!(
+        !address.is_unspecified(),
+        "the kind-network address is empty"
+    );
+    Ok(address)
+}
+
+/// Read the sole PostgreSQL port published on the loopback interface.
+pub fn postgres_host_port(settings: &Value) -> anyhow::Result<u16> {
+    let ports = settings["Ports"]["5432/tcp"]
+        .as_array()
+        .context("the owned PostgreSQL container publishes port 5432")?;
+    ensure!(
+        ports.len() == 1 && ports[0]["HostIp"] == "127.0.0.1",
+        "PostgreSQL must publish one loopback port"
+    );
+    let port = ports[0]["HostPort"]
+        .as_str()
+        .context("the PostgreSQL mapping names its host port")?
+        .parse::<u16>()
+        .context("the PostgreSQL host port is valid")?;
+    ensure!(port != 0, "the PostgreSQL host port must be allocated");
+    Ok(port)
+}
+
+/// Record a build command and its private output without recording environment values.
+pub async fn record_build(
+    evidence: &Path,
+    name: &str,
+    command: &mut Command,
+) -> anyhow::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(bytes)
+            .with_context(|| format!("write private file {}", path.display()))
+    }
+
+    let standard = command.as_std();
+    let argv = std::iter::once(standard.get_program())
+        .chain(standard.get_args())
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let cwd = standard
+        .get_current_dir()
+        .map(Path::to_path_buf)
+        .map_or_else(std::env::current_dir, Ok)?;
+    let stdout_path = evidence.join(format!("{name}.stdout.log"));
+    let stderr_path = evidence.join(format!("{name}.stderr.log"));
+    write_private(
+        &evidence.join(format!("{name}-command.json")),
+        &serde_json::to_vec_pretty(&json!({
+            "argv": argv, "cwd": cwd,
+            "stdout": stdout_path, "stderr": stderr_path,
+        }))?,
+    )?;
+    let stdout = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&stdout_path)?;
+    let stderr = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&stderr_path)?;
+    let started = Instant::now();
+    let status = command
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr)
+        .kill_on_drop(true)
+        .status()
+        .await;
+    let result = match &status {
+        Ok(status) => json!({
+            "exit_code": status.code(), "signal": status.signal(),
+            "status": status.to_string(), "passed": status.success(),
+            "elapsed_seconds": started.elapsed().as_secs_f64(),
+        }),
+        Err(error) => json!({
+            "exit_code": null, "signal": null, "passed": false,
+            "failure": error.to_string(),
+            "elapsed_seconds": started.elapsed().as_secs_f64(),
+        }),
+    };
+    write_private(
+        &evidence.join(format!("{name}-result.json")),
+        &serde_json::to_vec_pretty(&result)?,
+    )?;
+    let status = status.with_context(|| format!("start {name}"))?;
+    ensure!(
+        status.success(),
+        "{name} failed with {status}; see {} and {}",
+        stdout_path.display(),
+        stderr_path.display(),
+    );
+    Ok(())
+}
 
 /// Host objects and pods observed after the requested release becomes ready.
 #[derive(Debug)]
@@ -1065,6 +1183,111 @@ async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::ScratchRoot;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[tokio::test]
+    async fn failed_image_build_retains_command_status_and_output_bytes() {
+        let root = ScratchRoot::create().unwrap();
+        let script = "printf 'stdout\\000data\\n'; printf 'stderr\\377data\\n' >&2; exit 7";
+        let failure = record_build(
+            root.path(),
+            "build-images",
+            Command::new("/bin/sh")
+                .current_dir(root.path())
+                .env("WAMN_TEST_PRIVATE_VALUE", "not-for-evidence")
+                .args(["-c", script]),
+        )
+        .await
+        .unwrap_err();
+        assert!(failure.to_string().contains("build-images.stderr.log"));
+        assert_eq!(
+            fs::read(root.path().join("build-images.stdout.log")).unwrap(),
+            b"stdout\0data\n"
+        );
+        assert_eq!(
+            fs::read(root.path().join("build-images.stderr.log")).unwrap(),
+            b"stderr\xffdata\n"
+        );
+        let command = fs::read_to_string(root.path().join("build-images-command.json")).unwrap();
+        assert!(!command.contains("not-for-evidence"));
+        let command: Value = serde_json::from_str(&command).unwrap();
+        assert_eq!(command["argv"], json!(["/bin/sh", "-c", script]));
+        assert_eq!(command["cwd"], json!(root.path()));
+        let result: Value = serde_json::from_slice(
+            &fs::read(root.path().join("build-images-result.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["exit_code"], 7);
+        assert_eq!(result["passed"], false);
+        assert!(result["signal"].is_null());
+        for file in fs::read_dir(root.path()).unwrap() {
+            assert_eq!(
+                file.unwrap().metadata().unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn image_build_spawn_failure_is_retained_before_returning() {
+        let root = ScratchRoot::create().unwrap();
+        assert!(
+            record_build(
+                root.path(),
+                "build-identity",
+                Command::new(root.path().join("absent-build-command")).current_dir(root.path()),
+            )
+            .await
+            .is_err()
+        );
+        let result: Value = serde_json::from_slice(
+            &fs::read(root.path().join("build-identity-result.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["passed"], false);
+        assert!(result["exit_code"].is_null());
+        assert!(!result["failure"].as_str().unwrap().is_empty());
+        assert!(
+            fs::read(root.path().join("build-identity.stdout.log"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            fs::read(root.path().join("build-identity.stderr.log"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(root.path().join("build-identity-command.json").is_file());
+    }
+
+    #[test]
+    fn docker_network_output_requires_private_allocated_addresses() {
+        let settings = json!({
+            "Networks":{"kind":{"IPAddress":"172.18.0.5"}},
+            "Ports":{"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"41327"}]},
+        });
+        assert_eq!(kind_address(&settings).unwrap().to_string(), "172.18.0.5");
+        assert_eq!(postgres_host_port(&settings).unwrap(), 41327);
+        for ports in [
+            json!([{"HostIp":"0.0.0.0","HostPort":"41327"}]),
+            json!([{"HostIp":"127.0.0.1","HostPort":"0"}]),
+            json!([{"HostIp":"127.0.0.1","HostPort":"41327"},{"HostIp":"::1","HostPort":"41327"}]),
+            json!([{"HostIp":"127.0.0.1","HostPort":"65536"}]),
+            json!([]),
+            json!(null),
+        ] {
+            assert!(postgres_host_port(&json!({"Ports":{"5432/tcp":ports}})).is_err());
+        }
+        for networks in [
+            json!({"bridge":{"IPAddress":"172.18.0.4"}}),
+            json!({"kind":{"IPAddress":"0.0.0.0"}}),
+            json!({"kind":{"IPAddress":"::1"}}),
+            json!({"kind":{"IPAddress":""}}),
+        ] {
+            assert!(kind_address(&json!({"Networks":networks})).is_err());
+        }
+    }
 
     // These are observed native objects from the recorded three-host run.
     const DENIED: &str = include_str!("fixtures/workload/cross-environment-workload.json");

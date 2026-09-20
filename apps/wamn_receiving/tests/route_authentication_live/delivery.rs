@@ -4,6 +4,8 @@ use anyhow::{Context as _, ensure};
 use wamn_catalog::ServingManifest;
 use wamn_control::delivery::Candidate;
 
+pub(super) use wamn_test_infrastructure::rendering::{host_values, image_reference};
+
 pub(super) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>> {
     let Some(candidate) = Candidate::from_env()? else {
         return Ok(None);
@@ -30,36 +32,6 @@ pub(super) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
     Ok(Some((candidate, manifest)))
 }
 
-pub(super) fn image_reference(image: &str) -> anyhow::Result<String> {
-    let (repository, digest) = image
-        .rsplit_once('@')
-        .context("the supplied image has a digest")?;
-    if repository
-        .rsplit('/')
-        .next()
-        .is_some_and(|name| name.contains(':'))
-    {
-        Ok(image.to_owned())
-    } else {
-        Ok(format!("{repository}:latest@{digest}"))
-    }
-}
-
-pub(super) fn host_values(base: &str, image: &str) -> anyhow::Result<String> {
-    let (name, digest) = image
-        .rsplit_once('@')
-        .context("the supplied host image has a digest")?;
-    let (repository, tag) = name
-        .rsplit_once(':')
-        .context("the supplied host image has a tag")?;
-    let mut base: serde_yaml::Value = serde_yaml::from_str(base)?;
-    base["runtime"]["image"]["registry"] = "".into();
-    base["runtime"]["image"]["repository"] = repository.into();
-    base["runtime"]["image"]["tag"] = format!("{tag}@{digest}").into();
-    base["runtime"]["image"]["pull_policy"] = "IfNotPresent".into();
-    serde_yaml::to_string(&base).context("render the digest-pinned host image")
-}
-
 pub(super) fn registry_files(candidate: &Candidate, work: &std::path::Path) -> anyhow::Result<()> {
     let Some(endpoint) = &candidate.native_registry_endpoint else {
         return Ok(());
@@ -82,37 +54,4 @@ pub(super) fn registry_files(candidate: &Candidate, work: &std::path::Path) -> a
         ),
     )?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn host_image_digest_survives_chart_values() {
-        let digest = "a".repeat(64);
-        for repository in [
-            "registry.test:5443/wamn-host",
-            "registry.test:5443/wamn-host:release",
-        ] {
-            let image = super::image_reference(&format!("{repository}@sha256:{digest}")).unwrap();
-            let base = super::host_values(
-                "runtime:\n  image:\n    registry: old\n    repository: old\n    tag: old\n    pull_policy: Never\n",
-                &image,
-            )
-            .unwrap();
-            let base: serde_yaml::Value = serde_yaml::from_str(&base).unwrap();
-            let actual = format!(
-                "{}:{}",
-                base["runtime"]["image"]["repository"].as_str().unwrap(),
-                base["runtime"]["image"]["tag"].as_str().unwrap()
-            );
-            assert_eq!(actual, image);
-            assert!(actual.starts_with("registry.test:5443/wamn-host:"));
-            assert!(actual.ends_with(&format!("@sha256:{digest}")));
-            assert_eq!(base["runtime"]["image"]["registry"].as_str(), Some(""));
-            assert_eq!(
-                base["runtime"]["image"]["pull_policy"].as_str(),
-                Some("IfNotPresent")
-            );
-        }
-    }
 }

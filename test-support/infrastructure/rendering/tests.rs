@@ -1,5 +1,35 @@
 use super::*;
 
+#[test]
+fn host_image_digest_survives_chart_values() {
+    let digest = "a".repeat(64);
+    for repository in [
+        "registry.test:5443/wamn-host",
+        "registry.test:5443/wamn-host:release",
+    ] {
+        let image = image_reference(&format!("{repository}@sha256:{digest}")).unwrap();
+        let base = host_values(
+            "runtime:\n  image:\n    registry: old\n    repository: old\n    tag: old\n    pull_policy: Never\n",
+            &image,
+        )
+        .unwrap();
+        let base: serde_yaml::Value = serde_yaml::from_str(&base).unwrap();
+        let actual = format!(
+            "{}:{}",
+            base["runtime"]["image"]["repository"].as_str().unwrap(),
+            base["runtime"]["image"]["tag"].as_str().unwrap()
+        );
+        assert_eq!(actual, image);
+        assert!(actual.starts_with("registry.test:5443/wamn-host:"));
+        assert!(actual.ends_with(&format!("@sha256:{digest}")));
+        assert_eq!(base["runtime"]["image"]["registry"].as_str(), Some(""));
+        assert_eq!(
+            base["runtime"]["image"]["pull_policy"].as_str(),
+            Some("IfNotPresent")
+        );
+    }
+}
+
 const BASE: &str = include_str!("../../../deploy/platform/values-host-default.yaml");
 const RECEIVING: &str = include_str!("../../../deploy/platform/values-host-receiving-pat.yaml");
 const WMS: &str = include_str!("../../../deploy/platform/values-host-wms-pat.yaml");

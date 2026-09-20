@@ -2,7 +2,6 @@
 
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::Write as _;
-use std::net::Ipv4Addr;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -12,6 +11,7 @@ use object_store::aws::{AmazonS3, AmazonS3Builder};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
 use wamn_test_infrastructure::rendering::render_kind_cluster;
+pub(super) use wamn_test_infrastructure::workload::{kind_address, postgres_host_port};
 
 const REGISTRY_USERNAME: &str = "wamn-wms-journey";
 const MINIO_ACCESS_KEY: &str = "wamn-labels-store";
@@ -136,70 +136,4 @@ pub(super) fn object_store(files: &BootstrapFiles, endpoint: &str) -> anyhow::Re
 /// Supply the existing labels-store Secret body to the application setup.
 pub(super) fn object_store_credentials(files: &BootstrapFiles) -> Value {
     json!({"ACCESS_KEY_ID":MINIO_ACCESS_KEY,"ACCESS_SECRET_KEY":files.minio_password})
-}
-
-/// Read the owned container's IPv4 address from its restricted Docker output.
-pub(super) fn kind_address(settings: &Value) -> anyhow::Result<Ipv4Addr> {
-    let address: Ipv4Addr = settings["Networks"]["kind"]["IPAddress"]
-        .as_str()
-        .context("the owned container has a kind-network address")?
-        .parse()
-        .context("the owned container has an IPv4 kind-network address")?;
-    ensure!(
-        !address.is_unspecified(),
-        "the kind-network address is empty"
-    );
-    Ok(address)
-}
-
-/// Read the sole PostgreSQL port published on the loopback interface.
-pub(super) fn postgres_host_port(settings: &Value) -> anyhow::Result<u16> {
-    let ports = settings["Ports"]["5432/tcp"]
-        .as_array()
-        .context("the owned PostgreSQL container publishes port 5432")?;
-    ensure!(
-        ports.len() == 1,
-        "PostgreSQL must publish one loopback port"
-    );
-    ensure!(
-        ports[0]["HostIp"] == "127.0.0.1",
-        "PostgreSQL must publish only on the loopback interface"
-    );
-    let port = ports[0]["HostPort"]
-        .as_str()
-        .context("the PostgreSQL mapping names its host port")?
-        .parse::<u16>()
-        .context("the PostgreSQL host port is valid")?;
-    ensure!(port != 0, "the PostgreSQL host port must be allocated");
-    Ok(port)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{kind_address, postgres_host_port};
-    use serde_json::json;
-
-    #[test]
-    fn docker_network_output_keeps_the_explicit_kind_address_and_loopback_port() {
-        let settings = json!({
-            "Networks":{"kind":{"IPAddress":"172.18.0.5"}},
-            "Ports":{"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"41327"}]},
-        });
-        assert_eq!(kind_address(&settings).unwrap().to_string(), "172.18.0.5");
-        assert_eq!(postgres_host_port(&settings).unwrap(), 41327);
-    }
-
-    #[test]
-    fn postgres_mapping_refuses_public_multiple_and_unallocated_ports() {
-        for ports in [
-            json!([{"HostIp":"0.0.0.0","HostPort":"41327"}]),
-            json!([{"HostIp":"127.0.0.1","HostPort":"41327"},{"HostIp":"::1","HostPort":"41327"}]),
-            json!([{"HostIp":"127.0.0.1","HostPort":"0"}]),
-            json!([{"HostIp":"127.0.0.1","HostPort":"65536"}]),
-            json!(null),
-        ] {
-            assert!(postgres_host_port(&json!({"Ports":{"5432/tcp":ports}})).is_err());
-        }
-        assert!(kind_address(&json!({"Networks":{"kind":{"IPAddress":""}}})).is_err());
-    }
 }

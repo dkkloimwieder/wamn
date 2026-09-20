@@ -82,6 +82,38 @@ pub struct RenderedHostValues {
     pub overlay: String,
 }
 
+/// Add a default tag when a digest-pinned image omits one.
+pub fn image_reference(image: &str) -> anyhow::Result<String> {
+    let (repository, digest) = image
+        .rsplit_once('@')
+        .context("the supplied image has a digest")?;
+    if repository
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name.contains(':'))
+    {
+        Ok(image.to_owned())
+    } else {
+        Ok(format!("{repository}:latest@{digest}"))
+    }
+}
+
+/// Put one digest-pinned host image into the chart's split image fields.
+pub fn host_values(base: &str, image: &str) -> anyhow::Result<String> {
+    let (name, digest) = image
+        .rsplit_once('@')
+        .context("the supplied host image has a digest")?;
+    let (repository, tag) = name
+        .rsplit_once(':')
+        .context("the supplied host image has a tag")?;
+    let mut base: Value = serde_yaml::from_str(base)?;
+    base["runtime"]["image"]["registry"] = "".into();
+    base["runtime"]["image"]["repository"] = repository.into();
+    base["runtime"]["image"]["tag"] = format!("{tag}@{digest}").into();
+    base["runtime"]["image"]["pull_policy"] = "IfNotPresent".into();
+    serde_yaml::to_string(&base).context("render the digest-pinned host image")
+}
+
 /// All identity claims consumed by the HTTP component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
