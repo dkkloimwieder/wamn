@@ -1,7 +1,8 @@
 //! Native HTTP routing with a bounded refusal for hosts in the verified release.
 //!
-//! Only an unbound, explicit release hostname becomes unavailable. Native
-//! request parsing, workload selection, and outgoing policy remain unchanged.
+//! During serving, an unbound explicit release hostname reports unavailable.
+//! Shutdown refuses further requests, including on existing connections.
+//! Native parsing, workload selection, and outgoing policy remain unchanged.
 //! Operator-created aliases and wildcard expansion are outside this projection.
 //! A selected workload without an ingress handle still receives native 404.
 

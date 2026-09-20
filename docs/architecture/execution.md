@@ -441,6 +441,7 @@ No timer creates a synthetic beat.
 An absent first beat fails through the normal silence budget.
 
 The host drains readiness, stops queue claims, and starts native HTTP shutdown together.
+The same admission signal refuses further HTTP requests on existing connections.
 One shutdown signal stops HTTP admission and queue polling, bounds active work in both paths, and then performs shared cleanup.
 Ingress failure, probe failure, or command-task failure follows the failure cleanup path.
 The process bounds plugin coordination, auxiliary task cleanup, telemetry flush, and final runtime shutdown.
