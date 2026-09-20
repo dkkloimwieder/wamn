@@ -534,7 +534,7 @@ fn schema_holds_no_credential_column() {
 /// Invariant 1 (system cluster absent from ALL request paths): a static grep of
 /// the deploy manifests. Only the T1 cluster definition itself
 /// (`wamn-sysdb.yaml`) may reference the system cluster / DB; NO data-plane
-/// workload (gateway / runner / dispatcher / webhook) may.
+/// workload (host / webhook) may.
 #[test]
 fn no_data_plane_manifest_references_the_system_cluster() {
     // M1 supplies its system registry from an emptyDir-backed loopback PG18
@@ -565,8 +565,7 @@ fn no_data_plane_manifest_references_the_system_cluster() {
             // as the R8b precedent while documenting a Secret reference is
             // exactly the prose a credential-hygiene change should carry, and
             // tripping on it pushes the next author toward the ALLOWLIST --
-            // which is the one edit that genuinely weakens this guard. Mirrors
-            // `without_yaml_comments` in tests/conformance/tests/dispatcher_boundary.rs.
+            // which is the one edit that genuinely weakens this guard.
             let body = body
                 .lines()
                 .map(|line| line.split_once('#').map_or(line, |(rendered, _)| rendered))

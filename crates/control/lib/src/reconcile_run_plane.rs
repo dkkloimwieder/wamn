@@ -54,7 +54,7 @@ use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
     APP_SCHEMA_SQL, PlatformComponent, bind_platform_principal_sql, platform_principals_sql,
-    project_env_database_name, sql, validate_project_env,
+    project_env_database_name, validate_project_env,
 };
 use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{

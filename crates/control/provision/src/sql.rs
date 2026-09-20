@@ -130,20 +130,6 @@ pub fn drain_app_role_sessions_sql() -> String {
     )
 }
 
-// --- Dispatcher read-only provisioning (wamn-0h0g.12.66) ---------------------
-//
-// The always-on dispatcher authenticated as the shared, guest-reachable
-// [`APP_ROLE`], which holds `INSERT`/`UPDATE`/`DELETE` on the run queue and on
-// the whole `catalog` schema. Its real surface is two `SELECT`s. These builders
-// mint the scoped reader and grant it exactly that surface, nothing wider.
-
-/// The relations the dispatcher reads, in the order it touches them: the
-/// parked-due reconciliation `SELECT` scans `run_queue` and its budget clause
-/// `EXISTS`-joins `effect_attempts`; the queue-depth `SELECT` reads the same
-/// pair. PostgreSQL checks privileges on every relation a statement references
-/// regardless of whether the subquery yields rows, so BOTH grants are load
-/// bearing even when the table is empty.
-
 /// Catalog relations read by the surviving management-admission surface.
 ///
 /// Publish reads the immutable wiring and package-owned component facts; Gate
