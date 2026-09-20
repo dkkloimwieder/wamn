@@ -14,8 +14,8 @@ The existing owner rule forbids restoring the retired fork patches.
 
 Native loading and dispatch own compilation, linking, fresh and warm stores, epoch interruption, and guest cancellation.
 WAMN uses public `GuestCall`, `InstancePolicy::Ephemeral`, `InstancePolicy::Warm`, `ProbeState`, `Liveness`, and bounded flush operations.
-Host and executor process construction call native `raise_descriptor_limit()` before sizing descriptor-dependent resources.
-Their Tokio runtimes use `event_interval(1)` for timely timer polling.
+Host process construction calls native `raise_descriptor_limit()` before sizing descriptor-dependent resources.
+Its Tokio runtime uses `event_interval(1)` for timely timer polling.
 These choices make no general performance claim.
 
 ## Retained WAMN implementations
@@ -58,7 +58,7 @@ The native operator can exit after an initial scheduler NATS dial timeout.
 Accepted supervised restarts do not establish the cause or removal of that delay.
 A successful recovery without a startup refusal cannot establish recovery after that refusal.
 
-The [lifecycle contract](execution.md#process-lifecycle) retains the unbuilt automation producer and dependent active-work shutdown case.
+The [lifecycle contract](execution.md#process-lifecycle) covers the combined host shutdown path.
 
 Tenant raw-socket admission remains refused.
 `wamn-d0w4` must be resolved before admitting a raw-socket guest.

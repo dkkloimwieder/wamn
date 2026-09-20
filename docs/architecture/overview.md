@@ -91,7 +91,7 @@ Promotion compares target manifests and ordered migrations, copies admitted fact
 Conflicting content refuses, and exact retries retain their original facts.
 
 Publication produces an immutable release manifest addressed by its digest.
-Deployment supplies that digest and artifact location to the host and executor.
+Deployment supplies that digest and artifact location to the host.
 A rollout changes the serving release.
 Runtime requests resolve wiring from the supplied release, independently of mutable activation pointers and PostgreSQL notifications.
 Frozen candidate execution retains its own admitted facts throughout the traversal.
@@ -109,9 +109,9 @@ The [operations pages](../operations/README.md) own publication, deployment, and
 
 ## Runtime owners
 
-The host and executor share the [execution driver](execution.md).
+The host uses the [execution driver](execution.md) for both HTTP and queued work.
 The driver coordinates graph decisions, while private native modules own dispatch, invocation authority, and workload loading.
-The executor and existing run-state libraries own durable queue claims and settlement.
+The host and existing run-state libraries own durable queue claims and settlement.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 The developer host also loads unpublished components and admitted facts from local files.

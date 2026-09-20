@@ -14,7 +14,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/wamn_wms](apps/wamn_wms/README.md) | WMS manifest, migrations, guest, generated code, example, and tests |
 | [apps/client_acme_receiving](apps/client_acme_receiving/README.md) | Acme Receiving overlay and its tests |
 | [apps/platform](apps/platform/) | Shared platform guests and guest libraries |
-| [services](services/) | Deployable native processes and their service tests |
+| [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |
 | [crates](crates/) | Platform libraries, grouped by responsibility |
 | [tests](tests/) | Conformance, integration, system, and orchestration test owners |
 | [test-support](test-support/) | Shared test functions, fixtures, and infrastructure |

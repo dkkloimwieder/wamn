@@ -12,7 +12,7 @@ Build native programs in debug mode by default:
 
 ```bash
 cargo build --locked --offline -p wamn-host -p wamn-ctl -p wamn-identity \
-  -p wamn-dispatcher -p wamn-executor -p wamn-scenario-worker \
+  -p wamn-scenario-worker \
   -p wamn-cdc-reader -p wamn-gates
 cargo build --locked --offline -p wamn-ctl --features ops --bin wamn-ctl-ops
 ```

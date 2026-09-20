@@ -544,16 +544,13 @@ Stream tests also need an explicitly selected disposable NATS service.
 `streambench --mode all` refuses fewer than three replicas before it connects.
 Do not use the frozen cluster as a fixture.
 
-## Executor shutdown
+## Host and package runtime
 
-Run the process-signal tests with a disposable PostgreSQL 18 fixture:
+Run the combined host's library tests:
 
 ```bash
-cargo test --locked --offline -p wamn-executor --lib automation_live::shutdown:: -- --nocapture
+cargo test --locked --offline -p wamn-host --lib
 ```
 
-The runner creates and removes its own database fixture through `wamn-test-postgres`.
-Each case submits work through the production admission function and observes a guest log before sending SIGTERM or SIGINT.
-The tests use the production queue, native router, scoped database credentials, and shared signal-and-drain function.
-They assert bounded abort, authority revocation, store release, lease recovery, and refusal of completion through the old lease generation.
-They do not start a deployed executor or test registry startup, Kubernetes termination, or the Receiving heartbeat failure.
+For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).
+Use the application delivery journeys for deployed startup, readiness, authenticated requests, queue delivery, and cleanup.

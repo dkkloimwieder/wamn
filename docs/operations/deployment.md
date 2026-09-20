@@ -134,9 +134,9 @@ Publication freezes the effective release and its canonical manifest digest.
 [Qualify the exact candidate](delivery.md#candidate-qualification) before publication.
 The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
 It takes the same `--oci-ca-path` input as `push-component`.
-`print-release-env` prints the executor environment entries and host flags without editing files.
+`print-release-env` prints the host release settings without editing files.
 
-Copy its output into the executor manifest and the selected complete host overlay.
+Copy its output into the selected complete host overlay.
 Commit those configuration changes together.
 The publisher and workloads can reach the registry through different hostnames.
 Their artifact repository path must identify the same bytes.
@@ -147,8 +147,6 @@ Use the environment's explicit Kubernetes context and the matching application o
 For the retained Receiving example:
 
 ```bash
-kubectl -n wamn-system apply -f deploy/platform/executor.yaml
-kubectl -n wamn-system rollout status deployment/executor --timeout=300s
 helm upgrade --install -n wamn-system wamn-host \
   oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
   -f deploy/platform/values-host-default.yaml \
@@ -156,8 +154,8 @@ helm upgrade --install -n wamn-system wamn-host \
 kubectl -n wamn-system rollout status deployment/hostgroup-default --timeout=150s
 ```
 
-The host and executor load the manifest selected by their deployment configuration.
-They refuse missing or inconsistent release artifacts and bindings.
+The host loads the manifest selected by its deployment configuration.
+It refuses missing or inconsistent release artifacts and bindings.
 A ready Pod does not establish successful authenticated application execution.
 Exercise a meaningful operation and inspect its expected state or outcome before reporting deployment success.
 Record the selected source, artifact identity, release identity, command exits, and actual observed outcome in one run directory.
@@ -277,7 +275,7 @@ These maintenance verbs do not authorize shared development targets or a new sch
 
 ## Trusted component reuse
 
-The deployment owner selects exact reviewed component digests on both `wamn-host` and `wamn-executor`.
+The deployment owner selects exact reviewed component digests on `wamn-host`.
 Keep the selection empty when guest-code correctness is not a sufficient isolation boundary.
 Review and test the entire linked unit before granting trust.
 Require alternating callers on an observed reused instance, request-local data, and no unfinished guest tasks after return.
@@ -292,4 +290,4 @@ Set `--component-pool-size` or `WAMN_COMPONENT_POOL_SIZE` to a positive count. T
 Set `--component-reclaim-window-seconds` or `WAMN_COMPONENT_RECLAIM_WINDOW_SECONDS` to a positive number of seconds. The default is 60 seconds.
 The native pool uses `maxConcurrency = 1`, no retained minimum, and a 1,000-call instance limit.
 Pool overflow uses fresh stores and remains subject to the existing admission and memory limits.
-Restart the host or executor to change trust or pool configuration. The replacement process creates new pools.
+Restart the host to change trust or pool configuration. The replacement process creates new pools.

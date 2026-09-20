@@ -107,7 +107,9 @@ After initialization, the host records caller, SQL, claims, causation, and effec
 Native callbacks restore the trace context from that scope.
 Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
 Candidate execution still refuses nested calls.
-The executor owns durable queue claims and settlement through the existing run-state libraries.
+The host owns durable queue claims and settlement through the existing run-state libraries.
+HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
+Each host replica polls the durable queue and claims work through database leases; replicas need no wake service or process-local handoff.
 
 The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
 [Record history](data-access.md#record-history) stamps that principal on every write.
@@ -116,12 +118,12 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 - A nested call binds the executing principal of its parent.
 - A post-commit registration delivery binds `wamn:materializer`.
 - An automation delivery binds its admitted service principal.
-- A legacy queue delivery or management candidate case binds `wamn:executor`.
+- A queue delivery binds its admitted service principal.
 
 The same transaction binds the executing operation as `app.operation`.
 A node binds the operation token that it runs, so a nested call binds its own token.
 A registration delivery binds the token of its handler.
-An executor queue claim, reap, renew, or complete transaction binds `wamn:executor`.
+A host queue claim, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
@@ -434,26 +436,27 @@ Deferred population declarations, multiple outer items, and web clients remain i
 ## Process lifecycle
 
 Host readiness requires a real native command-loop beat.
-Executor liveness follows queue turns and successful lease renewals.
+Queue liveness follows durable polls and successful lease renewals in each host replica.
 No timer creates a synthetic beat.
 An absent first beat fails through the normal silence budget.
 
 The host drains readiness before its configured signal delay and native shutdown.
+One shutdown signal stops HTTP admission and queue polling, bounds active work in both paths, and then performs shared cleanup.
 Ingress failure, probe failure, or command-task failure follows the failure cleanup path.
 The process bounds plugin coordination, auxiliary task cleanup, telemetry flush, and final runtime shutdown.
 Cleanup timeout remains an error and can leave plugin cleanup incomplete.
 The HTTP-stop allowance bounds coordination and does not guarantee native completion.
 
-Executor shutdown bounds its current queue turn and auxiliary cleanup.
+Queue shutdown bounds its current turn and auxiliary cleanup.
 A turn beyond the budget retains the existing durable lease for recovery.
 The [enqueue-run command](../operations/queued-automation.md) admits production automation under an active service principal.
-The executor reads that principal and its current application permissions before each delivery.
+The host reads that principal and its current application permissions before each delivery.
 The normal operation checks also apply to nested calls.
 The legacy `fresh-only` restriction still refuses queued service callers. Human session support does not widen queued automation.
 SIGTERM and SIGINT use the same five-second native drain budget during active guest work.
 An aborted call loses its invocation authority, and native teardown releases its store.
 After the lease expires, recovery takes a new lease generation. The old generation cannot complete the run.
-The [executor shutdown tests](../operations/running-tests.md#executor-shutdown) exercise this path with production-admitted work.
+The [runtime tests](../operations/running-tests.md#host-and-package-runtime) cover the retained host and package paths.
 
 OpenTelemetry records invocation and effect spans, request timing, and delivery outcomes.
 Operational logs use INFO, and detailed request traces go to Tempo.

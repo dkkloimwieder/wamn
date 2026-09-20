@@ -2,7 +2,7 @@
 
 `wamn-ctl enqueue-run` queues one released wiring under a service principal.
 The command uses project-admin database authority.
-The executor uses its existing database roles to claim and execute the run.
+The host's queue worker uses its existing database roles to claim and execute the run.
 
 First, provision the service identity and reconcile its tenant user row.
 Assign its application roles in `app_system.user_roles` through the project administrator.
@@ -10,7 +10,7 @@ Those roles grant operations through `app_system.permissions`.
 The service row must have type `service` and status `active`.
 
 Reconcile the run schema before admission.
-Configure the executor with the selected release and both executor and callable-HTTP database credentials.
+Configure the host with the selected release and both executor-class and callable-HTTP database credentials.
 The callable-HTTP credential reads the service identity and its current permissions.
 
 Set `WAMN_PG_ADMIN_URL` to the project-admin connection URL.
@@ -32,7 +32,7 @@ The run records the released wiring hash, service identity, and environment dura
 
 Automation has no waiting HTTP caller.
 Use an emit terminal, or let the graph finish without a terminal.
-The executor reads current service permissions before delivery and applies the normal operation checks.
+The host reads current service permissions before delivery and applies the normal operation checks.
 Nested calls retain the service principal.
 Operations that require a fresh PAT refuse queued automation.
-The service principal owns application writes, while `wamn:executor` owns queue maintenance.
+The service principal owns application writes, while the `wamn:executor` credential class owns queue maintenance.

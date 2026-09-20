@@ -53,7 +53,7 @@ Reference names remain valid. This pattern check cannot identify every arbitrary
 The platform supplies the complete connection semantics.
 Publication and activation refuse absent or incompatible bindings before executing effects.
 
-Guest SQL, executor work, HTTP admission, and event materialization use distinct authority classes.
+Guest SQL, queue maintenance, HTTP admission, and event materialization use distinct authority classes.
 Private event binding files remain outside guest configuration, and workload configuration cannot replace them.
 Credential generations remain separate from invocation identity.
 A replacement generation must demonstrate live use before the previous generation can retire.

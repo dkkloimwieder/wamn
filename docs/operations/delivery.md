@@ -34,8 +34,7 @@ wamn-ctl prepare-release \
   --database-url "$DELIVERY_DATABASE_URL" --tenant "$DELIVERY_TENANT" \
   --effective-release-id "$DELIVERY_RELEASE_ID" --artifact-base "$DELIVERY_ARTIFACT_BASE" \
   --target-directory "$DELIVERY_TARGET" \
-  --host-image "$DELIVERY_HOST_IMAGE" --gates-image "$DELIVERY_GATES_IMAGE" \
-  --executor-image "$DELIVERY_EXECUTOR_IMAGE" \
+  --host-image "$DELIVERY_HOST_IMAGE" \
   --manifest-output "$DELIVERY_MANIFEST" --candidate-output "$DELIVERY_CANDIDATE"
 ```
 
@@ -65,9 +64,6 @@ The first disposable targets use the existing Receiving and Acme baseline releas
 Receiving runs command histories and baseline overlay compatibility against the same manifest.
 WMS runs its released routes against its own manifest.
 Both require exact canonical release bytes, executed success, unchanged artifacts, and successful cleanup.
-A supplied executor image also runs the existing idle lifecycle assertions.
-The gates assertions inspect its image and shared host layers.
-
 Qualification writes pass or fail with the source commit, command results, release inputs, and artifact hashes.
 It creates temporary application results in the system temporary directory and removes its own files after the cases.
 Keep the qualification result and candidate files until publication and deployment finish.
@@ -87,7 +83,7 @@ tools/delivery-owned wms
 Each fixture creates its own services, database, kind cluster, and native image registry.
 It keeps the minted release store until preparation, qualification, publication, selection, and deployment finish.
 The application owner supplies the authenticated request and expected response.
-Receiving also supplies an executor image, while WMS uses the host image.
+Receiving and WMS both supply the combined host image.
 The fixture reports failure if an operation or cleanup fails.
 It removes only its own resources.
 It writes the command results to its own new directory and prints that path.
@@ -150,10 +146,7 @@ For fresh nodes, set `imagePullPolicy: IfNotPresent` so the node can fetch that 
 The owned application fixtures set this policy for qualified candidates.
 The command permits Kubernetes defaults but refuses changes to supplied container fields or additional container images.
 
-If the candidate includes an executor image, include its Deployment JSON and pass `--executor-deployment`.
-Its `WAMN_RELEASE_ARTIFACT_BASE` and `WAMN_RELEASE_MANIFEST_DIGEST` environment values must match the published release.
 If the deployment also replaces identity, include its qualified Deployment JSON and pass `--identity-deployment`.
-The gates image belongs to qualification and does not require a deployed workload.
 The target must already provide its database, bindings, credentials, ingress, and other required infrastructure.
 
 Run the deployment against the explicit Kubernetes target:
