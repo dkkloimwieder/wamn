@@ -230,6 +230,9 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod automation_live;
+
 async fn drain_one(
     driver: &RouterDriver,
     postgres: &WamnPostgres,
