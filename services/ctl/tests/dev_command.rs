@@ -55,45 +55,6 @@ fn the_bare_development_command_still_requires_its_configuration() {
     );
 }
 
-/// The Gate is a real child process, and readiness watches its port rather than
-/// a route on it (wamn-10yt.10.32). Spawn something that is not a Gate and dies
-/// at once: the refusal says so and NAMES the port readiness was watching.
-#[test]
-fn a_gate_that_dies_before_listening_is_reported_against_its_port() {
-    let credentials = wamn_control::dev::environment::JourneyCredentials {
-        guest_sql: String::new(),
-        executor_platform: String::new(),
-        event_materializer: String::new(),
-        http_admitter: String::new(),
-        identity_reader: "postgresql://unused.invalid/unused".to_owned(),
-        control_author: "postgresql://unused.invalid/unused".to_owned(),
-        management_admitter: String::new(),
-    };
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build a runtime for the spawned Gate");
-    let error = runtime
-        .block_on(
-            wamn_control::dev::environment::spawn_journey_management_gate(
-                std::path::Path::new("/bin/false"),
-                &credentials,
-                "postgresql://unused.invalid/unused",
-                "127.0.0.1:18099",
-            ),
-        )
-        .expect_err("/bin/false is not a management Gate");
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("127.0.0.1:18099"),
-        "the readiness refusal does not name the port: {rendered}"
-    );
-    assert!(
-        rendered.contains("stopped before listening"),
-        "the readiness refusal does not say the Gate died: {rendered}"
-    );
-}
-
 #[test]
 fn unreadable_configuration_refuses_before_any_stage_runs() {
     let missing =

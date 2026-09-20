@@ -704,11 +704,11 @@ const GATE_READINESS_INTERVAL: Duration = Duration::from_millis(250);
 /// the bound is generous; what matters is that it is bounded.
 const GATE_READINESS_ATTEMPTS: u32 = 120;
 
-/// One `wamn-scenario-worker serve` child and the authority it listens on.
+/// One remote-boundary test Gate and the authority it listens on.
 ///
-/// The Gate is a real process, not a task in this one (wamn-10yt.10.32): the
-/// environment it serves outlives the command that stood it up, and a test
-/// that links the Gate in-process shows something the operator never runs.
+/// The local development coordinator validates authoring in-process. Retained
+/// delivery and authentication tests use this real process to exercise the
+/// authenticated HTTP boundary itself.
 #[derive(Debug)]
 pub struct JourneyManagementGate {
     child: tokio::process::Child,
@@ -742,7 +742,7 @@ impl JourneyManagementGate {
     }
 }
 
-/// Settle the address the Gate will listen on, before anything is provisioned.
+/// Settle the address a remote-boundary test Gate will listen on.
 ///
 /// A fixed nameable port is not a preference. The in-process launch could hand
 /// the ephemeral port the kernel picked back to its caller; a spawned child
@@ -761,7 +761,7 @@ pub fn gate_listen_address(bind: &str) -> anyhow::Result<SocketAddr> {
     Ok(address)
 }
 
-/// Spawn `wamn-scenario-worker serve` and wait until it accepts a connection.
+/// Spawn a remote-boundary `wamn-scenario-worker serve` test fixture.
 ///
 /// Readiness is a bounded TCP connect against the port the caller named. The
 /// management surface answers `POST /authoring` and 404s everything else, and
