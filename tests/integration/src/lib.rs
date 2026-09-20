@@ -17,6 +17,7 @@ pub mod host_session_test;
 mod hot_route_trace;
 pub mod identity_keys_test;
 pub mod identity_session_test;
+pub mod local_application;
 pub mod measure;
 mod measurement_schema;
 pub mod membership_test;

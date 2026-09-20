@@ -59,6 +59,7 @@ wamn-schema-introspection = { workspace = true }
 wat = "=1.252.0"
 http-body-util = { workspace = true }
 hyper = { workspace = true }
+hyper-util = { workspace = true, features = ["tokio"] }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wasmtime-wasi-http = { workspace = true }
 wamn-test-postgres = { workspace = true }
