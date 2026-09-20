@@ -14,7 +14,7 @@ use opentelemetry::global;
 use tokio_postgres::NoTls;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
-use wash_runtime::host::http::{ConnectionLimit, Ingress};
+use wash_runtime::host::http::{ConnectionLimit, HostHandler as _, Ingress};
 use wash_runtime::host::probes::{self, Liveness, ProbeState};
 use wash_runtime::host::{HostApi as _, HostConfig};
 use wash_runtime::observability::{MeterKind, Meters};
@@ -1071,6 +1071,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     builder = builder.with_liveness(Arc::clone(&liveness));
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let mut ingress_connections = None;
+    let mut ingress_handler = None;
     if let Some(addr) = args.http_addr {
         let router = wamn_runtime::expected_router::expected_host_router(release.as_deref());
         let mut ingress = Ingress::builder(router, addr);
@@ -1084,11 +1085,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             }
             ingress = ingress.tls(tls);
         }
-        let server = ingress.build().await?;
+        let server = Arc::new(ingress.build().await?);
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));
         ingress_connections = Some(connections);
-        builder = builder.with_http_handler(Arc::new(server));
+        ingress_handler = Some(Arc::clone(&server));
+        builder = builder.with_http_handler(server);
     }
     let probe_listener = match args.probe_addr {
         Some(address) => Some(probes::bind(address).await?),
@@ -1123,7 +1125,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             std::future::pending(),
         ));
     }
-    let (native_host, cleanup) = cluster_host
+    let (native_host, native_cleanup) = cluster_host
         .start()
         .await
         .context("failed to start cluster host")?;
@@ -1146,7 +1148,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             Err(error) => Err(error),
         };
         if let Err(error) = started {
-            wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, cleanup).await?;
+            if let Some(handler) = ingress_handler.as_ref() {
+                handler.stop().await.context("stop HTTP admission")?;
+            }
+            wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, native_cleanup).await?;
             return Err(error);
         }
     }
@@ -1200,9 +1205,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             }
         };
         let queue_enabled = queue.is_some();
+        let had_ingress = ingress_handler.is_some();
+        let stop_ingress = async move {
+            match ingress_handler {
+                Some(handler) => handler.stop().await.context("stop HTTP admission"),
+                None => Ok(()),
+            }
+        };
         stop_combined_after(
             stopped,
-            cleanup,
+            stop_ingress,
+            had_ingress,
+            native_cleanup,
             queue_serving.as_mut(),
             queue_enabled,
             stop_queue,
@@ -1351,8 +1365,10 @@ async fn ingress_stopped(connections: Option<&ConnectionLimit>) {
     clippy::too_many_arguments,
     reason = "Keep the single shutdown owner, both execution paths, and their shared budget explicit"
 )]
-async fn stop_combined_after<Q, N>(
+async fn stop_combined_after<I, Q, N>(
     stopped: impl std::future::Future<Output = anyhow::Result<()>>,
+    stop_ingress: I,
+    had_ingress: bool,
     native_cleanup: N,
     mut queue_serving: std::pin::Pin<&mut Q>,
     queue_enabled: bool,
@@ -1362,6 +1378,7 @@ async fn stop_combined_after<Q, N>(
     cleanup_budget: Duration,
 ) -> anyhow::Result<()>
 where
+    I: std::future::Future<Output = anyhow::Result<()>>,
     Q: std::future::Future<Output = anyhow::Result<()>>,
     N: std::future::Future<Output = anyhow::Result<()>>,
 {
@@ -1384,6 +1401,8 @@ where
     };
     tracing::info!("shutting down wamn-host");
     let cleanup_result = wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, async {
+        // Admission closes completely before either execution drain is polled.
+        let ingress_result = stop_ingress.await;
         let queue_cleanup = async {
             if !queue_enabled || queue_finished {
                 Ok(())
@@ -1394,7 +1413,18 @@ where
         let propagation = tokio::time::sleep(propagation_delay);
         let (queue_result, native_result, ()) =
             tokio::join!(queue_cleanup, native_cleanup, propagation);
-        queue_result.and(native_result)
+        let native_result = match native_result {
+            Err(error)
+                if had_ingress
+                    && ingress_result.is_ok()
+                    && error.to_string()
+                        == "HTTP ingress stopped accepting connections; the host can no longer serve traffic" =>
+            {
+                Ok(())
+            }
+            result => result,
+        };
+        ingress_result.and(queue_result).and(native_result)
     })
     .await;
     if let Err(error) = &cleanup_result {
@@ -1520,6 +1550,8 @@ mod tests {
         let probes = ProbeState::default();
         let running = stop_combined_after(
             async { stopped.await.context("test shutdown sender") },
+            async { Ok(()) },
+            false,
             async {
                 cleanup_polled.store(true, Ordering::Relaxed);
                 Ok(())
@@ -1556,6 +1588,8 @@ mod tests {
         tokio::pin!(queue);
         stop_combined_after(
             async { Ok(()) },
+            async { Ok(()) },
+            false,
             async {
                 assert!(
                     *native_stopping.borrow(),
@@ -1582,6 +1616,8 @@ mod tests {
         tokio::pin!(queue);
         stop_combined_after(
             std::future::pending(),
+            async { Ok(()) },
+            false,
             async { Ok(()) },
             queue.as_mut(),
             true,
@@ -1629,6 +1665,8 @@ mod tests {
                     assert!(task.as_ref().unwrap().as_ref().unwrap_err().is_cancelled());
                     Err(probe_listener_failure(task.as_ref()))
                 },
+                async { Ok(()) },
+                false,
                 async {
                     cleanup_polled.store(true, Ordering::Relaxed);
                     Ok(())
@@ -1669,6 +1707,8 @@ mod tests {
             Duration::from_secs(1),
             stop_combined_after(
                 async { anyhow::bail!("native ingress stopped") },
+                async { Ok(()) },
+                false,
                 std::future::pending(),
                 queue.as_mut(),
                 false,
@@ -1686,6 +1726,8 @@ mod tests {
         tokio::pin!(queue);
         let result = stop_combined_after(
             async { Ok(()) },
+            async { Ok(()) },
+            false,
             async { anyhow::bail!("native cleanup failed") },
             queue.as_mut(),
             false,
