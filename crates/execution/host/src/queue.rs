@@ -19,8 +19,8 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_runtime::release_manifest::LoadedRelease;
 
 use crate::{
-    CandidateCaseRequest, CandidateExecutionRefusal, CandidateWiringTarget, RouterDriver,
-    RouterDriverRequest, Verdict,
+    CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
+    CandidateWiringTarget, RouterDriver, RouterDriverRequest, Verdict,
 };
 
 const QUEUE_CLAIM_SCOPE: &str = "wamn-executor-queue";
@@ -106,9 +106,7 @@ impl QueueService {
             &config.project,
             &scope.environment,
         )?;
-        let liveness = Arc::new(Liveness::new(
-            Duration::from_millis(config.lease_ttl_ms).saturating_mul(3),
-        ));
+        let liveness = Liveness::new(Duration::from_millis(config.lease_ttl_ms).saturating_mul(3));
         Ok(Self {
             driver,
             postgres,
@@ -436,7 +434,7 @@ async fn drive_claim(
     let adjustments = match &delivery {
         Ok(delivery) => delivery.deadline_adjustments.as_slice(),
         Err(error) => error
-            .downcast_ref::<wamn_execution_host::DeadlineAdjustments>()
+            .downcast_ref::<crate::DeadlineAdjustments>()
             .map_or(&[][..], |adjustments| adjustments.0.as_slice()),
     };
     if !adjustments.is_empty()

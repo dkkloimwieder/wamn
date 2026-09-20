@@ -23,25 +23,9 @@ const RELEASE_LOAD_CONSTRUCTION: &str = "LoadedRelease::load";
 /// that filled it called.
 const RELEASE_BINDING: &str = "let release = ";
 
-/// The two host processes, and per process the position that must hold:
-/// `(file, the first bind-capable text the release binding must precede)`.
-///
-/// wamn-0h0g.15.101 rules one loaded release instance PER PROCESS: the wash host serves
-/// flow-http routing and jetstream delivery, the executor serves the durable
-/// queue. Separate processes cannot share one object, so each binds exactly
-/// once — and must do so before anything binds a component, because under ruling
-/// wamn-0h0g.15.102 the verified manifest is the sole carrier of the
-/// `(effective release id, manifest digest)` pair a claim records. A component that
-/// bound first would have no pair.
-///
-/// The second process used to be the in-process run host, reached through
-/// `load_plan_release`; `18ba72b6` deleted host plan supply and that symbol with
-/// it, so this entry named a function that existed nowhere and the guard checked
-/// nothing (wamn-nguw). Both surviving processes call the loaded release directly.
-const HOST_RELEASE_LOAD_SITES: [(&str, &str); 2] = [
-    ("services/host/src/host.rs", "ClusterHostBuilder::default()"),
-    ("services/executor/src/lib.rs", "RouterDriver::new("),
-];
+/// One loaded release precedes all component binding in the combined host.
+const HOST_RELEASE_LOAD_SITES: [(&str, &str); 1] =
+    [("services/host/src/host.rs", "ClusterHostBuilder::default()")];
 
 /// The production construction of a claim's release pair.
 ///
@@ -63,14 +47,13 @@ const RELEASE_IDENTITY_CONSTRUCTION: &str = "ReleaseIdentity {";
 /// The two production sites that build the pair, and the loaded release expression each
 /// one must read both halves off.
 ///
-/// The per-run site is shared by both host processes through `RouterDriver`; the
-/// executor's is its queue-claim session scope. Two sites, one source.
+/// RouterDriver and the queue claim scope share the same loaded release.
 const RELEASE_IDENTITY_SOURCE_SITES: [(&str, &str); 2] = [
     (
         "crates/execution/host/src/router_driver.rs",
         "self.release.release()",
     ),
-    ("services/executor/src/lib.rs", "release.release()"),
+    ("crates/execution/host/src/queue.rs", "release.release()"),
 ];
 
 /// The host's one `RouterDeliveryBridge` opts into its meter.
@@ -97,7 +80,7 @@ const STRUCK_RELEASE_IDENTITY_KEYS: [&str; 2] = ["wamn.release-version", "wamn.m
 /// the plugin whose bind path used to read them.
 const STRUCK_KEY_SITES: [&str; 3] = [
     "crates/platform/runtime/src/plugins/wamn_postgres/mod.rs",
-    "services/executor/src/lib.rs",
+    "crates/execution/host/src/queue.rs",
     "services/host/src/host.rs",
 ];
 

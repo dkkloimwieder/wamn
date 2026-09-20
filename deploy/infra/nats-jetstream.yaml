@@ -4,9 +4,7 @@
 # event streams for each organization, project, and environment, with subjects
 # evt.<org>.<project>.<env>.<entity>.<op>. It is DELIBERATELY SEPARATE from the
 # operator/control-plane NATS (Deployment `nats`, Service `nats`) that carries
-# only the dispatcher doorbell (wamn.doorbell.<tenant>) and the wasmCloud
-# control plane — that cluster is untouched by this manifest, and the
-# NATS-optional posture of the doorbell/dispatcher path is unaffected.
+# the wasmCloud control plane. This manifest does not change that cluster.
 #
 # It also carries the ROUTER-TAP PREVIEW stream (WAMN_TAP, subjects tap.>,
 # wamn-0h0g.24.5) — see the ConfigMap and Job at the end of this file.

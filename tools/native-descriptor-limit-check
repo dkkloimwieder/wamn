@@ -24,9 +24,6 @@ SOURCE_PATHS = (
     "services/host/Cargo.toml",
     "services/host/src/main.rs",
     "services/host/src/host.rs",
-    "services/executor/Cargo.toml",
-    "services/executor/src/main.rs",
-    "services/executor/src/lib.rs",
     "tools/native-descriptor-limit-check",
 )
 
@@ -46,12 +43,7 @@ def child():
 def run_case(role, binary, mode, soft, hard, output_dir):
     name = f"{role}_{mode}"
     missing_ca = str(output_dir / "deliberately-missing-ca.pem")
-    service_args = ["host"] if role == "host" else [
-        "--release-artifact-base", "registry.invalid/wamn-test/release",
-        "--release-manifest-digest", "sha256:" + "0" * 64,
-        "--component-artifact-base", "registry.invalid/wamn-test/component",
-        "--registry-auth-file", str(output_dir / "deliberately-missing-auth.json"),
-    ]
+    service_args = ["host"]
     service_args += ["--oci-ca-path", missing_ca]
     command = [sys.executable, str(Path(__file__).resolve()), "--_child", str(soft), str(hard),
                str(binary), *service_args]
@@ -128,14 +120,13 @@ def run_case(role, binary, mode, soft, hard, output_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host-binary", type=Path, required=True)
-    parser.add_argument("--executor-binary", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True,
                         help="New caller-selected directory for diagnostic output")
     args = parser.parse_args()
     parent_before = resource.getrlimit(resource.RLIMIT_NOFILE)
     if parent_before[1] != resource.RLIM_INFINITY and parent_before[1] < 4096:
         parser.error("The parent hard descriptor limit must be at least 4096.")
-    binaries = {"host": args.host_binary.resolve(), "executor": args.executor_binary.resolve()}
+    binaries = {"host": args.host_binary.resolve()}
     for binary in binaries.values():
         if not binary.is_file() or not os.access(binary, os.X_OK):
             parser.error(f"The binary is not executable: {binary}")

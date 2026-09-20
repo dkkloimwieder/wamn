@@ -370,42 +370,6 @@ pub fn terminalize_exhausted_production_sql() -> String {
     )
 }
 
-/// Reconcile due work using the production claim predicate and FIFO order.
-///
-/// DELIBERATELY NOT CLASS-GATED (wamn-0h0g.20.2), and it cannot be. This is the
-/// dispatcher's statement, and the dispatcher runs as the scoped read role whose
-/// confinement `services/dispatcher/tests/read_authority.rs` asserts: SELECT on
-/// `run_queue` and `effect_attempts`, and explicitly NOT on `runs`. Correlating
-/// this predicate to `runs.durability_class` — the carrier wamn-0h0g.20.1 ruled —
-/// would make the dispatcher's every sweep a permission failure, so the ruling's
-/// "the claim path reads ONE column" holds at the claim and not here.
-///
-/// Nothing is lost. What this statement produces is a WAKE HINT, not a state
-/// transition: the dispatcher rings a doorbell and the executor's own claim
-/// re-decides under [`select_production_claim_sql`], which IS gated. An
-/// over-selected row is therefore declined at the claim, one statement later.
-/// Under-selecting would be the real defect, and this predicate can only
-/// over-select relative to the gated one.
-pub fn parked_due_sql(limit: usize) -> String {
-    format!(
-        "SELECT q.run_id FROM run_queue AS q \
-          WHERE q.tenant_id = current_setting('app.tenant', true) \
-            AND q.available_at <= now() + interval '250 milliseconds' \
-            AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
-            AND ( \
-                q.attempts < q.max_attempts \
-                OR q.lease_expires_at IS NULL \
-                OR EXISTS ( \
-                    SELECT 1 FROM effect_attempts AS effect \
-                     WHERE effect.tenant_id = q.tenant_id \
-                       AND effect.run_id = q.run_id \
-                ) \
-            ) \
-          ORDER BY q.available_at, q.stream_seq, q.run_id \
-          LIMIT {limit}"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

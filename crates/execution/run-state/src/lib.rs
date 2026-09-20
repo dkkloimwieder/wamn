@@ -5,7 +5,7 @@
 //! This crate owns the transactionally coupled `runs`, `run_queue`, lease,
 //! timer, and terminal lifecycle. It contains only decisions and
 //! parameterized SQL; Postgres, clocks, and
-//! doorbells remain adapter effects.
+//! database calls remain adapter effects.
 //!
 //! This crate's default graph is **pure**: no DB, no wasm, no clock. The
 //! crate maps execution outcomes to storage literals ([`RunStatus`]); the

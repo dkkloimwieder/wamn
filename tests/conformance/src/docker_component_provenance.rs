@@ -158,25 +158,12 @@ fn retained_native_images_have_package_scoped_build_stages() {
             &["wamn-identity"][..],
         ),
         (
-            "executor",
-            "wamn-executor",
-            "executor",
-            &["wamn-run-worker"][..],
-        ),
-        (
             "scenario-worker",
             "wamn-scenario-worker",
             "scenario-worker",
             &["wamn-scenario-worker"][..],
         ),
         ("ctl", "wamn-ctl", "ctl", &["wamn-ctl", "wamn-ctl-ops"][..]),
-        (
-            "dispatcher",
-            "wamn-dispatcher",
-            "dispatcher",
-            &["wamn-dispatcher"][..],
-        ),
-        ("waker", "wamn-waker", "waker", &["wamn-waker"][..]),
         (
             "cdc-reader",
             "wamn-cdc-reader",

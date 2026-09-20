@@ -34,10 +34,10 @@ use wamn_run_state::queue::{
     ClaimPlan, ClaimState, JanitorVerdict, Millis, ProductionClaimClass, QueueEntry,
     advance_claim_attempts_sql, claim_state, classify_production_claim, clear_pre_effect_state_sql,
     grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline, lease_live,
-    mint_evt_run_id, parked_due_sql, plan_claim, production_claim_state,
-    renew_production_lease_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
-    select_production_claim_sql, serialize_effect_intent_sql, should_renew,
-    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
+    mint_evt_run_id, plan_claim, production_claim_state, renew_production_lease_sql,
+    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
+    serialize_effect_intent_sql, should_renew, terminalize_effect_uncertain_claim_sql,
+    terminalize_exhausted_production_sql,
 };
 
 // ---- D8a: the RUN-* invariant sweep (wamn-54b0.2) --------------------------
@@ -408,32 +408,6 @@ fn queue_stamps_take_the_caller_instant_and_comparisons_keep_the_server_clock() 
         renew.contains("q.lease_expires_at > statement_timestamp()"),
         "{renew}"
     );
-    let wake = parked_due_sql(32);
-    assert!(wake.contains("q.available_at <= now()"), "{wake}");
-}
-
-#[test]
-fn dispatcher_reconciliation_mirrors_claim_eligibility_and_order() {
-    let wake = parked_due_sql(100);
-    assert!(wake.contains("available_at <= now() + interval '250 milliseconds'"));
-    assert!(wake.contains("attempts < q.max_attempts"));
-    assert!(wake.contains("OR q.lease_expires_at IS NULL"));
-    assert!(wake.contains("FROM effect_attempts AS effect"));
-    assert!(wake.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
-    assert!(!wake.contains("partition_key"));
-
-    // THE CLASS GATE STOPS HERE, AND MUST (wamn-0h0g.20.2). The dispatcher runs
-    // as a scoped reader holding SELECT on `run_queue` and `effect_attempts` and
-    // explicitly NOT on `runs` (services/dispatcher/tests/read_authority.rs), so
-    // correlating this to `runs.durability_class` would make every sweep a
-    // permission failure. It produces a WAKE HINT; the executor's own claim
-    // re-decides under the gated predicate one statement later, and this one can
-    // only ever over-select relative to it.
-    assert!(
-        !wake.contains("runs"),
-        "the reconciliation hint must not read a relation its role cannot see"
-    );
-    assert!(!wake.contains("durability_class"));
 }
 
 #[test]

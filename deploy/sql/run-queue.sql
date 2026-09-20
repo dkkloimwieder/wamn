@@ -1,12 +1,10 @@
 -- Run-queue storage schema (5.14). The durable dispatch queue that co-transacts
 -- with the 5.7 run state: `run_queue` (one row per run waiting to be, or being,
 -- dispatched). Postgres owns durability (`FOR UPDATE SKIP LOCKED` claim + run
--- state, one durability domain — D3); NATS-core carries fire-and-forget doorbells
--- (a hint per enqueue) with a slow reconciliation sweep for lost hints; a
--- run-claim lease reclaims a dead replica's work. The claim/lease/janitor LOGIC
--- lives in crates/execution/run-state/src/queue (pure); this file is the shape
--- used by the host-owned production claim/admission path and materializer
--- enqueue. Dispatcher reconciliation reads due/depth state but does not write it.
+-- state share one durability domain). The host polls due work and claims rows.
+-- A run-claim lease lets another replica recover abandoned work.
+-- Claim, lease, and janitor logic lives in crates/execution/run-state/src/queue.
+-- The host and materializer use this schema to claim and enqueue work.
 --
 -- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
 -- run-state.sql / catalog-schema.sql — deliberately NOT included by

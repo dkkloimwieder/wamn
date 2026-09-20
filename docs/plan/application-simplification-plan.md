@@ -75,19 +75,53 @@ Keep useful properties and saved regressions; delete obsolete-shape snapshots an
 
 **No new harness framework, mandatory mutation campaign, coverage quota, benchmark campaign, full DST/replay build-out or Kani.** Reuse CI checks; ordinary test output and a short change summary suffice. No evidence registry or handwritten proof report.
 
-## 4. Consolidate services without a second rewrite
+## 4. Consolidate service lifecycles
 
-Combine host/executor in the existing host: reuse modules, one runtime bootstrap and one shutdown path. Keep separate bounded HTTP/queue admission, credential classes, tenant/release scope and lease cleanup. Remove obsolete executor startup, deployment and build configuration.
+Use the existing host as the combined HTTP and queue service. Remove duplicate lifecycles as their responsibilities move.
+Do not place the two existing service bootstraps beside each other.
 
-**Approve shared HTTP/queue scaling and process failures before landing.** Wait for shared runtime interfaces to settle; avoid conflicting parallel refactors.
+### Deployment decision
 
-For auxiliary services, remove responsibilities only when transferred or deliberately retired:
+The owner approved one always-running combined service type. Multiple replicas remain supported.
+HTTP and queued work share replica scaling and process failure, but keep separate hard admission limits.
+This removes wake-from-zero and its standby resource saving. Guest pool reclamation remains separate from process lifetime.
+Retire wake-from-zero. Beads records the approved deployment decision.
 
-- **Dispatcher/waker:** an approved always-running runtime can own due-work discovery and retire wake-from-zero machinery. Otherwise retain it. Guest pool reclamation does not replace waking an absent process.
-- **Scenario/authoring:** local validation calls the existing control library. Retain a thin remote endpoint while real consumers need it.
-- **Identity and CDC:** remain separate in this wave. No password, signing-key, replication or event-model redesign.
+### One runtime owner
 
-Packaging separate processes as subcommands is not lifecycle consolidation. No general supervisor, new scheduler or service-count target. Unrelated declined/file-only/trigger-gated work stays out.
+Keep `services/host/src/main.rs` as the process entry point.
+Build the runtime, plugins, credentials, artifact source, `RouterDriver`, and readiness state once in the existing host.
+Move queue-specific delivery, claim, and completion functions from `services/executor/src/lib.rs` into the existing execution library.
+Pass shared runtime objects and cancellation into that adapter. Remove the executor bootstrap, probe listener, signal handler, and binary.
+Retain the host’s native wasmCloud integration and HTTP ingress.
+A host without a release remains valid. Enable queue execution only with a loaded release and complete queue credentials.
+
+One shutdown owner stops new HTTP admission and queue claims, drains active work within existing limits, then cleans up resources and telemetry.
+Preserve separate credential classes, tenant and release scope, deadlines, transaction cleanup, claim generations, and completion authority.
+Update deployment, build, development, delivery, and test consumers in the same increment as each removed lifecycle.
+This includes the executor image and deployment inputs in `Dockerfile`, `deploy/platform`, and `crates/control/lib/src/delivery`.
+
+### Due work and authoring
+
+Keep due-work discovery in the existing durable queue loop as it moves into the host.
+Preserve bounded discovery, durable concurrent claims across replicas, due times, retries, leases, and recovery.
+Remove dispatcher and waker processes, doorbell paths, scaling privileges, secrets, images, and manifests only where their responsibilities disappear.
+Retain shared broker and operator resources that other services still use. Add no scheduler, supervisor, registry, or compatibility layer.
+
+Keep local authoring on the existing control-library path.
+Remove obsolete local child-process assumptions; retain process helpers only for real remote-boundary tests.
+Keep a thin authenticated remote endpoint for retained clients, with the same authorization, audit, and retry rules.
+Identity and CDC remain separate. Do not change application contracts, numeric representations, UI behavior, or transactional extensions.
+The deferred fractional-quantity error limitation and revision-limit suggestion remain outside this epic.
+
+### Focused validation and closure
+
+Reuse the epic-3 application tests and existing host lifecycle and executor automation cases.
+Exercise combined startup, HTTP and queued execution, and shutdown with active work.
+Move surviving assertions to their new owner and delete obsolete process/setup assertions together with the replaced code.
+Run one integrated packaged Receiving/Acme journey after the topology settles, rather than after each move.
+Report removed processes and configuration, executed checks, and remaining limitations for owner review.
+Do not set a crate-count target or expand the later extension epic before that review.
 
 ## 5. Later feature — transactional application extension
 

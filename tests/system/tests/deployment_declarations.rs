@@ -789,42 +789,6 @@ fn the_platform_tier_carries_no_retired_artifact() {
     }
 }
 
-/// THE READINESS CONTRACT IS PROVISIONED ONCE.
-///
-/// `wamn-0h0g.5.16` gave the executor the final readiness shape: a `/readyz`
-/// endpoint that holds Ready only on complete closure, bound by
-/// `WAMN_READINESS_BIND`. Exactly one workload in the tier carries it. The other
-/// two probes in the tier are a fixture's `pg_isready` exec and the registry's
-/// `tcpSocket` — different mechanisms on purpose, and neither is this contract.
-#[test]
-fn the_readiness_contract_is_provisioned_once() {
-    let root = repository_root();
-    let mut readyz = Vec::new();
-    let mut binds = Vec::new();
-    let files = platform_files(&root);
-    for file in files.iter().map(String::as_str) {
-        let source = read(&root, file);
-        for line in significant(&source) {
-            if scalar_after(line, "path") == Some("/readyz") {
-                readyz.push(file);
-            }
-            if line.contains("WAMN_READINESS_BIND") {
-                binds.push(file);
-            }
-        }
-    }
-    assert_eq!(
-        readyz,
-        ["executor.yaml"],
-        "the /readyz contract must be provisioned exactly once, by the executor"
-    );
-    assert_eq!(
-        binds,
-        ["executor.yaml"],
-        "WAMN_READINESS_BIND must be set exactly once, by the executor"
-    );
-}
-
 /// EVERY MOUNTED SECRET IS DECLARED HERE OR NAMED AS A PREREQUISITE.
 ///
 /// Computed, not transcribed: the test collects `secretName`, `secretKeyRef`
@@ -923,57 +887,6 @@ fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
             "{name} is declared by this tier and is also absorbed by an \
              external-prerequisite prefix; delete its carrier and the prefix \
              would account for it silently"
-        );
-    }
-}
-
-/// THE DOORBELL ROUTE IS AN EXECUTION TARGET, RENDERED WHERE THE SHAPE ALLOWS.
-///
-/// `wamn-0h0g.5.9`'s placement contract makes the doorbell subject segment an
-/// EXECUTION TARGET. Two carriers in this tier can state one and now do, and
-/// they must agree: the dispatcher publishes at the projects-file entry's
-/// `execution_target_id`, and the waker subscribes at the `--wake` left-hand
-/// side. Omitting the projects-file key silently routes by the RLS claim
-/// instead, through the MVP tenant-to-target adapter.
-///
-/// `materializer.example.yaml` is NOT checked here: the guest config shape
-/// carries no key for a target, so it has nothing to render (see its header).
-#[test]
-fn the_rendered_execution_target_agrees_across_dispatcher_and_waker() {
-    let root = repository_root();
-
-    let projects = read(&root, "dispatcher-projects.example.yaml");
-    let published: Vec<&str> = significant(&projects)
-        .into_iter()
-        .filter_map(|line| {
-            let (key, value) = line.trim().split_once(':')?;
-            (key.trim_matches('"') == "execution_target_id")
-                .then(|| value.trim().trim_end_matches(',').trim_matches('"'))
-        })
-        .collect();
-    assert!(
-        !published.is_empty(),
-        "every dispatcher projects-file entry must render execution_target_id \
-         explicitly; omitted, project_spec falls back to the MVP \
-         tenant-to-target adapter and routes by the RLS claim"
-    );
-
-    let waker = read(&root, "waker.yaml");
-    let subscribed: Vec<&str> = significant(&waker)
-        .into_iter()
-        .filter_map(|line| line.trim().strip_prefix("- \"")?.strip_suffix('"'))
-        .filter_map(|value| value.split_once('='))
-        .map(|(target, _deployment)| target)
-        .collect();
-    assert!(
-        !subscribed.is_empty(),
-        "waker.yaml must carry at least one --wake <execution-target-id>=<Deployment>"
-    );
-    for target in &published {
-        assert!(
-            subscribed.contains(target),
-            "the dispatcher publishes at execution target {target:?} and no \
-             --wake mapping in waker.yaml subscribes to it: {subscribed:?}"
         );
     }
 }

@@ -30,7 +30,7 @@
 -- deploy/sql/run-queue.sql.
 --
 -- SCOPE (what 5.7 does NOT own, reserved as nullable seams below): the durable
--- run QUEUE + leases + doorbell (5.14) co-transact with these INSERTs but own
+-- run QUEUE + leases (5.14) co-transact with these INSERTs but own
 -- their own table; the run-level I/O CAPTURE policy (9.6) is fixed at admission
 -- and full capture fills scrubbed `input_json`/`output_json` plus the output
 -- size and optional hash; the content-addressed payload BYTE store (5.10) is

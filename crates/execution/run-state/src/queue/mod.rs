@@ -1,20 +1,12 @@
 //! Durable global FIFO queue, lease, timer, and reclaim state.
 //!
-//! The queued-delivery spine: a `FOR UPDATE SKIP LOCKED` run queue in
-//! Postgres (durability), NATS-core fire-and-forget doorbells (latency), and
-//! run-claim leases that reclaim a dead replica's work (scaling). Where the run
-//! history records persist *what happened* while this module governs *what
-//! runs next and who runs it*: the one-row production claim, lease renewal, the
-//! janitor that gives up on an abandoned run, and the reconciliation sweep that
-//! backstops a lost doorbell hint.
+//! Postgres stores queued work. The host claims due rows with
+//! `FOR UPDATE SKIP LOCKED`; leases allow another replica to recover abandoned work.
+//! This module supplies claim, lease renewal, and exhausted-run decisions.
 //!
-//! Like the rest of `wamn-run-state`, this
-//! crate is **pure**: no DB, no NATS, no clock. Every decision is a function of
-//! `(rows, now, config)` with `now` a passed-in [`crate::queue::Millis`]; the SQL is emitted as
-//! parameterized `String`s. The host-owned production composer and dispatcher
-//! supply the Postgres effects against the schema in
-//! `deploy/sql/run-queue.sql`, the NATS-core doorbell, the real clock, and the replica
-//! identity.
+//! This crate has no database, broker, or clock. Decisions consume explicit
+//! rows and time, and SQL builders return parameterized statements.
+//! The host supplies database effects, the clock, and the replica identity.
 //!
 //! ```
 //! use wamn_run_state::queue::{claim_state, ClaimState, QueueEntry};
@@ -30,11 +22,8 @@
 //! ```
 //!
 //! ## Scope vs siblings
-//! Owns: the global `run_queue`, exact FIFO claim decision, lease/reclaim
-//! classifier, and janitor. The dispatcher's poll cadence lives in `wamn-scheduler`.
-//! (Row events are no longer a
-//! dispatcher concern: the D19 v3 event plane — CDC reader → JetStream →
-//! materializer — delivers them; the outbox path was torn down at l5i9.19.)
+//! Owns the global `run_queue`, FIFO claim decision, lease recovery, and janitor.
+//! The host polls due work. CDC and the materializer deliver row events.
 //! The host-only Postgres adapter composes the transaction and hands the exact
 //! frozen wiring identity plus payload to the router driver.
 //! Does **not** own: the router walk / retry (the claimed run drives it);
@@ -74,7 +63,7 @@ pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, QueueEntry};
 pub use sql::{
     advance_claim_attempts_sql, clear_pre_effect_state_sql, grant_production_claim_sql,
-    parked_due_sql, renew_production_lease_sql, select_claim_effect_attempt_sql,
-    select_exhausted_production_sql, select_production_claim_sql, serialize_effect_intent_sql,
+    renew_production_lease_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
+    select_production_claim_sql, serialize_effect_intent_sql,
     terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
 };

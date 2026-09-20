@@ -36,7 +36,7 @@ pub const CURRENT_USER_ROLE_MEMBERSHIP_SQL: &str = "SELECT EXISTS ( \
 pub enum AuthorityClass {
     /// Tenant component `wamn:postgres` imports.
     GuestSql,
-    /// Executor run-state and catalog work, and the wiring doorbell listener.
+    /// Executor run-state and catalog work.
     ExecutorPlatform,
     /// Connection-HTTP authorization and effect-snapshot operations.
     CallableHttp,

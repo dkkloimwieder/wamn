@@ -91,7 +91,7 @@ case "$action" in
     work=${3:?work directory}; shift 3
     status=0
     kind delete cluster --name "$cluster" --kubeconfig "$work/kubeconfig" || status=$?
-    for suffix in postgres registry nats executor; do
+    for suffix in postgres registry nats; do
       if docker container inspect "$cluster-$suffix" >/dev/null 2>&1; then
         docker rm --force --volumes "$cluster-$suffix" || status=$?
       fi

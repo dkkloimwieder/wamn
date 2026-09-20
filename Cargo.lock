@@ -5854,32 +5854,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-dispatcher"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "clap",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-postgres",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "wamn-catalog",
- "wamn-control-provision",
- "wamn-control-registry",
- "wamn-run-state",
- "wamn-scheduler",
- "wamn-test-postgres",
-]
-
-[[package]]
 name = "wamn-event-reg"
 version = "0.1.0"
 dependencies = [
@@ -5940,37 +5914,8 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-project-state",
  "wamn-router",
- "wamn-runtime",
- "wamn-test-postgres",
- "wash-runtime",
- "wat",
-]
-
-[[package]]
-name = "wamn-executor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "opentelemetry",
- "opentelemetry_sdk",
- "serde_json",
- "tokio",
- "tokio-postgres",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
- "wamn-catalog",
- "wamn-control",
- "wamn-control-provision",
- "wamn-event-wire",
- "wamn-execution-host",
- "wamn-project-state",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-control",
- "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
  "wat",
@@ -6392,10 +6337,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-scheduler"
-version = "0.1.0"
-
-[[package]]
 name = "wamn-schema-control"
 version = "0.1.0"
 dependencies = [
@@ -6508,23 +6449,6 @@ dependencies = [
  "anyhow",
  "hex",
  "url",
-]
-
-[[package]]
-name = "wamn-waker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "clap",
- "futures-util",
- "reqwest",
- "rustls",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wamn-control-registry",
 ]
 
 [[package]]
