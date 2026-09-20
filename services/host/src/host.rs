@@ -1070,10 +1070,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let liveness = Liveness::new(silence_budget);
     builder = builder.with_liveness(Arc::clone(&liveness));
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
+    let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut ingress_connections = None;
     let mut ingress_handler = None;
     if let Some(addr) = args.http_addr {
-        let router = wamn_runtime::expected_router::expected_host_router(release.as_deref());
+        let router = wamn_runtime::expected_router::expected_host_router(
+            release.as_deref(),
+            stopping.clone(),
+        );
         let mut ingress = Ingress::builder(router, addr);
         if let Some(max) = args.max_http_ingress_connections {
             ingress = ingress.max_connections(max);
@@ -1148,6 +1152,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             Err(error) => Err(error),
         };
         if let Err(error) = started {
+            let _ = stop_queue.send(true);
             wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, async {
                 let had_ingress = ingress_handler.is_some();
                 let explicit_stop = match ingress_handler.as_ref() {
@@ -1161,6 +1166,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 explicit_stop.and(native_result)
             })
             .await?;
+
             return Err(error);
         }
     }
@@ -1170,7 +1176,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         "wamn-host runtime startup completed"
     );
     let result = {
-        let (stop_queue, stopping) = tokio::sync::watch::channel(false);
         let queue_serving = async {
             match queue.as_ref() {
                 Some(queue) => queue.serve(stopping).await,

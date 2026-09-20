@@ -21,6 +21,7 @@ use crate::release_manifest::LoadedRelease;
 pub struct ExpectedHostRouter {
     inner: DynamicRouter,
     expected_hosts: HashSet<String>,
+    stopping: tokio::sync::watch::Receiver<bool>,
 }
 
 impl std::fmt::Debug for ExpectedHostRouter {
@@ -33,12 +34,16 @@ impl std::fmt::Debug for ExpectedHostRouter {
 }
 
 /// Project explicit hostnames once from the host's verified release.
-pub fn expected_host_router(release: Option<&LoadedRelease>) -> ExpectedHostRouter {
+pub fn expected_host_router(
+    release: Option<&LoadedRelease>,
+    stopping: tokio::sync::watch::Receiver<bool>,
+) -> ExpectedHostRouter {
     ExpectedHostRouter {
         inner: DynamicRouter::default(),
         expected_hosts: release
             .map(|release| expected_http_hostnames(release.manifest()))
             .unwrap_or_default(),
+        stopping,
     }
 }
 
@@ -94,6 +99,9 @@ impl Router for ExpectedHostRouter {
         &self,
         request: &hyper::Request<hyper::body::Incoming>,
     ) -> Result<String, RouteError> {
+        if *self.stopping.borrow() {
+            return Err(RouteError::Unavailable);
+        }
         match self.inner.route_incoming_request(request) {
             Err(RouteError::NoWorkloadForHost(host)) if self.expected_hosts.contains(&host) => {
                 Err(RouteError::Unavailable)
@@ -196,8 +204,9 @@ mod tests {
     #[tokio::test]
     async fn native_ingress_preserves_refusals_bind_transitions_and_application_404() {
         let loaded_release = release();
+        let (stop, stopping) = tokio::sync::watch::channel(false);
         let ingress = Ingress::new(
-            expected_host_router(Some(&loaded_release)),
+            expected_host_router(Some(&loaded_release), stopping),
             "127.0.0.1:0".parse().unwrap(),
         )
         .await
@@ -256,7 +265,6 @@ mod tests {
             404
         );
         assert_eq!(dispatched.load(Ordering::SeqCst), 2);
-
         ingress
             .on_workload_unbind("service")
             .await
@@ -272,6 +280,13 @@ mod tests {
             .await
             .expect("bind a replacement service");
         assert_eq!(request(&ingress, Some(HOST), "/").await.0, 204);
+        stop.send(true).expect("router stop receiver");
+        assert_eq!(request(&ingress, Some(HOST), "/").await.0, 503);
+        assert_eq!(
+            dispatched.load(Ordering::SeqCst),
+            3,
+            "shutdown gate refuses before bound service dispatch"
+        );
         ingress
             .on_service_http_unbind("replacement")
             .await
@@ -290,7 +305,8 @@ mod tests {
     #[tokio::test]
     async fn a_missing_native_handle_still_returns_404() {
         let loaded_release = release();
-        let router = expected_host_router(Some(&loaded_release));
+        let router =
+            expected_host_router(Some(&loaded_release), tokio::sync::watch::channel(false).1);
         router
             .on_service_http_resolved("missing-handle", &[HOST.into()])
             .await
@@ -308,9 +324,12 @@ mod tests {
 
     #[tokio::test]
     async fn no_release_keeps_native_unknown_host_behavior() {
-        let ingress = Ingress::new(expected_host_router(None), "127.0.0.1:0".parse().unwrap())
-            .await
-            .unwrap();
+        let ingress = Ingress::new(
+            expected_host_router(None, tokio::sync::watch::channel(false).1),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .await
+        .unwrap();
         ingress.start().await.unwrap();
         assert_eq!(request(&ingress, Some(HOST), "/").await.0, 404);
         ingress.stop().await.unwrap();
@@ -321,7 +340,7 @@ mod tests {
 
     #[test]
     fn both_outgoing_http_versions_keep_native_host_policy() {
-        let router = expected_host_router(None);
+        let router = expected_host_router(None, tokio::sync::watch::channel(false).1);
         let p2 = hyper::Request::builder()
             .uri("https://allowed.example.test/path")
             .body(HyperOutgoingBody::default())
