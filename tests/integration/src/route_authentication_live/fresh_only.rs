@@ -852,6 +852,7 @@ fn parent_component() -> anyhow::Result<Vec<u8>> {
       (alias export $node "node-context" (type $context))
       (alias export $node "node-error" (type $error))
       (alias export $node "emission" (type $emission))
+      (type $run-result (result $emission (error $error)))
       (import "{base}" (instance $base
         (export "json" (type (eq $json)))
         (export "node-context" (type (eq $context)))
@@ -875,7 +876,7 @@ fn parent_component() -> anyhow::Result<Vec<u8>> {
       (alias export $pg "pg-error" (type $pg-error))
       (import "wamn:postgres/client@0.1.0" (instance $pg-client
         (export "sql-value" (type (eq $value))) (export "pg-error" (type (eq $pg-error)))
-        (export "execute" (func (param "sql" string) (param "params" (list $value))
+        (export "execute" (func async (param "sql" string) (param "params" (list $value))
           (result (result u64 (error $pg-error)))))))
       (core module $memory
         (memory (export "memory") 16)
@@ -895,22 +896,28 @@ fn parent_component() -> anyhow::Result<Vec<u8>> {
         (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core func $nested (canon lower (func $base "run")
         (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $task-return (canon task.return (result $run-result)
+        (memory $memory "memory")))
       (core module $main
         (import "memory" "memory" (memory 16))
         (import "host" "execute" (func $execute (param i32 i32 i32 i32 i32)))
         (import "host" "nested" (func $nested (param i32 i32)))
+        (import "host" "task-return" (func $task-return (param i32)))
+        (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
         (func (export "run") (param $input i32) (result i32)
           i32.const 256 i32.const {sql_len} i32.const 192 i32.const 0 i32.const 768 call $execute
           i32.const 768 i32.load8_u if unreachable end
           i32.const 776 i64.load i64.const 1 i64.ne if unreachable end
           local.get $input i32.const 832 call $nested
-          i32.const 832))
+          i32.const 832 call $task-return
+          i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
-        (with "host" (instance (export "execute" (func $execute)) (export "nested" (func $nested))))))
-      (func $run (param "ctx" $context) (param "input" $json)
-        (result (result $emission (error $error)))
+        (with "host" (instance (export "execute" (func $execute))
+          (export "nested" (func $nested)) (export "task-return" (func $task-return))))))
+      (func $run async (param "ctx" $context) (param "input" $json)
+        (result $run-result)
         (canon lift (core func $main "run") (memory $memory "memory")
-          (realloc (func $memory "realloc"))))
+          (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
       (instance $handler
         (export "json" (type $json)) (export "node-context" (type $context))
         (export "emission" (type $emission)) (export "node-error" (type $error))
@@ -1265,13 +1272,13 @@ mod execution_tests {
             linker.instance("wamn:postgres/types@0.1.0")?;
             linker
                 .instance("wamn:postgres/client@0.1.0")?
-                .func_wrap_async(
+                .func_wrap_concurrent(
                     "execute",
-                    |mut store, (sql, params): (String, Vec<SqlValue>)| {
-                        Box::new(async move {
+                    |accessor, (sql, params): (String, Vec<SqlValue>)| {
+                        Box::pin(async move {
                             assert_eq!(sql, COUNTER_SQL);
                             assert!(params.is_empty());
-                            store.data_mut().order.push("sql");
+                            accessor.with(|mut access| access.get().order.push("sql"));
                             Ok((Ok::<u64, PgError>(1),))
                         })
                     },
@@ -1304,7 +1311,12 @@ mod execution_tests {
                 .context("fixture run export")?;
             let run: TypedFunc<(&NodeContext, &str), (Result<Emission, NodeError>,)> =
                 instance.get_typed_func(&mut store, export)?;
-            let result = run.call_async(&mut store, (&context, input)).await;
+            let result = store
+                .run_concurrent(async |accessor| {
+                    run.call_concurrent(accessor, (&context, input)).await
+                })
+                .await
+                .and_then(std::convert::identity);
             if refuse_nested {
                 let error = result.expect_err("the nested host error must propagate");
                 anyhow::ensure!(
