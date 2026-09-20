@@ -462,21 +462,16 @@ mod tests {
                 std::process::id(),
                 SEQUENCE.fetch_add(1, Ordering::Relaxed)
             ));
-            fs::create_dir_all(root.join("apps/wamn_receiving")).expect("create scaffold fixture");
+            fs::create_dir_all(root.join("apps/ui_scaffold_fixture"))
+                .expect("create scaffold fixture");
             fs::write(
                 root.join("Cargo.toml"),
                 "[workspace]\nmembers = [\"apps/*/generated/*\"]\n",
             )
             .expect("write fixture native workspace");
-            let original = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
-            let package = root.join("apps/wamn_receiving");
-            fs::copy(original.join("wamn.json"), package.join("wamn.json"))
-                .expect("copy package manifest");
-            copy_tree(
-                &original.join("generated/contracts"),
-                &package.join("generated/contracts"),
-            );
-            copy_tree(&original.join("publication"), &package.join("publication"));
+            let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ui_scaffold");
+            let package = root.join("apps/ui_scaffold_fixture");
+            copy_tree(&source, &package);
             let manifest = PackageManifest::from_slice(
                 &fs::read(package.join("wamn.json")).expect("read manifest"),
             )
@@ -487,7 +482,7 @@ mod tests {
                 &package.join("publication/attachments.json"),
             )
             .expect("project fixture release");
-            let files = emit_tui(&ir, "receiving", None, "../../../..")
+            let files = emit_tui(&ir, "operator", None, "../../../..")
                 .expect("emit fixture screens")
                 .into_iter()
                 .chain(emit_rust_client(&ir).expect("emit fixture bindings"));
@@ -503,7 +498,7 @@ mod tests {
 
     fn args(screen: Option<&str>) -> ScaffoldArgs {
         ScaffoldArgs {
-            package: "wamn_receiving".to_owned(),
+            package: "ui_scaffold_fixture".to_owned(),
             screen: screen.map(str::to_owned),
             component: None,
         }
@@ -531,28 +526,28 @@ mod tests {
     #[test]
     fn one_screen_scaffold_keeps_explicit_generated_fallbacks_and_live_specs() {
         let fixture = Fixture::new();
-        let output = scaffold_package(&fixture.root, &args(Some("purchase_order.get")))
-            .expect("scaffold one screen");
+        let output =
+            scaffold_package(&fixture.root, &args(Some("entry.get"))).expect("scaffold one screen");
         let main =
             fs::read_to_string(output.join("src/main.rs")).expect("read executable entry point");
         assert!(main.contains(
             "async fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>>"
         ));
-        let copied = fs::read_to_string(output.join("src/screens/purchase_order.rs"))
-            .expect("read copied function");
-        assert!(copied.contains("use ::generated::screens::purchase_order::{GET_SPEC};"));
+        let copied =
+            fs::read_to_string(output.join("src/screens/entry.rs")).expect("read copied function");
+        assert!(copied.contains("use ::generated::screens::entry::{GET_SPEC};"));
         assert!(copied.contains("screen::Screen::new(&GET_SPEC, binding)"));
         assert!(!copied.contains("pub static"));
         assert!(!copied.contains("pub fn update("));
         let library =
             fs::read_to_string(output.join("src/lib.rs")).expect("read direct composition");
-        assert!(library.contains("screens::purchase_order::get(binding.clone())"));
-        assert!(library.contains("::generated::screens::purchase_order::update(binding.clone())"));
+        assert!(library.contains("screens::entry::get(binding.clone())"));
+        assert!(library.contains("::generated::screens::entry::update(binding)"));
         assert!(!library.contains("HashMap"));
         let cargo =
             fs::read_to_string(output.join("Cargo.toml")).expect("read standalone manifest");
         assert!(cargo.contains("[workspace]\n"));
-        assert!(cargo.contains("path = \"../generated/receiving-tui\""));
+        assert!(cargo.contains("path = \"../generated/operator-tui\""));
         let tests = fs::read_to_string(output.join("tests/scaffold_tracks_contract.rs"))
             .expect("read declared interaction tests");
         assert!(tests.contains("fn scaffold_tracks_contract()"));
@@ -564,24 +559,24 @@ mod tests {
     #[test]
     fn a_model_named_generated_cannot_shadow_the_generated_dependency() {
         let fixture = Fixture::new();
-        let package = fixture.root.join("apps/wamn_receiving");
+        let package = fixture.root.join("apps/ui_scaffold_fixture");
         let mut ir = ClientContractIr::from_release(
-            "receiving",
+            "ui_scaffold_fixture",
             &package.join("generated/contracts"),
             &package.join("publication/attachments.json"),
         )
         .expect("project the fixture release");
         ir.models
             .iter_mut()
-            .find(|model| model.name == "purchase_order")
-            .expect("the fixture declares purchase_order")
+            .find(|model| model.name == "entry")
+            .expect("the fixture declares entry")
             .name = "generated".to_owned();
-        let emitted = emit_tui(&ir, "receiving", None, "../../../..")
+        let emitted = emit_tui(&ir, "operator", None, "../../../..")
             .expect("generated is a valid model name");
-        let screens = screen_functions(&ir, "receiving", &emitted).expect("find emitted screens");
+        let screens = screen_functions(&ir, "operator", &emitted).expect("find emitted screens");
         let files = scaffold_files(
-            "wamn_receiving",
-            "receiving",
+            "ui_scaffold_fixture",
+            "operator",
             &ir.package,
             &screens,
             Some(("generated", "get")),
@@ -589,7 +584,7 @@ mod tests {
         .expect("scaffold the generated model");
         let library = &files[Path::new("src/lib.rs")];
         assert!(library.contains("pub use ::generated::generated;"));
-        assert!(library.contains("::generated::screens::generated::update(binding.clone())"));
+        assert!(library.contains("::generated::screens::generated::update(binding)"));
         let copied = &files[Path::new("src/screens/generated.rs")];
         assert!(copied.contains("use ::generated::screens::generated::{GET_SPEC};"));
     }
@@ -601,10 +596,10 @@ mod tests {
         let library =
             fs::read_to_string(output.join("src/lib.rs")).expect("read direct composition");
         assert!(!library.contains("generated::screens::"));
-        assert!(library.contains("screens::receiving::record_receipt(binding)"));
-        let screen = fs::read_to_string(output.join("src/screens/receiving.rs"))
-            .expect("read receiving overrides");
-        assert!(screen.contains("pub fn record_receipt("));
+        assert!(library.contains("screens::entry::update(binding)"));
+        let screen = fs::read_to_string(output.join("src/screens/entry.rs"))
+            .expect("read fixture overrides");
+        assert!(screen.contains("pub fn update("));
         assert!(!screen.contains("ScreenSpec {"));
     }
 
@@ -612,27 +607,27 @@ mod tests {
     fn the_app_directory_keeps_the_declared_component_dependency() {
         let fixture = Fixture::new();
         let mut selection = args(None);
-        selection.package = "wamn_receiving".to_owned();
-        selection.component = Some("receiving".to_owned());
+        selection.package = "ui_scaffold_fixture".to_owned();
+        selection.component = Some("operator".to_owned());
         let output =
             scaffold_package(&fixture.root, &selection).expect("scaffold the declared component");
         let cargo = fs::read_to_string(output.join("Cargo.toml")).unwrap();
-        assert!(cargo.contains("wamn-generated-receiving-tui"));
-        assert!(cargo.contains("../generated/receiving-tui"));
-        assert!(!cargo.contains("wamn-generated-wamn-receiving-tui"));
+        assert!(cargo.contains("wamn-generated-operator-tui"));
+        assert!(cargo.contains("../generated/operator-tui"));
+        assert!(!cargo.contains("wamn-generated-ui-scaffold-fixture-tui"));
     }
 
     #[test]
     fn multiple_components_require_an_explicit_selection() {
         let fixture = Fixture::new();
-        let path = fixture.root.join("apps/wamn_receiving/wamn.json");
+        let path = fixture.root.join("apps/ui_scaffold_fixture/wamn.json");
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         manifest["components"]["reports"] = serde_json::json!({"connections":["postgres"]});
         fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let error = scaffold_package(&fixture.root, &args(None)).unwrap_err();
         assert!(error.to_string().contains("--component NAME"));
-        assert!(!fixture.root.join("apps/wamn_receiving/ui").exists());
+        assert!(!fixture.root.join("apps/ui_scaffold_fixture/ui").exists());
     }
 
     #[test]
@@ -641,7 +636,7 @@ mod tests {
         let output = scaffold_package(&fixture.root, &args(None)).expect("create custom crate");
         let path = output.join("src/lib.rs");
         fs::write(&path, "developer-owned edits\n").expect("make a developer edit");
-        assert!(scaffold_package(&fixture.root, &args(Some("purchase_order.get"))).is_err());
+        assert!(scaffold_package(&fixture.root, &args(Some("entry.get"))).is_err());
         assert_eq!(
             fs::read_to_string(path).expect("read retained edits"),
             "developer-owned edits\n"
@@ -654,20 +649,20 @@ mod tests {
         fs::write(
             fixture
                 .root
-                .join("apps/wamn_receiving/generated/receiving-tui/src/screens/purchase_order.rs"),
+                .join("apps/ui_scaffold_fixture/generated/operator-tui/src/screens/entry.rs"),
             "stale source\n",
         )
         .expect("change the generated source");
         let error = scaffold_package(&fixture.root, &args(None))
             .expect_err("refuse stale generated screens");
         assert!(error.to_string().contains("run Generate"));
-        assert!(!fixture.root.join("apps/wamn_receiving/ui").exists());
+        assert!(!fixture.root.join("apps/ui_scaffold_fixture/ui").exists());
     }
 
     #[test]
     fn package_and_screen_selection_refuse_traversal_and_missing_names() {
         let fixture = Fixture::new();
-        for package in ["../receiving", "receiving", "wamn_receiving/other"] {
+        for package in ["../fixture", "fixture", "ui_scaffold_fixture/other"] {
             let args = ScaffoldArgs {
                 package: package.to_owned(),
                 screen: None,
@@ -675,13 +670,9 @@ mod tests {
             };
             assert!(scaffold_package(&fixture.root, &args).is_err());
         }
-        for screen in [
-            "purchase_order",
-            "purchase_order.get.extra",
-            "purchase_order.missing",
-        ] {
+        for screen in ["entry", "entry.get.extra", "entry.missing"] {
             assert!(scaffold_package(&fixture.root, &args(Some(screen))).is_err());
         }
-        assert!(!fixture.root.join("apps/wamn_receiving/ui").exists());
+        assert!(!fixture.root.join("apps/ui_scaffold_fixture/ui").exists());
     }
 }

@@ -1,0 +1,221 @@
+{
+  "package": {
+    "id": "client_acme_receiving",
+    "version": "3.0.0"
+  },
+  "base_dependencies": {
+    "base_receiving": {
+      "package": "wamn_receiving",
+      "version": "1.0.0",
+      "digest": "sha256:370ae9416719ca4cec3ed033749dec2676cead0345462cb6a401fb3aa044d42a",
+      "operations": [
+        "purchase_order.get"
+      ]
+    }
+  },
+  "required_platform_policy_contract": {
+    "id": "receiving_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "purchase_order": {
+      "schema": "receiving",
+      "table": "purchase_order",
+      "owner": "wamn_receiving",
+      "field_owners": {
+        "acme_inspection_required": "client_acme_receiving",
+        "acme_quality_status": "client_acme_receiving"
+      },
+      "constraint_owners": {
+        "purchase_order_acme_quality_status_check": "client_acme_receiving"
+      },
+      "server_owned_fields": [
+        "id",
+        "purchase_order_number",
+        "supplier_id",
+        "status",
+        "row_version"
+      ],
+      "enum_fields": {
+        "status": [
+          "open",
+          "complete",
+          "cancelled"
+        ],
+        "acme_quality_status": [
+          "not_required",
+          "pending",
+          "approved"
+        ]
+      },
+      "operations": {
+        "get": {
+          "permission": "purchase_order.get",
+          "result": "one"
+        },
+        "update": {
+          "permission": "purchase_order.update",
+          "writable_fields": [
+            "acme_inspection_required",
+            "acme_quality_status"
+          ],
+          "revision_field": "row_version",
+          "result": "one"
+        }
+      }
+    },
+    "quality_inspection": {
+      "schema": "receiving",
+      "table": "quality_inspection",
+      "owner": "client_acme_receiving",
+      "server_owned_fields": [
+        "receipt_id",
+        "status",
+        "row_version"
+      ],
+      "enum_fields": {
+        "status": [
+          "pending",
+          "approved"
+        ]
+      },
+      "audit_log": {
+        "columns": [
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by"
+        ],
+        "retention": "none"
+      },
+      "operations": {}
+    }
+  },
+  "custom_operations": {
+    "quality.create_inspection": {
+      "kind": "event_handler",
+      "visibility": "private",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "event",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "insert"
+            ]
+          },
+          {
+            "path": "new.id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "internal_error"
+      ],
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "receipt",
+          "select_fields": [
+            "id",
+            "purchase_order_id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "acme_inspection_required"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "quality_inspection",
+          "select_fields": [
+            "receipt_id"
+          ],
+          "insert_fields": [
+            "receipt_id"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": [
+            "quality_inspection_receipt_id_pkey"
+          ]
+        }
+      ],
+      "statements": {
+        "insert_inspection": {
+          "path": "command/create_inspection/insert_inspection.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "load_inspection": {
+          "path": "command/create_inspection/load_inspection.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        }
+      },
+      "registration": {
+        "source_package": "wamn_receiving",
+        "entity": "receipt",
+        "ops": [
+          "insert"
+        ]
+      }
+    }
+  },
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "client_acme_receiving": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

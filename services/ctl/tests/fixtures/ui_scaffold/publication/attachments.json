@@ -1,0 +1,117 @@
+{
+  "entry-get-http": {
+    "kind": "http",
+    "package-id": "ui_scaffold_fixture",
+    "wiring-id": "entry_get",
+    "wiring-version": 1,
+    "definition-hash": "sha256:aa3411356694d4a6a224d42ca6b34bc9f28cfd88f5a07aa53fd61bb87f2bbba1",
+    "definition": {
+      "id": "entry-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/entry/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "pat",
+        "session"
+      ]
+    },
+    "registered-operation": "ui-scaffold-fixture:entry/get@1.0.0"
+  },
+  "entry-update-http": {
+    "kind": "http",
+    "package-id": "ui_scaffold_fixture",
+    "wiring-id": "entry_update",
+    "wiring-version": 1,
+    "definition-hash": "sha256:9ded5b10c3e29a6ab36b7add270a41010a619adf6e05df449683063994173847",
+    "definition": {
+      "id": "entry-update-http",
+      "kind": "http",
+      "route": {
+        "path": "/entry/update",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id",
+            "expected_row_version",
+            "change"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "expected_row_version": {
+              "type": "string",
+              "pattern": "^-?(0|[1-9][0-9]*)$"
+            },
+            "change": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "supplier_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-wamn-explicit-null": "invalid_input"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "pat",
+        "session"
+      ]
+    },
+    "registered-operation": "ui-scaffold-fixture:entry/update@1.0.0"
+  }
+}

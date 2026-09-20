@@ -84,14 +84,16 @@ fn fixture_root() -> PathBuf {
         .join(format!("apply-package-live-{}", std::process::id()))
 }
 
-fn overlay_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/client_acme_receiving")
+fn package_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/apply_package")
+        .join(name)
 }
 
-fn copy_receiving_package(root: &Path) {
+fn copy_base_fixture(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("migrations")).expect("create package fixture directory");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+    let source = package_fixture("base");
     std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))
         .expect("copy strict package manifest");
     std::fs::copy(
@@ -102,11 +104,11 @@ fn copy_receiving_package(root: &Path) {
     declare_missing_audit_logs(root);
 }
 
-/// Copy the real client overlay so that its fixture declares every audit_log.
-fn copy_real_overlay_package(root: &Path) {
+/// Copy the small client overlay used by apply-package ownership assertions.
+fn copy_overlay_fixture(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("migrations")).expect("create overlay fixture directory");
-    let source = overlay_package_root();
+    let source = package_fixture("overlay");
     std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))
         .expect("copy strict overlay manifest");
     for entry in std::fs::read_dir(source.join("migrations")).expect("list overlay migrations") {
@@ -206,8 +208,8 @@ fn trigger_definitions(triggers: &[(String, String)]) -> Vec<&str> {
         .collect()
 }
 
-fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
-    copy_receiving_package(root);
+fn copy_base_fixture_as(root: &Path, package_id: &str, schema: &str) {
+    copy_base_fixture(root);
     let manifest_path = root.join("wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read copied package manifest"),
@@ -242,7 +244,7 @@ fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
     std::fs::write(migration_path, migration).expect("write copied package migration");
 }
 
-fn copy_overlay_package(
+fn copy_mutated_overlay_fixture(
     root: &Path,
     package_id: &str,
     model_id: &str,
@@ -251,7 +253,7 @@ fn copy_overlay_package(
     constraints: &[&str],
     migration: &str,
 ) {
-    copy_receiving_package(root);
+    copy_base_fixture(root);
     let manifest_path = root.join("wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read copied overlay manifest"),
@@ -266,7 +268,7 @@ fn copy_overlay_package(
             "package": "wamn_receiving",
             "version": "1.0.0",
             "digest": format!("sha256:{}", "a".repeat(64)),
-            "operations": ["receiving.record_receipt"]
+            "operations": ["purchase_order.get"]
         }
     });
     manifest["custom_operations"] = serde_json::json!({});
@@ -414,8 +416,8 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         fixture_root().with_file_name(format!("apply-package-race-alpha-{}", std::process::id()));
     let beta =
         fixture_root().with_file_name(format!("apply-package-race-beta-{}", std::process::id()));
-    copy_receiving_package_as(&alpha, "race_alpha", "race_alpha");
-    copy_receiving_package_as(&beta, "race_beta", "race_beta");
+    copy_base_fixture_as(&alpha, "race_alpha", "race_alpha");
+    copy_base_fixture_as(&beta, "race_beta", "race_beta");
     let expected_grants = [&alpha, &beta]
         .into_iter()
         .flat_map(|package| {
@@ -554,14 +556,14 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     let package = fixture_root();
-    copy_receiving_package(&package);
+    copy_base_fixture(&package);
     install(&client).await;
 
     let distinct_identity = package.with_file_name(format!(
         "apply-package-distinct-internal-relation-{}",
         std::process::id()
     ));
-    copy_receiving_package(&distinct_identity);
+    copy_base_fixture(&distinct_identity);
     rename_internal_relation(
         &distinct_identity,
         "record_receipt_command",
@@ -587,7 +589,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         "apply-package-undeclared-relation-{}",
         std::process::id()
     ));
-    copy_receiving_package(&undeclared);
+    copy_base_fixture(&undeclared);
     std::fs::write(
         undeclared.join("migrations/0002_undeclared.sql"),
         "CREATE TABLE receiving.undeclared_relation (id int);",
@@ -617,7 +619,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         "apply-package-missing-exclusion-{}",
         std::process::id()
     ));
-    copy_receiving_package(&missing_exclusion);
+    copy_base_fixture(&missing_exclusion);
     let manifest_path = missing_exclusion.join("wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read missing-exclusion manifest"),
@@ -818,7 +820,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     let alter_base =
         fixture_root().with_file_name(format!("apply-package-alter-base-{}", std::process::id()));
-    copy_overlay_package(
+    copy_mutated_overlay_fixture(
         &alter_base,
         "client_alter_receiving",
         "purchase_order",
@@ -859,7 +861,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     let drop_base =
         fixture_root().with_file_name(format!("apply-package-drop-base-{}", std::process::id()));
-    copy_overlay_package(
+    copy_mutated_overlay_fixture(
         &drop_base,
         "client_drop_receiving",
         "purchase_order",
@@ -897,7 +899,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         "apply-package-nonextensible-{}",
         std::process::id()
     ));
-    copy_overlay_package(
+    copy_mutated_overlay_fixture(
         &nonextensible,
         "client_receipt_extension",
         "receipt",
@@ -919,11 +921,11 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(write_identity(&client).await, first_identity);
 
     let overlay =
-        fixture_root().with_file_name(format!("apply-package-real-overlay-{}", std::process::id()));
-    copy_real_overlay_package(&overlay);
+        fixture_root().with_file_name(format!("apply-package-overlay-{}", std::process::id()));
+    copy_overlay_fixture(&overlay);
     apply(&url, &overlay)
         .await
-        .expect("the exact client overlay applies after its exact base");
+        .expect("the client overlay fixture applies after its base fixture");
     let registration: String = client
         .query_one(
             "SELECT registration::text FROM catalog.event_registrations \
@@ -932,7 +934,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             &[&TENANT],
         )
         .await
-        .expect("apply-package projects the real overlay handler registration")
+        .expect("apply-package projects the overlay handler registration")
         .get(0);
     let registration: serde_json::Value =
         serde_json::from_str(&registration).expect("parse projected registration");
@@ -1528,7 +1530,7 @@ async fn record_history_triggers_follow_the_declaration() {
         "apply-package-record-history-{}",
         std::process::id()
     ));
-    copy_receiving_package(&package);
+    copy_base_fixture(&package);
     set_audit_log_columns(&package, "purchase_order", &["updated_at", "created_at"]);
     set_audit_log_columns(&package, "receipt", &[]);
 
@@ -1747,7 +1749,7 @@ async fn record_history_log_follows_the_declaration() {
         "apply-package-record-history-log-{}",
         std::process::id()
     ));
-    copy_receiving_package(&package);
+    copy_base_fixture(&package);
     set_audit_log_retention(&package, "purchase_order", "unlimited");
     set_audit_log_retention(&package, "purchase_order_line", "P30D");
 
@@ -2067,7 +2069,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     install(&client).await;
     let package =
         fixture_root().with_file_name(format!("apply-package-local-target-{}", std::process::id()));
-    copy_receiving_package(&package);
+    copy_base_fixture(&package);
     let instance: u32 = client
         .query_one(
             "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
@@ -2195,7 +2197,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         "apply-package-local-target-first-{}",
         std::process::id()
     ));
-    copy_receiving_package(&first_bytes_package);
+    copy_base_fixture(&first_bytes_package);
     std::fs::copy(
         package.join("migrations/0002_location_description.sql"),
         first_bytes_package.join("migrations/0002_location_description.sql"),
@@ -2317,7 +2319,7 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
         "apply-package-local-target-reuse-{}",
         std::process::id()
     ));
-    copy_receiving_package(&package);
+    copy_base_fixture(&package);
     set_audit_log_retention(&package, "item", "unlimited");
     set_audit_log_retention(&package, "location", "unlimited");
     apply(&url, &package)
@@ -2400,7 +2402,7 @@ async fn one_apply_takes_a_created_relation_and_its_later_column() {
         "apply-package-created-then-added-{}",
         std::process::id()
     ));
-    copy_receiving_package(&package);
+    copy_base_fixture(&package);
     std::fs::write(
         package.join("migrations/0002_location_note.sql"),
         "ALTER TABLE receiving.location ADD COLUMN note text;\n",

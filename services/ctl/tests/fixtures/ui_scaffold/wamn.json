@@ -1,0 +1,52 @@
+{
+  "package": {
+    "id": "ui_scaffold_fixture",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "ui_scaffold_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "entry": {
+      "schema": "fixture",
+      "table": "entry",
+      "owner": "ui_scaffold_fixture",
+      "server_owned_fields": [
+        "id",
+        "code",
+        "row_version"
+      ],
+      "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "entry.get",
+          "result": "one"
+        },
+        "update": {
+          "permission": "entry.update",
+          "writable_fields": [
+            "code"
+          ],
+          "revision_field": "row_version",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "custom_operations": {},
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "operator": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}
