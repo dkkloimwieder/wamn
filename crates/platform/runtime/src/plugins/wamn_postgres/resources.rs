@@ -34,15 +34,16 @@ use super::{
 use super::bindings;
 
 #[derive(Debug)]
-struct TxnState {
+pub(super) struct TxnState {
     /// Present while the transaction owns a connection. Taken out for the
     /// duration of each call (a std mutex guard cannot be held across await).
-    conn: Option<Object>,
+    pub(super) conn: Option<Object>,
     /// True once COMMIT or ROLLBACK ran (connection repooled).
-    finished: bool,
+    pub(super) finished: bool,
+    pub(super) view: Option<std::sync::Weak<super::transaction_views::TransactionViewLease>>,
 }
 
-type SharedTxnState = Arc<std::sync::Mutex<TxnState>>;
+pub(super) type SharedTxnState = Arc<std::sync::Mutex<TxnState>>;
 
 /// Owns a checked-out connection across an await.
 ///
@@ -77,11 +78,13 @@ impl StatementConnectionGuard {
         drop(self.connection.take());
     }
 
-    fn restore(mut self, state: &SharedTxnState) {
+    pub(super) fn restore(mut self, state: &SharedTxnState) {
         let Ok(mut transaction) = state.lock() else {
             return;
         };
-        transaction.conn = self.connection.take();
+        if !transaction.finished {
+            transaction.conn = self.connection.take();
+        }
     }
 }
 
@@ -101,11 +104,11 @@ impl Drop for StatementConnectionGuard {
 /// never repooled.
 #[derive(Debug)]
 pub struct PgTransaction {
-    state: SharedTxnState,
-    destroyed: Arc<AtomicU64>,
+    pub(super) state: SharedTxnState,
+    pub(super) destroyed: Arc<AtomicU64>,
     cursor_seq: u32,
     /// Row limit of the project this transaction's connection belongs to.
-    row_limit: u64,
+    pub(super) row_limit: u64,
 }
 
 /// Host side of a `wamn:postgres/statements.transaction`.
@@ -113,8 +116,9 @@ pub struct PgTransaction {
 /// The operation's statement set is snapshotted at `begin`; changing or
 /// revoking the invocation scope cannot widen an already-open transaction.
 pub struct PgStatementTransaction {
-    transaction: PgTransaction,
-    statements: Option<Arc<BoundStatementSet>>,
+    pub(super) transaction: PgTransaction,
+    pub(super) owner_scope: String,
+    pub(super) statements: Option<Arc<BoundStatementSet>>,
 }
 
 impl std::fmt::Debug for PgStatementTransaction {
@@ -131,8 +135,16 @@ impl Drop for PgTransaction {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if let Some(obj) = st.conn.take() {
-            if st.finished {
+        let finished = st.finished;
+        st.finished = true;
+        let view = st.view.take().and_then(|view| view.upgrade());
+        let connection = st.conn.take();
+        drop(st);
+        if let Some(view) = view {
+            view.revoke();
+        }
+        if let Some(obj) = connection {
+            if finished {
                 drop(obj); // clean: back to the pool
             } else {
                 tracing::warn!(
@@ -160,7 +172,7 @@ fn txn_closed() -> PgError {
     ))
 }
 
-fn take_conn(state: &SharedTxnState) -> Result<Object, PgError> {
+pub(super) fn take_conn(state: &SharedTxnState) -> Result<Object, PgError> {
     let mut st = state.lock().map_err(|_| txn_closed())?;
     if st.finished {
         return Err(txn_closed());
@@ -326,7 +338,7 @@ pub(super) async fn run_verified_query(
     .await
 }
 
-fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {
+pub(super) fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {
     ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
 }
 
@@ -354,7 +366,7 @@ const DB_OPERATION: &str = "db.operation";
 
 /// Record one guest DB call's wall time on [`QUERY_DURATION_MS`]. `op` matches
 /// the `db_span` operation; `project` is the executing component's project.
-fn record_query_ms(op: &'static str, project: &str, elapsed: std::time::Duration) {
+pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::time::Duration) {
     record_effect_ms(&QUERY_DURATION_MS, DB_OPERATION, op, project, elapsed);
 }
 
@@ -381,7 +393,7 @@ fn db_span(plugin: &WamnPostgres, component_id: &str, op: &'static str) -> traci
     db_span_for_project(plugin, component_id, &project, op)
 }
 
-fn db_span_for_project(
+pub(super) fn db_span_for_project(
     plugin: &WamnPostgres,
     component_id: &str,
     project: &str,
@@ -454,6 +466,7 @@ async fn begin_transaction(
         state: Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection.into_connection()),
             finished: false,
+            view: None,
         })),
         destroyed: plugin.destroyed.clone(),
         cursor_seq: 0,
@@ -461,7 +474,7 @@ async fn begin_transaction(
     })
 }
 
-async fn begin_statement_transaction(
+pub(super) async fn begin_statement_transaction(
     plugin: &WamnPostgres,
     component_id: &str,
     project: &str,
@@ -495,11 +508,24 @@ async fn begin_statement_transaction(
         state: Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection.into_connection()),
             finished: false,
+            view: None,
         })),
         destroyed: Arc::clone(&plugin.destroyed),
         cursor_seq: 0,
         row_limit: policy.row_limit,
     })
+}
+
+fn independent_plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {
+    let plugin = plugin_of(ctx)?;
+    plugin
+        .refuse_independent_participant_sql(ctx.component_id.as_ref())
+        .map_err(|_| {
+            wash_runtime::wasmtime::Error::msg(
+                "transaction participant requires its execution-only view",
+            )
+        })?;
+    Ok(plugin)
 }
 
 impl client::Host for ActiveCtx<'_> {}
@@ -513,7 +539,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
+                independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 crate::plugins::invocation_trace::invocation_trace(&ctx),
             ))
@@ -545,7 +571,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
+                independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 crate::plugins::invocation_trace::invocation_trace(&ctx),
             ))
@@ -577,7 +603,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
+                independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 crate::plugins::invocation_trace::invocation_trace(&ctx),
             ))
@@ -620,7 +646,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
+                independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 crate::plugins::invocation_trace::invocation_trace(&ctx),
             ))
@@ -653,7 +679,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
+                independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 crate::plugins::invocation_trace::invocation_trace(&ctx),
             ))
@@ -686,7 +712,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
+                independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 crate::plugins::invocation_trace::invocation_trace(&ctx),
             ))
@@ -723,7 +749,7 @@ async fn txn_query<T: 'static>(
             let ctx = access.get();
             let txn = ctx.table.get(&rep)?;
             Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
+                independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 crate::plugins::invocation_trace::invocation_trace(&ctx),
                 Arc::clone(&txn.state),
@@ -761,7 +787,7 @@ async fn txn_execute<T: 'static>(
         let ctx = access.get();
         let txn = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
-            plugin_of(&ctx)?,
+            independent_plugin_of(&ctx)?,
             ctx.component_id.to_string(),
             crate::plugins::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&txn.state),
@@ -796,7 +822,7 @@ async fn txn_open_cursor<T: 'static>(
 ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
     let (plugin, component_id, trace, state, destroyed, name) = accessor.with(|mut access| {
         let ctx = access.get();
-        let plugin = plugin_of(&ctx)?;
+        let plugin = independent_plugin_of(&ctx)?;
         let component_id = ctx.component_id.to_string();
         let trace = crate::plugins::invocation_trace::invocation_trace(&ctx);
         let txn = ctx.table.get_mut(&rep)?;
@@ -864,7 +890,7 @@ async fn txn_finish<T: 'static>(
         let ctx = access.get();
         let txn = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
-            plugin_of(&ctx)?,
+            independent_plugin_of(&ctx)?,
             ctx.component_id.to_string(),
             crate::plugins::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&txn.state),
@@ -907,7 +933,7 @@ async fn cursor_fetch<T: 'static>(
         let ctx = access.get();
         let cursor = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
-            plugin_of(&ctx)?,
+            independent_plugin_of(&ctx)?,
             ctx.component_id.to_string(),
             crate::plugins::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&cursor.state),
@@ -1025,7 +1051,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_query(accessor, &project, rep, sql, params).await
@@ -1040,7 +1066,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_execute(accessor, &project, rep, sql, params).await
@@ -1055,7 +1081,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_open_cursor(accessor, &project, rep, sql, params).await
@@ -1068,7 +1094,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_finish(accessor, &project, rep, "COMMIT").await
@@ -1081,7 +1107,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_finish(accessor, &project, rep, "ROLLBACK").await
@@ -1095,6 +1121,7 @@ async fn finish_txn(
     destroyed: &Arc<AtomicU64>,
     verb: &str,
 ) -> Result<(), PgError> {
+    super::transaction_views::finish_view(state).await;
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
     match connection.connection().batch_execute(verb).await {
         Ok(()) => {
@@ -1123,7 +1150,7 @@ impl<T: 'static + Send> client::HostCursorWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         cursor_fetch(accessor, &project, rep, max_rows).await
@@ -1183,6 +1210,15 @@ impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'
 impl statement_wit::Host for ActiveCtx<'_> {}
 
 impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
+    async fn run_view(
+        accessor: &Accessor<T, Self>,
+        view: statement_wit::TransactionView,
+        statement_digest: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+        super::transaction_views::run(accessor, view, statement_digest, binds).await
+    }
+
     async fn run(
         accessor: &Accessor<T, Self>,
         statement_digest: String,
@@ -1246,6 +1282,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
                             .table
                             .push(PgStatementTransaction {
                                 transaction,
+                                owner_scope: component_id.clone(),
                                 statements,
                             })
                             .map(Ok)
@@ -1259,6 +1296,19 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
 }
 
 impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the native async WIT method only issues local transaction state"
+    )]
+    async fn view(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<PgStatementTransaction>,
+        participant_operation: String,
+    ) -> wash_runtime::wasmtime::Result<Result<statement_wit::TransactionView, StatementError>>
+    {
+        super::transaction_views::issue(accessor, &rep, participant_operation)
+    }
+
     async fn run(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
@@ -1269,6 +1319,10 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
             .with(|mut access| {
                 let ctx = access.get();
                 let transaction = ctx.table.get(&rep)?;
+                wash_runtime::wasmtime::ensure!(
+                    transaction.owner_scope == ctx.component_id.as_ref(),
+                    "statement transaction belongs to a different invocation"
+                );
                 Ok::<_, wash_runtime::wasmtime::Error>((
                     plugin_of(&ctx)?,
                     ctx.component_id.to_string(),
@@ -1380,6 +1434,10 @@ async fn statement_txn_finish<T: 'static>(
     let (plugin, component_id, trace, state, destroyed) = accessor.with(|mut access| {
         let ctx = access.get();
         let transaction = ctx.table.get(&rep)?;
+        wash_runtime::wasmtime::ensure!(
+            transaction.owner_scope == ctx.component_id.as_ref(),
+            "statement transaction belongs to a different invocation"
+        );
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
@@ -1422,11 +1480,12 @@ fn statement_run_disposition<T>(result: &Result<T, StatementError>) -> Statement
     }
 }
 
-async fn finish_statement_txn(
+pub(super) async fn finish_statement_txn(
     state: &SharedTxnState,
     destroyed: &Arc<AtomicU64>,
     verb: &str,
 ) -> Result<(), PgError> {
+    super::transaction_views::finish_view(state).await;
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
     match connection.connection().batch_execute(verb).await {
         Ok(()) => {
@@ -1533,6 +1592,7 @@ mod tests {
         let state = Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection),
             finished: false,
+            view: None,
         }));
         let destroyed = Arc::new(AtomicU64::new(0));
         let operation_started = Arc::new(tokio::sync::Notify::new());
@@ -1570,6 +1630,7 @@ mod tests {
         let state = Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection),
             finished: false,
+            view: None,
         }));
         let value = with_txn_conn(&state, &destroyed, |connection| async move {
             let result = connection

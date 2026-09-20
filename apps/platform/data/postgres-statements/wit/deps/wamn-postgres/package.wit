@@ -2,7 +2,7 @@ package wamn:postgres@0.1.0;
 
 /// Host-plugin interface for tenant-scoped Postgres access.
 /// Security invariants (enforced by the HOST, invisible to the guest):
-/// - The guest NEVER holds a socket; only resource handles. Connections
+/// - The guest NEVER holds a socket. It holds resources or scoped views. Connections
 ///   live in the plugin's pool.
 /// - RLS claims (tenant/user/role) are derived from the executing
 ///   workload's identity and injected by the plugin via SET LOCAL inside
@@ -149,7 +149,13 @@ interface statements {
     postgres(pg-error),
   }
 
+  /// Copyable reference. Only the host-bound participant invocation can use it.
+  record transaction-view {
+    opaque: string,
+  }
+
   resource transaction {
+    view: async func(participant-operation: string) -> result<transaction-view, statement-error>;
     run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
     commit: async func() -> result<_, statement-error>;
     rollback: async func() -> result<_, statement-error>;
@@ -157,6 +163,7 @@ interface statements {
 
   run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
   begin: async func() -> result<transaction, statement-error>;
+  run-view: async func(view: transaction-view, statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
 }
 
 /// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).

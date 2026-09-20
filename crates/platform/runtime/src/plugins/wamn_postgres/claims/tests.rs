@@ -693,7 +693,8 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
 const LIVE_TENANT: &str = "acme";
 
 /// The executing principal a live transactional statement binds.
-const LIVE_PRINCIPAL: &str = "5c2b7e1a-9d3f-4a6b-8c1e-2f4d6a8b0c3e";
+pub(in crate::plugins::wamn_postgres) const LIVE_PRINCIPAL: &str =
+    "5c2b7e1a-9d3f-4a6b-8c1e-2f4d6a8b0c3e";
 
 /// Ensure the stable guest ACL role exists, race-tolerantly.
 ///
@@ -730,7 +731,11 @@ const ENSURE_LIVE_USERS_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS app_syste
 
 /// Install the users floor in one disposable database and name the principals
 /// that own a row there.
-async fn ensure_live_users_rows(admin_url: &str, tenant: &str, principals: &[&str]) {
+pub(in crate::plugins::wamn_postgres) async fn ensure_live_users_rows(
+    admin_url: &str,
+    tenant: &str,
+    principals: &[&str],
+) {
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!(
@@ -766,7 +771,10 @@ fn live_database(admin_url: &str) -> String {
 /// URL naming an arbitrary user no longer resolves for the guest class.
 /// That is the point — a shared login is exactly what item 2 retires — and
 /// it means a live guest test has to authenticate as a real generation.
-async fn live_guest_url(admin_url: &str, tenant: &str) -> String {
+pub(in crate::plugins::wamn_postgres) async fn live_guest_url(
+    admin_url: &str,
+    tenant: &str,
+) -> String {
     let mut url = url::Url::parse(admin_url).expect("parse the live test url");
     let database = live_database(admin_url);
     let role = format!(

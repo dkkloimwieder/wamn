@@ -274,6 +274,11 @@ impl NativePolicy {
         resources
             .postgres
             .activate_statement_operation(scope, operation)?;
+        resources.postgres.bind_transaction_scope(
+            scope,
+            deadline,
+            request.transaction_participation.as_ref(),
+        )?;
         resources
             .logging
             .set_claim(scope, &acquisition.claims.tenant, &resources.project);
@@ -322,6 +327,7 @@ impl NativePolicy {
     }
 
     fn revoke(&self, scope: &str) {
+        self.resources.postgres.revoke_transaction_scope(scope);
         self.traces.revoke(scope);
         self.invocations
             .lock()
@@ -365,6 +371,15 @@ impl NativePolicy {
         mut context: node_types::NodeContext,
         input: NativeInput,
     ) -> anyhow::Result<NativeOutcome> {
+        self.resources
+            .postgres
+            .permit_transaction_nested_call(scope)
+            .map_err(|_| {
+                OperationRefusal::new(
+                    OperationRefusalKind::PermissionDenied,
+                    dependency.operation.as_str(),
+                )
+            })?;
         let bound = self
             .invocations
             .lock()
@@ -436,6 +451,10 @@ impl NativePolicy {
             .iter()
             .find_map(|(id, fact)| (fact == target).then_some(id))
             .context("native-operation-component-unavailable")?;
+        let transaction_participation = self
+            .resources
+            .postgres
+            .prepare_transaction_participation(scope, &dependency.operation)?;
         let dispatch = application
             .workload
             .resolved
@@ -484,6 +503,7 @@ impl NativePolicy {
                 context,
                 input,
                 deadline,
+                transaction_participation,
                 acquisition: bound.acquisition.retarget(target, &dependency.operation),
                 caller: bound.caller,
                 application,

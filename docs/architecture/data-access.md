@@ -122,6 +122,14 @@ The transaction resource never crosses a wiring edge, and separate outer items h
 A composed write followed by a projection is not one transaction.
 Atomic extension of a base command requires a separate future contract.
 
+`wamn:postgres/statements` provides a typed transaction view, an opaque reference with call-scoped access.
+The token grants no authority by itself. The native dispatcher binds one admitted participant invocation to the existing transaction owner.
+Each use checks that invocation, its operation, the original caller, tenant, release, database identity, deadline, and admitted statements.
+The participant cannot commit, roll back, open an independent SQL connection, or delegate its view.
+SQL uses the same held connection and records the participant operation before restoring the owner operation.
+Return, trap, cancellation, deadline, or transaction completion revokes access. Finalization cancels and waits for active view SQL before using the connection.
+The borrowed-resource contract tested on the current runtime pin failed with `mismatched resource types`; that result does not describe all native resource contracts.
+
 The host owns begin, commit, rollback, and connection cleanup.
 An error, trap, cancellation, or deadline destroys unfinished transaction state before another request can acquire the connection.
 Serialization and deadlock errors reach the caller without an automatic transaction retry.

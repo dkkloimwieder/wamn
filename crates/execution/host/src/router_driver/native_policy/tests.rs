@@ -589,6 +589,7 @@ impl Fixture {
             operation: ROOT.into(),
             input: r#"[{"value":37}]"#.into(),
             deadline,
+            transaction_participation: None,
             caller: None,
             application: Arc::clone(&self.application),
             context: node_types::NodeContext {

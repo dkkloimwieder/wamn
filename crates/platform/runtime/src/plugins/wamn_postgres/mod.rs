@@ -5,7 +5,7 @@
 //! Host-enforced invariants:
 //!
 //! - The guest never holds a socket. Connections live in a deadpool pool
-//!   owned by the plugin; guests get resource handles only.
+//!   owned by the plugin; guests get resource handles or call-scoped transaction views.
 //! - Claims are derived from the executing component's identity
 //!   (`Ctx::component_id` → tenant, registered at workload bind time from
 //!   `localResources.config["wamn.tenant"]` or via [`WamnPostgres::set_tenant`])
@@ -63,6 +63,7 @@ mod pool;
 mod production_claim;
 mod resources;
 mod statements;
+mod transaction_views;
 mod types;
 mod wiring_resolution;
 
@@ -97,6 +98,7 @@ pub use statements::{
     PreparedStatementSet, StatementField, StatementValueType, VerifiedStatement,
     VerifiedStatementSet,
 };
+pub use transaction_views::TransactionParticipation;
 pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this

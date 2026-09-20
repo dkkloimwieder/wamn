@@ -1446,6 +1446,7 @@ impl RouterDriver {
                     context,
                     input: input.into(),
                     deadline,
+                    transaction_participation: None,
                     acquisition,
                     caller: request.caller.clone(),
                     application,

@@ -156,6 +156,7 @@ pub struct WamnPostgres {
     /// Verified SQL facts bound by operation plus the one invocation-active
     /// scope. The active scope is host-selected; a guest can only name a digest
     /// inside it.
+    pub(super) transaction_views: std::sync::Mutex<super::transaction_views::TransactionViews>,
     pub(super) statement_scopes: std::sync::RwLock<StatementScopes>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     pub(super) destroyed: Arc<AtomicU64>,
@@ -784,6 +785,7 @@ impl WamnPostgres {
             current_run: std::sync::RwLock::new(HashMap::new()),
             invocations: std::sync::RwLock::new(HashMap::new()),
             statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
+            transaction_views: std::sync::Mutex::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
         }
@@ -1879,4 +1881,4 @@ pub(super) enum OneShotResult {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::plugins::wamn_postgres) mod tests;

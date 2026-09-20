@@ -30,6 +30,9 @@ pub(super) struct NativeInvocation {
     pub(super) context: node_types::NodeContext,
     pub(super) input: NativeInput,
     pub(super) deadline: Instant,
+    /// Host-attested owner scope for one nested transaction participant.
+    pub(super) transaction_participation:
+        Option<wamn_runtime::plugins::wamn_postgres::TransactionParticipation>,
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,
     pub(super) application: Arc<NativeApplication>,

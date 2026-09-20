@@ -272,6 +272,20 @@ impl fmt::Debug for Transaction {
 }
 
 impl Transaction {
+    /// Issue one opaque view for an exact nested participant operation.
+    pub async fn view(
+        &mut self,
+        participant_operation: &str,
+    ) -> Result<TransactionView, StatementError> {
+        self.inner
+            .view(participant_operation.to_string())
+            .await
+            .map(|view| TransactionView {
+                opaque: view.opaque,
+            })
+            .map_err(StatementError::from_wire)
+    }
+
     /// Run one admitted statement in this transaction.
     pub async fn run(
         &mut self,
@@ -295,6 +309,31 @@ impl Transaction {
             .rollback()
             .await
             .map_err(StatementError::from_wire)
+    }
+}
+
+/// Opaque authority to run admitted statements in an owner transaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransactionView {
+    pub opaque: String,
+}
+
+impl TransactionView {
+    /// Run one admitted statement through this transaction view.
+    pub async fn run(
+        &self,
+        statement_digest: &str,
+        params: Vec<SqlValue>,
+    ) -> Result<RowSet, StatementError> {
+        host::run_view(
+            host::TransactionView {
+                opaque: self.opaque.clone(),
+            },
+            statement_digest.to_string(),
+            params,
+        )
+        .await
+        .map_err(StatementError::from_wire)
     }
 }
 
