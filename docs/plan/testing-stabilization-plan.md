@@ -1,7 +1,8 @@
 # Testing stabilization and repository qualification
 
-**Status:** draft 0.3 for epic/issue decomposition  
-**Basis:** current repository behavior and test ownership on `main`, especially `docs/testing/*`, `docs/operations/running-tests.md`, existing application test owners, and current delivery/test tooling.
+**Status:** draft 0.4 for epic/issue decomposition
+
+**Basis:** current repository behavior and test ownership on `main`, especially `docs/testing/*`, `docs/operations/running-tests.md`, existing application test owners, generator/control-plane tests, and current delivery/test tooling.
 
 ## 1. Goal and scope
 
@@ -18,13 +19,15 @@ The repository already has the major testing/developer-loop mechanisms this plan
 - ordinary UI workflow assertions have moved substantially in-process;
 - cluster tests retain deployment/runtime boundaries.
 
-This plan therefore does **not** introduce another testing framework or developer-loop architecture. It stabilizes what exists, removes superseded or duplicated coverage, and establishes the baseline that future feature work must preserve.
+This plan therefore does **not** introduce another testing framework or developer-loop architecture. It stabilizes what exists, removes application-specific coupling from platform tests, removes superseded or duplicated coverage, and establishes the baseline that future feature work must preserve.
 
-Applications own business fixtures, expected results, workflows, and application assertions. Platform libraries own invocation mechanics, capability setup, disposable infrastructure, and common failure reporting.
+Applications own business fixtures, expected results, workflows, and application assertions. Platform libraries own invocation mechanics, capability setup, disposable infrastructure, generator/control-plane fixtures, and common failure reporting.
 
-Preserve public contracts, authorization, transaction ownership, replay semantics, exact-value behavior, and deployment guarantees. Do not weaken an assertion merely to obtain a green baseline.
+Preserve public contracts, authorization, transaction ownership, replay semantics, exact-value behavior, SQL verification, and deployment guarantees. Do not weaken an assertion merely to obtain a green baseline.
 
-## 2. Testing rule
+## 2. Testing and fixture rules
+
+### Use the smallest proving boundary
 
 **Use the smallest existing test boundary that actually proves the behavior.**
 
@@ -42,9 +45,26 @@ Mocks may test response handling. They do not establish database correctness, au
 
 Required tests must execute their named cases. Ignored, skipped, filtered-to-zero, or missing-prerequisite runs do not count as passing evidence.
 
-## 3. Increment A — establish the current qualification baseline
+### Platform fixtures do not come from shipped applications
 
-Run one deliberate local qualification against the stabilization revision. Do not repeat a broad campaign after every cleanup edit.
+A platform test must not depend on a shipped application merely to obtain representative:
+
+- schema/catalog data;
+- `wamn.json`;
+- authored SQL;
+- generated contracts or generated Rust;
+- WIT dependency trees;
+- package/release structure.
+
+Use small platform-owned fixtures under the owning platform crate.
+
+Shipped applications prove application behavior and intentional release qualification. They are not the generic fixture library for the generator, control plane, or runtime.
+
+This rule does **not** remove intentional real-application acceptance from release qualification. A qualification case that exists specifically to prove the shipped Receiving/Acme or WMS release remains an application test.
+
+## 3. Increment A — establish the current local qualification baseline
+
+Run one deliberate **local** qualification against the stabilization revision. Do not repeat a broad campaign after every cleanup edit.
 
 Include the existing owners for:
 
@@ -61,7 +81,7 @@ Include the existing owners for:
 List the retained deployed tests and their prerequisites without running them.
 Carry existing deployed-test results forward only as prior evidence for planning.
 Keep known failures and limitations named, including `wamn-h6lm`.
-Do not claim a new deployed result until Increment D.
+Do not claim a new deployed result until Increment E.
 
 Classify every non-green result as exactly one of:
 
@@ -77,41 +97,186 @@ A known or classified failure remains a failure. Record it explicitly; do not si
 - Every required local qualification owner executes at least one expected case and reports its real result.
 - Regressions and stale tests are filed/fixed rather than normalized into the baseline.
 - External limitations are named with their existing issue where one exists.
-- The resulting baseline is reproducible from `docs/operations/running-tests.md` and existing test documentation.
+- Existing deployed failures are recorded as historical/prior evidence only, not current execution.
+- The resulting local baseline is reproducible from `docs/operations/running-tests.md` and existing test documentation.
 
-## 4. Increment B — remove obsolete and duplicate test paths
+## 4. Increment B — decouple platform tests from application fixtures and remove obsolete coverage
 
-Audit retained tests against current production architecture.
+Complete the work below **in order**. Later steps assume earlier fixture ownership has settled.
 
-Delete or rewrite tests that exist only for retired implementation shapes, including where applicable:
+### B1. Build one platform-owned generator fixture
 
-- transaction-view token/UUID contracts superseded by participant-local WIT resources;
-- pre-native-async bridges or `block_on` behavior;
-- retired JSON component-call adapters where typed native contracts now own the boundary;
-- executor/dispatcher/waker process topology removed by service consolidation;
-- removed manifest fields or parser compatibility retained only for superseded authored formats;
-- old generated-TUI paths replaced by the current generated/application-owned UI composition;
-- setup/build helpers whose only consumer was deleted;
-- snapshots or bookkeeping checks that protect no independently consumed artifact or contract.
+Create one small fixture under `crates/schema/generator/tests/support/`.
 
-For duplicated business assertions, retain the lowest-cost boundary that proves the behavior and keep higher-cost coverage only for the distinct boundary it owns.
+Requirements:
 
-Examples:
+- no path under `apps/`;
+- deliberately not Receiving-shaped;
+- small catalog + manifest + SQL;
+- enough supported shapes to cover generator tests that genuinely need them.
 
-- quantity/idempotency/business refusal → local application test;
-- PostgreSQL constraint/lock semantics → database/local application test;
-- rendering/submission state → reducer/widget test;
-- terminal restoration/password masking/signals → process test;
-- image/startup/broker/restart/CDC/materializer behavior → cluster test.
+Include only capabilities actually exercised by generator tests, such as:
 
-Do not rewrite a surviving process test merely to remove Python or standardize implementation language.
+- CRUD/get/query/update shape;
+- revision/concurrency field;
+- required/omittable and nullable/non-null fields;
+- custom operation;
+- business error details plus derived platform errors;
+- authored SQL;
+- relation access/locking metadata;
+- client/TUI descriptors where their tests need them.
 
-### Acceptance
+Do not build a second sample application. This is a test fixture owned by the generator.
 
-- Every deleted test has either a surviving equivalent assertion at the correct boundary or no longer corresponds to production behavior.
-- Cluster tests contain no ordinary business assertions whose only purpose is already established locally.
-- No retained test imports or configures a retired runtime/process path.
-- No obsolete compatibility layer is kept solely to satisfy an old test.
+### B2. Move generator tests out of Receiving
+
+Audit `apps/wamn_receiving/tests/generation.rs`.
+
+For every test:
+
+1. check whether an equivalent assertion already exists in `crates/schema/generator/tests`;
+2. if equivalent, delete the application-level duplicate;
+3. if distinct and platform/generator-owned, port it to the B1 fixture;
+4. if genuinely Receiving business behavior, move it to the appropriate Receiving test owner rather than the generator fixture.
+
+Delete the generated-output drift test if it only proves that committed generated files equal the current generator output and no separately consumed contract depends on that assertion.
+
+End state: delete `apps/wamn_receiving/tests/generation.rs`.
+
+### B3. Remove shipped-application inputs from generator tests
+
+Replace use of real application packages in generator tests with B1 fixtures.
+
+Audit at least:
+
+- `crates/schema/generator/tests/client_emitter.rs`;
+- `crates/schema/generator/tests/tui_emitter.rs`;
+- `crates/schema/generator/tests/client_projection.rs`;
+- generator tests that read WMS WIT dependencies;
+- unit tests in generator WIT emission that use `receiving.record_receipt` only as sample vocabulary.
+
+After this step, generator tests should not require `apps/wamn_receiving`, `apps/client_acme_receiving`, or `apps/wamn_wms` merely to construct representative input.
+
+### B4. Restore generator invariants lost during manifest simplification
+
+Add focused generator tests on the B1 fixture for:
+
+1. the platform-derived error set/detail shape appropriate to each supported action;
+2. refusal of the obsolete authored manifest format that attempted to redeclare fixed platform protocol/error details.
+
+These tests verify the new derived behavior directly. They must not restore the deleted authored boilerplate.
+
+### B5. Move SQLx verifier ownership into platform/generator tooling
+
+Do **not** simply delete `receiving_sqlx_verifier.rs` or `client_acme_sqlx_verifier.rs`.
+
+They are currently executable verifier targets used by SQLx preparation/check and release qualification.
+
+First establish a platform-owned verifier mechanism that preserves:
+
+- verification of the exact generated + authored SQL corpus;
+- actual PostgreSQL bind/result types and nullability;
+- package-specific effective schema/search path;
+- `.sqlx` preparation/check behavior;
+- delivery qualification's requirement that the candidate SQL has been freshly checked.
+
+Update `crates/control/lib/src/delivery/sqlx.rs`, qualification, and any local generation path to use the replacement.
+
+Only after the replacement is executing the same required verification may the application-specific verifier targets and their Cargo entries be deleted.
+
+### B6. Remove application tests that inspect generated files only
+
+Delete tests whose only purpose is to compare application code against generated files or generated vocabulary after the generator/platform layer owns that contract.
+
+Audit specifically:
+
+- generated-contract/vocabulary tests in `apps/*/data/src/error.rs`;
+- `apps/wamn_wms/tests/wms_wiring_shape.rs`;
+- other tests reading files under `apps/*/generated/` as test assertions.
+
+Delete assertion-by-assertion, not file-by-file.
+
+Keep application tests that independently verify runtime error classification, application transformation, wiring behavior, or business semantics even if they live in the same source file.
+
+For `wms_wiring_shape.rs`, move distinct platform wiring validation to the owning platform test if it has no equivalent; delete only bookkeeping/generated-file assertions.
+
+### B7. Move platform behavior out of Receiving route tests
+
+Audit `apps/wamn_receiving/tests/route_authentication_live.rs` and its modules against existing owners in `tests/integration/`, especially the existing `route_authentication_live` platform module.
+
+Classify each case as:
+
+- Receiving application/business behavior → keep under Receiving;
+- generic session/authentication/runtime/startup/delivery behavior → existing platform owner if equivalent, otherwise move to `tests/integration/`;
+- deployed application acceptance → keep with the deployed application owner;
+- duplicate → delete.
+
+Check for existing equivalents before moving code.
+
+The goal is not to move thousands of lines mechanically. The goal is to stop Receiving being the generic platform authentication/runtime test application.
+
+### B8. Stop control-plane tests copying Receiving as a generic package fixture
+
+Replace real Receiving/Acme package copies in control-plane tests with small purpose-built platform fixtures where the test is about generic control-plane behavior.
+
+Audit at least:
+
+- `services/ctl/src/ui.rs`;
+- `crates/control/lib/tests/apply_package_live.rs`;
+- `crates/control/lib/src/push_component.rs`;
+- `crates/control/lib/src/publish_release.rs`;
+- `crates/control/lib/src/dev/coordinator.rs`.
+
+Create fixture packages beside the owning test/support code as needed. Reuse B1 only when the input model is genuinely the same; do not force every subsystem through one giant fixture.
+
+Retain intentional real-application release acceptance. Do not replace Receiving/Acme/WMS where the purpose of the test is to qualify those shipped artifacts themselves.
+
+### B9. Establish one WIT source/materialization path
+
+The repository currently has multiple copied WIT dependency trees guarded by coherence tests.
+
+Do not delete the coherence tests first.
+
+First:
+
+1. enumerate every WIT authority and vendored copy;
+2. identify why each copy exists as a build input;
+3. choose one canonical source for each platform WIT package;
+4. define one materialization/dependency path for consumers that require local WIT directories;
+5. update guest/platform build consumers to use that path.
+
+Only after independently editable copies are gone should the corresponding `*_wit_coherence.rs` tests be deleted.
+
+No WIT registry or second interface-description system is introduced.
+
+### B10. Decide what generated application output remains committed
+
+At the reviewed snapshot there are 295 files under `apps/*/generated/`.
+
+Do **not** begin with a deletion target.
+
+After B2–B9:
+
+1. enumerate every remaining reader of committed generated output;
+2. classify it as build input, publication/distribution contract, offline evidence, or obsolete;
+3. keep generated artifacts that must be available without regeneration for a real build/publish/distribution reason;
+4. move reproducible intermediates to build output where no real consumer requires them committed;
+5. update clean-checkout build and publication paths before untracking anything.
+
+Preserve `.sqlx` metadata or other offline evidence where the owning tool still requires committed input.
+
+### Acceptance for Increment B
+
+- Generator tests have no dependency on shipped applications merely as fixtures.
+- `apps/wamn_receiving/tests/generation.rs` is gone.
+- Every moved/deleted generator test has either an equivalent current owner or a deliberate deletion rationale.
+- Derived platform error behavior and obsolete-manifest refusal have direct generator-level tests.
+- SQLx qualification still checks exact application SQL before application verifier targets are removed.
+- Application tests no longer inspect generated files where the platform generator already owns the contract.
+- Receiving route tests contain Receiving/application behavior rather than generic platform authentication/runtime coverage.
+- Generic control-plane tests use platform-owned fixtures.
+- WIT has one authority/materialization path per package and no copy-coherence tests remain solely to police editable duplicates.
+- The committed generated-output set has an explicit remaining consumer for every retained artifact class.
 
 ## 5. Increment C — audit UI/process coverage
 
@@ -147,16 +312,68 @@ In-process coverage should continue to own:
 - Application-state assertions have an in-process owner.
 - No frontend behavior is weakened to remove a process test.
 
-## 6. Increment D — qualify the real external boundaries
+## 6. Increment D — confirm the normal developer test path
+
+Complete this increment before deployed qualification.
+Treat the landed developer-loop mechanisms as requirements to verify, not new architecture to build.
+
+### Change selection
+
+Confirm:
+
+- `tools/test-changes dry-run` selects the expected owning packages and dependents;
+- `tools/test-changes run` executes the selected commands;
+- a named/required test matching zero cases is rejected;
+- non-Cargo inputs read indirectly by packages have explicit selection ownership where Cargo metadata cannot infer it.
+
+The B1/B8 fixture changes must not accidentally cause ordinary application edits to select unrelated platform suites.
+
+### PostgreSQL isolation
+
+Confirm:
+
+- database-backed tests use `wamn-test-postgres` or the documented owning fixture;
+- tests do not read user-supplied PostgreSQL URLs for ordinary execution;
+- tests that mutate server-wide roles/settings hold the documented lock or own a separate server;
+- interactive development databases are never used by tests.
+
+### SQLx
+
+Confirm after B5:
+
+- ordinary Rust-only builds/tests compile from committed `.sqlx` metadata with PostgreSQL unavailable;
+- SQL, migration, effective-schema, or verifier-input changes refresh metadata through the owning application/delivery command;
+- check-only qualification verifies metadata against a fresh schema and does not rewrite tracked metadata first;
+- stale/missing metadata is rejected;
+- removal of application-specific verifier test targets did not reduce the SQL corpus being checked.
+
+### Required-test behavior
+
+Confirm:
+
+- missing prerequisites fail by name;
+- ignored or skipped tests never count as executed evidence;
+- qualification commands require real executed cases.
+
+### Acceptance
+
+- One Rust-only application edit reaches focused feedback without SQLx preparation or cluster setup.
+- One SQL edit refreshes/checks metadata through the normal path.
+- One application business edit runs its selected local application/database coverage.
+- Platform fixture edits select their owning platform tests rather than unrelated application tests.
+- The full qualification path remains available separately.
+
+## 7. Increment E — qualify the real external boundaries once
 
 After cleanup and final local qualification settle, run the retained deployment/runtime layer once against the resulting topology.
-This increment alone owns deployed execution and establishes the post-cleanup deployment baseline.
 
-At minimum, retain and execute the cases that genuinely require deployment or external infrastructure:
+This increment alone owns new deployed execution and establishes the post-cleanup deployment baseline.
+
+At minimum, retain and execute cases that genuinely require deployment or external infrastructure:
 
 - combined deployed host startup/readiness/shutdown;
 - packaged HTTP ingress and queued execution;
-- deployed active work interruption/recovery;
+- deployed active-work interruption/recovery;
 - broker/CDC/materializer delivery;
 - packaged Receiving/Acme behavior where packaging/native deployment is the subject;
 - WMS label delivery and partial-completion boundary;
@@ -175,63 +392,23 @@ Known external/runtime failures remain visible. In particular, an unresolved ope
 - Cleanup is observed after success, failure, and handled interruption.
 - The deployed layer is materially smaller than the business/local layer.
 
-## 7. Increment E — confirm the normal developer test path
-
-Complete this increment before the deployed qualification in Increment D.
-Treat the landed developer-loop mechanisms as requirements to verify, not new architecture to build.
-
-Confirm:
-
-### Change selection
-
-- `tools/test-changes dry-run` selects the expected owning packages and dependents.
-- `tools/test-changes run` executes the selected commands.
-- A named/required test matching zero cases is rejected.
-- Changes outside Cargo ownership that are read indirectly by another package have an explicit owner documented where Cargo metadata cannot infer it.
-
-### PostgreSQL isolation
-
-- Database-backed tests use `wamn-test-postgres` or the documented owning fixture.
-- Tests do not read user-supplied PostgreSQL URLs for ordinary execution.
-- Tests that mutate server-wide roles/settings hold the documented lock or own a separate server.
-- Interactive development databases are never used by tests.
-
-### SQLx
-
-- Ordinary Rust-only builds/tests compile from committed `.sqlx` metadata with PostgreSQL unavailable.
-- SQL, migration, effective-schema, or verifier-input changes refresh metadata through the owning application/delivery command.
-- Check-only qualification verifies metadata against a fresh schema and does not rewrite tracked metadata first.
-- Stale/missing metadata is rejected.
-
-### Required-test behavior
-
-- Missing prerequisites fail by name.
-- Ignored or skipped tests never count as executed evidence.
-- Test commands used as qualification require real executed cases.
-
-### Acceptance
-
-- One Rust-only application edit reaches focused feedback without SQLx preparation or cluster setup.
-- One SQL edit refreshes/checks metadata through the normal path.
-- One application business edit runs its selected local application/database coverage.
-- The full qualification path remains available as a separate command set.
-
 ## 8. Documentation and ownership cleanup
 
 Testing documentation should describe current behavior only.
 
 - `docs/operations/running-tests.md` owns commands, prerequisites, test selection, database isolation, and execution mechanics.
-- `docs/testing/strategy.md` owns the boundary-selection rule and test philosophy.
+- `docs/testing/strategy.md` owns the boundary-selection and platform-fixture rules.
 - `docs/testing/application-tests.md`, `database-tests.md`, and `cluster-tests.md` own assertions at those boundaries.
 - Completed implementation plans belong in history; they are not competing instructions.
-- Remove recipes for retired binaries, services, adapters, manifest fields, or test harnesses.
-- Do not create an evidence registry, test inventory database, or second dependency graph.
+- Remove recipes for retired binaries, services, adapters, manifest fields, WIT copies, generated-file checks, or test harnesses.
+- Update SQLx documentation after B5 so it no longer names deleted verifier targets.
+- Do not create an evidence registry, test inventory database, fixture registry, or second dependency graph.
 
 Where a behavior has one authoritative recipe, link to it rather than restating the command in several plans.
 
 ## 9. Explicit non-goals
 
-This stabilization epic does **not** add:
+This stabilization work does **not** add:
 
 - new product features;
 - a new test framework or DSL;
@@ -240,6 +417,7 @@ This stabilization epic does **not** add:
 - a broad deterministic-simulation/replay program;
 - Kani or a new formal-verification engine;
 - another result/evidence registry;
+- a fixture registry;
 - a crate-count target;
 - a new application schema language;
 - a broad performance benchmark program.
@@ -248,24 +426,43 @@ Focused property tests, deliberate mutants, deterministic controls, or regressio
 
 ## 10. Delivery
 
-Land cleanup in small commits grouped by test owner or retired mechanism.
+Land cleanup in small commits grouped by test owner or dependency edge.
 
 For each change:
 
 1. identify the current behavior/contract;
-2. identify the test(s) that prove it;
-3. remove or move only redundant/obsolete coverage;
-4. run the smallest affected validation;
-5. reuse the baseline result rather than rerunning unrelated suites.
+2. identify the current test(s) and fixture(s) that prove it;
+3. check for equivalent coverage before moving or recreating it;
+4. move platform fixtures out of application ownership where required;
+5. remove only redundant/obsolete coverage;
+6. run the smallest affected validation;
+7. reuse the baseline result rather than rerunning unrelated suites.
 
-Start with the local baseline, then complete cleanup and review the developer test path.
-Complete final local qualification, then run deployed qualification once and request final owner review.
-Run only the smallest affected tests during cleanup.
-Run the broad local qualification after the cleanup set settles, then run the retained external/deployment layer once.
+Sequence:
+
+```text
+local baseline
+→ B1 fixture
+→ B2–B4 generator decoupling
+→ B5 SQLx verifier ownership
+→ B6 generated-file test cleanup
+→ B7 platform/application test ownership
+→ B8 control-plane fixture cleanup
+→ B9 WIT ownership
+→ B10 generated-output decision
+→ UI/process audit
+→ developer-path verification
+→ final local qualification
+→ one deployed qualification
+→ owner review
+```
 
 Report:
 
 - tests removed/moved and their surviving owners;
+- application dependencies removed from platform tests;
+- fixtures introduced and their owner;
+- generated/WIT copies removed;
 - regressions fixed;
 - stale tests deleted;
 - unresolved external limitations;
@@ -279,13 +476,18 @@ Testing stabilization is complete when:
 
 1. Current `main` has a reproducible local qualification baseline with every required case actually executed.
 2. Regressions are fixed; stale tests are removed; external limitations are explicitly named rather than hidden.
-3. Ordinary application business behavior runs without cluster/image/broker setup where those boundaries are irrelevant.
-4. Cluster/deployment tests contain only assertions that genuinely require those boundaries.
-5. UI application behavior is owned in-process; retained PTY/process tests prove actual process behavior.
-6. SQLx offline compilation, fresh-schema verification, disposable PostgreSQL, and change-based test selection are the normal documented paths.
-7. Required tests cannot report green by skipping, matching zero cases, or silently lacking prerequisites.
-8. No test or helper references a retired service topology, transaction-token path, obsolete adapter, or removed manifest contract.
-9. Testing documentation has one current owner for each command and testing rule.
-10. The owner reviews the remaining failures/limitations and accepts the repository as the baseline for future feature work.
+3. Generator/control-plane/runtime tests do not depend on shipped application files merely as generic fixtures.
+4. Ordinary application business behavior runs without cluster/image/broker setup where those boundaries are irrelevant.
+5. Cluster/deployment tests contain only assertions that genuinely require those boundaries.
+6. UI application behavior is owned in-process; retained PTY/process tests prove actual process behavior.
+7. SQLx offline compilation, fresh-schema verification, disposable PostgreSQL, and change-based test selection are the normal documented paths.
+8. SQLx verification still covers the exact application SQL corpus after verifier ownership is cleaned up.
+9. Required tests cannot report green by skipping, matching zero cases, or silently lacking prerequisites.
+10. WIT packages have one canonical source/materialization path rather than editable copies guarded by coherence tests.
+11. Every committed generated-output class has a real build, publication, distribution, or offline-evidence consumer.
+12. No test or helper references a retired service topology, transaction-token path, obsolete adapter, removed manifest contract, or obsolete generated artifact.
+13. Testing documentation has one current owner for each command and testing rule.
+14. One post-cleanup deployed qualification has run, with remaining external failures explicitly recorded.
+15. The owner reviews the remaining failures/limitations and accepts the repository as the baseline for future feature work.
 
 **No new feature epic opens until this completion gate is reviewed.**
