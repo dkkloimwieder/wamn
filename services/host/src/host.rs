@@ -1148,18 +1148,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             Err(error) => Err(error),
         };
         if let Err(error) = started {
-            let had_ingress = ingress_handler.is_some();
-            let explicit_stop = match ingress_handler.as_ref() {
-                Some(handler) => handler.stop().await.context("stop HTTP admission"),
-                None => Ok(()),
-            };
-            let native_result =
-                wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, native_cleanup).await;
-            let native_result = normalize_explicit_ingress_stop(
-                native_result,
-                had_ingress && explicit_stop.is_ok(),
-            );
-            explicit_stop.and(native_result)?;
+            wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, async {
+                let had_ingress = ingress_handler.is_some();
+                let explicit_stop = match ingress_handler.as_ref() {
+                    Some(handler) => handler.stop().await.context("stop HTTP admission"),
+                    None => Ok(()),
+                };
+                let native_result = normalize_explicit_ingress_stop(
+                    native_cleanup.await,
+                    had_ingress && explicit_stop.is_ok(),
+                );
+                explicit_stop.and(native_result)
+            })
+            .await?;
             return Err(error);
         }
     }
@@ -1216,7 +1217,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let had_ingress = ingress_handler.is_some();
         let stop_ingress = async move {
             match ingress_handler {
-                Some(handler) => handler.stop().await.context("stop HTTP admission"),
+                Some(handler) => {
+                    handler.stop().await.context("stop HTTP admission")?;
+                    handler.stopped().await;
+                    Ok(())
+                }
                 None => Ok(()),
             }
         };
@@ -1432,6 +1437,8 @@ where
     result.and(cleanup_result)
 }
 
+// The pinned native supervisor reports listener closure as a failure, including
+// our explicit stop. Preserve every other cleanup failure and the original trigger.
 fn normalize_explicit_ingress_stop(
     result: anyhow::Result<()>,
     explicitly_stopped: bool,

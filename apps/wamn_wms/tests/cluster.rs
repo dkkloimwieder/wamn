@@ -390,7 +390,7 @@ async fn run_created(
         evidence,
         image,
         tag,
-        source_head,
+        source_head: _,
         runtime_digest,
         files,
         broker,
