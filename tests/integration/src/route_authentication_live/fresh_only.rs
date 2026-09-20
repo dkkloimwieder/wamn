@@ -862,7 +862,7 @@ fn parent_component() -> anyhow::Result<Vec<u8>> {
 #[test]
 #[ignore = "requires: WAMN_PRIOR_COMMIT_COMPONENT"]
 fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_PRIOR_COMMIT_COMPONENT"])?;
+    wamn_test_postgres::require_prerequisites(&["WAMN_PRIOR_COMMIT_COMPONENT"]);
     let manifest = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
         &fixture_manifest(&format!("sha256:{}", "a".repeat(64))),
     )?)?;
@@ -901,8 +901,9 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
 mod execution_tests {
     use super::{BASE_RECORD_RECEIPT, COUNTER_SQL, OPERATION, parent_component};
     use anyhow::Context as _;
-    use wash_runtime::wasmtime::component::{Component, Linker, TypedFunc};
+    use wash_runtime::wasmtime::component::{Component, Linker, ResourceTable, TypedFunc};
     use wash_runtime::wasmtime::{Engine, Store};
+    use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
     mod bindings {
         wash_runtime::wasmtime::component::bindgen!({
@@ -931,10 +932,31 @@ mod execution_tests {
         RecordReceiptItem, RecordReceiptOutcome, RecordReceiptRequest, RecordReceiptResult,
     };
 
-    #[derive(Default)]
     struct Calls {
         order: Vec<&'static str>,
         nested: Option<(NodeContext, Vec<RecordReceiptItem>)>,
+        table: ResourceTable,
+        wasi: WasiCtx,
+    }
+
+    impl Default for Calls {
+        fn default() -> Self {
+            Self {
+                order: Vec::new(),
+                nested: None,
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+            }
+        }
+    }
+
+    impl WasiView for Calls {
+        fn ctx(&mut self) -> WasiCtxView<'_> {
+            WasiCtxView {
+                ctx: &mut self.wasi,
+                table: &mut self.table,
+            }
+        }
     }
 
     #[tokio::test]
@@ -1191,7 +1213,7 @@ mod execution_tests {
     #[ignore = "requires: WAMN_PRIOR_COMMIT_COMPONENT"]
     async fn counter_parent_executes_sql_then_forwards_the_exact_nested_call() -> anyhow::Result<()>
     {
-        wamn_test_postgres::require_prerequisites(&["WAMN_PRIOR_COMMIT_COMPONENT"])?;
+        wamn_test_postgres::require_prerequisites(&["WAMN_PRIOR_COMMIT_COMPONENT"]);
         let engine = Engine::default();
         let component = Component::new(&engine, parent_component()?)?;
         let context = NodeContext {
@@ -1209,6 +1231,7 @@ mod execution_tests {
         let input = r#"[{"request_id":"abi-only","value":{"idempotency_key":"abi-key","purchase_order_id":"00000000-0000-0000-0000-000000000301","receipt_reference":"ABI-1","occurred_at":"2026-08-31T12:30:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000501","quantity":"5.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#;
         for refuse_nested in [false, true] {
             let mut linker = Linker::<Calls>::new(&engine);
+            wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
             linker.instance("wamn:node/types@0.1.0")?;
             linker.instance("wamn:postgres/types@0.1.0")?;
             linker
@@ -1216,7 +1239,7 @@ mod execution_tests {
                 .func_wrap_concurrent(
                     "execute",
                     |accessor, (sql, params): (String, Vec<SqlValue>)| {
-                        Box::new(async move {
+                        Box::pin(async move {
                             assert_eq!(sql, COUNTER_SQL);
                             assert!(params.is_empty());
                             accessor.with(|mut store| store.data_mut().order.push("sql"));
@@ -1237,7 +1260,7 @@ mod execution_tests {
                 "run",
                 move |accessor, (context, input): (NodeContext, Vec<RecordReceiptItem>)| {
                     let nested_result = nested_result.clone();
-                    Box::new(async move {
+                    Box::pin(async move {
                         accessor.with(|mut store| {
                             store.data_mut().order.push("nested");
                             store.data_mut().nested = Some((context, input.clone()));
@@ -1259,13 +1282,18 @@ mod execution_tests {
             let export = instance
                 .get_export_index(&mut store, Some(&handler), "run")
                 .context("fixture run export")?;
-            let run: TypedFunc<(&NodeContext, &str), (Result<Emission, NodeError>,)> =
+            let run: TypedFunc<(NodeContext, String), (Result<Emission, NodeError>,)> =
                 instance.get_typed_func(&mut store, export)?;
-            let result = store
+            let result = match store
                 .run_concurrent(async |accessor| {
-                    run.call_concurrent(accessor, (&context, input)).await
+                    run.call_concurrent(accessor, (context.clone(), input.to_owned()))
+                        .await
                 })
-                .await?;
+                .await
+            {
+                Ok(result) => result,
+                Err(error) => Err(error),
+            };
             if refuse_nested {
                 let error = result.expect_err("the nested host error must propagate");
                 anyhow::ensure!(
