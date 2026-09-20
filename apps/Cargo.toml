@@ -26,6 +26,7 @@ members = [
     "wamn_wms/data",
     "platform/fixtures/busyloop",
     "platform/fixtures/connection-http-standard",
+    "platform/fixtures/prior-commit",
     "platform/fixtures/sockprobe",
     "platform/fixtures/sqlx-command",
     "platform/fixtures/std-virtualization-probe",

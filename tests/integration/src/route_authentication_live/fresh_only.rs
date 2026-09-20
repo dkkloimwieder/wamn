@@ -33,7 +33,7 @@ use super::{
 
 const PACKAGE: &str = "fresh_only_probe";
 const VERSION: &str = "1.0.0";
-const OPERATION: &str = "wamn:node/handler@0.1.0";
+const OPERATION: &str = "wamn:node/async-handler@0.1.0";
 const WIRING: &str = "prior_commit";
 const ROUTE: &str = "/fresh_only_probe/prior_commit";
 const COUNTER_ID: &str = "00000000-0000-0000-0000-000000000904";
@@ -825,102 +825,31 @@ fn fixture_manifest(base_digest: &str) -> Value {
 }
 
 fn parent_component() -> anyhow::Result<Vec<u8>> {
-    // More than 16 flat handler parameters use one pointer to the original
-    // (node-context, input) aggregate. Forward it unchanged after SQL COMMIT.
-    Ok(wat::parse_str(format!(
-        r#"(component
-      (import "wamn:node/types@0.1.0" (instance $node
-        (type $json' string)
-        (export "json" (type $json (eq $json')))
-        (type $context' (record
-          (field "wiring-id" string) (field "wiring-version" u32)
-          (field "node-id" string) (field "delivery-id" string)
-          (field "input-port" (option string)) (field "occurrence" u32)
-          (field "traceparent" (option string)) (field "tracestate" (option string))
-          (field "deadline-ms" (option u64)) (field "config" $json)))
-        (export "node-context" (type $context (eq $context')))
-        (type $detail' (record (field "message" string) (field "code" (option string))))
-        (export "error-detail" (type $detail (eq $detail')))
-        (type $rate' (record (field "detail" $detail) (field "retry-after-ms" (option u64))))
-        (export "rate-limit-detail" (type $rate (eq $rate')))
-        (type $error' (variant (case "retryable" $detail) (case "rate-limited" $rate)
-          (case "terminal" $detail) (case "invalid-input" $detail) (case "cancelled")))
-        (export "node-error" (type $error (eq $error')))
-        (type $emission' (record (field "payload" $json) (field "port" (option string))))
-        (export "emission" (type $emission (eq $emission')))))
-      (alias export $node "json" (type $json))
-      (alias export $node "node-context" (type $context))
-      (alias export $node "node-error" (type $error))
-      (alias export $node "emission" (type $emission))
-      (import "{base}" (instance $base
-        (export "json" (type (eq $json)))
-        (export "node-context" (type (eq $context)))
-        (export "emission" (type (eq $emission)))
-        (export "node-error" (type (eq $error)))
-        (export "run" (func (param "ctx" $context) (param "input" $json)
-          (result (result $emission (error $error)))))))
-      (import "wamn:postgres/types@0.1.0" (instance $pg
-        (type $value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
-          (case "int64" s64) (case "float64" f64) (case "text" string)
-          (case "bytes" (list u8)) (case "numeric" string) (case "timestamptz" string)
-          (case "json" string) (case "uuid" string)))
-        (export "sql-value" (type $value (eq $value')))
-        (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
-          (case "statement-timeout") (case "row-limit-exceeded" u64)
-          (case "unique-violation" string) (case "foreign-key-violation" string)
-          (case "check-violation" string) (case "exclusion-violation" string)
-          (case "permission-denied") (case "query-error" (tuple string string))))
-        (export "pg-error" (type $pg-error (eq $pg-error')))))
-      (alias export $pg "sql-value" (type $value))
-      (alias export $pg "pg-error" (type $pg-error))
-      (import "wamn:postgres/client@0.1.0" (instance $pg-client
-        (export "sql-value" (type (eq $value))) (export "pg-error" (type (eq $pg-error)))
-        (export "execute" (func (param "sql" string) (param "params" (list $value))
-          (result (result u64 (error $pg-error)))))))
-      (core module $memory
-        (memory (export "memory") 16)
-        (global $next (mut i32) (i32.const 1024))
-        (data (i32.const 256) "{sql}")
-        (func (export "realloc") (param $old i32) (param $old-size i32)
-          (param $align i32) (param $size i32) (result i32) (local $new i32)
-          global.get $next local.get $align i32.const 1 i32.sub i32.add
-          i32.const 0 local.get $align i32.sub i32.and local.tee $new
-          local.get $size i32.add global.set $next
-          global.get $next i32.const 1048576 i32.gt_u if unreachable end
-          local.get $old if
-            local.get $new local.get $old local.get $old-size memory.copy
-          end local.get $new))
-      (core instance $memory (instantiate $memory))
-      (core func $execute (canon lower (func $pg-client "execute")
-        (memory $memory "memory") (realloc (func $memory "realloc"))))
-      (core func $nested (canon lower (func $base "run")
-        (memory $memory "memory") (realloc (func $memory "realloc"))))
-      (core module $main
-        (import "memory" "memory" (memory 16))
-        (import "host" "execute" (func $execute (param i32 i32 i32 i32 i32)))
-        (import "host" "nested" (func $nested (param i32 i32)))
-        (func (export "run") (param $input i32) (result i32)
-          i32.const 256 i32.const {sql_len} i32.const 192 i32.const 0 i32.const 768 call $execute
-          i32.const 768 i32.load8_u if unreachable end
-          i32.const 776 i64.load i64.const 1 i64.ne if unreachable end
-          local.get $input i32.const 832 call $nested
-          i32.const 832))
-      (core instance $main (instantiate $main (with "memory" (instance $memory))
-        (with "host" (instance (export "execute" (func $execute)) (export "nested" (func $nested))))))
-      (func $run (param "ctx" $context) (param "input" $json)
-        (result (result $emission (error $error)))
-        (canon lift (core func $main "run") (memory $memory "memory")
-          (realloc (func $memory "realloc"))))
-      (instance $handler
-        (export "json" (type $json)) (export "node-context" (type $context))
-        (export "emission" (type $emission)) (export "node-error" (type $error))
-        (export "run" (func $run)))
-      (export "{operation}" (instance $handler)))"#,
-        base = BASE_RECORD_RECEIPT,
-        operation = OPERATION,
-        sql = COUNTER_SQL,
-        sql_len = COUNTER_SQL.len()
-    ))?)
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                repository.join(path)
+            }
+        })
+        .unwrap_or_else(|| repository.join("apps/target"));
+    let release = target.join("wasm32-wasip2/release/prior_commit.wasm");
+    let path = if release.is_file() {
+        release
+    } else {
+        target.join("wasm32-wasip2/debug/prior_commit.wasm")
+    };
+    std::fs::read(&path).with_context(|| {
+        format!(
+            "read compiled prior-commit fixture {}; build it with \
+             `cargo build --manifest-path apps/Cargo.toml --locked --offline \
+             -p prior-commit --target wasm32-wasip2`",
+            path.display()
+        )
+    })
 }
 
 #[test]
@@ -966,30 +895,37 @@ mod execution_tests {
     use wash_runtime::wasmtime::component::{Component, Linker, TypedFunc};
     use wash_runtime::wasmtime::{Engine, Store};
 
-    mod node_bindings {
+    mod bindings {
         wash_runtime::wasmtime::component::bindgen!({
-            path: "../../../crates/execution/router/wit",
-            world: "node",
+            world: "fixture:prior-commit/host",
+            inline: r#"
+                package fixture:prior-commit;
+
+                world host {
+                  import wamn:postgres/client@0.1.0;
+                  import wamn-receiving:receiving/record-receipt@1.0.0;
+                  export wamn:node/async-handler@0.1.0;
+                }
+            "#,
+            path: [
+                "../../../apps/wamn_receiving/data/wit/deps/wamn-node",
+                "../../../apps/wamn_receiving/data/wit/deps/wamn-postgres",
+                "../../../apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
+            ],
             additional_derives: [PartialEq],
             wasmtime_crate: wash_runtime::wasmtime,
         });
     }
-
-    mod postgres_bindings {
-        wash_runtime::wasmtime::component::bindgen!({
-            path: "../../../crates/platform/runtime/wit",
-            world: "postgres-plugin",
-            wasmtime_crate: wash_runtime::wasmtime,
-        });
-    }
-
-    use node_bindings::wamn::node::types::{Emission, NodeContext, NodeError};
-    use postgres_bindings::wamn::postgres::types::{PgError, SqlValue};
+    use bindings::wamn::node::types::{Emission, NodeContext, NodeError};
+    use bindings::wamn::postgres::types::{PgError, SqlValue};
+    use bindings::wamn_receiving::receiving::record_receipt::{
+        RecordReceiptItem, RecordReceiptOutcome, RecordReceiptRequest, RecordReceiptResult,
+    };
 
     #[derive(Default)]
     struct Calls {
         order: Vec<&'static str>,
-        nested: Option<(NodeContext, String)>,
+        nested: Option<(NodeContext, Vec<RecordReceiptItem>)>,
     }
 
     #[tokio::test]
@@ -1239,8 +1175,9 @@ mod execution_tests {
         Ok(())
     }
 
-    /// Isolate the WAT's memory ABI from DB/authorization setup. The deployed
-    /// test above remains the witness for actual commits and fresh-only checks.
+    /// Isolate the compiled guest's forwarding from DB/authorization setup.
+    /// The deployed test above remains the witness for actual commits and
+    /// fresh-only checks.
     #[tokio::test]
     async fn counter_parent_executes_sql_then_forwards_the_exact_nested_call() -> anyhow::Result<()>
     {
@@ -1258,7 +1195,7 @@ mod execution_tests {
             deadline_ms: Some(30_000),
             config: "{\"fixture\":true}".to_owned(),
         };
-        let input = "[{\"request_id\":\"abi-only\",\"value\":17}]";
+        let input = r#"[{"request_id":"abi-only","value":{"idempotency_key":"abi-key","purchase_order_id":"00000000-0000-0000-0000-000000000301","receipt_reference":"ABI-1","occurred_at":"2026-08-31T12:30:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000501","quantity":"5.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#;
         for refuse_nested in [false, true] {
             let mut linker = Linker::<Calls>::new(&engine);
             linker.instance("wamn:node/types@0.1.0")?;
@@ -1276,9 +1213,19 @@ mod execution_tests {
                         })
                     },
                 )?;
+            let nested_result = vec![RecordReceiptOutcome {
+                request_id: "abi-only".to_owned(),
+                outcome: Ok(RecordReceiptResult {
+                    receipt_id: "00000000-0000-0000-0000-000000000601".to_owned(),
+                    purchase_order_id: "00000000-0000-0000-0000-000000000301".to_owned(),
+                    purchase_order_status: "received".to_owned(),
+                    row_version: 2,
+                }),
+            }];
             linker.instance(BASE_RECORD_RECEIPT)?.func_wrap_async(
                 "run",
-                move |mut store, (context, input): (NodeContext, String)| {
+                move |mut store, (context, input): (NodeContext, Vec<RecordReceiptItem>)| {
+                    let nested_result = nested_result.clone();
                     Box::new(async move {
                         store.data_mut().order.push("nested");
                         store.data_mut().nested = Some((context, input.clone()));
@@ -1287,10 +1234,7 @@ mod execution_tests {
                                 "local nested refusal sentinel",
                             ));
                         }
-                        Ok((Ok::<Emission, NodeError>(Emission {
-                            payload: input,
-                            port: Some("main".to_owned()),
-                        }),))
+                        Ok((Ok::<Vec<RecordReceiptOutcome>, NodeError>(nested_result),))
                     })
                 },
             )?;
@@ -1314,19 +1258,35 @@ mod execution_tests {
             } else {
                 let (result,) = result
                     .map_err(anyhow::Error::from)
-                    .context("execute the actual counter-parent WAT")?;
+                    .context("execute the compiled counter parent")?;
                 assert_eq!(
                     result,
                     Ok(Emission {
-                        payload: input.to_owned(),
-                        port: Some("main".to_owned())
+                        payload: r#"[{"request_id":"abi-only","value":{"purchase_order_id":"00000000-0000-0000-0000-000000000301","purchase_order_status":"received","receipt_id":"00000000-0000-0000-0000-000000000601","row_version":"2"}}]"#.to_owned(),
+                        port: None,
                     })
                 );
             }
             assert_eq!(store.data().order, ["sql", "nested"]);
             assert_eq!(
                 store.data().nested,
-                Some((context.clone(), input.to_owned()))
+                Some((
+                    context.clone(),
+                    vec![RecordReceiptItem {
+                        request_id: "abi-only".to_owned(),
+                        input: Ok(RecordReceiptRequest {
+                            idempotency_key: "abi-key".to_owned(),
+                            line: vec![bindings::wamn_receiving::receiving::record_receipt::RecordReceiptLine {
+                                location_id: "00000000-0000-0000-0000-000000000201".to_owned(),
+                                purchase_order_line_id: "00000000-0000-0000-0000-000000000501".to_owned(),
+                                quantity: "5.0000".to_owned(),
+                            }],
+                            occurred_at: "2026-08-31T12:30:00.000000Z".to_owned(),
+                            purchase_order_id: "00000000-0000-0000-0000-000000000301".to_owned(),
+                            receipt_reference: "ABI-1".to_owned(),
+                        }),
+                    }],
+                ))
             );
         }
         Ok(())
