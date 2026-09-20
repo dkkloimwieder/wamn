@@ -210,6 +210,10 @@ impl std::error::Error for ComponentProjectionError {}
 
 #[derive(Debug, Deserialize)]
 struct GeneratedOperationContract {
+    #[serde(default)]
+    pre_commit: Option<String>,
+    #[serde(default)]
+    dependency: Option<serde_json::Value>,
     operation: String,
     #[serde(default)]
     fresh_only: bool,
@@ -674,6 +678,28 @@ fn load_component_statement_facts(
                     expected_contract.fresh_only,
                 ),
             ));
+        }
+        if let Some(declared) = component.operations.get(operation) {
+            let expected_participant = contract
+                .dependency
+                .as_ref()
+                .and_then(|dependency| dependency.get("participant"))
+                .and_then(serde_json::Value::as_str);
+            let declared_participants = declared
+                .dependencies
+                .iter()
+                .filter_map(|dependency| dependency.participant.as_deref())
+                .collect::<Vec<_>>();
+            if declared.pre_commit != contract.pre_commit
+                || declared_participants != expected_participant.into_iter().collect::<Vec<_>>()
+            {
+                return Err(ComponentProjectionError::new(
+                    ComponentProjectionErrorKind::StatementOperationMismatch,
+                    format!(
+                        "operation {operation:?} participation differs from its generated contract"
+                    ),
+                ));
+            }
         }
         let operation_statements = load_operation_statements(
             package_root,
@@ -2008,6 +2034,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
                 AdmittedComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: Some(
@@ -2046,6 +2073,7 @@ mod tests {
                     (
                         export,
                         AdmittedComponentOperation {
+                            pre_commit: operation.pre_commit,
                             committed_result_schema: operation.committed_result_schema.map(
                                 |schema| wamn_catalog::ComponentSchema {
                                     schema_digest: wamn_execution_contract::canonical_json_sha256(
@@ -2291,6 +2319,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation,
                 AdmittedComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
@@ -2343,6 +2372,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: registered.map(str::to_owned),
@@ -3203,6 +3233,7 @@ mod tests {
                     operations: BTreeMap::from([(
                         operation.to_owned(),
                         ComponentOperationDeclaration {
+                            pre_commit: None,
                             committed_result_schema: None,
                             fresh_only: false,
                             registered_operation: None,

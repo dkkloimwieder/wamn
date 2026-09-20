@@ -150,6 +150,7 @@
           "operation": "receiving.record_receipt"
         }
       },
+      "participant": "receiving.record_receipt_participant",
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -318,6 +319,113 @@
       "constraint_errors": {},
       "relations": [],
       "statements": {}
+    },
+    "receiving.record_receipt_participant": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "receiving.record_receipt_participant",
+      "connection": "postgres",
+      "transaction": "participant",
+      "idempotent_by": {
+        "inherited": {
+          "base": "base_receiving",
+          "operation": "receiving.record_receipt"
+        }
+      },
+      "input": {
+        "fields": [
+          {
+            "path": "receipt_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": ["field"]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": ["operation"]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "acme_inspection_required",
+            "acme_quality_status"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "quality_inspection",
+          "select_fields": [
+            "receipt_id"
+          ],
+          "insert_fields": [
+            "receipt_id",
+            "status"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": [
+            "quality_inspection_receipt_id_pkey"
+          ]
+        }
+      ],
+      "statements": {
+        "record_receipt_participant": {
+          "path": "command/record_receipt_participant/record_receipt_participant.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "outcome",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": true
+            }
+          ]
+        }
+      }
     },
     "quality.load_purchase_order_detail": {
       "kind": "projection",
@@ -735,6 +843,30 @@
       },
       "constraint_errors": {},
       "relations": [
+        {
+          "schema": "receiving",
+          "table": "receipt",
+          "select_fields": [
+            "id",
+            "purchase_order_id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "acme_inspection_required"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
         {
           "schema": "receiving",
           "table": "quality_inspection",

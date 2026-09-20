@@ -940,6 +940,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     operation.to_owned(),
                     ComponentOperationDeclaration {
+                        pre_commit: None,
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,
@@ -1177,6 +1178,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_owned(),
                 AdmittedComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,

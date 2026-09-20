@@ -373,6 +373,7 @@ pub fn validate_local_facts(
             });
             anyhow::ensure!(
                 selected.committed_result_schema == schema
+                    && selected.pre_commit == operation.pre_commit
                     && selected.registered_operation == operation.registered_operation
                     && selected.fresh_only == operation.fresh_only
                     && selected.dependencies == operation.dependencies
@@ -625,6 +626,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "run".to_owned(),
                     ServingComponentOperation {
+                        pre_commit: None,
                         committed_result_schema: None,
                         registered_operation: None,
                         fresh_only: false,

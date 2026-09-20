@@ -44,6 +44,12 @@ pub struct CustomOperationDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
     pub input: CustomOperationInputDeclaration,
+    /// Base-owned typed input passed through before the command runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_commit: Option<CustomOperationInputDeclaration>,
+    /// Package-local execution-only operation selected while composing this command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub participant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<CustomOperationResultDeclaration>,
     pub errors: Vec<String>,
@@ -126,6 +132,7 @@ pub struct EventRegistrationDeclaration {
 #[serde(rename_all = "snake_case")]
 pub enum CommandTransaction {
     ExplicitPerInput,
+    Participant,
 }
 
 /// How one command survives a repeat, in exactly three declared shapes.
@@ -846,6 +853,23 @@ fn validate_custom_operation(
 
     validate_custom_operation_kind(manifest, operation_name, operation)?;
     validate_custom_operation_input(operation_name, &operation.input)?;
+    if let Some(pre_commit) = &operation.pre_commit {
+        if operation.kind != CustomOperationKind::Command
+            || operation.claim.is_none()
+            || pre_commit.raw_body_maximum.is_some()
+            || pre_commit.envelope.is_some()
+            || pre_commit.item_semantics.is_some()
+            || pre_commit.line.is_some()
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "command {operation_name} pre_commit requires a claim and typed fields without envelope or line bounds"
+                ),
+            ));
+        }
+        validate_custom_operation_input(operation_name, pre_commit)?;
+    }
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to
         // the generated query, which checks its cursor, limit and envelope.
@@ -897,13 +921,38 @@ fn validate_custom_operation_kind(
             }
         }
         CustomOperationKind::Command => {
-            if operation.result.is_none() || operation.registration.is_some() {
+            let participant = operation.transaction == Some(CommandTransaction::Participant);
+            if (!participant && operation.result.is_none())
+                || (participant && operation.result.is_some())
+                || operation.registration.is_some()
+            {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
-                    format!("command {operation_name} must declare a result and no registration"),
+                    format!(
+                        "command {operation_name} must declare a result unless it is an execution-only participant, and must declare no registration"
+                    ),
                 ));
             }
             validate_command_idempotence(manifest, operation_name, operation)?;
+            if participant
+                && (!matches!(
+                    operation.idempotent_by,
+                    Some(CommandIdempotence::Inherited(_))
+                ) || operation.claim.is_some()
+                    || operation.automatic_retry.is_some()
+                    || operation.visibility != OperationVisibility::Public
+                    || operation.input.raw_body_maximum.is_some()
+                    || operation.input.envelope.is_some()
+                    || operation.input.item_semantics.is_some()
+                    || operation.input.line.is_some())
+            {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "participant command {operation_name} must be public with its own permission, plain typed input, inherited idempotence, and no result, claim or automatic_retry"
+                    ),
+                ));
+            }
             if operation.claim.is_some()
                 && operation.transaction != Some(CommandTransaction::ExplicitPerInput)
             {
@@ -923,6 +972,7 @@ fn validate_custom_operation_kind(
                 operation.automatic_retry,
             ) {
                 (true, Some(CommandTransaction::ExplicitPerInput), Some(false))
+                | (true, Some(CommandTransaction::Participant), None)
                 | (false, None, None) => {}
                 (true, Some(_), Some(true)) => {
                     return Err(GenerateError::new(
@@ -950,6 +1000,7 @@ fn validate_custom_operation_kind(
             if let Some(canonicalization) = &operation.canonicalization {
                 validate_command_canonicalization(operation_name, operation, canonicalization)?;
             }
+            validate_participant_reference(manifest, operation_name, operation)?;
         }
         CustomOperationKind::EventHandler => {
             if operation.visibility != OperationVisibility::Private || operation.result.is_some() {
@@ -969,6 +1020,62 @@ fn validate_custom_operation_kind(
             })?;
             validate_registration(manifest, operation_name, registration)?;
         }
+    }
+    Ok(())
+}
+
+fn validate_participant_reference(
+    manifest: &PackageManifest,
+    operation_name: &str,
+    operation: &CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    let Some(participant_name) = &operation.participant else {
+        return Ok(());
+    };
+    if operation.transaction.is_some()
+        || operation.connection.is_some()
+        || !operation.relations.is_empty()
+        || !operation.statements.is_empty()
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("composing command {operation_name} with a participant must not own local SQL"),
+        ));
+    }
+    let Some(CommandIdempotence::Inherited(wrapper_inherited)) = &operation.idempotent_by else {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "composing command {operation_name} with a participant must inherit its base claim"
+            ),
+        ));
+    };
+    let participant = manifest
+        .custom_operations
+        .get(participant_name)
+        .ok_or_else(|| {
+            GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("command {operation_name} names unknown participant {participant_name}"),
+            )
+        })?;
+    if participant.transaction != Some(CommandTransaction::Participant) {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "command {operation_name} participant {participant_name} is not execution-only"
+            ),
+        ));
+    }
+    if participant.idempotent_by.as_ref()
+        != Some(&CommandIdempotence::Inherited(wrapper_inherited.clone()))
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "command {operation_name} and participant {participant_name} must inherit the same base operation"
+            ),
+        ));
     }
     Ok(())
 }
@@ -1025,7 +1132,14 @@ fn validate_command_idempotence(
             validate_state_guards(operation_name, operation, state)?;
         }
         CommandIdempotence::Inherited(inherited) => {
-            refuse_minted_identity(operation_name, operation, "inherited")?;
+            if operation.transaction != Some(CommandTransaction::Participant) {
+                refuse_minted_identity(operation_name, operation, "inherited")?;
+            } else if operation.claim.is_some() {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!("participant command {operation_name} must not declare a claim"),
+                ));
+            }
             let dependency = manifest.base_dependencies.get(&inherited.base).ok_or_else(|| {
                 GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
@@ -1144,6 +1258,8 @@ fn refuse_command_only_fields(
         || operation.idempotent_by.is_some()
         || operation.claim.is_some()
         || operation.canonicalization.is_some()
+        || operation.pre_commit.is_some()
+        || operation.participant.is_some()
     {
         Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,

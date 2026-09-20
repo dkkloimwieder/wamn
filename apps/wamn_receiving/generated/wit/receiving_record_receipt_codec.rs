@@ -380,12 +380,15 @@ macro_rules! export_operation {
 
             impl __contract::Guest for $component {
                 async fn run(
-                    _context: __node::NodeContext,
+                    context: __node::NodeContext,
                     input: Vec<__contract::RecordReceiptItem>,
                 ) -> Result<Vec<__contract::RecordReceiptOutcome>, __node::NodeError> {
                     let mut state = $state;
                     __codec::validate(&input).map_err(invalid)?;
-                    Ok(__codec::run(input, &mut state, $handler).await)
+                    Ok(__codec::run(input, &mut state, async |state, request| {
+                        $handler(context.clone(), state, request).await
+                    })
+                    .await)
                 }
 
                 async fn run_json(

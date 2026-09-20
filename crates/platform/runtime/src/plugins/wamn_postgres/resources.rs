@@ -1212,6 +1212,17 @@ impl statement_wit::Host for ActiveCtx<'_> {}
 impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
     #[expect(
         clippy::unused_async_trait_impl,
+        reason = "the async WIT method reads local invocation metadata"
+    )]
+    async fn selected_participation(
+        accessor: &Accessor<T, Self>,
+    ) -> wash_runtime::wasmtime::Result<Result<Option<statement_wit::Participation>, StatementError>>
+    {
+        super::transaction_views::selected(accessor)
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
         reason = "the async WIT method acquires only a local resource"
     )]
     async fn participant_view(

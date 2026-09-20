@@ -272,8 +272,13 @@ pub fn validate_component_admission(
         .declaration
         .operations
         .values()
-        .flat_map(|operation| operation.dependencies.iter())
-        .map(|dependency| dependency.operation.clone())
+        .flat_map(|operation| {
+            operation
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.operation.clone())
+                .chain(operation.pre_commit.iter().cloned())
+        })
         .collect::<BTreeSet<_>>();
     let byte_dependency_imports = imports
         .iter()
@@ -650,6 +655,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     OPERATION.to_string(),
                     ComponentOperationDeclaration {
+                        pre_commit: None,
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,
@@ -678,6 +684,7 @@ mod tests {
 
     fn dependency(operation: &str) -> ComponentOperationDependency {
         ComponentOperationDependency {
+            participant: None,
             package: "wamn_receiving".to_string(),
             version: "1.0.0".to_string(),
             digest: format!("sha256:{}", "c".repeat(64)),

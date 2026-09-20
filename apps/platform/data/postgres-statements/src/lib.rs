@@ -309,6 +309,26 @@ impl Transaction {
     }
 }
 
+/// Exact participant selected by the admitted caller for the current command.
+#[derive(Debug, Clone)]
+pub struct Participation {
+    pub operation: String,
+    pub intent: String,
+}
+
+/// Read trusted participation metadata for complete command identity.
+pub async fn participation() -> Result<Option<Participation>, StatementError> {
+    host::selected_participation()
+        .await
+        .map(|selected| {
+            selected.map(|selected| Participation {
+                operation: selected.operation,
+                intent: selected.intent,
+            })
+        })
+        .map_err(StatementError::from_wire)
+}
+
 /// Execution-only resource for the current participant invocation.
 #[derive(Debug)]
 pub struct TransactionView {

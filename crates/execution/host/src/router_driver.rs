@@ -1447,6 +1447,7 @@ impl RouterDriver {
                     input: input.into(),
                     deadline,
                     transaction_participation: None,
+                    selected_participant: None,
                     acquisition,
                     caller: request.caller.clone(),
                     application,
@@ -1493,6 +1494,7 @@ fn validate_component_in_release(
                 (
                     name.clone(),
                     ServingComponentOperation {
+                        pre_commit: operation.pre_commit.clone(),
                         registered_operation: operation.registered_operation.clone(),
                         fresh_only: operation.fresh_only,
                         committed_result_schema: operation.committed_result_schema.as_ref().map(
@@ -1660,10 +1662,11 @@ fn nested_operation_links(component: &AdmittedComponent) -> anyhow::Result<Neste
     let mut links = NestedOperationLinks::new();
     for (owner_operation, operation) in &component.operations {
         for dependency in &operation.dependencies {
-            if links
-                .get(&dependency.operation)
-                .is_some_and(|(pinned, _)| pinned != dependency)
-            {
+            if links.get(&dependency.operation).is_some_and(|(pinned, _)| {
+                pinned.package != dependency.package
+                    || pinned.version != dependency.version
+                    || pinned.digest != dependency.digest
+            }) {
                 anyhow::bail!("component-operation-dependency-pin-mismatch");
             }
             let (_, owners) = links
@@ -1842,6 +1845,7 @@ mod tests {
         statements: BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
     ) -> AdmittedComponentOperation {
         AdmittedComponentOperation {
+            pre_commit: None,
             registered_operation: None,
             fresh_only: false,
             committed_result_schema: None,
@@ -2215,6 +2219,7 @@ mod tests {
         let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
         let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let dependency = ComponentOperationDependency {
+            participant: None,
             package: "wamn_receiving".to_owned(),
             version: "1.0.0".to_owned(),
             digest: digest.to_owned(),
@@ -2231,6 +2236,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.to_owned(),
                 AdmittedComponentOperation {
+                    pre_commit: None,
                     registered_operation: Some(operation.to_owned()),
                     fresh_only: false,
                     committed_result_schema: None,
@@ -2249,6 +2255,7 @@ mod tests {
         };
 
         let declaration = AdmittedComponentOperation {
+            pre_commit: None,
             registered_operation: None,
             fresh_only: false,
             committed_result_schema: None,

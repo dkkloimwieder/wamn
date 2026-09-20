@@ -1251,6 +1251,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "request".into(),
                 ServingComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,

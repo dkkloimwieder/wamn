@@ -13,7 +13,7 @@ pub struct LoadInspectionRow {
 }
 
 pub(crate) const INSERT_INSPECTION_DIGEST: &str =
-    "sha256:5e18c52dedc3857274c7f6a246a1e486b50d4afebff4081edebd3232ceadba14";
+    "sha256:de2fe05dfc979c3882dad6138ca8807b67b5b78a9f48884b471a2cbe5e70ada8";
 pub(crate) const LOAD_INSPECTION_DIGEST: &str =
     "sha256:0f21db223ec017fa15f04c26dd646b85270965bda939885c2195674960e9242a";
 

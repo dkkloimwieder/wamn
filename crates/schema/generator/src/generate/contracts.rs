@@ -295,15 +295,31 @@ fn emit_custom_operation_contracts(
         operation_contract.insert("fresh_only".to_owned(), json!(true));
     }
     if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
+        let mut dependency_contract = serde_json::Map::from_iter([
+            ("alias".to_owned(), json!(alias)),
+            ("package".to_owned(), json!(dependency.package)),
+            ("version".to_owned(), json!(dependency.version)),
+            ("digest".to_owned(), json!(dependency.digest)),
+            ("operation".to_owned(), json!(operation_name)),
+        ]);
+        if let Some(participant) = &operation.participant {
+            dependency_contract.insert(
+                "participant".to_owned(),
+                json!(canonical_operation_identity(
+                    &manifest.package,
+                    participant
+                )?),
+            );
+        }
+        operation_contract.insert("dependency".to_owned(), Value::Object(dependency_contract));
+    }
+    if operation.pre_commit.is_some() {
+        let (prefix, version) = operation_id
+            .rsplit_once('@')
+            .expect("canonical operation identity has a version");
         operation_contract.insert(
-            "dependency".to_owned(),
-            json!({
-                "alias": alias,
-                "package": dependency.package,
-                "version": dependency.version,
-                "digest": dependency.digest,
-                "operation": operation_name,
-            }),
+            "pre_commit".to_owned(),
+            json!(format!("{prefix}-pre-commit@{version}")),
         );
     }
     if let Some(connection) = &operation.connection {

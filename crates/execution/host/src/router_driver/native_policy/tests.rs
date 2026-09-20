@@ -12,8 +12,9 @@ use tokio::time::{Instant, timeout};
 use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, ComponentOperationDependency,
-    ComponentPackageScope, EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease,
+    ComponentPackageScope, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
+    EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingRelease,
 };
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::component_admission::component_digest;
@@ -97,9 +98,17 @@ enum Case {
     Cancellation,
     Trap,
     PostgresImport,
+    TransactionOwner,
+    TransactionParticipant,
 }
 
 fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
+    if matches!(case, Case::TransactionOwner) {
+        return transaction_owner_component(operation);
+    }
+    if matches!(case, Case::TransactionParticipant) {
+        return transaction_participant_component(operation);
+    }
     let nested = matches!(case, Case::NestedRefusal);
     let postgres = if matches!(case, Case::PostgresImport) {
         format!(r#"(import "{STATEMENTS}" (instance))"#)
@@ -149,6 +158,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
           i32.const 264 local.get $input i32.load offset=96 i32.store
           i32.const 268 local.get $input i32.load offset=100 i32.store"
         }
+        Case::TransactionOwner | Case::TransactionParticipant => unreachable!(),
     };
     wat::parse_str(format!(
         r#"(component
@@ -196,6 +206,157 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     ))
     .expect("encode the complete node ABI fixture")
 }
+
+const POSTGRES_TYPES: &str = r#"
+      (import "wamn:postgres/types@0.1.0" (instance $types
+        (type $sql-value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
+          (case "int64" s64) (case "float64" f64) (case "text" string) (case "bytes" (list u8))
+          (case "numeric" string) (case "timestamptz" string) (case "json" string) (case "uuid" string)))
+        (export "sql-value" (type $sql-value (eq $sql-value')))
+        (type $column' (record (field "name" string) (field "type-name" string)))
+        (export "column" (type $column (eq $column')))
+        (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
+        (export "row-set" (type $row-set (eq $row-set')))
+        (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
+          (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
+          (case "foreign-key-violation" string) (case "check-violation" string)
+          (case "exclusion-violation" string) (case "permission-denied")
+          (case "query-error" (tuple string string))))
+        (export "pg-error" (type $pg-error (eq $pg-error')))))
+      (alias export $types "sql-value" (type $sql-value))
+      (alias export $types "row-set" (type $row-set))
+      (alias export $types "pg-error" (type $pg-error))
+      (import "wamn:postgres/statements@0.1.0" (instance $statements
+        (type $contract-part' (enum "binds" "columns"))
+        (export "contract-part" (type $contract-part (eq $contract-part')))
+        (type $value-shape' (record (field "count" u32) (field "types" (list string))))
+        (export "value-shape" (type $value-shape (eq $value-shape')))
+        (type $contract-mismatch' (record (field "statement-digest" string) (field "part" $contract-part)
+          (field "expected" $value-shape) (field "observed" $value-shape)))
+        (export "contract-mismatch" (type $contract-mismatch (eq $contract-mismatch')))
+        (type $statement-error' (variant (case "unknown-statement" string)
+          (case "statement-contract-mismatch" $contract-mismatch) (case "postgres" $pg-error)))
+        (export "statement-error" (type $statement-error (eq $statement-error')))
+        (export "transaction" (type $transaction (sub resource)))
+        (export "transaction-view" (type $transaction-view (sub resource)))
+        (export "begin" (func async (result (result (own $transaction) (error $statement-error)))))
+        (export "[method]transaction.select-participant" (func async
+          (param "self" (borrow $transaction)) (param "participant-operation" string)
+          (result (result (error $statement-error)))))
+        (export "[method]transaction.rollback" (func async
+          (param "self" (borrow $transaction)) (result (result (error $statement-error)))))
+        (export "participant-view" (func async
+          (result (result (own $transaction-view) (error $statement-error)))))
+        (export "[method]transaction-view.run" (func async (param "self" (borrow $transaction-view))
+          (param "statement-digest" string) (param "binds" (list $sql-value))
+          (result (result $row-set (error $statement-error)))))))
+"#;
+
+fn transaction_participant_component(operation: &str) -> Vec<u8> {
+    wat::parse_str(format!(r#"(component
+      {NODE_TYPES}{POSTGRES_TYPES}
+      (core module $memory
+        (memory (export "memory") 16)
+        (data (i32.const 16) "{digest}")
+        (data (i32.const 320) "[]")
+        (data (i32.const 400) "viewrun")
+        (global $next (mut i32) (i32.const 1024))
+        (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
+          (local $ptr i32) global.get $next local.get $align i32.const 1 i32.sub i32.add
+          i32.const 0 local.get $align i32.sub i32.and local.tee $ptr
+          local.get $size i32.add global.set $next local.get $ptr))
+      (core instance $memory (instantiate $memory))
+      (core func $view (canon lower (func $statements "participant-view")
+        (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $run-view (canon lower (func $statements "[method]transaction-view.run")
+        (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $return (canon task.return (result (result $emission (error $error)))
+        (memory $memory "memory")))
+      (core module $main
+        (import "memory" "memory" (memory 16))
+        (import "host" "view" (func $view (param i32)))
+        (import "host" "run-view" (func $run-view (param i32 i32 i32 i32 i32 i32)))
+        (import "host" "return" (func $return
+          (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
+        (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
+        (func (export "run") (param i32) (result i32)
+          i32.const 64 call $view
+          i32.const 64 i32.load8_u if
+            i32.const 0 i32.const 400 i32.const 4 i32.const 0 i32.const 0 i32.const 0
+            i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
+          i32.const 72 i32.load i32.const 16 i32.const {digest_len} i32.const 0 i32.const 0 i32.const 128 call $run-view
+          i32.const 128 i32.load8_u if
+            i32.const 0 i32.const 404 i32.const 3 i32.const 0 i32.const 0 i32.const 0
+            i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
+          i32.const 0 i32.const 320 i32.const 2 i32.const 0 i32.const 0 i32.const 0
+          i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0))
+      (core instance $main (instantiate $main (with "memory" (instance $memory))
+        (with "host" (instance (export "view" (func $view)) (export "run-view" (func $run-view))
+          (export "return" (func $return))))))
+      (func $run async (param "ctx" $context) (param "input" $json)
+        (result (result $emission (error $error)))
+        (canon lift (core func $main "run") (memory $memory "memory")
+          (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
+      (instance $handler (export "json" (type $json)) (export "node-context" (type $context))
+        (export "node-error" (type $error)) (export "emission" (type $emission))
+        (export "run" (func $run)))
+      (export "{operation}" (instance $handler)))"#,
+      digest = TRANSACTION_SQL_DIGEST,
+      digest_len = TRANSACTION_SQL_DIGEST.len(),
+    )).expect("encode transaction participant")
+}
+
+fn transaction_owner_component(operation: &str) -> Vec<u8> {
+    wat::parse_str(format!(r#"(component
+      {NODE_TYPES}{POSTGRES_TYPES}
+      (import "{CHILD}" (instance $child
+        (export "json" (type (eq $json))) (export "node-context" (type (eq $context)))
+        (export "node-error" (type (eq $error))) (export "emission" (type (eq $emission)))
+        (export "run" (func async (param "ctx" $context) (param "input" $json)
+          (result (result $emission (error $error)))))))
+      (core module $memory
+        (memory (export "memory") 16) (data (i32.const 16) "{CHILD}")
+        (data (i32.const 320) "[]")
+        (global $next (mut i32) (i32.const 1024))
+        (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
+          (local $ptr i32) global.get $next local.get $align i32.const 1 i32.sub i32.add
+          i32.const 0 local.get $align i32.sub i32.and local.tee $ptr
+          local.get $size i32.add global.set $next local.get $ptr))
+      (core instance $memory (instantiate $memory))
+      (core func $begin (canon lower (func $statements "begin") (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $select (canon lower (func $statements "[method]transaction.select-participant") (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $rollback (canon lower (func $statements "[method]transaction.rollback") (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $nested (canon lower (func $child "run") (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $return (canon task.return (result (result $emission (error $error)))
+        (memory $memory "memory")))
+      (core module $main
+        (import "memory" "memory" (memory 16))
+        (import "host" "begin" (func $begin (param i32))) (import "host" "select" (func $select (param i32 i32 i32 i32)))
+        (import "host" "nested" (func $nested (param i32 i32))) (import "host" "rollback" (func $rollback (param i32 i32)))
+        (import "host" "return" (func $return
+          (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
+        (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
+        (func (export "run") (param $input i32) (result i32) (local $transaction i32)
+          i32.const 64 call $begin i32.const 64 i32.load8_u if unreachable end
+          i32.const 72 i32.load local.tee $transaction i32.const 16 i32.const {child_len} i32.const 96 call $select
+          i32.const 96 i32.load8_u if unreachable end
+          local.get $input i32.const 256 call $nested
+          local.get $transaction i32.const 352 call $rollback
+          i32.const 0 i32.const 320 i32.const 2 i32.const 0 i32.const 0 i32.const 0
+          i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0))
+      (core instance $main (instantiate $main (with "memory" (instance $memory))
+        (with "host" (instance (export "begin" (func $begin)) (export "select" (func $select))
+          (export "nested" (func $nested)) (export "rollback" (func $rollback)) (export "return" (func $return))))))
+      (func $run async (param "ctx" $context) (param "input" $json) (result (result $emission (error $error)))
+        (canon lift (core func $main "run") (memory $memory "memory") (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
+      (instance $handler (export "json" (type $json)) (export "node-context" (type $context))
+        (export "node-error" (type $error)) (export "emission" (type $emission)) (export "run" (func $run)))
+      (export "{operation}" (instance $handler)))"#, child_len = CHILD.len())).expect("encode transaction owner")
+}
+
+const TRANSACTION_SQL: &str = "UPDATE native_policy_participant SET value = 2 RETURNING value";
+const TRANSACTION_SQL_DIGEST: &str =
+    "sha256:1404226aba656e74db5db97045be6526e3451412526dc1ae2f99302f9b0d7bd3";
 
 #[derive(Debug, Clone)]
 struct Observation {
@@ -345,6 +506,7 @@ fn fact(
                 registered_operation: registered.then(|| operation.into()),
                 fresh_only: false,
                 committed_result_schema: None,
+                pre_commit: None,
                 dependencies,
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -371,7 +533,11 @@ struct Fixture {
 
 impl Fixture {
     async fn new(case: Case) -> Self {
-        let child = matches!(case, Case::NestedRefusal).then_some((Case::Success, false));
+        let child = match case {
+            Case::NestedRefusal => Some((Case::Success, false)),
+            Case::TransactionOwner => Some((Case::TransactionParticipant, false)),
+            _ => None,
+        };
         Self::build(case, child, false).await
     }
 
@@ -406,11 +572,38 @@ impl Fixture {
                 .get_mut(CHILD)
                 .expect("child operation")
                 .fresh_only = fresh_only;
+            if matches!(child_case, Case::TransactionParticipant) {
+                child.imports = vec![
+                    "wamn:node/types@0.1.0".into(),
+                    "wamn:postgres/types@0.1.0".into(),
+                    STATEMENTS.into(),
+                ];
+                child
+                    .operations
+                    .get_mut(CHILD)
+                    .expect("child operation")
+                    .statements = BTreeMap::from([(
+                    TRANSACTION_SQL_DIGEST.into(),
+                    ComponentSqlStatement {
+                        name: "update-participant".into(),
+                        path: "sql/update-participant.sql".into(),
+                        sql: TRANSACTION_SQL.into(),
+                        binds: Vec::new(),
+                        columns: vec![ComponentSqlField {
+                            name: "value".into(),
+                            value_type: ComponentSqlValueType::Int32,
+                            nullable: false,
+                        }],
+                        transactional: true,
+                    },
+                )]);
+            }
             let dependency = ComponentOperationDependency {
                 package: "child".into(),
                 version: "1.0.0".into(),
                 digest: child.component_digest.clone(),
                 operation: CHILD.into(),
+                participant: None,
             };
             native.push(NativeComponent { fact: child, bytes });
             vec![dependency]
@@ -420,6 +613,39 @@ impl Fixture {
         let mut root = fact(ROOT, &root_bytes, registered_root, dependencies);
         if matches!(case, Case::NestedRefusal) {
             root.imports.push(CHILD.into());
+        }
+        if matches!(case, Case::TransactionOwner) {
+            root.imports = vec![
+                "wamn:node/types@0.1.0".into(),
+                "wamn:postgres/types@0.1.0".into(),
+                STATEMENTS.into(),
+                CHILD.into(),
+            ];
+        }
+        if matches!(case, Case::TransactionParticipant) {
+            root.imports = vec![
+                "wamn:node/types@0.1.0".into(),
+                "wamn:postgres/types@0.1.0".into(),
+                STATEMENTS.into(),
+            ];
+            root.operations
+                .get_mut(ROOT)
+                .expect("root operation")
+                .statements = BTreeMap::from([(
+                TRANSACTION_SQL_DIGEST.into(),
+                ComponentSqlStatement {
+                    name: "update-participant".into(),
+                    path: "sql/update-participant.sql".into(),
+                    sql: TRANSACTION_SQL.into(),
+                    binds: Vec::new(),
+                    columns: vec![ComponentSqlField {
+                        name: "value".into(),
+                        value_type: ComponentSqlValueType::Int32,
+                        nullable: false,
+                    }],
+                    transactional: true,
+                },
+            )]);
         }
         if matches!(case, Case::PostgresImport) {
             root.imports.push(STATEMENTS.into());
@@ -463,6 +689,7 @@ impl Fixture {
                                     registered_operation: operation.registered_operation.clone(),
                                     fresh_only: operation.fresh_only,
                                     committed_result_schema: None,
+                                    pre_commit: operation.pre_commit.clone(),
                                     dependencies: operation.dependencies.clone(),
                                     statements: operation.statements.clone(),
                                 },
@@ -590,6 +817,7 @@ impl Fixture {
             input: r#"[{"value":37}]"#.into(),
             deadline,
             transaction_participation: None,
+            selected_participant: None,
             caller: None,
             application: Arc::clone(&self.application),
             context: node_types::NodeContext {
@@ -792,6 +1020,9 @@ async fn run_case(case: Case) {
             }
             Case::Cancellation => unreachable!("cancellation has its own caller task"),
             Case::PostgresImport => unreachable!("the postgres bind case has its own test"),
+            Case::TransactionOwner | Case::TransactionParticipant => {
+                unreachable!("transaction participation has its own authenticated test")
+            }
         }
     }
     fixture.assert_clean().await;

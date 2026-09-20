@@ -886,6 +886,12 @@ fn build_operation(
         }
         return Ok(None);
     }
+    // A participant is a public, authorized component export, but it can run
+    // only inside a host-selected base transaction. It has no direct client
+    // route or operator screen.
+    if operation.get("transaction").and_then(Value::as_str) == Some("participant") {
+        return Ok(None);
+    }
     let member = |key: &str| -> Result<String, ClientIrError> {
         operation
             .get(key)

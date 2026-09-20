@@ -314,6 +314,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "map".to_owned(),
                     ComponentOperationDeclaration {
+                        pre_commit: None,
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,

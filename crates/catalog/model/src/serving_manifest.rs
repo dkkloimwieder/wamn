@@ -134,6 +134,9 @@ pub struct ServingRelease {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponentOperation {
+    /// Base-owned typed pre-commit import, bound only by an admitted caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_commit: Option<String>,
     /// Explicit application permission identity. Palette exports carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -353,6 +356,18 @@ impl ServingManifest {
             }
             for (export, operation) in &component.operations {
                 validate_text(export, "component-operation")?;
+                if let Some(pre_commit) = &operation.pre_commit {
+                    validate_canonical_operation_for_package(
+                        pre_commit,
+                        &component.package_id,
+                        package_versions[component.package_id.as_str()],
+                    )?;
+                    if pre_commit == export {
+                        return invalid(
+                            "pre-commit interface must differ from the operation export",
+                        );
+                    }
+                }
                 // Only an imported full interface needs a unique provider.
                 // Export-only handlers can be selected directly by the host.
                 if operation_imports.contains(export.as_str())
@@ -571,6 +586,41 @@ fn validate_component_dependency_closure(
                         dependency.operation
                     ));
                 }
+                if let Some(participant) = &dependency.participant {
+                    let owner_version = package_versions[component.package_id.as_str()];
+                    validate_canonical_operation_for_package(
+                        participant,
+                        &component.package_id,
+                        owner_version,
+                    )?;
+                    if !component
+                        .operations
+                        .get(participant)
+                        .is_some_and(|operation| {
+                            operation.registered_operation.as_deref() == Some(participant.as_str())
+                        })
+                    {
+                        return invalid(format!(
+                            "participant {participant:?} is not a registered local operation"
+                        ));
+                    }
+                    let base = components
+                        .iter()
+                        .find(|candidate| {
+                            candidate.package_id == dependency.package
+                                && candidate.digest.as_str() == dependency.digest
+                                && candidate.operations.contains_key(&dependency.operation)
+                        })
+                        .expect("exact dependency provider validated");
+                    if base.operations[&dependency.operation].pre_commit.is_none() {
+                        return invalid("selected base operation declares no pre-commit interface");
+                    }
+                    targets.push((
+                        component.package_id.clone(),
+                        component.digest.as_str().to_owned(),
+                        participant.clone(),
+                    ));
+                }
                 targets.push((
                     dependency.package.clone(),
                     dependency.digest.clone(),
@@ -759,10 +809,12 @@ mod tests {
                 operations: BTreeMap::from([(
                     "overlay:transform/map@3.0.0".into(),
                     ServingComponentOperation {
+                        pre_commit: None,
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: Some("overlay:transform/map@3.0.0".into()),
                         dependencies: vec![ComponentOperationDependency {
+                            participant: None,
                             package: "base".into(),
                             version: "1.0.0".into(),
                             digest: COMPONENT_A.into(),
@@ -780,6 +832,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "base:purchase-order/get@1.0.0".into(),
                     ServingComponentOperation {
+                        pre_commit: None,
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: Some("base:purchase-order/get@1.0.0".into()),
@@ -944,6 +997,7 @@ mod tests {
             .get_mut("base:purchase-order/get@1.0.0")
             .unwrap()
             .dependencies = vec![ComponentOperationDependency {
+            participant: None,
             package: "overlay".into(),
             version: "3.0.0".into(),
             digest: COMPONENT_B.into(),

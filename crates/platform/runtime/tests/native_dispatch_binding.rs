@@ -259,6 +259,7 @@ fn exact_child_manifest() -> ServingManifest {
             operations: BTreeMap::from([(
                 operation.into(),
                 ServingComponentOperation {
+                    pre_commit: None,
                     registered_operation: Some(operation.into()),
                     fresh_only: false,
                     committed_result_schema: None,
@@ -278,6 +279,7 @@ fn exact_child_manifest() -> ServingManifest {
         .get_mut(ROOT)
         .expect("root operation")
         .dependencies = vec![ComponentOperationDependency {
+        participant: None,
         package: "child".into(),
         version: "1.0.0".into(),
         digest: selected_digest.expect("selected child digest"),

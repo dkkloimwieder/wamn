@@ -122,7 +122,7 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
 }
 
 /// Emit component exports around an application's typed handler.
-pub(super) fn emit_export_adapter(type_name: &str, direct: bool) -> String {
+pub(super) fn emit_export_adapter(type_name: &str, direct: bool, pass_context: bool) -> String {
     let input_type = if direct {
         format!("__contract::{type_name}Request")
     } else {
@@ -138,6 +138,10 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool) -> String {
                     __codec::normalize(&mut input).map_err(invalid)?;
                     $handler(&mut state, input).await"
             .to_owned()
+    } else if pass_context {
+        "__codec::validate(&input).map_err(invalid)?;
+                    Ok(__codec::run(input, &mut state, async |state, request| $handler(context.clone(), state, request).await).await)"
+            .to_owned()
     } else {
         "__codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, $handler).await)"
@@ -150,6 +154,7 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool) -> String {
         "let input = __codec::decode(&input).map_err(invalid)?;\n                    let output = <Self as __contract::Guest>::run(context, input).await?;\n                    Ok(__node::Emission {\n                        payload: __codec::encode(&output),\n                        port: None,\n                    })"
             .to_owned()
     };
+    let context_parameter = if pass_context { "context" } else { "_context" };
     format!(
         r#"
 #[allow(unused_macros)]
@@ -169,7 +174,7 @@ macro_rules! export_operation {{
 
             impl __contract::Guest for $component {{
                 async fn run(
-                    _context: __node::NodeContext,
+                    {context_parameter}: __node::NodeContext,
                     input: {input_type},
                 ) -> Result<{output_type}, __node::NodeError> {{
                     let mut state = $state;

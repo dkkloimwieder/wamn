@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH purchase AS (\n    SELECT acme_inspection_required, acme_quality_status\n    FROM purchase_order\n    WHERE id = $2\n    FOR UPDATE\n), inserted AS (\n    INSERT INTO quality_inspection (receipt_id, status)\n    SELECT $1, 'approved'\n    FROM purchase\n    WHERE acme_inspection_required IS TRUE\n      AND acme_quality_status = 'approved'\n    ON CONFLICT ON CONSTRAINT quality_inspection_receipt_id_pkey\n    DO NOTHING\n    RETURNING receipt_id\n)\nSELECT CASE\n           WHEN acme_inspection_required IS NOT TRUE THEN 'not_required'\n           WHEN acme_quality_status = 'approved' THEN 'approved'\n           ELSE 'quality_not_approved'\n       END AS outcome,\n       (SELECT receipt_id FROM inserted) AS receipt_id\nFROM purchase;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "receipt_id",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "964d38a35353ea399a15e73286c137c32a510457c2e1d9a60897592d576edc85"
+}

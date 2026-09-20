@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID, WamnPostgres,
 };
 use wamn_runtime::release_manifest::LoadedRelease;
-use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
+use wash_runtime::engine::ctx::extract_active_ctx;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
@@ -63,6 +63,13 @@ struct ComponentPolicy {
     statements: BTreeMap<String, PreparedStatementSet>,
 }
 
+/// A caller-owned participant pinned to the same admitted component and release.
+#[derive(Debug, Clone)]
+pub(super) struct SelectedParticipant {
+    dependency: ComponentOperationDependency,
+    intent: String,
+}
+
 #[derive(Debug, Clone)]
 struct InvocationAuthority {
     acquisition: NodeAcquisition,
@@ -70,6 +77,7 @@ struct InvocationAuthority {
     operation: String,
     deadline: Instant,
     failure: NativeCallFailure,
+    selected_participant: Option<SelectedParticipant>,
 }
 
 /// Immutable component policy and the authority of calls that are still active.
@@ -279,6 +287,13 @@ impl NativePolicy {
             deadline,
             request.transaction_participation.as_ref(),
         )?;
+        if let Some(selected) = &request.selected_participant {
+            resources.postgres.bind_selected_participant(
+                scope,
+                selected.dependency.operation.clone(),
+                selected.intent.clone(),
+            )?;
+        }
         resources
             .logging
             .set_claim(scope, &acquisition.claims.tenant, &resources.project);
@@ -300,6 +315,7 @@ impl NativePolicy {
                     operation: operation.to_owned(),
                     deadline,
                     failure,
+                    selected_participant: request.selected_participant.clone(),
                 },
             );
         anyhow::ensure!(previous.is_none(), "native-invocation-scope-already-bound");
@@ -363,6 +379,56 @@ impl NativePolicy {
         }
     }
 
+    async fn invoke_pre_commit(
+        &self,
+        scope: &str,
+        slot: &str,
+        context: node_types::NodeContext,
+        input: NativeInput,
+    ) -> anyhow::Result<NativeOutcome> {
+        let bound = self
+            .invocations
+            .lock()
+            .expect("native invocation lock poisoned")
+            .get(scope)
+            .cloned()
+            .context("native-pre-commit-invocation-unbound")?;
+        let owner = self
+            .components
+            .values()
+            .find(|entry| {
+                entry.fact.scope.package_id == bound.acquisition.invocation.package_id
+                    && entry.fact.component_digest == bound.acquisition.invocation.component_digest
+                    && entry.fact.component == bound.acquisition.invocation.component
+            })
+            .context("native-pre-commit-owner-missing")?;
+        anyhow::ensure!(
+            owner.fact.operations[&bound.operation]
+                .pre_commit
+                .as_deref()
+                == Some(slot),
+            "native-pre-commit-not-owned-by-operation"
+        );
+        let selected = bound
+            .selected_participant
+            .context("native-pre-commit-participant-unbound")?;
+        anyhow::ensure!(
+            self.resources
+                .postgres
+                .prepare_transaction_participation(scope, &selected.dependency.operation,)?
+                .is_some(),
+            "native-pre-commit-transaction-unselected"
+        );
+        self.invoke_nested(
+            scope,
+            &BTreeSet::from([bound.operation]),
+            &selected.dependency,
+            context,
+            input,
+        )
+        .await
+    }
+
     async fn invoke_nested(
         &self,
         scope: &str,
@@ -410,12 +476,14 @@ impl NativePolicy {
             )
             .into());
         }
-        // The interface selects its single admitted provider. The dependency
-        // digest checks provenance; it cannot choose among implementations.
-        let mut providers = self
-            .components
-            .values()
-            .filter(|entry| entry.fact.operations.contains_key(&dependency.operation));
+        // Admission enforces unique providers for ordinary imports. A selected
+        // participant is an exact export of the admitted caller component.
+        let mut providers = self.components.values().filter(|entry| {
+            entry.fact.operations.contains_key(&dependency.operation)
+                && entry.fact.scope.package_id == dependency.package
+                && entry.fact.scope.package_version == dependency.version
+                && entry.fact.component_digest == dependency.digest
+        });
         let provider = providers
             .next()
             .context("native-operation-provider-missing")?;
@@ -440,6 +508,57 @@ impl NativePolicy {
             operation.fresh_only,
         )?;
         validate_component_in_release(&self.resources.release, target)?;
+        let owner = self
+            .components
+            .values()
+            .find(|entry| {
+                entry.fact.scope.package_id == bound.acquisition.invocation.package_id
+                    && entry.fact.component_digest == bound.acquisition.invocation.component_digest
+                    && entry.fact.component == bound.acquisition.invocation.component
+            })
+            .context("native-participant-owner-missing")?;
+        let declared_participant = owner.fact.operations[&bound.operation]
+            .dependencies
+            .iter()
+            .find(|declared| declared.operation == dependency.operation)
+            .and_then(|declared| declared.participant.as_ref());
+        let selected_participant = if let Some(participant) = declared_participant {
+            anyhow::ensure!(
+                operation.pre_commit.is_some(),
+                "native-base-has-no-pre-commit"
+            );
+            let participant_operation = owner
+                .fact
+                .operation(participant)
+                .context("native-participant-export-missing")?;
+            anyhow::ensure!(
+                participant_operation.registered_operation.as_deref() == Some(participant),
+                "native-participant-permission-unbound"
+            );
+            authorize_registered_operation(
+                bound.caller.as_ref(),
+                participant_operation.registered_operation.as_deref(),
+                participant_operation.fresh_only,
+            )?;
+            let participant_dependency = ComponentOperationDependency {
+                participant: None,
+                package: owner.fact.scope.package_id.clone(),
+                version: owner.fact.scope.package_version.clone(),
+                digest: owner.fact.component_digest.clone(),
+                operation: participant.clone(),
+            };
+            let intent = serde_json::to_string(&serde_json::json!({
+                "participant": participant_dependency,
+                "release": self.resources.release.manifest().release.effective_release_id,
+                "manifest": self.resources.release.release().manifest_digest.as_str(),
+            }))?;
+            Some(SelectedParticipant {
+                dependency: participant_dependency,
+                intent,
+            })
+        } else {
+            None
+        };
         let application = self
             .application
             .get()
@@ -504,6 +623,7 @@ impl NativePolicy {
                 input,
                 deadline,
                 transaction_participation,
+                selected_participant,
                 acquisition: bound.acquisition.retarget(target, &dependency.operation),
                 caller: bound.caller,
                 application,
@@ -545,6 +665,9 @@ impl HostPlugin for NativePolicy {
         for entry in self.components.values() {
             for (name, operation) in &entry.fact.operations {
                 exports.insert(WitInterface::from(name.as_str()));
+                if let Some(slot) = &operation.pre_commit {
+                    imports.insert(WitInterface::from(slot.as_str()));
+                }
                 imports.extend(
                     operation
                         .dependencies
@@ -593,6 +716,55 @@ impl HostPlugin for NativePolicy {
         let interfaces = WitInterfaces::new(&imports);
         let component = item.component().clone();
         let linker = item.linker();
+        let slots: BTreeSet<_> = policy
+            .fact
+            .operations
+            .values()
+            .filter_map(|operation| operation.pre_commit.as_ref())
+            .collect();
+        for slot in slots {
+            let slot = slot.clone();
+            linker.instance(&slot)?.func_new_concurrent(
+                "run",
+                move |accessor, _ty, params, results| {
+                    let (trace, scope, policy) = accessor.with(|mut access| {
+                        let active = extract_active_ctx(access.get());
+                        (
+                            invocation_trace(&active),
+                            Arc::clone(&active.ctx.component_id),
+                            active.ctx.get_plugin::<NativePolicy>(NATIVE_POLICY_ID),
+                        )
+                    });
+                    let slot = slot.clone();
+                    Box::pin(trace.run(async move {
+                        let [context, input] = params else {
+                            wash_runtime::wasmtime::bail!(
+                                "pre-commit requires context and typed input"
+                            );
+                        };
+                        let context = typed_context(context)
+                            .map_err(|error| policy.host_failure(&scope, error))?;
+                        let outcome = policy
+                            .invoke_pre_commit(
+                                &scope,
+                                &slot,
+                                context,
+                                NativeInput::Typed(input.clone()),
+                            )
+                            .await
+                            .map_err(|error| policy.host_failure(&scope, error))?;
+                        let NativeOutcome::Typed(value) = outcome else {
+                            wash_runtime::wasmtime::bail!("pre-commit returned JSON");
+                        };
+                        let [result] = results else {
+                            wash_runtime::wasmtime::bail!("pre-commit requires one result");
+                        };
+                        *result = value;
+                        Ok(())
+                    }))
+                },
+            )?;
+        }
         for (dependency, owners) in links.values() {
             let dependency = dependency.clone();
             let owners = Arc::new(owners.clone());
@@ -680,26 +852,31 @@ impl HostPlugin for NativePolicy {
                 )?;
                 continue;
             }
-            linker.instance(&dependency.operation)?.func_wrap_async(
-                "run",
-                move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
-                      (context, input): (node_types::NodeContext, String)| {
-                    let active = extract_active_ctx(store.data_mut());
-                    let trace = invocation_trace(&active);
-                    let scope = Arc::clone(&active.ctx.component_id);
-                    let policy = active.ctx.get_plugin::<NativePolicy>(NATIVE_POLICY_ID);
-                    let owners = Arc::clone(&owners);
-                    let dependency = dependency.clone();
-                    Box::new(trace.run(async move {
-                        let result = policy
-                            .invoke_nested(&scope, &owners, &dependency, context, input.into())
-                            .await
-                            .and_then(NativeOutcome::into_json)
-                            .map_err(|error| policy.host_failure(&scope, error))?;
-                        Ok((result,))
-                    }))
-                },
-            )?;
+            linker
+                .instance(&dependency.operation)?
+                .func_wrap_concurrent(
+                    "run",
+                    move |accessor, (context, input): (node_types::NodeContext, String)| {
+                        let (trace, scope, policy) = accessor.with(|mut access| {
+                            let active = extract_active_ctx(access.get());
+                            (
+                                invocation_trace(&active),
+                                Arc::clone(&active.ctx.component_id),
+                                active.ctx.get_plugin::<NativePolicy>(NATIVE_POLICY_ID),
+                            )
+                        });
+                        let owners = Arc::clone(&owners);
+                        let dependency = dependency.clone();
+                        Box::pin(trace.run(async move {
+                            let result = policy
+                                .invoke_nested(&scope, &owners, &dependency, context, input.into())
+                                .await
+                                .and_then(NativeOutcome::into_json)
+                                .map_err(|error| policy.host_failure(&scope, error))?;
+                            Ok((result,))
+                        }))
+                    },
+                )?;
         }
         self.resources
             .postgres

@@ -416,6 +416,7 @@ fn overlay_manifest() -> Value {
         "transaction",
         "automatic_retry",
         "claim",
+        "pre_commit",
         "canonicalization",
         "constraint_errors",
     ] {
@@ -1083,7 +1084,38 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
     );
     assert_eq!(command["transaction"], "explicit_per_input");
     assert_eq!(command["automatic_retry"], false);
+    assert_eq!(
+        command["pre_commit"],
+        "wamn-receiving:receiving/record-receipt-pre-commit@1.0.0"
+    );
     assert_eq!(command["statements"].as_array().unwrap().len(), 9);
+    let pre_commit_wit = std::str::from_utf8(
+        package
+            .file("generated/wit/deps/wamn-receiving-receiving/package.wit")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(pre_commit_wit.contains("interface record-receipt-pre-commit"));
+    assert!(pre_commit_wit.contains(
+        "run: async func(ctx: node-context, input: record-receipt-pre-commit-request) -> result<record-receipt-pre-commit-request, node-error>"
+    ));
+    let codec = std::str::from_utf8(
+        package
+            .file("generated/wit/receiving_record_receipt_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(codec.contains("$handler(context.clone(), state, request).await"));
+    let access = std::str::from_utf8(
+        package
+            .file("generated/wamn/receiving_record_receipt.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(access.contains("async fn select_participant("));
     let errors = artifact_json(
         &package,
         "generated/contracts/receiving/record_receipt.errors.json",
@@ -1530,12 +1562,12 @@ fn command_privilege_mismatch_reports_returning_reads_and_declared_writes() {
         concat!(
             "InvalidOperation: receiving.record_receipt receiving.receipt privilege declaration ",
             "does not match verified SQL reads, writes, and row locks.\n",
-            "Verified SQL: {\"insert_fields\":[\"id\",\"idempotency_key\",\"occurred_at\",",
+            "Verified SQL: {\"delete\":false,\"insert_fields\":[\"id\",\"idempotency_key\",\"occurred_at\",",
             "\"purchase_order_id\",\"receipt_reference\"],\"lock\":false,",
             "\"select_fields\":[\"id\"],\"update_fields\":[]}\n",
-            "Declared: {\"insert_fields\":[\"id\"],\"lock\":false,\"select_fields\":[],",
+            "Declared: {\"delete\":false,\"insert_fields\":[\"id\"],\"lock\":false,\"select_fields\":[],",
             "\"update_fields\":[\"id\",\"receipt_reference\"]}\n",
-            "RETURNING columns require select_fields. ",
+            "DELETE requires delete=true. RETURNING columns require select_fields. ",
             "Row-lock clauses such as FOR UPDATE require lock=true.",
         )
     );
@@ -1559,13 +1591,13 @@ fn command_privilege_mismatch_reports_for_update_lock_and_declared_value() {
         concat!(
             "InvalidOperation: receiving.record_receipt receiving.purchase_order privilege declaration ",
             "does not match verified SQL reads, writes, and row locks.\n",
-            "Verified SQL: {\"insert_fields\":[],\"lock\":true,",
+            "Verified SQL: {\"delete\":false,\"insert_fields\":[],\"lock\":true,",
             "\"select_fields\":[\"id\",\"row_version\",\"status\"],",
             "\"update_fields\":[\"row_version\",\"status\"]}\n",
-            "Declared: {\"insert_fields\":[],\"lock\":false,",
+            "Declared: {\"delete\":false,\"insert_fields\":[],\"lock\":false,",
             "\"select_fields\":[\"id\",\"row_version\",\"status\"],",
             "\"update_fields\":[\"row_version\",\"status\"]}\n",
-            "RETURNING columns require select_fields. ",
+            "DELETE requires delete=true. RETURNING columns require select_fields. ",
             "Row-lock clauses such as FOR UPDATE require lock=true.",
         )
     );
@@ -1674,8 +1706,8 @@ fn shipped_command_source_map_parity_and_bind_fixtures_align_structurally() {
         assert_eq!(contract["columns"], statement["row"]);
         assert_eq!(native_row["name"], accessor["row"]);
         assert_eq!(wamn_row["name"], accessor["row"]);
-        assert_eq!(native_row["visibility"], "crate");
-        assert_eq!(wamn_row["visibility"], "crate");
+        assert_eq!(native_row["visibility"], "public");
+        assert_eq!(wamn_row["visibility"], "public");
 
         let declared_fields = statement["row"].as_array().unwrap();
         let native_fields = native_row["fields"].as_array().unwrap();

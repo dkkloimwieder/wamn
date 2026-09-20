@@ -15,6 +15,8 @@ const PACKAGE_VERSION: &str = "3.0.0";
 const COMPONENT: &str = "client_acme_receiving";
 const INTERFACE_VERSION: &str = "0.1.0";
 const PRIVATE_OPERATION: &str = "client-acme-receiving:quality/create-inspection@3.0.0";
+const PARTICIPANT_OPERATION: &str =
+    "client-acme-receiving:receiving/record-receipt-participant@3.0.0";
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
 struct DirectOperation {
@@ -129,8 +131,14 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
         DIRECT_OPERATIONS
             .iter()
             .map(|operation| operation.token)
-            .chain([PRIVATE_OPERATION])
+            .chain([PRIVATE_OPERATION, PARTICIPANT_OPERATION])
             .collect::<BTreeSet<_>>()
+    );
+    assert_eq!(
+        declaration.operations[PARTICIPANT_OPERATION]
+            .registered_operation
+            .as_deref(),
+        Some(PARTICIPANT_OPERATION)
     );
 
     for operation in &DIRECT_OPERATIONS {
@@ -143,6 +151,9 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
                 version: "1.0.0".to_owned(),
                 digest: base_digests()["wamn_receiving@1.0.0"].to_string(),
                 operation: BASE_RECORD_RECEIPT.to_owned(),
+                participant: Some(
+                    "client-acme-receiving:receiving/record-receipt-participant@3.0.0".to_owned(),
+                ),
             })
             .into_iter()
             .collect::<Vec<_>>();

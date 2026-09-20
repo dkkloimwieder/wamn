@@ -51,6 +51,7 @@ fn components() -> BTreeSet<ServingComponent> {
             operations: BTreeMap::from([(
                 "map".into(),
                 ServingComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
@@ -67,6 +68,7 @@ fn components() -> BTreeSet<ServingComponent> {
             operations: BTreeMap::from([(
                 "client-acme-receiving:purchase-order/get@3.0.0".into(),
                 ServingComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: Some(
@@ -325,6 +327,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// publisher can mint.
 fn operation_provider_manifest(package: &str, export: &str, version: &str) -> ServingManifest {
     let operation = ServingComponentOperation {
+        pre_commit: None,
         registered_operation: None,
         fresh_only: false,
         committed_result_schema: None,
@@ -396,6 +399,7 @@ fn add_operation_import(
         .get_mut("consumer:entry/run@1.0.0")
         .expect("consumer operation")
         .dependencies = vec![ComponentOperationDependency {
+        participant: None,
         package: package.into(),
         version: version.into(),
         digest: COMPONENT_A.into(),

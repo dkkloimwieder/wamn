@@ -7,3 +7,14 @@ interface record-receipt {
   run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;
   run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
+interface record-receipt-participant {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record record-receipt-participant-request {
+    purchase-order-id: string,
+    receipt-id: string,
+  }
+
+  run: async func(ctx: node-context, input: record-receipt-participant-request) -> result<record-receipt-participant-request, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

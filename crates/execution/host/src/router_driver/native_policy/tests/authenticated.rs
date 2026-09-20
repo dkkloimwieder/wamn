@@ -654,6 +654,95 @@ fn native_authenticated_nested_authority_and_lifecycle() {
 }
 
 #[test]
+fn native_authenticated_transaction_participant() {
+    super::run_isolated_test(
+        "authenticated::native_authenticated_transaction_participant",
+        async {
+            let _lock = wamn_test_postgres::lock();
+            let database = wamn_test_postgres::database();
+            let (mut server, route) = authentication_fixture(database.url())
+                .await
+                .expect("authenticated transaction fixture");
+            let caller = authenticated(&route, true).await;
+            let parent_only = authenticated(&route, false).await;
+            let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
+                .await
+                .expect("participant SQL credentials");
+            let admin = connect(database.url()).await.expect("admin connection");
+            admin
+                .batch_execute(
+                    "CREATE TABLE public.native_policy_participant(value int NOT NULL); \
+                     INSERT INTO public.native_policy_participant VALUES (1); \
+                     GRANT SELECT, UPDATE ON public.native_policy_participant TO wamn_app",
+                )
+                .await
+                .expect("participant table");
+
+            let fixture = Fixture::build_with_reuse(
+                Case::TransactionOwner,
+                Some((Case::TransactionParticipant, false)),
+                true,
+                None,
+                false,
+                Some(Arc::clone(&postgres)),
+            )
+            .await;
+            let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
+            request.caller = Some(caller.clone());
+            let result = invoke_native(&fixture.target().await, request)
+                .await
+                .expect("authorized participant dispatch")
+                .expect("participant SQL succeeds");
+            assert_eq!(result.payload, "[]");
+            let value: i32 = admin
+                .query_one("SELECT value FROM public.native_policy_participant", &[])
+                .await
+                .expect("read rollback result")
+                .get(0);
+            assert_eq!(
+                value, 1,
+                "participant SQL used the owner's rolled-back transaction"
+            );
+            fixture.assert_clean().await;
+
+            let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
+            request.caller = Some(parent_only);
+            let error = invoke_native(&fixture.target().await, request)
+                .await
+                .expect_err("caller without participant permission is refused");
+            let refusal = error
+                .downcast_ref::<OperationRefusal>()
+                .expect("participant refusal remains typed");
+            assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
+            assert_eq!(refusal.operation(), CHILD);
+            fixture.assert_clean().await;
+
+            let denied = Fixture::build_with_reuse(
+                Case::TransactionParticipant,
+                None,
+                true,
+                None,
+                false,
+                Some(postgres),
+            )
+            .await;
+            let mut request = denied.request(Instant::now() + Duration::from_secs(10));
+            request.caller = Some(caller);
+            let result = invoke_native(&denied.target().await, request)
+                .await
+                .expect("nonparticipant probe dispatches")
+                .expect("probe reports the resource result");
+            assert_eq!(
+                result.payload, "view",
+                "participant-view refused the nonparticipating invocation"
+            );
+            denied.assert_clean().await;
+            server.stop().await;
+        },
+    );
+}
+
+#[test]
 fn native_warm_alternating_callers_and_fresh_nested_component() {
     super::run_isolated_test(
         "authenticated::native_warm_alternating_callers_and_fresh_nested_component",
@@ -889,6 +978,14 @@ async fn warm_postgres(
     admin_url: &str,
     principals: &[&str],
 ) -> anyhow::Result<(Arc<WamnPostgres>, Arc<WarmCredentials>)> {
+    warm_postgres_with_pool(admin_url, principals, 1).await
+}
+
+async fn warm_postgres_with_pool(
+    admin_url: &str,
+    principals: &[&str],
+    guest_pool_max_size: usize,
+) -> anyhow::Result<(Arc<WamnPostgres>, Arc<WarmCredentials>)> {
     let admin = connect(admin_url).await?;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
@@ -942,7 +1039,7 @@ async fn warm_postgres(
         &configuration.to_string(),
         &WamnPostgresConfig {
             credentials: None,
-            guest_pool_max_size: 1,
+            guest_pool_max_size,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
             statement_timeout_ms: 5000,

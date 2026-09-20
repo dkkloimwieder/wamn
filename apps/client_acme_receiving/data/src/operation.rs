@@ -1,14 +1,20 @@
 //! Wire adapters for Acme Receiving operations backed by generated SQL.
 
-use wamn_postgres_statements::{Connection, Uuid as WamnUuid};
+use wamn_postgres_statements::{Connection, TransactionView, Uuid as WamnUuid};
 
 use crate::error::{AccessError, AllowedConstraints};
 use crate::generated::{
     purchase_order as purchase_order_sql, quality_approve_inspection as approve_sql,
     quality_create_inspection as create_sql, quality_load_purchase_order_detail as detail_sql,
+    receiving_record_receipt_participant as receipt_participant_sql,
 };
 
 pub use crate::generated::purchase_order::PurchaseOrderRow;
+
+/// Classify failure to acquire the host-issued participant transaction view.
+pub fn participant_view_error(source: &wamn_postgres_statements::StatementError) -> AccessError {
+    AccessError::from_statement("acquire participant transaction view", source)
+}
 
 const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints {
     exclusion: purchase_order_sql::UPDATE_EXCLUSION_CONSTRAINTS,
@@ -318,22 +324,15 @@ pub async fn quality_create_inspection(event: &str, receipt_id: &str) -> Result<
         .await
         .map_err(|source| AccessError::from_statement("insert quality_inspection", &source))?;
     let persisted_id = match inserted {
-        Some(row) => row.receipt_id,
-        None => {
-            create_sql::load_inspection(&mut transaction, receipt_id.clone())
-                .await
-                .map_err(|source| {
-                    AccessError::from_statement("load quality_inspection replay", &source)
-                })?
-                .ok_or_else(|| {
-                    AccessError::internal(
-                        "quality_inspection conflict did not resolve to the receipt id",
-                    )
-                })?
-                .receipt_id
-        }
+        Some(row) => Some(row.receipt_id),
+        None => create_sql::load_inspection(&mut transaction, receipt_id.clone())
+            .await
+            .map_err(|source| {
+                AccessError::from_statement("load quality_inspection replay", &source)
+            })?
+            .map(|row| row.receipt_id),
     };
-    if persisted_id != receipt_id {
+    if persisted_id.as_ref().is_some_and(|id| id != &receipt_id) {
         return Err(AccessError::internal(
             "quality_inspection returned a different receipt id",
         ));
@@ -343,4 +342,32 @@ pub async fn quality_create_inspection(event: &str, receipt_id: &str) -> Result<
         .await
         .map_err(|source| AccessError::from_statement("commit inspection creation", &source))?;
     Ok(())
+}
+
+/// Apply Acme quality control inside the selected base receipt transaction.
+pub async fn record_receipt_participant(
+    transaction: &mut TransactionView,
+    receipt_id: &str,
+    purchase_order_id: &str,
+) -> Result<(), AccessError> {
+    let receipt_id = parse_uuid(receipt_id, "receipt_id")?;
+    let purchase_order_id = parse_uuid(purchase_order_id, "purchase_order_id")?;
+    let row = receipt_participant_sql::record_receipt_participant(
+        transaction,
+        receipt_id.clone(),
+        purchase_order_id,
+    )
+    .await
+    .map_err(|source| AccessError::from_statement("apply receipt quality control", &source))?;
+    match row.outcome.as_deref() {
+        Some("not_required") => Ok(()),
+        Some("approved") if row.receipt_id.as_ref() == Some(&receipt_id) => Ok(()),
+        Some("quality_not_approved") => Err(AccessError::invalid(
+            "purchase_order quality control is required and is not approved",
+            "purchase_order_id",
+        )),
+        _ => Err(AccessError::internal(
+            "receipt participant returned an incomplete or unknown outcome",
+        )),
+    }
 }

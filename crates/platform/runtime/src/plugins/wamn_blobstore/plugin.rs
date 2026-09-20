@@ -685,6 +685,7 @@ mod tests {
                     .clone()
                     .expect("the fixture snapshot names an operation"),
                 ServingComponentOperation {
+                    pre_commit: None,
                     fresh_only: false,
                     committed_result_schema: None,
                     registered_operation: snapshot.registered_operation.clone(),
@@ -807,6 +808,7 @@ mod tests {
             .expect("root operation")
             .dependencies
             .push(wamn_catalog::ComponentOperationDependency {
+                participant: None,
                 package: child.package_id.clone(),
                 version: "1.0.0".to_string(),
                 digest: child.digest.to_string(),

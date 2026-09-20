@@ -149,7 +149,13 @@ pub(super) fn emit_static_sql_projection(
 ) -> Result<(), GenerateError> {
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
     if matches!(projection, Projection::Wamn) && operation.claim.is_none() {
-        source.push_str("use wamn_postgres_statements::Transaction;\n\n");
+        source.push_str(
+            if operation.transaction == Some(crate::manifest::CommandTransaction::Participant) {
+                "use wamn_postgres_statements::TransactionView;\n\n"
+            } else {
+                "use wamn_postgres_statements::Transaction;\n\n"
+            },
+        );
     }
     for row in rows {
         emit_rust_row(&mut source, row, projection);
@@ -209,6 +215,7 @@ pub(super) fn emit_static_sql_projection(
                     .claim
                     .as_ref()
                     .map(|claim| claim.finalize.as_str()),
+                operation.transaction == Some(crate::manifest::CommandTransaction::Participant),
             );
         }
     }
@@ -254,6 +261,16 @@ impl FinalizedClaim {{
         self.transaction.commit().await
     }}
 }}
+
+impl PendingClaim {{
+    /// Select the exact nested operation admitted to use this transaction.
+    pub(crate) async fn select_participant(
+        &mut self,
+        operation: &str,
+    ) -> Result<(), wamn_postgres_statements::StatementError> {{
+        self.transaction.select_participant(operation).await
+    }}
+}}
 "
     )
     .expect("writing to a String cannot fail");
@@ -264,6 +281,7 @@ fn emit_static_sql_wamn_accessor(
     accessor: &StaticSqlAccessor,
     row: &RustRow,
     claim_finalize: Option<&str>,
+    participant: bool,
 ) {
     let finalizes_claim = claim_finalize == Some(accessor.name.as_str());
     let function = rust_identifier(&accessor.name)
@@ -274,6 +292,8 @@ fn emit_static_sql_wamn_accessor(
         source.push_str("    mut claim: PendingClaim,\n");
     } else if claim_finalize.is_some() {
         source.push_str("    claim: &mut PendingClaim,\n");
+    } else if participant {
+        source.push_str("    transaction: &mut TransactionView,\n");
     } else {
         source.push_str("    transaction: &mut Transaction,\n");
     }

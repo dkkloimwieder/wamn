@@ -33,6 +33,7 @@ pub(super) struct NativeInvocation {
     /// Host-attested owner scope for one nested transaction participant.
     pub(super) transaction_participation:
         Option<wamn_runtime::plugins::wamn_postgres::TransactionParticipation>,
+    pub(super) selected_participant: Option<super::native_policy::SelectedParticipant>,
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,
     pub(super) application: Arc<NativeApplication>,

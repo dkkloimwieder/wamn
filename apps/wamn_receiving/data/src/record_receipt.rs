@@ -45,6 +45,13 @@ pub struct RecordReceiptResult {
     pub row_version: i64,
 }
 
+/// Values the base command exposes to its selected pre-commit participant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordReceiptPreCommit {
+    pub receipt_id: Box<str>,
+    pub purchase_order_id: Box<str>,
+}
+
 /// Closed status vocabulary returned by the command.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PurchaseOrderStatus {
@@ -150,6 +157,28 @@ struct InputRange {
 }
 
 impl RecordReceiptError {
+    /// Translate a selected participant refusal at the base operation boundary.
+    pub fn participation_refused(context: impl Into<Box<str>>) -> Self {
+        Self::invalid(context, "value.purchase_order_id")
+    }
+
+    /// Translate a participant execution failure without collapsing its retry semantics.
+    pub fn participation_failed(
+        kind: RecordReceiptErrorKind,
+        context: impl Into<Box<str>>,
+    ) -> Self {
+        Self::new(kind, context)
+    }
+
+    /// Classify failure to read trusted participation metadata.
+    pub fn participation_statement_failed(source: StatementError) -> Self {
+        Self::from_statement(
+            "read record_receipt participation metadata",
+            source,
+            AllowedConstraints::NONE,
+        )
+    }
+
     /// Stable class; callers must not match display text.
     pub const fn kind(&self) -> RecordReceiptErrorKind {
         self.kind
@@ -343,9 +372,49 @@ pub async fn execute(
     connection: &mut Connection,
     command: &RecordReceiptValue,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
-    let prepared = prepare(command)?;
+    execute_inner(connection, command, None, |_| async { Ok(()) }).await
+}
+
+/// Execute with one exact participant before the base claim is finalized.
+pub async fn execute_with_pre_commit<F, Fut>(
+    connection: &mut Connection,
+    command: &RecordReceiptValue,
+    participant_operation: &str,
+    intent: &str,
+    pre_commit: F,
+) -> Result<RecordReceiptResult, RecordReceiptError>
+where
+    F: FnOnce(RecordReceiptPreCommit) -> Fut,
+    Fut: Future<Output = Result<(), RecordReceiptError>>,
+{
+    execute_inner(
+        connection,
+        command,
+        Some((participant_operation, intent)),
+        pre_commit,
+    )
+    .await
+}
+
+async fn execute_inner<F, Fut>(
+    connection: &mut Connection,
+    command: &RecordReceiptValue,
+    participation: Option<(&str, &str)>,
+    pre_commit: F,
+) -> Result<RecordReceiptResult, RecordReceiptError>
+where
+    F: FnOnce(RecordReceiptPreCommit) -> Fut,
+    Fut: Future<Output = Result<(), RecordReceiptError>>,
+{
+    let prepared = prepare_with_intent(command, participation.map(|(_, intent)| intent))?;
     let transaction = connection.begin().await?;
-    record_receipt_in(generated::begin_claim(transaction), prepared).await
+    record_receipt_in(
+        generated::begin_claim(transaction),
+        prepared,
+        participation.map(|(operation, _)| operation),
+        pre_commit,
+    )
+    .await
 }
 
 #[derive(Debug)]
@@ -359,7 +428,10 @@ struct PreparedCommand {
     line_count: usize,
 }
 
-fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceiptError> {
+fn prepare_with_intent(
+    command: &RecordReceiptValue,
+    participation_intent: Option<&str>,
+) -> Result<PreparedCommand, RecordReceiptError> {
     if command.idempotency_key.is_empty() {
         return Err(RecordReceiptError::invalid(
             "idempotency_key must not be empty",
@@ -410,12 +482,15 @@ fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceip
         })
         .collect::<Vec<_>>();
     let line_value = Value::Array(line);
-    let canonical_value = json!({
+    let mut canonical_value = json!({
         "purchase_order_id": purchase_order_id.hyphenated().to_string(),
         "receipt_reference": command.receipt_reference,
         "occurred_at": occurred_at,
         "line": line_value,
     });
+    if let Some(intent) = participation_intent {
+        canonical_value["participation_intent"] = Value::String(intent.to_owned());
+    }
     let line_json = String::from_utf8(canonical_json_bytes(&canonical_value["line"]))
         .expect("canonical JSON is UTF-8");
     Ok(PreparedCommand {
@@ -429,10 +504,21 @@ fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceip
     })
 }
 
-async fn record_receipt_in(
+#[cfg(test)]
+fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceiptError> {
+    prepare_with_intent(command, None)
+}
+
+async fn record_receipt_in<F, Fut>(
     mut transaction: generated::PendingClaim,
     command: PreparedCommand,
-) -> Result<RecordReceiptResult, RecordReceiptError> {
+    participant_operation: Option<&str>,
+    pre_commit: F,
+) -> Result<RecordReceiptResult, RecordReceiptError>
+where
+    F: FnOnce(RecordReceiptPreCommit) -> Fut,
+    Fut: Future<Output = Result<(), RecordReceiptError>>,
+{
     if let Some(replay) = generated::find_replay(&mut transaction, command.idempotency_key.clone())
         .await
         .map_err(|source| sql_error("find record_receipt replay", source))?
@@ -565,6 +651,17 @@ async fn record_receipt_in(
     .await
     .map_err(|source| sql_error("finish purchase_order", source))?;
     let status = PurchaseOrderStatus::parse(&finished.status)?;
+    if let Some(operation) = participant_operation {
+        transaction
+            .select_participant(operation)
+            .await
+            .map_err(|source| sql_error("select record_receipt participant", source))?;
+        pre_commit(RecordReceiptPreCommit {
+            receipt_id: receipt_id.clone().into_boxed_str(),
+            purchase_order_id: command.purchase_order_id.clone().into_boxed_str(),
+        })
+        .await?;
+    }
     let finalized = generated::finalize_command(
         transaction,
         command.idempotency_key,
@@ -810,6 +907,19 @@ mod tests {
         let scaled = prepare(&command(vec![line(FIRST_LINE_ID, "12.3400")])).unwrap();
         let respelled = prepare(&command(vec![line(FIRST_LINE_ID, "12.34")])).unwrap();
         assert_ne!(scaled.canonical_command, respelled.canonical_command);
+    }
+
+    #[test]
+    fn participation_intent_is_part_of_command_identity() {
+        let input = command(vec![line(FIRST_LINE_ID, "12.3400")]);
+        let direct = prepare_with_intent(&input, None).unwrap();
+        let extended = prepare_with_intent(&input, Some("acme-quality-v1")).unwrap();
+        let replay = prepare_with_intent(&input, Some("acme-quality-v1")).unwrap();
+        let changed = prepare_with_intent(&input, Some("acme-quality-v2")).unwrap();
+
+        assert_ne!(direct.canonical_command, extended.canonical_command);
+        assert_eq!(extended.canonical_command, replay.canonical_command);
+        assert_ne!(extended.canonical_command, changed.canonical_command);
     }
 
     /// The spellings PostgreSQL 18.6 respells without touching scale, each

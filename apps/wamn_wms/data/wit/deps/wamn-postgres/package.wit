@@ -149,6 +149,14 @@ interface statements {
     postgres(pg-error),
   }
 
+  /// Exact participant selected by the admitted caller for this base invocation.
+  record participation {
+    operation: string,
+    intent: string,
+  }
+
+  selected-participation: async func() -> result<option<participation>, statement-error>;
+
   /// Local execution-only resource. The host revokes access when participation ends.
   resource transaction-view {
     run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;

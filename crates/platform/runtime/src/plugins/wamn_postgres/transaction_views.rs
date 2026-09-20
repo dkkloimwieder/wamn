@@ -40,6 +40,7 @@ struct ViewInvocation {
     identity: ViewIdentity,
     deadline: Instant,
     participant: Option<Arc<TransactionViewLease>>,
+    selected: Option<super::statement_wit::Participation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,9 +264,55 @@ impl WamnPostgres {
                 identity,
                 deadline,
                 participant,
+                selected: None,
             },
         );
         Ok(())
+    }
+
+    /// Bind the exact participant selected by an admitted native caller.
+    pub fn bind_selected_participant(
+        &self,
+        scope: &str,
+        operation: String,
+        intent: String,
+    ) -> anyhow::Result<()> {
+        let identity = self
+            .view_identity(scope)
+            .map_err(|_| anyhow::anyhow!("participant-owner-unbound"))?;
+        let mut views = self
+            .transaction_views
+            .lock()
+            .expect("transaction views lock poisoned");
+        let invocation = views
+            .scopes
+            .get_mut(scope)
+            .ok_or_else(|| anyhow::anyhow!("participant-owner-revoked"))?;
+        anyhow::ensure!(
+            invocation.identity == identity
+                && invocation.participant.is_none()
+                && Instant::now() < invocation.deadline
+                && invocation.selected.is_none(),
+            "participant-owner-mismatch"
+        );
+        invocation.selected = Some(super::statement_wit::Participation { operation, intent });
+        Ok(())
+    }
+
+    fn selected_participation(
+        &self,
+        scope: &str,
+    ) -> Result<Option<super::statement_wit::Participation>, StatementError> {
+        let identity = self.view_identity(scope)?;
+        let views = self
+            .transaction_views
+            .lock()
+            .expect("transaction views lock poisoned");
+        let invocation = views.scopes.get(scope).ok_or_else(denied)?;
+        if invocation.identity != identity || Instant::now() >= invocation.deadline {
+            return Err(denied());
+        }
+        Ok(invocation.selected.clone())
     }
 
     /// A participant cannot delegate work beyond its execution-only view.
@@ -494,6 +541,17 @@ pub(super) fn select<T: 'static>(
             transaction,
             operation,
         ))
+    })
+}
+
+pub(super) fn selected<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
+) -> wash_runtime::wasmtime::Result<
+    Result<Option<super::statement_wit::Participation>, StatementError>,
+> {
+    accessor.with(|mut access| {
+        let ctx = access.get();
+        Ok(plugin_of(&ctx)?.selected_participation(ctx.component_id.as_ref()))
     })
 }
 

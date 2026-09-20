@@ -106,6 +106,7 @@ async fn admit_component(
             operation.to_owned(),
             // These fixture operations register no package operation.
             AdmittedComponentOperation {
+                pre_commit: None,
                 committed_result_schema: None,
                 fresh_only: false,
                 registered_operation: None,

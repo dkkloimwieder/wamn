@@ -492,6 +492,7 @@ fn serving_manifest(
                     (
                         name.clone(),
                         json!({
+                            "pre-commit": operation.pre_commit,
                             "registered-operation": operation.registered_operation,
                             "fresh-only": operation.fresh_only,
                             "committed-result-schema": committed_result_schema,

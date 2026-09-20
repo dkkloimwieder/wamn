@@ -31,3 +31,10 @@ pub(crate) mod quality_load_purchase_order_detail {
         "/../generated/wamn/quality_load_purchase_order_detail.rs"
     ));
 }
+
+pub(crate) mod receiving_record_receipt_participant {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../generated/wamn/receiving_record_receipt_participant.rs"
+    ));
+}

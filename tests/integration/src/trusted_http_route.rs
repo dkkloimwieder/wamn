@@ -324,6 +324,7 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
             (
                 name.clone(),
                 ServingComponentOperation {
+                    pre_commit: operation.pre_commit.clone(),
                     committed_result_schema: None,
                     registered_operation: operation.registered_operation.clone(),
                     fresh_only: operation.fresh_only,
@@ -1115,6 +1116,7 @@ mod tests {
 
         operation.registered_operation = None;
         operation.dependencies = vec![ComponentOperationDependency {
+            participant: None,
             package: PACKAGE.to_owned(),
             version: PACKAGE_VERSION.to_owned(),
             digest: child.component_digest.clone(),

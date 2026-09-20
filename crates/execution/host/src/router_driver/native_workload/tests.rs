@@ -49,6 +49,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
             operations: BTreeMap::from([(
                 export.into(),
                 AdmittedComponentOperation {
+                    pre_commit: None,
                     registered_operation: None,
                     fresh_only: false,
                     committed_result_schema: None,
@@ -143,6 +144,7 @@ async fn native_loader_refuses_ambiguous_imported_operation() {
             .expect("caller operation")
             .dependencies
             .push(ComponentOperationDependency {
+                participant: None,
                 package: first.fact.scope.package_id.clone(),
                 version: first.fact.scope.package_version.clone(),
                 digest: first.fact.component_digest.clone(),

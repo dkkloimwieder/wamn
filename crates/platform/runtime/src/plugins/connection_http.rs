@@ -1195,6 +1195,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {
+                        pre_commit: None,
                         fresh_only: false,
                         committed_result_schema: None,
                         registered_operation: snapshot.registered_operation,
@@ -1254,6 +1255,7 @@ mod tests {
         grandchild.digest = ArtifactHash::parse(digest('d')).expect("grandchild digest");
         let dependency =
             |component: &ServingComponent| wamn_catalog::ComponentOperationDependency {
+                participant: None,
                 package: component.package_id.clone(),
                 version: "1.0.0".to_string(),
                 digest: component.digest.to_string(),

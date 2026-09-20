@@ -218,3 +218,15 @@ interface record-receipt {
   run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;
   run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
+
+
+interface record-receipt-pre-commit {
+  use wamn:node/types@0.1.0.{node-context, node-error};
+
+  record record-receipt-pre-commit-request {
+    purchase-order-id: string,
+    receipt-id: string,
+  }
+
+  run: async func(ctx: node-context, input: record-receipt-pre-commit-request) -> result<record-receipt-pre-commit-request, node-error>;
+}

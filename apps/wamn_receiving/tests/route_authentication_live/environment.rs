@@ -726,6 +726,9 @@ pub(super) fn released_component_digests(
             .context("released manifest omitted the base component digest")?
             .clone(),
         operation: BASE_RECORD_RECEIPT.to_owned(),
+        participant: Some(
+            "client-acme-receiving:receiving/record-receipt-participant@3.0.0".to_owned(),
+        ),
     };
     anyhow::ensure!(
         overlay

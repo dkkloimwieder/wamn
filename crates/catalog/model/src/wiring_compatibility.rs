@@ -431,6 +431,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.to_string(),
                 AdmittedComponentOperation {
+                    pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,

@@ -373,6 +373,7 @@ pub(super) fn project_serving_component(
                 (
                     name.clone(),
                     ServingComponentOperation {
+                        pre_commit: operation.pre_commit.clone(),
                         committed_result_schema: operation.committed_result_schema.as_ref().map(
                             |schema| {
                                 String::from_utf8(wamn_execution_contract::canonical_json_bytes(

@@ -132,9 +132,12 @@ Build one reusable participation mechanism. Receiving and Acme supply the first 
 
 Define one base-owned extension point before commit, its exact application/release binding, and an execution-only transaction view.
 The view permits admitted statements within the owner's transaction. It grants no independent commit or rollback operation.
-First establish that an authorized participant can obtain and use its own WIT resource through the pinned native linker.
+The focused native-linker case establishes participant-local resource feasibility. Production authorization and application completion remain separate acceptance requirements.
 The base selects the participant. The participant obtains an execution-only resource directly from `wamn:postgres`.
 No resource crosses the application operation interface. The host binds the resource to the existing transaction and participant invocation.
+Resource ownership does not replace application authorization or revocation when the call ends.
+The base declaration supplies the typed pre-commit input. A forwarding declaration selects a participant in its own admitted component.
+The release pins both components. Native dispatch authorizes the selected operation under the original caller before the participant obtains its local resource.
 The tested borrowed-resource contract failed with `mismatched resource types` on the current pin. This result does not establish a general native-resource limitation.
 Keep bounded view state inside `wamn:postgres`, referencing its existing transaction. Add no signing infrastructure, database table, or token compatibility path.
 Reuse the existing PostgreSQL transaction implementation and native dispatch. Add no fork, manual dispatch path, or second transaction manager.

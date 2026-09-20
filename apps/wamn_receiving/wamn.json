@@ -381,6 +381,20 @@
         "replay": "find_replay",
         "finalize": "finalize_command"
       },
+      "pre_commit": {
+        "fields": [
+          {
+            "path": "receipt_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {

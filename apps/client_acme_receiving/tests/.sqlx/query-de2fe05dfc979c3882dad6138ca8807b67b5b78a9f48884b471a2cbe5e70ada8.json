@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO quality_inspection (receipt_id)\nSELECT receipt.id\nFROM receipt\nJOIN purchase_order ON purchase_order.id = receipt.purchase_order_id\nWHERE receipt.id = $1\n  AND purchase_order.acme_inspection_required IS TRUE\nON CONFLICT ON CONSTRAINT quality_inspection_receipt_id_pkey\nDO NOTHING\nRETURNING receipt_id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "receipt_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "quality_inspection",
+            "name": "receipt_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "de2fe05dfc979c3882dad6138ca8807b67b5b78a9f48884b471a2cbe5e70ada8"
+}
