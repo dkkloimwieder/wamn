@@ -190,18 +190,13 @@ async fn provision_project(project: &Client, project_url: &str) {
         ))
         .await
         .expect("ensure the CallableHttp class ACL role the pool probes for");
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .expect("control library lives under crates/control/lib");
     apply_package::apply_package(ApplyPackageRequest {
-        package: repository.join("apps/wamn_wms"),
+        package: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection"),
         database_url: project_url.to_string(),
         tenant: TENANT.to_string(),
     })
     .await
-    .expect("apply the real WMS package");
+    .expect("apply the bind-connection package fixture");
     project
         .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await

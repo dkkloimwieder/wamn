@@ -128,18 +128,13 @@ async fn provision_project(project: &Client, project_url: &str) {
         )
         .await
         .expect("give the project database to the package owner");
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .expect("the control library lives under crates/control/lib");
     apply_package::apply_package(ApplyPackageRequest {
-        package: repository.join("apps/wamn_receiving"),
+        package: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base"),
         database_url: project_url.to_string(),
         tenant: TENANT.to_string(),
     })
     .await
-    .expect("apply the real Receiving package");
+    .expect("apply the package fixture");
     project
         .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await

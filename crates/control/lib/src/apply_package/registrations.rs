@@ -77,9 +77,9 @@ mod tests {
     #[test]
     fn overlay_registration_projection_does_not_require_redeclaring_the_base_entity() {
         let manifest: wamn_schema_generator::PackageManifest = serde_json::from_str(include_str!(
-            "../../../../../apps/client_acme_receiving/wamn.json"
+            "../../tests/fixtures/apply_package/overlay/wamn.json"
         ))
-        .expect("the repository overlay manifest parses");
+        .expect("the overlay fixture manifest parses");
         wamn_schema_generator::validate_operation_vocabulary(&manifest)
             .expect("the overlay operation vocabulary is valid without base model restatement");
 

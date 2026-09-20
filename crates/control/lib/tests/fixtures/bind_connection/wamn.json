@@ -1,0 +1,34 @@
+{
+  "package": {
+    "id": "wamn_wms",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "bind_connection_fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "item": {
+      "schema": "bind_connection_fixture",
+      "table": "item",
+      "owner": "wamn_wms",
+      "server_owned_fields": ["id"],
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "item.get",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "connections": ["postgres"],
+  "components": {
+    "fixture": {
+      "connections": ["postgres"]
+    }
+  }
+}

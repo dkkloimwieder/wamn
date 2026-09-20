@@ -23,14 +23,14 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         )
         .await
         .unwrap();
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
     apply_package(ApplyPackageRequest {
         package: shipped.clone(),
         database_url: url.clone(),
         tenant: TENANT.to_owned(),
     })
     .await
-    .expect("apply the shipped package");
+    .expect("apply the package fixture");
 
     let mut directory = read_package_directory(&shipped).unwrap();
     let mut manifest: serde_json::Value =
@@ -39,7 +39,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         .as_object_mut()
         .unwrap()
         .remove("receipt_line")
-        .expect("the shipped package models receipt_line");
+        .expect("the package fixture models receipt_line");
     directory.manifest_bytes = serde_json::to_vec(&manifest).unwrap();
     let root =
         std::env::temp_dir().join(format!("wamn-local-configuration-{}", std::process::id()));
