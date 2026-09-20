@@ -64,7 +64,7 @@ pub struct HostArgs {
     #[arg(long, default_value = "0s", value_parser = humantime::parse_duration)]
     pub nats_connect_timeout: Duration,
 
-    /// Keep serving after draining readiness so traffic removal can propagate.
+    /// Wait during cleanup after refusing new work so traffic removal can propagate.
     #[arg(long, env = "WASH_DRAIN_DELAY", default_value = "0s", value_parser = humantime::parse_duration)]
     pub drain_delay: Duration,
 
