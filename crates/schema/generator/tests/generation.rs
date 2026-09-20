@@ -1199,9 +1199,8 @@ fn compile_inventory_item_component(package: &GeneratedPackage) {
         .and_then(Path::parent)
         .and_then(Path::parent)
         .expect("the generator sits three levels below the repository root");
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"));
+    let target =
+        std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
     let scratch = target.join("generator-fixtures/typed-crud-contracts");
     let fixture_target = target.join("generator-fixture-build");
     let _ = std::fs::remove_dir_all(&scratch);
