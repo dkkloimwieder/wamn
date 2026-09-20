@@ -11,6 +11,12 @@
       "workspace_manifest": "apps/Cargo.toml",
       "raw_file": "blob_put.wasm",
       "output_file": "blob_put.wasm"
+    },
+    {
+      "package": "prior-commit",
+      "workspace_manifest": "apps/Cargo.toml",
+      "raw_file": "prior_commit.wasm",
+      "output_file": "prior_commit.wasm"
     }
   ]
 }

@@ -46,9 +46,14 @@ struct Component;
 
 impl Guest for Component {
     async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        client::execute(COUNTER_SQL.to_owned(), Vec::new())
+        let affected = client::execute(COUNTER_SQL.to_owned(), Vec::new())
             .await
             .map_err(postgres_error)?;
+        if affected != 1 {
+            return Err(internal_error(
+                "counter update did not affect exactly one row",
+            ));
+        }
         let typed = receipt_codec::decode(&input).map_err(|error| {
             NodeError::InvalidInput(ErrorDetail {
                 message: error.context().to_owned(),
@@ -64,8 +69,12 @@ impl Guest for Component {
 }
 
 fn postgres_error(_: bindings::wamn::postgres::types::PgError) -> NodeError {
+    internal_error("counter update failed")
+}
+
+fn internal_error(message: &str) -> NodeError {
     NodeError::Terminal(ErrorDetail {
-        message: "counter update failed".to_owned(),
+        message: message.to_owned(),
         code: Some("internal_error".to_owned()),
     })
 }

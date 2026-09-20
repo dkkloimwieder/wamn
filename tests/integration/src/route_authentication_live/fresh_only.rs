@@ -825,6 +825,14 @@ fn fixture_manifest(base_digest: &str) -> Value {
 }
 
 fn parent_component() -> anyhow::Result<Vec<u8>> {
+    if let Some(path) = std::env::var_os("WAMN_PRIOR_COMMIT_COMPONENT") {
+        return std::fs::read(&path).with_context(|| {
+            format!(
+                "read WAMN_PRIOR_COMMIT_COMPONENT {}",
+                std::path::Path::new(&path).display()
+            )
+        });
+    }
     let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(std::path::PathBuf::from)
@@ -836,7 +844,7 @@ fn parent_component() -> anyhow::Result<Vec<u8>> {
             }
         })
         .unwrap_or_else(|| repository.join("apps/target"));
-    let release = target.join("wasm32-wasip2/release/prior_commit.wasm");
+    let release = target.join("virtualized/std-empty-environment/prior_commit.wasm");
     let path = if release.is_file() {
         release
     } else {
@@ -844,16 +852,17 @@ fn parent_component() -> anyhow::Result<Vec<u8>> {
     };
     std::fs::read(&path).with_context(|| {
         format!(
-            "read compiled prior-commit fixture {}; build it with \
-             `cargo build --manifest-path apps/Cargo.toml --locked --offline \
-             -p prior-commit --target wasm32-wasip2`",
+            "read virtualized prior-commit fixture {}; build it with \
+             `tools/build-components all` or set WAMN_PRIOR_COMMIT_COMPONENT",
             path.display()
         )
     })
 }
 
 #[test]
+#[ignore = "requires: WAMN_PRIOR_COMMIT_COMPONENT"]
 fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["WAMN_PRIOR_COMMIT_COMPONENT"])?;
     let manifest = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
         &fixture_manifest(&format!("sha256:{}", "a".repeat(64))),
     )?)?;
@@ -1179,8 +1188,10 @@ mod execution_tests {
     /// The deployed test above remains the witness for actual commits and
     /// fresh-only checks.
     #[tokio::test]
+    #[ignore = "requires: WAMN_PRIOR_COMMIT_COMPONENT"]
     async fn counter_parent_executes_sql_then_forwards_the_exact_nested_call() -> anyhow::Result<()>
     {
+        wamn_test_postgres::require_prerequisites(&["WAMN_PRIOR_COMMIT_COMPONENT"])?;
         let engine = Engine::default();
         let component = Component::new(&engine, parent_component()?)?;
         let context = NodeContext {
@@ -1202,13 +1213,13 @@ mod execution_tests {
             linker.instance("wamn:postgres/types@0.1.0")?;
             linker
                 .instance("wamn:postgres/client@0.1.0")?
-                .func_wrap_async(
+                .func_wrap_concurrent(
                     "execute",
-                    |mut store, (sql, params): (String, Vec<SqlValue>)| {
+                    |accessor, (sql, params): (String, Vec<SqlValue>)| {
                         Box::new(async move {
                             assert_eq!(sql, COUNTER_SQL);
                             assert!(params.is_empty());
-                            store.data_mut().order.push("sql");
+                            accessor.with(|mut store| store.data_mut().order.push("sql"));
                             Ok((Ok::<u64, PgError>(1),))
                         })
                     },
@@ -1222,13 +1233,15 @@ mod execution_tests {
                     row_version: 2,
                 }),
             }];
-            linker.instance(BASE_RECORD_RECEIPT)?.func_wrap_async(
+            linker.instance(BASE_RECORD_RECEIPT)?.func_wrap_concurrent(
                 "run",
-                move |mut store, (context, input): (NodeContext, Vec<RecordReceiptItem>)| {
+                move |accessor, (context, input): (NodeContext, Vec<RecordReceiptItem>)| {
                     let nested_result = nested_result.clone();
                     Box::new(async move {
-                        store.data_mut().order.push("nested");
-                        store.data_mut().nested = Some((context, input.clone()));
+                        accessor.with(|mut store| {
+                            store.data_mut().order.push("nested");
+                            store.data_mut().nested = Some((context, input.clone()));
+                        });
                         if refuse_nested {
                             return Err(wash_runtime::wasmtime::Error::msg(
                                 "local nested refusal sentinel",
@@ -1248,7 +1261,11 @@ mod execution_tests {
                 .context("fixture run export")?;
             let run: TypedFunc<(&NodeContext, &str), (Result<Emission, NodeError>,)> =
                 instance.get_typed_func(&mut store, export)?;
-            let result = run.call_async(&mut store, (&context, input)).await;
+            let result = store
+                .run_concurrent(async |accessor| {
+                    run.call_concurrent(accessor, (&context, input)).await
+                })
+                .await?;
             if refuse_nested {
                 let error = result.expect_err("the nested host error must propagate");
                 anyhow::ensure!(
