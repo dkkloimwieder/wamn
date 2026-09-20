@@ -168,12 +168,6 @@ fn take_conn(state: &SharedTxnState) -> Result<Object, PgError> {
     st.conn.take().ok_or_else(txn_closed)
 }
 
-fn put_conn(state: &SharedTxnState, obj: Object) {
-    if let Ok(mut st) = state.lock() {
-        st.conn = Some(obj);
-    }
-}
-
 /// Run `op` with the transaction's connection. Fatal (connection-level)
 /// errors destroy the connection and poison the transaction; statement-level
 /// errors return the connection to the slot (the transaction is aborted
@@ -184,14 +178,14 @@ async fn with_txn_conn<T, F, Fut>(
     op: F,
 ) -> Result<T, PgError>
 where
-    F: FnOnce(Object) -> Fut,
-    Fut: std::future::Future<Output = (Object, Result<T, tokio_postgres::Error>)>,
+    F: FnOnce(StatementConnectionGuard) -> Fut,
+    Fut: std::future::Future<Output = (StatementConnectionGuard, Result<T, tokio_postgres::Error>)>,
 {
-    let conn = take_conn(state)?;
-    let (conn, result) = op(conn).await;
+    let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
+    let (connection, result) = op(connection).await;
     match result {
         Ok(v) => {
-            put_conn(state, conn);
+            connection.restore(state);
             Ok(v)
         }
         Err(e) => {
@@ -200,9 +194,9 @@ where
                 if let Ok(mut st) = state.lock() {
                     st.finished = true;
                 }
-                destroy_connection(conn, destroyed);
+                drop(connection);
             } else {
-                put_conn(state, conn);
+                connection.restore(state);
             }
             Err(mapped)
         }
@@ -438,12 +432,13 @@ async fn begin_transaction(
     let user_id = plugin.user_id_for(component_id);
     let operation = plugin.operation_for(component_id);
     let run = plugin.current_run_for(component_id);
-    let (conn, pp, authority) = plugin
+    let (connection, pp, authority) = plugin
         .checkout_workload(component_id, project, &tenant)
         .await?;
-    if let Err(e) = plugin
+    let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
+    plugin
         .begin_with_claims(
-            &conn,
+            connection.connection(),
             authority,
             &tenant,
             schema.as_deref(),
@@ -454,14 +449,10 @@ async fn begin_transaction(
             run.as_ref(),
             pp.statement_timeout_ms,
         )
-        .await
-    {
-        plugin.destroy(conn);
-        return Err(e);
-    }
+        .await?;
     Ok(PgTransaction {
         state: Arc::new(std::sync::Mutex::new(TxnState {
-            conn: Some(conn),
+            conn: Some(connection.into_connection()),
             finished: false,
         })),
         destroyed: plugin.destroyed.clone(),
@@ -744,11 +735,11 @@ async fn txn_query<T: 'static>(
         .run(async move {
             let span = db_span_for_project(&plugin, &component_id, project, "txn.query");
             let t0 = std::time::Instant::now();
-            let out = with_txn_conn(&state, &destroyed, |conn| async move {
+            let out = with_txn_conn(&state, &destroyed, |connection| async move {
                 // `run_query` maps errors already, so nothing reaching
                 // `with_txn_conn` is a raw error it would judge fatal.
-                let queried = run_query(&conn, &sql, &params, row_limit).await;
-                (conn, Ok(queried))
+                let queried = run_query(connection.connection(), &sql, &params, row_limit).await;
+                (connection, Ok(queried))
             })
             .instrument(span)
             .await
@@ -781,11 +772,11 @@ async fn txn_execute<T: 'static>(
         .run(async move {
             let span = db_span_for_project(&plugin, &component_id, project, "txn.execute");
             let t0 = std::time::Instant::now();
-            let out = with_txn_conn(&state, &destroyed, |conn| async move {
+            let out = with_txn_conn(&state, &destroyed, |connection| async move {
                 // `run_execute` maps errors already, so nothing reaching
                 // `with_txn_conn` is a raw error it would judge fatal.
-                let executed = run_execute(&conn, &sql, &params).await;
-                (conn, Ok(executed))
+                let executed = run_execute(connection.connection(), &sql, &params).await;
+                (connection, Ok(executed))
             })
             .instrument(span)
             .await
@@ -829,15 +820,17 @@ async fn txn_open_cursor<T: 'static>(
             let span = db_span_for_project(&plugin, &component_id, project, "txn.open_cursor");
             let declare = format!("DECLARE {name} CURSOR FOR {sql}");
             let t0 = std::time::Instant::now();
-            let result = with_txn_conn(&state, &destroyed, |conn| async move {
+            let result = with_txn_conn(&state, &destroyed, |connection| async move {
                 let r = async {
-                    let stmt = conn.prepare(&declare).await?;
+                    let stmt = connection.connection().prepare(&declare).await?;
                     let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
-                    conn.execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
+                    connection
+                        .connection()
+                        .execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
                         .await
                 }
                 .await;
-                (conn, r)
+                (connection, r)
             })
             .instrument(span)
             .await;
@@ -926,16 +919,16 @@ async fn cursor_fetch<T: 'static>(
         .run(async move {
             let span = db_span_for_project(&plugin, &component_id, project, "cursor.fetch");
             let t0 = std::time::Instant::now();
-            let fetched = with_txn_conn(&state, &destroyed, |conn| async move {
+            let fetched = with_txn_conn(&state, &destroyed, |connection| async move {
                 let r = async {
                     let sql = format!("FETCH FORWARD {max_rows} FROM {name}");
-                    let stmt = conn.prepare(&sql).await?;
+                    let stmt = connection.connection().prepare(&sql).await?;
                     let columns = columns_of(&stmt);
-                    let rows = conn.query(&stmt, &[]).await?;
+                    let rows = connection.connection().query(&stmt, &[]).await?;
                     Ok::<_, tokio_postgres::Error>((columns, rows))
                 }
                 .await;
-                (conn, r)
+                (connection, r)
             })
             .instrument(span)
             .await;
@@ -1102,20 +1095,20 @@ async fn finish_txn(
     destroyed: &Arc<AtomicU64>,
     verb: &str,
 ) -> Result<(), PgError> {
-    let conn = take_conn(state)?;
-    match conn.batch_execute(verb).await {
+    let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
+    match connection.connection().batch_execute(verb).await {
         Ok(()) => {
             if let Ok(mut st) = state.lock() {
                 st.finished = true;
             }
-            drop(conn); // back to the pool
+            connection.repool();
             Ok(())
         }
         Err(e) => {
             if let Ok(mut st) = state.lock() {
                 st.finished = true;
             }
-            destroy_connection(conn, destroyed);
+            drop(connection);
             Err(map_pg_error(&e))
         }
     }
@@ -1491,6 +1484,8 @@ mod tests {
     use crate::plugins::wamn_postgres::{
         ContractMismatch, ContractPart, ValueShape, WamnPostgresConfig,
     };
+    use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+    use tokio_postgres::NoTls;
     use wamn_event_wire::Causation;
 
     const COMPONENT_ID: &str = "component-store-7";
@@ -1511,6 +1506,88 @@ mod tests {
             .set_tenant(COMPONENT_ID, "tenant-a")
             .expect("the tenant claim is valid");
         plugin
+    }
+
+    #[tokio::test]
+    async fn cancelled_client_transaction_destroys_its_connection_and_completion_repools() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let config: tokio_postgres::Config = database.url().parse().expect("test database URL");
+        let manager = Manager::from_config(
+            config,
+            NoTls,
+            ManagerConfig {
+                recycling_method: RecyclingMethod::Fast,
+            },
+        );
+        let pool = Pool::builder(manager)
+            .max_size(1)
+            .runtime(deadpool_postgres::Runtime::Tokio1)
+            .build()
+            .expect("test pool");
+        let connection = pool.get().await.expect("initial pooled connection");
+        connection
+            .batch_execute("BEGIN")
+            .await
+            .expect("begin cancellation transaction");
+        let state = Arc::new(std::sync::Mutex::new(TxnState {
+            conn: Some(connection),
+            finished: false,
+        }));
+        let destroyed = Arc::new(AtomicU64::new(0));
+        let operation_started = Arc::new(tokio::sync::Notify::new());
+        let task_state = Arc::clone(&state);
+        let task_destroyed = Arc::clone(&destroyed);
+        let task_started = Arc::clone(&operation_started);
+        let task = tokio::spawn(async move {
+            with_txn_conn(&task_state, &task_destroyed, |connection| async move {
+                task_started.notify_one();
+                let result = connection
+                    .connection()
+                    .batch_execute("SELECT pg_sleep(30) /* wamn-cancelled-client-transaction */")
+                    .await;
+                (connection, result)
+            })
+            .await
+        });
+        operation_started.notified().await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("cancelled transaction task")
+                .is_cancelled()
+        );
+        assert_eq!(destroyed.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        let connection = tokio::time::timeout(std::time::Duration::from_secs(2), pool.get())
+            .await
+            .expect("destroyed connection releases pool capacity")
+            .expect("pool creates a clean replacement");
+        connection
+            .batch_execute("BEGIN")
+            .await
+            .expect("begin completion control transaction");
+        let state = Arc::new(std::sync::Mutex::new(TxnState {
+            conn: Some(connection),
+            finished: false,
+        }));
+        let value = with_txn_conn(&state, &destroyed, |connection| async move {
+            let result = connection
+                .connection()
+                .query_one("SELECT 1::integer", &[])
+                .await
+                .map(|row| row.get::<_, i32>(0));
+            (connection, result)
+        })
+        .await
+        .expect("normal transaction operation");
+        assert_eq!(value, 1);
+        finish_txn(&state, &destroyed, "COMMIT")
+            .await
+            .expect("normal transaction completion");
+        assert_eq!(destroyed.load(std::sync::atomic::Ordering::Relaxed), 1);
+        pool.get().await.expect("completed connection was repooled");
     }
 
     /// The invocation the router driver binds before the pooled instance runs.
