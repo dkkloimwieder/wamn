@@ -105,13 +105,13 @@ pub use management_admitter::{
 };
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, CONTROL_AUTHOR_SECRET_PREFIX, DB_OWNER_ROLE,
-    DB_PREFIX, DISPATCH_READER_ROLE, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
-    MANAGEMENT_ADMITTER_SECRET_PREFIX, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
-    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url, control_author_secret_name,
-    event_stream_name, management_admitter_secret_name, project_env_cdc_secret_name,
-    project_env_database_name, project_env_guest_secret_name, project_env_namespace,
-    project_env_secret_name, validate_instance_suffix, validate_project_env,
-    validate_project_env_cdc, validate_project_id, workload_secret_name,
+    DB_PREFIX, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN, MANAGEMENT_ADMITTER_SECRET_PREFIX,
+    MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
+    NAMESPACE_PREFIX, cdc_object_name, compose_url, control_author_secret_name, event_stream_name,
+    management_admitter_secret_name, project_env_cdc_secret_name, project_env_database_name,
+    project_env_guest_secret_name, project_env_namespace, project_env_secret_name,
+    validate_instance_suffix, validate_project_env, validate_project_env_cdc, validate_project_id,
+    workload_secret_name,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 pub use platform_principals::{

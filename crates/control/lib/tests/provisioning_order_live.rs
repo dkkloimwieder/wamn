@@ -23,7 +23,7 @@ use wamn_control::provision_project_env::{
 };
 use wamn_control_provision::tenant_key::authority_derivations_bootstrap_sql;
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, DISPATCH_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
+    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope,
     project_env_database_name, sql, workload_generation_role,
 };
 
@@ -107,7 +107,7 @@ async fn connect_databases(admin: &Client, role: &str) -> Vec<String> {
 }
 
 /// Rebuild the cluster to the state the runbook's step 0 assumes: the registry
-/// rows exist, and NO `wamn_app` / `wamn_dispatch_reader` / generation role
+/// rows exist, and no `wamn_app` or generation role
 /// survives. The stable ACL role is DROPPED, not left healthy — a surviving one
 /// satisfies the ensure-ACL builder's `IF NOT EXISTS` guard and masks a mutated
 /// builder.
@@ -222,12 +222,7 @@ async fn the_documented_provisioning_order_completes_end_to_end() {
         .expect("App takes a tenant scope");
 
     let catalog = connect(&admin_url).await;
-    reset_cluster(
-        &catalog,
-        &database,
-        &[&role_a, APP_ROLE, DISPATCH_READER_ROLE],
-    )
-    .await;
+    reset_cluster(&catalog, &database, &[&role_a, APP_ROLE]).await;
     apply_documented_order(&catalog, &database).await;
 
     // The emitted privilege SQL leaves the stable guest ACL role CONNECTION
@@ -236,17 +231,6 @@ async fn the_documented_provisioning_order_completes_end_to_end() {
         connect_databases(&catalog, APP_ROLE).await.is_empty(),
         "the emitted privilege SQL granted the stable guest ACL role CONNECT, \
          which --prepare-guest-generation refuses"
-    );
-    // ... and so is the dispatcher's, since `wamn-0h0g.22.24` cut that family
-    // over too. It was the LAST stable-LOGIN principal; the batch now grants
-    // CONNECT to nobody, and every consumer is a generation.
-    assert!(
-        connect_databases(&catalog, DISPATCH_READER_ROLE)
-            .await
-            .is_empty(),
-        "the emitted privilege SQL granted the stable dispatch-reader ACL role \
-         CONNECT, which every dispatch-reader generation inherits into every \
-         database on the cluster"
     );
     // Ownership converged FIRST and stayed converged.
     let owner: String = catalog
@@ -348,12 +332,7 @@ async fn a_refused_prepare_leaves_the_state_its_documentation_promises() {
         .expect("App takes a tenant scope");
 
     let catalog = connect(&admin_url).await;
-    reset_cluster(
-        &catalog,
-        &database,
-        &[&role_a, APP_ROLE, DISPATCH_READER_ROLE],
-    )
-    .await;
+    reset_cluster(&catalog, &database, &[&role_a, APP_ROLE]).await;
     apply_documented_order(&catalog, &database).await;
     // Re-introduce EXACTLY what the pre-fix privilege SQL left behind. This is
     // the only hand-written statement in the file, and it is here because the

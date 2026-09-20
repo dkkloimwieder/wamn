@@ -46,27 +46,25 @@
 //! `--dry-run` is STRICTLY read-only: it neither ensures the `wamn_app` role
 //! nor executes any plan action.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
-    APP_SCHEMA_SQL, DISPATCH_READER_ROLE, PlatformComponent, bind_platform_principal_sql,
-    platform_principals_sql, project_env_database_name, sql, validate_project_env,
+    APP_SCHEMA_SQL, PlatformComponent, bind_platform_principal_sql, platform_principals_sql,
+    project_env_database_name, sql, validate_project_env,
 };
 use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
-    BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneAction,
-    RunPlaneActionKind, RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation,
-    catalog_schema_present_sql, count_retired_authored_ordering_rows_sql,
-    count_stale_registration_keys_sql, plan_run_plane, select_app_run_queue_authority_sql,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneActionKind,
+    RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql,
+    count_retired_authored_ordering_rows_sql, count_stale_registration_keys_sql, plan_run_plane,
+    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
-    select_authoring_table_privileges_sql, select_dispatch_reader_schema_privileges_sql,
-    select_dispatch_reader_table_privileges_sql,
-    select_effect_table_effective_column_privileges_sql,
+    select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
@@ -813,16 +811,7 @@ pub async fn reconcile(
     );
 
     let obs = observe(client, schema).await?;
-    let mut plan = plan_run_plane(schema, &obs);
-    let retires_node_runs = matches!(
-        plan.actions.as_slice(),
-        [action] if action.kind == RunPlaneActionKind::RetireNodeRuns
-    );
-    if !retires_node_runs
-        && let Some(action) = dispatch_reader_read_surface_action(schema, &obs, !plan.is_noop())
-    {
-        plan.actions.push(action);
-    }
+    let plan = plan_run_plane(schema, &obs);
     if apply {
         let mut applied = 0;
         while plan
@@ -864,56 +853,6 @@ async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result
         )
         .await
         .context("separate guest and scenario-author roles")
-}
-
-/// The dispatcher read principal's in-database surface, converged from the
-/// EFFECT SHELL rather than from the pure planner (wamn-0h0g.12.123).
-///
-/// **Why here.** The grant text is
-/// [`sql::grant_dispatch_reader_read_surface_sql`], which lives in
-/// `wamn-control-provision`; `wamn-schema-control` does not depend on that crate
-/// and should not. Re-encoding the surface inside the pure planner would make it
-/// the SECOND encoding of one grant shape, which is the failure that
-/// wamn-0h0g.12.37/.12.40 found SIX copies of. `RunPlanePlan::is_noop` is
-/// `actions.is_empty()`, so appending here keeps the plan the shell returns,
-/// prints, and gates on exactly truthful.
-///
-/// **Why `plan_already_acts` widens the trigger.** The observation is taken
-/// BEFORE any action runs, and several actions create the schema or drop and
-/// recreate `effect_attempts` — after which the reader's observed acl entries no
-/// longer describe the database the repair will land in. Enumerating "the
-/// actions that recreate my relations" would be one more encoding that rots, so
-/// the rule is the sound one: if the plan is doing anything at all, re-apply the
-/// (idempotent, narrowing) surface behind it. On a CONVERGED database the plan
-/// is empty and the surface matches, so nothing is planned — the repair never
-/// repeats, which is the whole acceptance.
-///
-/// **An absent role is not drift.** `provision-project-env` mints
-/// `wamn_dispatch_reader` with a password this verb does not hold, so the
-/// reconciler owns the role's in-database surface and never the role itself.
-fn dispatch_reader_read_surface_action(
-    schema: &BareSchemaName,
-    obs: &RunPlaneObservation,
-    plan_already_acts: bool,
-) -> Option<RunPlaneAction> {
-    if !obs.dispatch_reader_role_present {
-        return None;
-    }
-    let converged = !plan_already_acts
-        && obs.dispatch_reader_schema_privileges == BTreeSet::from(["USAGE".to_string()])
-        && obs.dispatch_reader_table_privileges
-            == sql::DISPATCH_READER_RELATIONS
-                .into_iter()
-                .map(|relation| (relation.to_string(), BTreeSet::from(["SELECT".to_string()])))
-                .collect::<BTreeMap<_, _>>();
-    if converged {
-        return None;
-    }
-    Some(RunPlaneAction {
-        kind: RunPlaneActionKind::RepairDispatchReaderPrivilege,
-        target: format!("{}.dispatch-reader-read-surface", schema.as_str()),
-        sql: sql::grant_dispatch_reader_read_surface_sql(schema.as_str()),
-    })
 }
 
 /// Read everything the pure planner decides on. Read-only.
@@ -996,31 +935,6 @@ async fn observe(
         capture_privileges.get(1),
         capture_privileges.get(2),
     );
-    let dispatch_reader_schema = client
-        .query_one(
-            select_dispatch_reader_schema_privileges_sql(),
-            &[&schema.as_str(), &DISPATCH_READER_ROLE],
-        )
-        .await
-        .context("read dispatch-reader schema privileges")?;
-    obs.dispatch_reader_role_present = dispatch_reader_schema.get(0);
-    obs.dispatch_reader_schema_privileges = dispatch_reader_schema
-        .get::<_, Vec<String>>(1)
-        .into_iter()
-        .collect();
-    for row in client
-        .query(
-            select_dispatch_reader_table_privileges_sql(),
-            &[&schema.as_str(), &DISPATCH_READER_ROLE],
-        )
-        .await
-        .context("read dispatch-reader table privileges")?
-    {
-        obs.dispatch_reader_table_privileges
-            .entry(row.get(0))
-            .or_default()
-            .insert(row.get(1));
-    }
     for row in client
         .query(select_authoring_table_privileges_sql(), &[&schema.as_str()])
         .await
@@ -1249,130 +1163,6 @@ mod tests {
         BareSchemaName::new("demo").expect("test schema is valid")
     }
 
-    /// The exact surface `sql::grant_dispatch_reader_read_surface_sql` produces.
-    fn converged_observation() -> RunPlaneObservation {
-        RunPlaneObservation {
-            dispatch_reader_role_present: true,
-            dispatch_reader_schema_privileges: BTreeSet::from(["USAGE".to_string()]),
-            dispatch_reader_table_privileges: BTreeMap::from([
-                (
-                    "run_queue".to_string(),
-                    BTreeSet::from(["SELECT".to_string()]),
-                ),
-                (
-                    "effect_attempts".to_string(),
-                    BTreeSet::from(["SELECT".to_string()]),
-                ),
-            ]),
-            ..Default::default()
-        }
-    }
-
-    /// wamn-0h0g.12.40's failure mode, guarded purely: a converged database must
-    /// plan NOTHING. An observation the grant can never satisfy makes drift
-    /// permanently true and the reconciler never converges.
-    #[test]
-    fn a_converged_dispatch_reader_plans_no_repair() {
-        assert_eq!(
-            dispatch_reader_read_surface_action(&schema(), &converged_observation(), false),
-            None
-        );
-    }
-
-    /// `provision-project-env` owns the role; an environment provisioned before
-    /// wamn-0h0g.12.122 simply has no reader, and that is not drift.
-    #[test]
-    fn an_absent_dispatch_reader_role_plans_no_repair() {
-        let mut obs = converged_observation();
-        obs.dispatch_reader_role_present = false;
-        obs.dispatch_reader_schema_privileges.clear();
-        obs.dispatch_reader_table_privileges.clear();
-        assert_eq!(
-            dispatch_reader_read_surface_action(&schema(), &obs, false),
-            None
-        );
-        // …and an absent role stays silent even when the plan is already acting,
-        // because the repair would fail on a role that does not exist.
-        assert_eq!(
-            dispatch_reader_read_surface_action(&schema(), &obs, true),
-            None
-        );
-    }
-
-    #[test]
-    fn a_widened_or_missing_dispatch_reader_surface_plans_the_repair() {
-        // Never granted at all.
-        let mut fresh = converged_observation();
-        fresh.dispatch_reader_schema_privileges.clear();
-        fresh.dispatch_reader_table_privileges.clear();
-        assert!(dispatch_reader_read_surface_action(&schema(), &fresh, false).is_some());
-
-        // Widened by one privilege on a relation it may read.
-        let mut widened = converged_observation();
-        widened
-            .dispatch_reader_table_privileges
-            .get_mut("run_queue")
-            .expect("run_queue is in the expected surface")
-            .insert("UPDATE".to_string());
-        assert!(dispatch_reader_read_surface_action(&schema(), &widened, false).is_some());
-
-        // Widened onto a relation it may not read at all.
-        let mut extra_relation = converged_observation();
-        extra_relation
-            .dispatch_reader_table_privileges
-            .insert("runs".to_string(), BTreeSet::from(["SELECT".to_string()]));
-        assert!(dispatch_reader_read_surface_action(&schema(), &extra_relation, false).is_some());
-
-        // Widened at the schema level.
-        let mut creator = converged_observation();
-        creator
-            .dispatch_reader_schema_privileges
-            .insert("CREATE".to_string());
-        assert!(dispatch_reader_read_surface_action(&schema(), &creator, false).is_some());
-    }
-
-    /// The observation predates every action, and the table cutover drops and
-    /// recreates `effect_attempts`. A converged reader observed BEFORE that
-    /// still needs its grants re-applied behind it.
-    #[test]
-    fn an_acting_plan_carries_the_reader_repair_along() {
-        assert!(
-            dispatch_reader_read_surface_action(&schema(), &converged_observation(), true)
-                .is_some()
-        );
-    }
-
-    /// The pinned repair. A runtime gate is insensitive to a builder swapped for
-    /// a wider one whose end state happens to include the narrow grants; the
-    /// frozen string is what catches it. The leading REVOKEs are what make the
-    /// action NARROW as well as grant.
-    #[test]
-    fn the_planned_repair_sql_is_exact() {
-        let action = dispatch_reader_read_surface_action(
-            &schema(),
-            &RunPlaneObservation {
-                dispatch_reader_role_present: true,
-                ..Default::default()
-            },
-            false,
-        )
-        .expect("an ungranted reader plans the repair");
-        assert_eq!(
-            action.kind,
-            RunPlaneActionKind::RepairDispatchReaderPrivilege
-        );
-        assert_eq!(action.target, "demo.dispatch-reader-read-surface");
-        assert_eq!(
-            action.sql,
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"demo\" \
-             FROM \"wamn_dispatch_reader\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA \"demo\" FROM \"wamn_dispatch_reader\"; \
-             GRANT USAGE ON SCHEMA \"demo\" TO \"wamn_dispatch_reader\"; \
-             GRANT SELECT ON \"demo\".\"run_queue\" TO \"wamn_dispatch_reader\"; \
-             GRANT SELECT ON \"demo\".\"effect_attempts\" TO \"wamn_dispatch_reader\";"
-        );
-    }
-
     /// The one POSITIVE reachability assertion behind
     /// [`PRE_ROLE_BOOTSTRAP_ACTIONS`]: when the retired plan table is present,
     /// the plan [`reconcile`] walks is exactly the carrier cutover, and that
@@ -1399,22 +1189,6 @@ mod tests {
             RunPlaneActionKind::RetireExecutionBundles
         );
         assert!(PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&plan.actions[0].kind));
-        // …and the shell appends nothing behind it, so the plan `reconcile`
-        // walks IS this plan: all of it runs before the role bootstrap.
-        assert_eq!(
-            dispatch_reader_read_surface_action(&schema(), &obs, true),
-            None
-        );
-    }
-
-    /// The repair is NOT a pre-bootstrap action: it must run after the creates,
-    /// never before.
-    #[test]
-    fn the_reader_repair_is_not_a_pre_role_bootstrap_action() {
-        assert!(
-            !PRE_ROLE_BOOTSTRAP_ACTIONS
-                .contains(&RunPlaneActionKind::RepairDispatchReaderPrivilege)
-        );
     }
 
     #[test]

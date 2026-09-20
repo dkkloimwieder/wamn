@@ -56,8 +56,6 @@ pub const DB_OWNER_ROLE: &str = "wamn_db_owner";
 /// Deliberately **`NOINHERIT` with zero memberships**: this role's authority is
 /// only what is granted to it directly, so the grant list is the whole
 /// story.
-pub const DISPATCH_READER_ROLE: &str = "wamn_dispatch_reader";
-
 /// Prefix for the scoped control-author URL Secret.
 pub const CONTROL_AUTHOR_SECRET_PREFIX: &str = "wamn-authoring-";
 

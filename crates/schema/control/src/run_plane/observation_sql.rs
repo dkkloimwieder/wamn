@@ -71,44 +71,6 @@ pub fn select_effect_table_effective_column_privileges_sql() -> &'static str {
 // the repair on every pass without converging. That is wamn-0h0g.12.40
 // exactly, and it was only ever caught by a live gate.
 
-/// Direct schema-level privileges held by the dispatcher read principal, plus
-/// whether that cluster-global role exists at all. `$1` is the run-plane
-/// schema, `$2` the role name.
-pub fn select_dispatch_reader_schema_privileges_sql() -> &'static str {
-    "SELECT reader.oid IS NOT NULL, \
-            ARRAY( \
-              SELECT acl.privilege_type \
-                FROM pg_catalog.pg_namespace AS namespace \
-                CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE( \
-                  namespace.nspacl, \
-                  pg_catalog.acldefault('n', namespace.nspowner))) AS acl \
-               WHERE namespace.nspname = $1 \
-                 AND acl.grantee = reader.oid \
-               ORDER BY 1) \
-       FROM (SELECT 1) AS singleton \
-       LEFT JOIN pg_catalog.pg_roles AS reader ON reader.rolname = $2"
-}
-
-/// Direct table-level privileges held by the dispatcher read principal in the
-/// run-plane schema. `$1` is the schema, `$2` the role name.
-///
-/// The `relkind` filter is the OTHER half of "observe only what the repair can
-/// reach": `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA` covers tables,
-/// partitioned tables, views, materialized views and foreign tables — and NOT
-/// sequences. Observing a sequence grant here would be drift no `GRANT`/`REVOKE`
-/// in the repair could ever clear.
-pub fn select_dispatch_reader_table_privileges_sql() -> &'static str {
-    "SELECT relation.relname, acl.privilege_type \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       JOIN pg_catalog.pg_roles AS reader ON reader.rolname = $2 \
-       CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl \
-      WHERE namespace.nspname = $1 \
-        AND relation.relkind IN ('r', 'p', 'v', 'm', 'f') \
-        AND acl.grantee = reader.oid \
-      ORDER BY 1, 2"
-}
-
 /// Whether guest-visible `wamn_app` inherits the host-only author role.
 pub fn select_app_scenario_author_membership_sql() -> &'static str {
     "SELECT COALESCE(pg_catalog.pg_has_role( \

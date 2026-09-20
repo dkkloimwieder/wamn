@@ -13,8 +13,7 @@
 //! the runbook/Job applies the emitted artifacts, in this order:
 //!
 //! 1. the `wamn_db_owner` title role must exist **before** the `Database` CR
-//!    (its `owner`), and the stable `wamn_app` + `wamn_dispatch_reader` ACL
-//!    roles with it — both NOLOGIN grant carriers, neither a credential: apply
+//!    (its `owner`) and the stable `wamn_app` ACL role with it: apply
 //!    the emitted
 //!    **role SQL** to the target cluster's superuser. Applying the CR first
 //!    fails reconciliation — CNPG maps `spec.owner` straight to `CREATE DATABASE
@@ -24,7 +23,7 @@
 //!    and re-owns an already-existing one to it;
 //! 3. apply the emitted **privilege SQL** (`ALTER DATABASE … OWNER TO
 //!    wamn_db_owner`, then `REVOKE CONNECT, TEMPORARY FROM PUBLIC` / `REVOKE
-//!    CONNECT FROM wamn_app` / `REVOKE CONNECT FROM wamn_dispatch_reader`) — the
+//!    CONNECT FROM wamn_app`) — the
 //!    thin imperative step the `Database` CRD does
 //!    not cover (topology fact 3), run **after** the database exists. The owner
 //!    statement is first and must stay first: `ALTER DATABASE … OWNER TO`
@@ -39,8 +38,7 @@
 //!    family's generation prepare — the LOGIN it mints is what actually reaches
 //!    the database. The stable ACL roles do not: they are NOLOGIN grant carriers
 //!    those generations inherit, and every one of them must stay connection-free
-//!    (see [`privilege_sql`]). `wamn-0h0g.22.24` moved the last holdout,
-//!    `wamn_dispatch_reader`, onto that shape.
+//!    (see [`privilege_sql`]).
 //!
 //! What this tool does directly (given `--system-database-url`): read the org's
 //! placement to pick the target cluster, and record `registry.projects` +
@@ -297,15 +295,7 @@ pub fn workload_secret_flag(family: WorkloadRoleFamily) -> String {
 /// The role batch the runbook applies to the TARGET cluster's superuser before
 /// the `Database` CR (step 1). Both `wamn_app` and `wamn_db_owner` precede the
 /// CR because `wamn_db_owner` is its `spec.owner` and the CR cannot reconcile
-/// against a role that does not exist yet; `wamn_dispatch_reader` is here
-/// (wamn-0h0g.12.122) because it is cluster-global exactly as they are, and
-/// because the reconcile step's read-surface grants name it.
-///
-/// It takes NO dispatch-reader password any more (`wamn-0h0g.22.24`). The role
-/// is minted by the generic ACL-role builder as a connection-free NOLOGIN grant
-/// carrier; the dispatcher's credential is a GENERATION, and a generation's
-/// password is CREATED by its own prepare action rather than handed to
-/// provisioning on a flag.
+/// against a role that does not exist yet.
 ///
 /// It takes no app password either (`wamn-xv69`). The app role is the same
 /// stable passwordless NOLOGIN carrier as every other generation family.
@@ -328,10 +318,9 @@ pub fn role_sql() -> String {
 /// Role creation and hardening half of [`role_sql`].
 pub fn role_posture_sql() -> String {
     format!(
-        "{app}\n{owner}\n{reader}\n",
+        "{app}\n{owner}\n",
         app = sql::ensure_app_acl_role_sql(),
         owner = sql::ensure_db_owner_role_sql(),
-        reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
     )
 }
 
@@ -356,27 +345,15 @@ pub fn role_posture_sql() -> String {
 /// that is not connection-free, and the `REVOKE` is what converges an
 /// environment provisioned before the cutover back under that refusal.
 ///
-/// **`wamn_dispatch_reader` is REVOKED for the identical reason
-/// (`wamn-0h0g.22.24`).** It was the LAST family still on the stable-LOGIN
-/// shape: the dispatcher authenticated as the cluster-global role itself and
-/// this batch GRANTED it `CONNECT` per environment, so its generations — once
-/// the family gained any — would inherit reach into every environment on the
-/// cluster, exactly as the guest's did. The dispatcher now mounts a
-/// dispatch-reader GENERATION, `prepare_workload_generation_sql` grants that
-/// generation `CONNECT` on its one database, and this `REVOKE` is what converges
-/// a pre-cutover environment back under the prepare's refusal.
-///
 /// `pub` for the same reason as [`role_sql`].
 pub fn privilege_sql(database: &str) -> String {
     let db = quote_ident(database);
     format!(
         "{owner};\n\
          REVOKE CONNECT, TEMPORARY ON DATABASE {db} FROM PUBLIC; \
-         REVOKE CONNECT ON DATABASE {db} FROM {app};\n\
-         {reader_connect}\n",
+         REVOKE CONNECT ON DATABASE {db} FROM {app};\n",
         owner = sql::set_database_owner_sql(database),
         app = quote_ident(APP_ROLE),
-        reader_connect = sql::revoke_dispatch_reader_connect_sql(database),
     )
 }
 

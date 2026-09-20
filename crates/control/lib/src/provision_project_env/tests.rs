@@ -227,9 +227,7 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
 /// guard.
 ///
 /// wamn-0h0g.12.179 re-pinned it once, moving `wamn_app` from granted to
-/// revoked. wamn-0h0g.22.24 re-pins it again for the LAST stable-LOGIN
-/// family: `wamn_dispatch_reader` moves the same way, and the batch now
-/// grants `CONNECT` to NOBODY. Every principal that reaches a project-env
+/// revoked. The batch grants `CONNECT` to nobody. Every principal that reaches a project-env
 /// database is a generation, and a generation is granted `CONNECT` directly
 /// by its own prepare.
 #[test]
@@ -239,9 +237,7 @@ fn the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_stateme
         batch,
         "ALTER DATABASE \"wamn-db-acme--billing--dev\" OWNER TO \"wamn_db_owner\";\n\
              REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC; \
-             REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"wamn_app\";\n\
-             REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
-             FROM \"wamn_dispatch_reader\";\n"
+             REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"wamn_app\";\n"
     );
 
     // The ordering assertion, stated independently of the frozen literal so
@@ -251,13 +247,7 @@ fn the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_stateme
     let owner = batch
         .find("ALTER DATABASE")
         .expect("the owner statement is emitted");
-    let reader_revoke = batch
-        .find("REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"wamn_dispatch_reader\"")
-        .expect("the reader CONNECT revoke is emitted");
-    assert!(
-        owner < reader_revoke,
-        "reader CONNECT revoke must follow ALTER DATABASE … OWNER TO: {batch}"
-    );
+    assert_eq!(owner, 0, "ownership must be the first statement: {batch}");
 
     // NOBODY is granted CONNECT here, and the PUBLIC confinement stands.
     assert!(!batch.contains("GRANT CONNECT"));
@@ -302,10 +292,9 @@ fn the_role_batch_creates_passwordless_nologin_acl_roles() {
     assert_eq!(
         role_posture_sql(),
         format!(
-            "{app}\n{owner}\n{reader}\n",
+            "{app}\n{owner}\n",
             app = sql::ensure_app_acl_role_sql(),
             owner = sql::ensure_db_owner_role_sql(),
-            reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
         )
     );
     assert_eq!(
@@ -316,9 +305,7 @@ fn the_role_batch_creates_passwordless_nologin_acl_roles() {
             drain = sql::drain_app_role_sessions_sql(),
         )
     );
-    for role in ["wamn_app", "wamn_dispatch_reader"] {
-        assert!(batch.contains(&format!("'{role}'")));
-    }
+    assert!(batch.contains("'wamn_app'"));
     assert!(batch.contains("CREATE ROLE \"wamn_app\" NOLOGIN"));
     assert!(batch.contains("ALTER ROLE \"wamn_app\" NOLOGIN PASSWORD NULL"));
     assert!(batch.contains("CREATE ROLE %I NOLOGIN"));
@@ -371,10 +358,6 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         with_grant_sets,
         [
             WorkloadRoleFamily::ManagementAdmitter,
-            // `wamn-0h0g.22.24`: the dispatch reader acquired GENERATIONS,
-            // so its long-standing grant set finally has an inheritor to
-            // guard and acquires a denial matrix with them.
-            WorkloadRoleFamily::DispatchReader,
             // `wamn-0h0g.12.69`: run retention acquired authority — DELETE
             // plus a three-column SELECT on `runs` — so it acquires a
             // denial matrix here at the same time. The two are the same
@@ -400,7 +383,6 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     // The pre-prepare grant-set assertion fires for the families whose grant
     // set is converged ELSEWHERE, and not for the ones this batch applies.
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::Retention).is_none());
-    assert!(sql::stable_surface_sql(WorkloadRoleFamily::DispatchReader).is_none());
     // apply-package converges the audit retention grants, not this batch.
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::AuditRetention).is_none());
     for family in [
@@ -923,7 +905,6 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
             WorkloadRoleFamily::ManagementAdmitter,
             "management-admitter",
         ),
-        (WorkloadRoleFamily::DispatchReader, "dispatch-reader"),
         (WorkloadRoleFamily::ServiceReader, "service-reader"),
         (WorkloadRoleFamily::App, "app"),
         (WorkloadRoleFamily::Retention, "retention"),

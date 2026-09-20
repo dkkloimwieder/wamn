@@ -256,14 +256,6 @@ const MATRIX: [FamilyReach; 10] = [
         ],
         routines: &[],
     },
-    FamilyReach {
-        family: WorkloadRoleFamily::DispatchReader,
-        relations: &[
-            "wamn_run.effect_attempts|SELECT|table",
-            "wamn_run.run_queue|SELECT|table",
-        ],
-        routines: &[],
-    },
     // The remaining family whose measured production surface is empty.
     FamilyReach {
         family: WorkloadRoleFamily::ServiceReader,
@@ -618,15 +610,6 @@ fn mint(db_url: &str, family: WorkloadRoleFamily) {
             "2099-01-01T00:00:00Z",
         ),
     );
-    // The dispatcher's in-database read surface is not part of
-    // `stable_surface_sql`; it is applied by the provisioner as its own step.
-    if family == WorkloadRoleFamily::DispatchReader {
-        apply(
-            db_url,
-            "converge the dispatch-reader read surface",
-            &sql::grant_dispatch_reader_read_surface_sql("wamn_run"),
-        );
-    }
 }
 
 /// The world of this process, built on first use.
@@ -847,11 +830,6 @@ fn the_session_role_reader_is_refused_the_other_families_operations() {
 }
 
 #[test]
-fn the_dispatch_reader_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::DispatchReader);
-}
-
-#[test]
 fn the_service_reader_family_is_refused_the_other_families_operations() {
     assert_family_row(WorkloadRoleFamily::ServiceReader);
 }
@@ -941,12 +919,11 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 6] = [
+const CONTAINED_PAIRS: [(&str, &str); 5] = [
     ("app", "event-materializer"),
     ("app", "http-admitter"),
     ("app", "retention"),
     ("app", "session-role-reader"),
-    ("executor-platform", "dispatch-reader"),
     ("http-admitter", "session-role-reader"),
 ];
 
@@ -1334,8 +1311,7 @@ fn authority_derivations_are_not_public_execute() {
 /// admitting or demoting a family costs one deliberate edit here.
 ///
 /// Sorted, because the arm compares against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
-    "wamn_dispatch_reader",
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",

@@ -109,9 +109,7 @@ pub use observation_sql::{
     count_stale_registration_keys_sql, select_app_run_queue_authority_sql,
     select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
-    select_authoring_table_privileges_sql, select_dispatch_reader_schema_privileges_sql,
-    select_dispatch_reader_table_privileges_sql,
-    select_effect_table_effective_column_privileges_sql,
+    select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
@@ -216,14 +214,6 @@ pub enum RunPlaneActionKind {
     /// Replace broad application-role run grants with column grants that omit
     /// the admission-owned `runs.capture_mode` carrier.
     RepairRunCapturePrivilege,
-    /// Converge the dispatcher read principal's in-database surface on exactly
-    /// schema `USAGE` plus `SELECT` on the two relations it reads, narrowing a
-    /// widened reader back (wamn-0h0g.12.123).
-    ///
-    /// This is the ONE run-plane privilege the pure planner does not build: its
-    /// grant text comes from `wamn_control_provision`, and the effect shell
-    /// appends the action. See `wamn_control::reconcile_run_plane`.
-    RepairDispatchReaderPrivilege,
     /// Remove every guest-visible table and column privilege on `run_queue`.
     RemoveAppRunQueueAuthority,
     /// Strip retired keys from stored registrations.

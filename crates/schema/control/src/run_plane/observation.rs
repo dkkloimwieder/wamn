@@ -106,20 +106,6 @@ pub struct RunPlaneObservation {
     pub authoring_table_owners: BTreeMap<(String, String), String>,
     /// Schemas on which the host-only author role effectively has USAGE.
     pub scenario_author_schema_usage: BTreeSet<String>,
-    /// Whether the cluster-global dispatcher read principal exists at all
-    /// (wamn-0h0g.12.123). The reconciler owns that role's IN-DATABASE surface
-    /// but never the role itself — `provision-project-env` mints it, with a
-    /// password this verb does not have — so an absent role is not drift.
-    pub dispatch_reader_role_present: bool,
-    /// DIRECT schema-level privileges held by the dispatcher read principal on
-    /// the target schema. See
-    /// [`super::select_dispatch_reader_schema_privileges_sql`] for why these are
-    /// direct rather than effective.
-    pub dispatch_reader_schema_privileges: BTreeSet<String>,
-    /// DIRECT table-level privileges held by the dispatcher read principal,
-    /// keyed by relation, over every relation the repair's blanket `REVOKE` can
-    /// reach.
-    pub dispatch_reader_table_privileges: BTreeMap<String, BTreeSet<String>>,
     /// EVERY ordinary table in the target schema → its live column names.
     /// Includes entity/floor tables (ignored by the planner) and retired
     /// outbox/stored-suite tables (planned for teardown).

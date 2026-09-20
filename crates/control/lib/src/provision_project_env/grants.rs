@@ -51,7 +51,6 @@ pub(super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrant
         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
         WorkloadRoleFamily::SessionRoleReader => Some(StableGrantSet::SessionRoleReader),
         WorkloadRoleFamily::Retention => Some(StableGrantSet::Retention),
-        WorkloadRoleFamily::DispatchReader => Some(StableGrantSet::DispatchReader),
         // `wamn-0h0g.22.37`: both families acquired authority, so both acquire
         // a denial matrix in the SAME edit. A family with one and not the other
         // is exactly the bug
@@ -76,7 +75,6 @@ pub(super) enum StableGrantSet {
     IdentityReader,
     SessionRoleReader,
     Retention,
-    DispatchReader,
     ExecutorPlatform,
     HttpAdmitter,
     EventMaterializer,
@@ -118,7 +116,6 @@ impl StableGrantSet {
                 verify_session_role_reader_grants(role, database, required_database, grants)
             }
             Self::Retention => verify_retention_grants(role, database, grants),
-            Self::DispatchReader => verify_dispatch_reader_grants(role, database, grants),
             Self::ExecutorPlatform => {
                 verify_executor_platform_grants(role, database, required_database, grants)
             }
@@ -320,63 +317,6 @@ fn verify_retention_grants(role: &str, database: &str, grants: &[RoleAcl]) -> an
         anyhow::ensure!(
             actual == expected,
             "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact run-retention grant set"
-        );
-    }
-    Ok(())
-}
-
-/// The exact dispatcher read surface, measured from the SERVER's ACL catalogs
-/// (`wamn-0h0g.22.24`).
-///
-/// The dispatcher's whole database surface is two `SELECT`s over
-/// [`sql::DISPATCH_READER_RELATIONS`], so the stable ACL role holds schema
-/// `USAGE` plus `SELECT` on exactly those two relations. It is asserted PER
-/// SCHEMA and exactly, because a dispatch-reader
-/// generation now inherits everything this role holds in every database the
-/// role has grants in — and until this bead the family had no denial matrix at
-/// all, because it had no generations to guard.
-fn verify_dispatch_reader_grants(
-    role: &str,
-    database: &str,
-    grants: &[RoleAcl],
-) -> anyhow::Result<()> {
-    let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
-    for acl in grants {
-        anyhow::ensure!(
-            matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
-            "stable role {role:?} carries non-reader {} ACL in database {database:?}",
-            acl.object_kind
-        );
-        by_schema
-            .entry(acl.schema_name.clone())
-            .or_default()
-            .insert((
-                acl.object_kind.clone(),
-                acl.object_name.clone(),
-                acl.privilege.clone(),
-            ));
-    }
-    for (schema, actual) in by_schema {
-        anyhow::ensure!(
-            !schema.starts_with("pg_")
-                && !matches!(
-                    schema.as_str(),
-                    "public" | "information_schema" | "wamn_system" | "catalog" | "app"
-                ),
-            "stable role {role:?} carries dispatch-reader ACLs in reserved schema {schema:?} in database {database:?}"
-        );
-        let mut expected =
-            BTreeSet::from([("schema".to_string(), schema.clone(), "USAGE".to_string())]);
-        for relation in sql::DISPATCH_READER_RELATIONS {
-            expected.insert((
-                "relation".to_string(),
-                relation.to_string(),
-                "SELECT".to_string(),
-            ));
-        }
-        anyhow::ensure!(
-            actual == expected,
-            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact dispatch-reader grant set"
         );
     }
     Ok(())

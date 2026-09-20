@@ -108,8 +108,8 @@ use wamn_control::reconcile_run_plane::{
 };
 use wamn_control::verification_policy::project_environment_policy;
 use wamn_control_provision::{
-    CredentialGeneration, DISPATCH_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
-    project_env_database_name, sql as provision_sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, project_env_database_name,
+    sql as provision_sql, workload_generation_role,
 };
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 use wamn_test_infrastructure::locked_database;
@@ -124,7 +124,6 @@ const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
 const SCHEMA: &str = "rp_live";
-const DISPATCH_READER_PASSWORD: &str = "dispatch-reader-run-plane-probe";
 const GUEST_GENERATION_PASSWORD: &str = "guest-generation-run-plane-probe";
 const EMPTY_EXECUTION_BUNDLE_HASH: &str =
     "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -386,22 +385,6 @@ async fn drop_database(su: &Client, database: &str) {
         .expect("drop target database");
 }
 
-/// The dispatch-reader A generation this leg dials as, DERIVED from the same
-/// builder `provision-project-env` uses rather than spelled (`wamn-0h0g.22.24`).
-fn dispatch_reader_generation(database: &str) -> String {
-    workload_generation_role(
-        WorkloadRoleFamily::DispatchReader,
-        WorkloadRoleScope::ProjectEnvironment {
-            org: "acme",
-            project: "billing",
-            environment: "dev",
-            database,
-        },
-        CredentialGeneration::A,
-    )
-    .expect("the dispatch reader takes a project-environment scope")
-}
-
 async fn connect_as(url: &str, role: &str, password: &str) -> Client {
     let mut config: tokio_postgres::Config = url.parse().expect("parse Postgres URL");
     config.user(role).password(password);
@@ -458,13 +441,7 @@ async fn seed_run_admission_facts(
 
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
 /// ensure the `wamn_app` role, so every leg builds its own starting state.
-/// Hermetic per CLUSTER, not merely per schema (wamn-0h0g.12.123). PostgreSQL
-/// roles are cluster-wide, and the reconciler now converges
-/// `wamn_dispatch_reader`'s in-database surface WHEN THAT ROLE EXISTS — so a
-/// reader left behind by another gate against the same container would make
-/// `current_noop_leg`'s first plan legitimately non-empty. `DROP OWNED BY` is
-/// what makes the role droppable: `DROP ROLE` refuses while any acl entry
-/// anywhere still names it. `wamn_app` and the projection writer role are created
+/// `wamn_app` and the projection writer role are created
 /// or hardened because the run-plane DDL and reconciler name them.
 async fn reset(su: &Client) {
     su.batch_execute(&provision_sql::ensure_app_acl_role_sql())
@@ -477,19 +454,6 @@ async fn reset(su: &Client) {
         "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
          DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
          DROP SCHEMA IF EXISTS catalog CASCADE; \
-         DO $reader_generations$ DECLARE generation record; BEGIN \
-           FOR generation IN SELECT rolname FROM pg_roles \
-                              WHERE rolname ~ '^{DISPATCH_READER_ROLE}_[0-9a-f]{{40}}_[ab]$' LOOP \
-             EXECUTE format('DROP OWNED BY %I', generation.rolname); \
-             EXECUTE format('DROP ROLE %I', generation.rolname); \
-           END LOOP; \
-         END $reader_generations$; \
-         DO $reader$ BEGIN \
-           IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}') THEN \
-             EXECUTE 'DROP OWNED BY {DISPATCH_READER_ROLE}'; \
-             EXECUTE 'DROP ROLE {DISPATCH_READER_ROLE}'; \
-           END IF; \
-         END $reader$; \
          DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
@@ -641,202 +605,12 @@ async fn run_plane_reconcile_live() {
     two_plane_residency_leg(&su).await;
     retired_effect_disposition_cutover_leg(&su).await;
     persisted_literal_check_drift_leg(&su).await;
-    dispatch_reader_read_surface_leg(&su, &url).await;
-}
-
-/// The dispatcher read principal's in-database surface (wamn-0h0g.12.123).
-///
-/// The `SELECT` grants target relations in the run-plane schema, which does not
-/// exist at provision time — so the reconciler owns them, on the same convergent
-/// footing as every other privilege it holds. **Runs last**: it is the only leg
-/// that needs `wamn_dispatch_reader` to EXIST, and it drops the role again on the
-/// way out so nothing downstream inherits it.
-async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
-    reset(su).await;
-    install_current_run_plane(su).await;
-    let schema = schema();
-    let database: String = su
-        .query_one("SELECT current_database()", &[])
-        .await
-        .expect("read current database")
-        .get(0);
-
-    // Provisioning's half (wamn-0h0g.12.122, cut over to generations by
-    // wamn-0h0g.22.24), from the SAME builders `provision-project-env` emits:
-    // the connection-free stable ACL role, the REVOKE that converges a
-    // pre-cutover CONNECT off it, and one A/B generation which is the only thing
-    // that can actually log in. Everything after this point must come from the
-    // reconciler alone — that is what "no manual SQL" means.
-    let reader_generation = dispatch_reader_generation(&database);
-    su.batch_execute(&provision_sql::ensure_workload_acl_role_sql(
-        WorkloadRoleFamily::DispatchReader,
-    ))
-    .await
-    .expect("mint the stable dispatch-reader ACL role");
-    su.batch_execute(&provision_sql::revoke_dispatch_reader_connect_sql(
-        &database,
-    ))
-    .await
-    .expect("converge the stable dispatch reader off CONNECT");
-    su.batch_execute(&provision_sql::prepare_workload_generation_sql(
-        WorkloadRoleFamily::DispatchReader,
-        &database,
-        &reader_generation,
-        DISPATCH_READER_PASSWORD,
-        "2100-01-01T00:00:00Z",
-    ))
-    .await
-    .expect("prepare the dispatch-reader generation");
-    // The STABLE role is connection-free and the GENERATION holds the CONNECT.
-    // Asserted from the server, because that inversion is the whole bead.
-    let stable_connect: bool = su
-        .query_one(
-            &format!("SELECT has_database_privilege('{DISPATCH_READER_ROLE}', $1, 'CONNECT')"),
-            &[&database],
-        )
-        .await
-        .expect("read stable dispatch-reader CONNECT")
-        .get(0);
-    assert!(
-        !stable_connect,
-        "the cluster-global dispatch reader still holds CONNECT: every generation \
-         inherits it into every database on the cluster"
-    );
-    let generation_connect: bool = su
-        .query_one(
-            "SELECT has_database_privilege($1, $2, 'CONNECT')",
-            &[&reader_generation, &database],
-        )
-        .await
-        .expect("read generation CONNECT")
-        .get(0);
-    assert!(
-        generation_connect,
-        "the generation cannot reach its database"
-    );
-
-    // A schema at the schema of record still owes the reader its read surface:
-    // deploy/sql grants the reader nothing, and this verb is where it lands.
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("apply the reader read surface");
-    assert_eq!(
-        plan.actions
-            .iter()
-            .map(|action| action.kind)
-            .collect::<Vec<_>>(),
-        vec![RunPlaneActionKind::RepairDispatchReaderPrivilege],
-        "a current schema owes exactly the reader repair: {:#?}",
-        plan.actions
-    );
-
-    // *** THE wamn-0h0g.12.40 GUARD. *** An observation arm that encodes a shape
-    // the grant can never satisfy leaves drift permanently true, and the
-    // reconciler plans this repair on EVERY pass without ever converging. Only a
-    // live second pass against the CONVERGED database can catch that.
-    let again = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("second reconcile");
-    assert!(
-        again.is_noop(),
-        "the reader repair repeats on a converged database — the observation \
-         arm encodes a state the grant cannot reach: {:#?}",
-        again.actions
-    );
-    let dry = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("third reconcile, read-only");
-    assert!(dry.is_noop(), "dry-run drift: {:#?}", dry.actions);
-
-    // The dispatcher dials and reads, with no manual SQL between provisioning
-    // and the read.
-    let reader = connect_as(url, &reader_generation, DISPATCH_READER_PASSWORD).await;
-    for relation in ["run_queue", "effect_attempts"] {
-        reader
-            .query_one(&format!("SELECT count(*) FROM {SCHEMA}.{relation}"), &[])
-            .await
-            .unwrap_or_else(|error| panic!("reader cannot read {relation}: {error}"));
-    }
-    // …and nothing wider. `runs` is the relation the dispatcher never touches.
-    for denied in [
-        format!("SELECT count(*) FROM {SCHEMA}.runs"),
-        format!("INSERT INTO {SCHEMA}.run_queue (tenant_id) VALUES ('t')"),
-    ] {
-        let error = reader
-            .batch_execute(&denied)
-            .await
-            .expect_err(&format!("reader was allowed {denied:?}"));
-        assert_db_code(&error, "42501", &denied);
-    }
-    drop(reader);
-
-    // A widened reader narrows back: the repair REVOKEs over the same scope it
-    // grants, so this is convergence and not merely a first-time install.
-    su.batch_execute(&format!(
-        "GRANT SELECT ON {SCHEMA}.runs TO \"{DISPATCH_READER_ROLE}\"; \
-         GRANT INSERT, UPDATE ON {SCHEMA}.run_queue TO \"{DISPATCH_READER_ROLE}\"; \
-         GRANT CREATE ON SCHEMA {SCHEMA} TO \"{DISPATCH_READER_ROLE}\";"
-    ))
-    .await
-    .expect("widen the reader");
-    let widened = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("observe the widened reader");
-    assert_eq!(
-        widened
-            .actions
-            .iter()
-            .map(|action| action.kind)
-            .collect::<Vec<_>>(),
-        vec![RunPlaneActionKind::RepairDispatchReaderPrivilege],
-        "a widened reader is drift: {:#?}",
-        widened.actions
-    );
-    reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("narrow the reader back");
-    let narrowed = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("reconcile after narrowing");
-    assert!(
-        narrowed.is_noop(),
-        "the narrowed reader did not converge: {:#?}",
-        narrowed.actions
-    );
-
-    let reader = connect_as(url, &reader_generation, DISPATCH_READER_PASSWORD).await;
-    let error = reader
-        .batch_execute(&format!("SELECT count(*) FROM {SCHEMA}.runs"))
-        .await
-        .expect_err("the widened SELECT on runs survived the reconcile");
-    assert_db_code(&error, "42501", "narrowed reader reads runs");
-    drop(reader);
-    assert!(
-        !su.query_one(
-            "SELECT pg_catalog.has_schema_privilege($1, $2, 'CREATE')",
-            &[&DISPATCH_READER_ROLE, &SCHEMA],
-        )
-        .await
-        .expect("probe reader CREATE")
-        .get::<_, bool>(0),
-        "the widened schema CREATE survived the reconcile"
-    );
-
-    // Leave the cluster as this leg found it: the role is cluster-wide.
-    reset(su).await;
 }
 
 /// Also a leg of `run_plane_reconcile_live`, and a separate entry for the same
 /// reason `stored_suite_cutover_live` is: so it can be run — and reached — on
 /// its own. The entries share the cluster-wide roles, so each holds the process
 /// lock.
-#[tokio::test]
-async fn dispatch_reader_read_surface_live() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let su = connect(&url).await;
-    dispatch_reader_read_surface_leg(&su, &url).await;
-}
-
 #[tokio::test]
 async fn environment_policy_row_security_live() {
     let url = locked_database::database(wamn_test_postgres::database);

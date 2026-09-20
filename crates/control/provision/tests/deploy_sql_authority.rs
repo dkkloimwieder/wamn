@@ -106,8 +106,7 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 /// Its explicit column grants and tenant predicates bound its reads.
 ///
 /// Sorted, because both consumers compare against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
-    "wamn_dispatch_reader",
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",
@@ -551,9 +550,8 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     //    keeps a demoted family from silently retaining the arm.
     //
     //    The stable ACL role is ensured FIRST, by its own builder: the membership
-    //    builder deliberately does not create it (it would harden the legacy
-    //    LOGIN-capable `wamn_dispatch_reader` to NOLOGIN and destroy that
-    //    credential), so it no-ops against a family whose role does not exist yet.
+    //    builder deliberately does not create it, so it no-ops against a family
+    //    whose role does not exist yet.
     for family in WorkloadRoleFamily::ALL {
         apply(&db_url, &sql::ensure_workload_acl_role_sql(family));
         apply(&db_url, &sql::platform_group_membership_sql(family));

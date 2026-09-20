@@ -46,7 +46,7 @@ pub use cdc::{
     upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
 
-use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE};
+use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{
     EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE,
     PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
@@ -143,7 +143,6 @@ pub fn drain_app_role_sessions_sql() -> String {
 /// pair. PostgreSQL checks privileges on every relation a statement references
 /// regardless of whether the subquery yields rows, so BOTH grants are load
 /// bearing even when the table is empty.
-pub const DISPATCH_READER_RELATIONS: [&str; 2] = ["run_queue", "effect_attempts"];
 
 /// Catalog relations read by the surviving management-admission surface.
 ///
@@ -269,68 +268,6 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
     "lease_generation",
     "attempts",
 ];
-/// `REVOKE CONNECT ON DATABASE "<database>" FROM "wamn_dispatch_reader"`.
-///
-/// **This used to GRANT, and the reversal is the whole of `wamn-0h0g.22.24`.**
-/// `wamn_dispatch_reader` is CLUSTER-GLOBAL and its generations are members
-/// `WITH INHERIT TRUE`, so one `GRANT CONNECT` per environment reached EVERY
-/// environment on the cluster — the identical defect `wamn-0h0g.12.179` measured
-/// live for the guest and closed in `provision_project_env::privilege_sql`.
-/// CONNECT belongs to the GENERATION, which
-/// [`prepare_workload_generation_sql`] grants it directly and only on the one
-/// database that generation was minted for.
-///
-/// **Order is load-bearing exactly as it is for the owner statement:** run this
-/// AFTER [`set_database_owner_sql`]. `ALTER DATABASE … OWNER TO` rewrites the
-/// outgoing owner's ACL entry, and a revoke applied before it can be undone by
-/// the entry the owner change carries over.
-///
-/// It is what CONVERGES a pre-cutover environment: an environment provisioned
-/// while the reader was a stable LOGIN still carries that `CONNECT`, and the
-/// dispatch-reader generation prepare refuses until this has run, because
-/// `verify_stable_workload_role` requires a connection-free stable ACL role.
-pub fn revoke_dispatch_reader_connect_sql(database: &str) -> String {
-    format!(
-        "REVOKE CONNECT ON DATABASE {db} FROM {role};",
-        db = quote_ident(database),
-        role = quote_ident(DISPATCH_READER_ROLE),
-    )
-}
-
-/// The dispatcher's whole in-database read surface, applied convergently inside
-/// one project-env database: `USAGE` on the run-plane `schema` and `SELECT` on
-/// [`DISPATCH_READER_RELATIONS`]. Nothing else — no `runs`, no `node_runs`, no
-/// `catalog`, no `EXECUTE`.
-///
-/// Every grant is preceded by a blanket `REVOKE` over the same scope, so the
-/// batch NARROWS as well as grants: an environment where someone widened the
-/// reader converges back to exactly this surface on the next apply, and a replay
-/// against an already-correct environment is a no-op. That is what makes this the
-/// provisioner's convergent step rather than a one-shot migration script.
-///
-/// Run connected to the project-env database as a principal that owns the
-/// run-plane relations (the database owner or the cluster superuser), AFTER the
-/// run-plane schema has been applied — the `REVOKE`/`GRANT` name relations that
-/// must already exist.
-pub fn grant_dispatch_reader_read_surface_sql(schema: &str) -> String {
-    let role = quote_ident(DISPATCH_READER_ROLE);
-    let schema_ident = quote_ident(schema);
-    let mut sql = format!(
-        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {schema_ident} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA {schema_ident} FROM {role}; \
-         GRANT USAGE ON SCHEMA {schema_ident} TO {role};"
-    );
-    for relation in DISPATCH_READER_RELATIONS {
-        write!(
-            sql,
-            " GRANT SELECT ON {schema_ident}.{relation} TO {role};",
-            relation = quote_ident(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    sql
-}
-
 /// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
 /// group every non-guest tenant-floor arm targets (`wamn-0h0g.22.17`).
 ///
@@ -381,15 +318,10 @@ pub fn ensure_platform_group_role_sql() -> String {
 /// membership and nothing else. `REVOKE` precedes the `GRANT` so a replay that
 /// finds a drifted edge replaces it instead of leaving it, and so a family that
 /// stops being platform-grain loses the arm on the next converge.
-/// # IT DOES NOT ENSURE THE ACL ROLE
+/// # It does not ensure the ACL role
 ///
-/// Historically it could not: [`WorkloadRoleFamily::DispatchReader`]'s stable
-/// role was minted as a LOGIN with a password, and [`ensure_workload_acl_role_sql`]
-/// HARDENS its target to `NOLOGIN PASSWORD NULL`, so composing the ensure builder
-/// in here would have revoked that credential every time this edge converged.
-/// `wamn-0h0g.22.24` retired that shape and the hazard with it. The separation
-/// stays anyway, because it is the right one: an ACL role's lifecycle belongs to
-/// its own builder, and this one only touches the edge — behind an existence
+/// An ACL role's lifecycle belongs to its own builder. This function only
+/// touches the membership edge, behind an existence
 /// guard, so a caller that has not created the role yet gets a no-op rather than
 /// an error.
 pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
@@ -756,9 +688,7 @@ pub const IDENTITY_READER_RELATIONS: [&str; 5] = [
 /// Converge one system-plane reader's stable ACL role to exactly `SELECT` on
 /// `relations` inside `schema`, and nothing anywhere else in the control plane.
 ///
-/// Table-level rather than column-exact — the
-/// [`grant_dispatch_reader_read_surface_sql`] shape rather than the
-/// management-admitter one: these roles hold no write privilege at all, so a
+/// Table-level rather than column-exact: these roles hold no write privilege, so a
 /// column list would withhold only timestamps and labels while making a query
 /// that reads one more column fail in production instead of at review.
 ///
@@ -948,85 +878,6 @@ mod tests {
             "DROP DATABASE IF EXISTS \"wamn-db-acme--billing--dev\" WITH (FORCE)"
         );
     }
-
-    #[test]
-    fn the_dispatch_reader_is_a_connection_free_stable_acl_role() {
-        // `wamn-0h0g.22.24`: the family HAD its own create-or-harden builder that
-        // minted a LOGIN role with a documented default password, because the
-        // dispatcher authenticated as the stable role itself. It now takes the
-        // generic ACL-role builder like every other family, and the assertion
-        // that matters is the NEGATIVE one — a builder that reintroduces LOGIN or
-        // a password hands a cluster-global credential CONNECT that its
-        // generations inherit into every database on the cluster.
-        let sql = ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader);
-        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
-        assert!(sql.contains("'wamn_dispatch_reader'"));
-        assert!(sql.contains("CREATE ROLE %I NOLOGIN"));
-        assert!(sql.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
-        assert!(
-            !sql.contains("PASSWORD '"),
-            "the stable role carries no credential"
-        );
-        // The harden arm treats a role that CAN log in as drifted — the exact
-        // negation the retired builder spelled the other way round.
-        assert!(sql.contains("rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
-        assert!(sql.contains("OR rolpassword IS NOT NULL"));
-        assert!(sql.contains("FROM pg_catalog.pg_authid WHERE rolname = role_name"));
-        // This builder owns the role identity only — never a grant.
-        for forbidden in ["ON SCHEMA", "ON TABLE", "CONNECT ON DATABASE"] {
-            assert!(!sql.contains(forbidden), "role builder leaked a grant");
-        }
-    }
-
-    #[test]
-    fn dispatch_reader_read_surface_is_exactly_two_selects_and_narrows() {
-        let sql = grant_dispatch_reader_read_surface_sql("wamn_run");
-        // Every grant is preceded by a blanket REVOKE over the same scope, so a
-        // widened environment CONVERGES BACK. Without these the batch could only
-        // ever add authority, and an over-granted reader would survive forever.
-        let revoke_tables = sql
-            .find("REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"wamn_run\" FROM \"wamn_dispatch_reader\"")
-            .expect("blanket table revoke");
-        let revoke_schema = sql
-            .find("REVOKE ALL PRIVILEGES ON SCHEMA \"wamn_run\" FROM \"wamn_dispatch_reader\"")
-            .expect("blanket schema revoke");
-        let grant_usage = sql
-            .find("GRANT USAGE ON SCHEMA \"wamn_run\" TO \"wamn_dispatch_reader\"")
-            .expect("schema usage");
-        assert!(revoke_tables < grant_usage && revoke_schema < grant_usage);
-
-        // Exactly the two relations the dispatcher reads, and exactly SELECT.
-        for relation in DISPATCH_READER_RELATIONS {
-            assert!(sql.contains(&format!(
-                "GRANT SELECT ON \"wamn_run\".\"{relation}\" TO \"wamn_dispatch_reader\""
-            )));
-        }
-        assert_eq!(sql.matches("GRANT SELECT ON").count(), 2);
-        // No write verb, no EXECUTE, and no relation outside the pair. `runs` is
-        // the pointed omission: the dispatcher joins the queue's budget clause to
-        // `effect_attempts`, never to the run history.
-        for forbidden in [
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "TRUNCATE",
-            "REFERENCES",
-            "TRIGGER",
-            "EXECUTE",
-            "ALL TABLES IN SCHEMA \"wamn_run\" TO",
-            "\"runs\"",
-            "\"node_runs\"",
-            "catalog",
-        ] {
-            assert!(
-                !sql.contains(forbidden),
-                "read surface gained {forbidden:?}"
-            );
-        }
-        // The schema is an identifier position and is quoted, not interpolated.
-        assert!(grant_dispatch_reader_read_surface_sql("we\"ird").contains("\"we\"\"ird\""));
-    }
-
     #[test]
     fn management_admitter_surface_is_current_column_exact_and_convergent() {
         let sql = grant_management_admitter_surface_sql("wamn_run");
@@ -1473,37 +1324,6 @@ mod tests {
         assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn_system\""));
         assert!(stable_surface_sql(WorkloadRoleFamily::IdentityReader).is_some());
     }
-
-    #[test]
-    fn the_dispatch_reader_connect_builder_revokes_and_never_grants() {
-        let sql = revoke_dispatch_reader_connect_sql("wamn-db-acme--billing--dev");
-        assert_eq!(
-            sql,
-            "REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
-             FROM \"wamn_dispatch_reader\";"
-        );
-        // `wamn-0h0g.22.24`: the direction is the fix. A `GRANT` here is
-        // cluster-global reach, because every dispatch-reader generation is a
-        // member of this role WITH INHERIT TRUE.
-        assert!(!sql.contains("GRANT"));
-        // It touches ONE principal, so one edit cannot move both.
-        assert!(!sql.contains(APP_ROLE));
-        // The generation is where CONNECT lives now, and only for its own
-        // database.
-        let generation = prepare_workload_generation_sql(
-            WorkloadRoleFamily::DispatchReader,
-            "wamn-db-acme--billing--dev",
-            "wamn_dispatch_reader_0123456789abcdef0123456789abcdef01234567_a",
-            "pw",
-            "2030-01-01T00:00:00Z",
-        );
-        assert!(generation.contains(
-            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
-             TO \"wamn_dispatch_reader_0123456789abcdef0123456789abcdef01234567_a\";"
-        ));
-        assert_eq!(generation.matches("GRANT CONNECT ON DATABASE").count(), 1);
-    }
-
     /// wamn-0h0g.8.18: the stable control-author role is host-only, hardens on
     /// replay, and never becomes a member of another plane's role.
     #[test]

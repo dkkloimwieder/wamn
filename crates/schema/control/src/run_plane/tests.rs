@@ -3059,62 +3059,6 @@ fn schema_rewrite_is_dot_anchored() {
             .contains("SET search_path = pg_catalog, pg_temp, poc_f1")
     );
 }
-
-/// wamn-0h0g.12.123. Pinned SEPARATELY from the block below because the
-/// exact shape of these two is the bug: `select_run_capture_privileges_sql`
-/// encoded a grant shape the real grant could never satisfy, so drift stayed
-/// permanently true and the reconciler planned a repair forever
-/// (wamn-0h0g.12.40). These queries must observe ONLY what the reader's
-/// `REVOKE`/`GRANT` repair can reach.
-#[test]
-fn dispatch_reader_observation_sql_is_pinned() {
-    let schema_privileges = select_dispatch_reader_schema_privileges_sql();
-    let table_privileges = select_dispatch_reader_table_privileges_sql();
-
-    // DIRECT acl entries only. `has_schema_privilege` / `has_table_privilege`
-    // would also report authority reached through PUBLIC or a group, which
-    // `REVOKE … FROM "wamn_dispatch_reader"` cannot remove.
-    for observation in [schema_privileges, table_privileges] {
-        assert!(observation.contains("aclexplode"), "{observation}");
-        assert!(
-            observation.contains("acl.grantee = reader.oid"),
-            "{observation}"
-        );
-        assert!(
-            !observation.contains("has_schema_privilege"),
-            "{observation}"
-        );
-        assert!(
-            !observation.contains("has_table_privilege"),
-            "{observation}"
-        );
-        assert!(
-            !observation.contains("has_column_privilege"),
-            "{observation}"
-        );
-        // The role name is bound, never inlined: `wamn_control_provision`
-        // owns it, and a second copy here could drift from the builder.
-        assert!(observation.contains("$2"), "{observation}");
-        assert!(
-            !observation.contains("wamn_dispatch_reader"),
-            "{observation}"
-        );
-    }
-
-    // Role absence must be observable and must not collapse into "no
-    // privileges", which would be indistinguishable from a role that exists
-    // and was never granted.
-    assert!(schema_privileges.contains("reader.oid IS NOT NULL"));
-    assert!(schema_privileges.contains("LEFT JOIN pg_catalog.pg_roles"));
-    assert!(schema_privileges.contains("acldefault('n', namespace.nspowner)"));
-
-    // Exactly the relkinds `GRANT/REVOKE … ON ALL TABLES IN SCHEMA` reaches.
-    // A sequence grant observed here would be drift the repair could never
-    // clear — the .12.40 shape again, one relkind over.
-    assert!(table_privileges.contains("relation.relkind IN ('r', 'p', 'v', 'm', 'f')"));
-    assert!(!table_privileges.contains("'S'"));
-}
-
 /// Named mutant guard: omitting any one field lets a disabled/unforced RLS
 /// flag or a missing/widened policy falsely observe as converged.
 #[test]

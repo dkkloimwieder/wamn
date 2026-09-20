@@ -5,10 +5,10 @@ use std::fmt;
 use sha2::{Digest as _, Sha256};
 use wamn_run_state::{AuthorityClass, CredentialGeneration, app_scope_hash};
 
+use crate::APP_ROLE;
 use crate::name::{
     CONTROL_AUTHOR_SECRET_PREFIX, GUEST_SECRET_PREFIX, MANAGEMENT_ADMITTER_SECRET_PREFIX,
 };
-use crate::{APP_ROLE, DISPATCH_READER_ROLE};
 
 /// Stable NOLOGIN role used by control-author generations.
 pub const CONTROL_AUTHOR_ROLE: &str = "wamn_control_author";
@@ -106,7 +106,6 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 pub enum WorkloadRoleFamily {
     ControlAuthor,
     ManagementAdmitter,
-    DispatchReader,
     ServiceReader,
     App,
     Retention,
@@ -126,10 +125,9 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 12] = [
         Self::ControlAuthor,
         Self::ManagementAdmitter,
-        Self::DispatchReader,
         Self::ServiceReader,
         Self::App,
         Self::Retention,
@@ -147,7 +145,6 @@ impl WorkloadRoleFamily {
         match self {
             Self::ControlAuthor => CONTROL_AUTHOR_ROLE,
             Self::ManagementAdmitter => MANAGEMENT_ADMITTER_ROLE,
-            Self::DispatchReader => DISPATCH_READER_ROLE,
             Self::ServiceReader => SERVICE_READER_ROLE,
             Self::App => APP_ROLE,
             Self::Retention => RETENTION_ROLE,
@@ -188,7 +185,6 @@ impl WorkloadRoleFamily {
         match self {
             Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeKind::Tenant,
             Self::ManagementAdmitter
-            | Self::DispatchReader
             | Self::ServiceReader
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
@@ -313,7 +309,6 @@ impl WorkloadRoleFamily {
         match self {
             Self::ControlAuthor => b"wamn.control-author.scope.v0.1",
             Self::ManagementAdmitter => b"wamn.management-admitter.scope.v0.1",
-            Self::DispatchReader => b"wamn.dispatch-reader.scope.v0.1",
             Self::ServiceReader => b"wamn.service-reader.scope.v0.1",
             Self::App => b"wamn.app.scope.v0.1",
             Self::Retention => b"wamn.run-retention.scope.v0.1",
@@ -338,7 +333,7 @@ impl WorkloadRoleFamily {
 /// than growing an arm.
 ///
 /// The direction is deliberate and one-way. Several families (`ControlAuthor`,
-/// `DispatchReader`, `ServiceReader`, `Retention`, `ManagementAdmitter`) carry no authority class at all, so the inverse is not
+/// `ServiceReader`, `Retention`, and `ManagementAdmitter`) carry no authority class at all, so the inverse is not
 /// a function and is not offered.
 impl From<AuthorityClass> for WorkloadRoleFamily {
     fn from(class: AuthorityClass) -> Self {
@@ -605,10 +600,9 @@ mod tests {
     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
     /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen;
     /// `wamn-emtx.13`: fourteen; `wamn-0h0g.10.15`: thirteen).
-    const FAMILIES: [WorkloadRoleFamily; 13] = [
+    const FAMILIES: [WorkloadRoleFamily; 12] = [
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
-        WorkloadRoleFamily::DispatchReader,
         WorkloadRoleFamily::ServiceReader,
         WorkloadRoleFamily::App,
         WorkloadRoleFamily::Retention,
@@ -629,17 +623,16 @@ mod tests {
             let pinned = match family {
                 WorkloadRoleFamily::ControlAuthor => 0,
                 WorkloadRoleFamily::ManagementAdmitter => 1,
-                WorkloadRoleFamily::DispatchReader => 2,
-                WorkloadRoleFamily::ServiceReader => 3,
-                WorkloadRoleFamily::App => 4,
-                WorkloadRoleFamily::Retention => 5,
-                WorkloadRoleFamily::ExecutorPlatform => 6,
-                WorkloadRoleFamily::HttpAdmitter => 7,
-                WorkloadRoleFamily::EventMaterializer => 8,
-                WorkloadRoleFamily::RegistryReader => 9,
-                WorkloadRoleFamily::IdentityReader => 10,
-                WorkloadRoleFamily::SessionRoleReader => 11,
-                WorkloadRoleFamily::AuditRetention => 12,
+                WorkloadRoleFamily::ServiceReader => 2,
+                WorkloadRoleFamily::App => 3,
+                WorkloadRoleFamily::Retention => 4,
+                WorkloadRoleFamily::ExecutorPlatform => 5,
+                WorkloadRoleFamily::HttpAdmitter => 6,
+                WorkloadRoleFamily::EventMaterializer => 7,
+                WorkloadRoleFamily::RegistryReader => 8,
+                WorkloadRoleFamily::IdentityReader => 9,
+                WorkloadRoleFamily::SessionRoleReader => 10,
+                WorkloadRoleFamily::AuditRetention => 11,
             };
             assert_eq!(index, pinned, "{family:?}");
         }
@@ -647,7 +640,6 @@ mod tests {
             FAMILIES.map(WorkloadRoleFamily::scope_kind),
             [
                 WorkloadRoleScopeKind::Control,
-                WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Tenant,
@@ -666,7 +658,6 @@ mod tests {
             [
                 "wamn_control_author",
                 "wamn_management_admitter",
-                "wamn_dispatch_reader",
                 "wamn_service_reader",
                 "wamn_app",
                 "wamn_run_retention",
@@ -712,15 +703,6 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::ManagementAdmitter,
-                WorkloadRoleScope::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::DispatchReader,
                 WorkloadRoleScope::ProjectEnvironment {
                     org: "o",
                     project: "p",

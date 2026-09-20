@@ -73,7 +73,7 @@
 #   kubectl -n wamn-system rollout restart deploy/nats
 #   kubectl -n wamn-system rollout restart deploy/runtime-operator
 #   kubectl -n wamn-system rollout restart deploy/hostgroup-default
-#   kubectl -n wamn-system rollout restart deploy/executor deploy/registry
+#   kubectl -n wamn-system rollout restart deploy/registry
 #   # redo the CA copy into `cert-manager` — the ClusterIssuer still holds a
 #   # SNAPSHOT of the old CA (deploy/infra/wasmcloud-ca-issuer.yaml):
 #   kubectl -n wamn-system get secret wasmcloud-ca -o json \

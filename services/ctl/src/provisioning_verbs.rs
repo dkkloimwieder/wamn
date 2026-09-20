@@ -111,7 +111,7 @@ pub struct ProvisionProjectEnvArgs {
 
     /// Write the privilege SQL (`ALTER DATABASE … OWNER TO wamn_db_owner`, then
     /// `REVOKE CONNECT,TEMPORARY FROM PUBLIC` and `REVOKE CONNECT` from
-    /// `wamn_app` and `wamn_dispatch_reader`; apply AFTER the database is
+    /// `wamn_app`; apply AFTER the database is
     /// ready) here; `-` = stdout.
     #[arg(long)]
     pub emit_privilege_sql: Option<PathBuf>,
@@ -339,10 +339,8 @@ pub struct EnableCdcProjectEnvArgs {
     /// emitted URL + role SQL). Supply it with `--replication-password` or the
     /// env var `WAMN_REPLICATION_PASSWORD`.
     ///
-    /// **Deliberately has no `default_value`.** This is the shape
-    /// `--dispatch-reader-password` held in `provision-project-env`
-    /// (wamn-0h0g.12.122) until `wamn-0h0g.22.24` retired that flag. A default
-    /// here minted a `LOGIN REPLICATION` role
+    /// **Deliberately has no `default_value`.** A default here would mint a
+    /// `LOGIN REPLICATION` role
     /// with a publicly known password, and `REPLICATION` authority is
     /// cluster-wide: it can open a replication session against any database on
     /// the cluster and decode co-tenant WAL. Provisioning refuses instead

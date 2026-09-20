@@ -414,40 +414,6 @@ fn provisioning_summary_contains_no_database_credentials() {
     assert!(!summary.contains("password"));
     assert!(!summary.contains("app url"));
 }
-
-/// `wamn-0h0g.22.24` RETIRED `--dispatch-reader-password`, and this is the
-/// pin that keeps it retired.
-///
-/// The flag existed because the dispatcher authenticated as the stable,
-/// cluster-global `wamn_dispatch_reader` LOGIN. That shape is the hazard
-/// `wamn-0h0g.12.179` measured live for the guest — a cluster-global role
-/// with a per-database `GRANT CONNECT` reaches every database on the
-/// cluster, because its generations inherit `WITH INHERIT TRUE`. The family
-/// is now on generations, so provisioning mints no dispatcher credential at
-/// all and there is nothing to pass. A reintroduced flag would be a
-/// reintroduced shared login.
-#[test]
-fn provisioning_mints_no_dispatch_reader_credential() {
-    let parsed = parse_args(&["--emit-secret", "/tmp/db.json"])
-        .expect("provisioning needs no dispatch-reader credential");
-    assert!(parsed.emit_secret.is_some());
-    // The flag is gone from the parser, not merely unused by this call.
-    let rejected = parse_args(&[
-        "--emit-secret",
-        "/tmp/db.json",
-        "--dispatch-reader-password",
-        "reader-probe",
-    ])
-    .expect_err("the retired dispatch-reader credential flag still parses");
-    assert_eq!(rejected.kind(), clap::error::ErrorKind::UnknownArgument);
-    // And the role batch mints a connection-free NOLOGIN carrier, never a
-    // login with a password.
-    let batch = role_sql();
-    assert!(batch.contains("'wamn_dispatch_reader'"));
-    assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN"));
-    assert!(batch.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
-}
-
 /// The exempt-mode half of `wamn-0h0g.12.141`, kept after `wamn-xv69`
 /// deleted the `--app-password` half it was written beside.
 ///
@@ -544,11 +510,7 @@ fn no_flag_exclusion_list_names_a_family_and_none_can() {
     assert_eq!(
         survivors.len(),
         1,
-        "the database Secret is the only argument a provisioning-only \
-             invocation still owes — wamn-0h0g.22.24 retired \
-             `--dispatch-reader-password` with the stable-LOGIN shape that \
-             needed it, and wamn-xv69 retired `--app-password` with the \
-             legacy shared-app URL surface"
+        "the database Secret is the only argument a provisioning-only invocation still owes"
     );
 
     for family in WorkloadRoleFamily::ALL {

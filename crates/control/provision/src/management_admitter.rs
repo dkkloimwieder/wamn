@@ -297,8 +297,7 @@ mod tests {
         // 18 + 1 + 40 + 1 + 1, inside PostgreSQL's 63-byte identifier limit. The
         // 24-byte stable ACL role name would have minted 67 (wamn-0h0g.13.62),
         // which is why the generation prefix is its own frozen, shorter string.
-        // This bound is THIS family's, not a universal one: `wamn_dispatch_reader`
-        // is 20 bytes and derives a role of exactly 63, which fits.
+        // This bound is this family's rather than a universal role-name limit.
         assert_eq!(a.len(), 61);
         assert_eq!(b.len(), 61);
         assert!(MANAGEMENT_ADMITTER_ROLE.len() > "wamn_mgmt_admitter".len());

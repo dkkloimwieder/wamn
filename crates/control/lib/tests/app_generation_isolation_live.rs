@@ -19,16 +19,13 @@
 //! `GRANT CONNECT` on the stable ACL role is a session on every environment of
 //! the cluster. `wamn-0h0g.12.179` measured exactly that.
 //!
-//! BOTH DIRECTIONS ARE ASSERTED, for the reason
-//! `dispatch_reader_provisioning_live::cross_database_reach_is_closed_leg`
-//! gives for its own family. A refusal on its own cannot tell a closed reach
+//! BOTH DIRECTIONS ARE ASSERTED. A refusal on its own cannot tell a closed reach
 //! from a credential that never worked, so the positive control runs first,
 //! against the same credential, in the same test.
 //!
 //! The SQLSTATE is MEASURED and asserted as a code, never as a message string.
 //! PostgreSQL 18 checks database `CONNECT` while it initializes the backend and
-//! reports the failure as `42501`, the same code the dispatch-reader arm
-//! records.
+//! reports the failure as `42501`.
 //!
 //! The test runs on the PostgreSQL server of its own test process and holds the
 //! process lock of that server, because it creates cluster-global roles.
