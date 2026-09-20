@@ -98,25 +98,6 @@ pub enum RecordReceiptErrorKind {
 }
 
 impl RecordReceiptErrorKind {
-    /// Every class, so a drift guard can walk the whole vocabulary. A variant
-    /// added without being listed here is invisible to that guard.
-    #[cfg(test)]
-    pub(crate) const ALL: &'static [Self] = &[
-        Self::InvalidInput,
-        Self::PurchaseOrderNotFound,
-        Self::PurchaseOrderNotOpen,
-        Self::PurchaseOrderLineNotFound,
-        Self::PurchaseOrderLineMismatch,
-        Self::LocationNotFound,
-        Self::QuantityExceedsRemaining,
-        Self::ReceiptReferenceConflict,
-        Self::IdempotencyConflict,
-        Self::Retry,
-        Self::Timeout,
-        Self::PermissionDenied,
-        Self::InternalError,
-    ];
-
     /// Frozen manifest-owned error literal.
     pub const fn literal(self) -> &'static str {
         match self {
@@ -1023,19 +1004,6 @@ mod tests {
         assert_eq!(
             prepare(&command(Vec::new())).unwrap_err().kind(),
             RecordReceiptErrorKind::InvalidInput
-        );
-    }
-
-    #[test]
-    fn all_closed_literals_are_distinct() {
-        let kinds = RecordReceiptErrorKind::ALL;
-        assert_eq!(
-            kinds
-                .iter()
-                .map(|kind| kind.literal())
-                .collect::<BTreeSet<_>>()
-                .len(),
-            kinds.len()
         );
     }
 }

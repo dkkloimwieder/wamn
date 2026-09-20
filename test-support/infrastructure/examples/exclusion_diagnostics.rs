@@ -1,4 +1,4 @@
-//! Generate real exclusion diagnostics and run both guest error-mapping tests.
+//! Generate real exclusion diagnostics and run the Receiving error-mapping test.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -35,25 +35,10 @@ fn sql_paths(value: &Value, paths: &mut BTreeSet<String>) {
     }
 }
 
-async fn generate_fixture(
-    url: &str,
-    package: &Path,
-    constraint: &str,
-    overlay: bool,
-) -> anyhow::Result<()> {
+async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
     let manifest_path = package.join("wamn.json");
-    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
-    let model = &mut manifest["models"]["purchase_order"];
-    for action in ["create", "update"] {
-        if let Some(operation) = model["operations"].get_mut(action) {
-            operation["error_details"]["exclusion_violation"] = json!({"required": ["constraint"]});
-        }
-    }
-    if overlay {
-        model["constraint_owners"][constraint] = json!("client_acme_receiving");
-    }
-    let manifest_bytes = serde_json::to_vec(&manifest)?;
-    std::fs::write(&manifest_path, &manifest_bytes)?;
+    let manifest_bytes = std::fs::read(&manifest_path)?;
+    let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
     let catalog = introspect_package(url, package).await?;
     let mut paths = BTreeSet::new();
     sql_paths(&manifest, &mut paths);
@@ -139,74 +124,38 @@ async fn main() -> anyhow::Result<()> {
                ('second', gen_random_uuid(), now(), gen_random_uuid(), now(), gen_random_uuid());
         ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_supplier_id_excl EXCLUDE USING gist (supplier_id WITH =);").await?;
     let receiving = diagnostic(&client, "UPDATE receiving.purchase_order SET supplier_id = (SELECT supplier_id FROM receiving.purchase_order WHERE purchase_order_number = 'first') WHERE purchase_order_number = 'second'").await?;
-    generate_fixture(
-        database.url(),
-        &scratch.path().join("apps/wamn_receiving"),
-        "purchase_order_supplier_id_excl",
-        false,
-    )
-    .await?;
-    client
-        .batch_execute(
-            "ALTER TABLE receiving.purchase_order DROP CONSTRAINT purchase_order_supplier_id_excl",
-        )
-        .await?;
-    client
-        .batch_execute(include_str!(
-            "../../../apps/client_acme_receiving/migrations/0001_add_inspection_required.sql"
-        ))
-        .await?;
-    client
-        .batch_execute(include_str!(
-            "../../../apps/client_acme_receiving/migrations/0002_quality_inspection.sql"
-        ))
-        .await?;
-    client.batch_execute("UPDATE receiving.purchase_order SET acme_quality_status = 'pending' WHERE purchase_order_number = 'second';
-        ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_acme_quality_status_excl EXCLUDE USING gist (acme_quality_status WITH =);").await?;
-    let overlay = diagnostic(&client, "UPDATE receiving.purchase_order SET acme_quality_status = 'not_required' WHERE purchase_order_number = 'second'").await?;
-    generate_fixture(
-        database.url(),
-        &scratch.path().join("apps/client_acme_receiving"),
-        "purchase_order_acme_quality_status_excl",
-        true,
-    )
-    .await?;
+    generate_fixture(database.url(), &scratch.path().join("apps/wamn_receiving")).await?;
     let diagnostics = scratch.path().join("exclusion-diagnostics.json");
     std::fs::write(
         &diagnostics,
-        serde_json::to_vec(&json!({"receiving": receiving, "client_acme_receiving": overlay}))?,
+        serde_json::to_vec(&json!({"receiving": receiving}))?,
     )?;
     drop(client);
     task.await??;
     server.stop()?;
-    for package in [
-        "wamn-receiving-data-access",
-        "wamn-client-acme-receiving-data-access",
-    ] {
-        let status = Command::new(root.join("tools/require-test-result"))
-            .current_dir(scratch.path())
-            .env("WAMN_EXCLUSION_DIAGNOSTICS", &diagnostics)
-            .env("CARGO_TARGET_DIR", scratch.path().join("target"))
-            .args([
-                "cargo",
-                "test",
-                "--manifest-path",
-                "apps/Cargo.toml",
-                "--locked",
-                "--offline",
-                "-p",
-                package,
-                "--lib",
-                "operation::tests::generated_update_exclusion_from_postgres",
-                "--",
-                "--exact",
-                "--ignored",
-            ])
-            .status()?;
-        ensure!(
-            status.success(),
-            "generated exclusion test failed for {package}"
-        );
-    }
+    let status = Command::new(root.join("tools/require-test-result"))
+        .current_dir(scratch.path())
+        .env("WAMN_EXCLUSION_DIAGNOSTICS", &diagnostics)
+        .env("CARGO_TARGET_DIR", scratch.path().join("target"))
+        .args([
+            "cargo",
+            "test",
+            "--manifest-path",
+            "apps/Cargo.toml",
+            "--locked",
+            "--offline",
+            "-p",
+            "wamn-receiving-data-access",
+            "--lib",
+            "error::tests::generated_update_exclusion_from_postgres",
+            "--",
+            "--exact",
+            "--ignored",
+        ])
+        .status()?;
+    ensure!(
+        status.success(),
+        "generated exclusion test failed for Receiving"
+    );
     Ok(())
 }

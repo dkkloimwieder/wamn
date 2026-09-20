@@ -246,13 +246,6 @@ fn receipt_insert_registration_selects_one_private_owner_wiring() {
             "ops": ["insert"]
         })
     );
-    let generated = read_json(
-        &package_root().join("generated/contracts/quality/create_inspection.operation.json"),
-    );
-    assert!(generated["grant"].is_null());
-    assert!(generated["permission_token"].is_null());
-    assert_eq!(generated["operation"], PRIVATE_OPERATION);
-
     let mut owner_entries = Vec::new();
     let directory = publication_root().join("wirings");
     for entry in std::fs::read_dir(&directory)

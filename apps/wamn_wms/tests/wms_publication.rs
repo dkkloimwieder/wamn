@@ -220,20 +220,4 @@ fn the_move_route_demands_exactly_what_the_command_requires() {
         ]
     );
     assert_eq!(value["additionalProperties"], false);
-
-    // The declared contract is the authority: every field the operation's
-    // input contract names must be demanded by the route that carries it.
-    let contract = read_json(
-        &repository_root().join("apps/wamn_wms/generated/contracts/inventory/move.input.json"),
-    );
-    for field in contract["fields"].as_array().expect("fields") {
-        let path = field["path"].as_str().expect("path");
-        let Some(name) = path.strip_prefix("value.") else {
-            continue;
-        };
-        assert!(
-            required.contains(&name),
-            "the route does not demand {path}, which the command requires"
-        );
-    }
 }

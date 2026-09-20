@@ -6,23 +6,10 @@
 
 use wamn_postgres_statements::Connection;
 
-#[cfg(test)]
-use crate::error::AccessErrorKind;
 use crate::error::{self, AccessError};
 use crate::generated::wamn::inventory_aggregate as sql;
 
 pub use crate::generated::wamn::inventory_aggregate::InventoryAggregateRow;
-
-/// What `inventory.aggregate` can refuse with. Read only by the contract test in
-/// `error`, which holds this list to the operation's generated contract.
-#[cfg(test)]
-pub(crate) const REFUSALS: &[AccessErrorKind] = &[
-    AccessErrorKind::InvalidInput,
-    AccessErrorKind::Retry,
-    AccessErrorKind::Timeout,
-    AccessErrorKind::PermissionDenied,
-    AccessErrorKind::InternalError,
-];
 
 /// # Errors
 ///

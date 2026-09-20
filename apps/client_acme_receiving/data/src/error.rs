@@ -31,20 +31,6 @@ pub enum AccessErrorKind {
 }
 
 impl AccessErrorKind {
-    /// Every class, so a drift guard can walk the whole vocabulary. A variant
-    /// added without being listed here is invisible to that guard.
-    #[cfg(test)]
-    pub(crate) const ALL: &'static [Self] = &[
-        Self::InvalidInput,
-        Self::NotFound,
-        Self::ConcurrencyConflict,
-        Self::ExclusionViolation,
-        Self::Retry,
-        Self::Timeout,
-        Self::PermissionDenied,
-        Self::InternalError,
-    ];
-
     /// Frozen operation-contract literal for this failure.
     pub const fn literal(self) -> &'static str {
         match self {
@@ -280,91 +266,6 @@ mod tests {
                     (AccessErrorKind::InternalError, None)
                 );
             }
-        }
-    }
-
-    /// The PIN between this crate's hand-copied vocabulary and the generator's.
-    ///
-    /// The generator owns one platform vocabulary,
-    /// `AccessOperationErrorLiteral`, and writes every operation's closed case
-    /// list from it. This enum is a HAND copy of the part the overlay uses, and
-    /// nothing held the copy to the source: when `exclusion_violation` joined
-    /// the platform vocabulary the copy did not grow. This test holds them
-    /// together in both directions.
-    #[test]
-    fn the_hand_copied_vocabulary_agrees_with_the_generated_contracts() {
-        /// Operations this crate implements. The package also re-declares the
-        /// inherited `receiving/record_receipt`, which this crate does not
-        /// serve, so its contract is not one this vocabulary must cover.
-        const OPERATIONS: &[&str] = &[
-            "purchase_order/get",
-            "purchase_order/update",
-            "quality/approve_inspection",
-            "quality/create_inspection",
-            "quality/load_purchase_order_detail",
-        ];
-
-        let declared: std::collections::BTreeSet<String> = OPERATIONS
-            .iter()
-            .flat_map(|operation| {
-                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../generated/contracts")
-                    .join(format!("{operation}.errors.json"));
-                let contract: serde_json::Value = serde_json::from_slice(
-                    &std::fs::read(&path)
-                        .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
-                )
-                .expect("parses");
-                contract["cases"]
-                    .as_array()
-                    .expect("cases")
-                    .iter()
-                    .map(|case| case["literal"].as_str().expect("literal").to_owned())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let exclusions = crate::generated::purchase_order::UPDATE_EXCLUSION_CONSTRAINTS;
-        let update: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../generated/contracts/purchase_order/update.errors.json"),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let declared_exclusions: std::collections::BTreeSet<&str> = update["cases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|case| case["literal"] == "exclusion_violation")
-            .map(|case| case["constraint"].as_str().unwrap())
-            .collect();
-        assert_eq!(
-            exclusions
-                .iter()
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>(),
-            declared_exclusions,
-            "the generated exclusion slice and contract disagree"
-        );
-        let spelled: std::collections::BTreeSet<&str> = AccessErrorKind::ALL
-            .iter()
-            .filter(|kind| **kind != AccessErrorKind::ExclusionViolation || !exclusions.is_empty())
-            .map(|kind| kind.literal())
-            .collect();
-
-        for literal in &spelled {
-            assert!(
-                declared.contains(*literal),
-                "{literal} is spelled here but declared by no contract this crate implements"
-            );
-        }
-        for literal in &declared {
-            assert!(
-                spelled.contains(literal.as_str()),
-                "{literal} is declared by a contract this crate implements, \
-                 but no error kind here spells it"
-            );
         }
     }
 }

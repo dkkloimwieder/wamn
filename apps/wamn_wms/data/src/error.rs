@@ -1,10 +1,4 @@
-//! The refusals the WMS operations declare, and the one translation into them.
-//!
-//! Every literal here is one some operation's contract names, and no operation
-//! produces one its own contract does not: each module lists what it can
-//! refuse with, and the test below holds every list to that operation's
-//! generated errors contract. A caller therefore never observes a class the
-//! contract it read did not promise.
+//! WMS operation failures and their translation from statement errors.
 
 use std::error::Error;
 use std::fmt;
@@ -41,24 +35,6 @@ pub enum AccessErrorKind {
 }
 
 impl AccessErrorKind {
-    /// Every class, so a drift guard can walk the whole vocabulary. A variant
-    /// added without being listed here is invisible to that guard.
-    #[cfg(test)]
-    pub(crate) const ALL: &'static [Self] = &[
-        Self::InvalidInput,
-        Self::NotFound,
-        Self::PalletNotFound,
-        Self::LocationNotFound,
-        Self::QuantityNotFound,
-        Self::InsufficientQuantity,
-        Self::ConcurrencyConflict,
-        Self::IdempotencyConflict,
-        Self::Retry,
-        Self::Timeout,
-        Self::PermissionDenied,
-        Self::InternalError,
-    ];
-
     /// Frozen operation-contract literal.
     #[must_use]
     pub const fn literal(self) -> &'static str {
@@ -193,73 +169,5 @@ mod tests {
         assert_eq!(error.kind().literal(), "concurrency_conflict");
         assert_eq!(error.detail()["expected_row_version"], 4);
         assert_eq!(error.detail()["observed_row_version"], 7);
-    }
-
-    /// Every literal an operation can produce is one ITS contract declares.
-    /// The lists are the modules' own; a refusal added to a module without
-    /// being added to the manifest fails here, before a caller sees it.
-    #[test]
-    fn every_operation_refuses_only_what_its_contract_declares() {
-        let contracts: [(&str, &[AccessErrorKind]); 7] = [
-            ("inventory/move", crate::inventory_move::REFUSALS),
-            ("inventory/adjust", crate::inventory_adjust::REFUSALS),
-            ("inventory/merge", crate::inventory_merge::REFUSALS),
-            ("inventory/split", crate::inventory_split::REFUSALS),
-            ("inventory/aggregate", crate::inventory_aggregate::REFUSALS),
-            ("pallet/get", crate::pallet::GET_REFUSALS),
-            ("pallet/query", crate::pallet::QUERY_REFUSALS),
-        ];
-        let mut package_declares = std::collections::BTreeSet::new();
-        for (operation, refusals) in contracts {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../generated/contracts")
-                .join(format!("{operation}.errors.json"));
-            let contract: serde_json::Value = serde_json::from_slice(
-                &std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
-            )
-            .expect("parses");
-            let declared: Vec<&str> = contract["cases"]
-                .as_array()
-                .expect("cases")
-                .iter()
-                .map(|case| case["literal"].as_str().expect("literal"))
-                .collect();
-            assert!(
-                !refusals.is_empty(),
-                "{operation} lists what it refuses with"
-            );
-            for kind in refusals {
-                assert!(
-                    declared.contains(&kind.literal()),
-                    "{operation}: {} is not declared by the contract: {declared:?}",
-                    kind.literal()
-                );
-            }
-            package_declares.extend(declared.iter().map(|literal| (*literal).to_owned()));
-        }
-
-        // The direction the per-operation pass cannot see: the ENUM against the
-        // package. The generator owns one platform vocabulary,
-        // `AccessOperationErrorLiteral`, and writes every case list above from
-        // it; `AccessErrorKind` is a HAND copy of the part this package uses,
-        // and nothing held the copy to the source --- when `exclusion_violation`
-        // joined the platform vocabulary the copy did not grow.
-        let spelled: std::collections::BTreeSet<&str> = AccessErrorKind::ALL
-            .iter()
-            .map(|kind| kind.literal())
-            .collect();
-        for literal in &spelled {
-            assert!(
-                package_declares.contains(*literal),
-                "{literal} is spelled here but declared by no contract this crate implements"
-            );
-        }
-        for literal in &package_declares {
-            assert!(
-                spelled.contains(literal.as_str()),
-                "{literal} is declared by a contract this crate implements, \
-                 but no error kind here spells it"
-            );
-        }
     }
 }

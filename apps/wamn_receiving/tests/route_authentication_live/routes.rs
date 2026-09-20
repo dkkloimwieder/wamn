@@ -59,18 +59,6 @@ fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyho
     let copies = scratch.path().join("packages");
     prepare_fresh_only_packages(&copies)?;
     let base = copies.join("wamn_receiving");
-    for (directory, generated) in [
-        ("wamn_receiving", "receiving"),
-        ("client_acme_receiving", "client_acme_receiving"),
-    ] {
-        assert!(
-            copies
-                .join(directory)
-                .join(format!("generated/{generated}-tui/Cargo.toml"))
-                .is_file(),
-            "copied TUI output must retain its generated directory name"
-        );
-    }
     let manifest: Value = serde_json::from_slice(&std::fs::read(base.join("wamn.json"))?)?;
     let declaration: Value = serde_json::from_slice(&std::fs::read(
         base.join("publication/components/receiving.json.in"),

@@ -30,21 +30,6 @@ use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_move as sql;
 use crate::scalar;
 
-/// What `inventory.move` can refuse with. Read only by the contract test in
-/// `error`, which holds this list to the operation's generated contract.
-#[cfg(test)]
-pub(crate) const REFUSALS: &[AccessErrorKind] = &[
-    AccessErrorKind::InvalidInput,
-    AccessErrorKind::PalletNotFound,
-    AccessErrorKind::LocationNotFound,
-    AccessErrorKind::ConcurrencyConflict,
-    AccessErrorKind::IdempotencyConflict,
-    AccessErrorKind::Retry,
-    AccessErrorKind::Timeout,
-    AccessErrorKind::PermissionDenied,
-    AccessErrorKind::InternalError,
-];
-
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct MoveCommand {

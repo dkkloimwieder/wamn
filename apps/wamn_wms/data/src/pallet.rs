@@ -16,29 +16,6 @@ use crate::scalar;
 
 pub use crate::generated::wamn::pallet::PalletRow;
 
-/// What `pallet.get` can refuse with. Read only by the contract test in
-/// `error`, which holds this list to the operation's generated contract.
-#[cfg(test)]
-pub(crate) const GET_REFUSALS: &[AccessErrorKind] = &[
-    AccessErrorKind::InvalidInput,
-    AccessErrorKind::NotFound,
-    AccessErrorKind::Retry,
-    AccessErrorKind::Timeout,
-    AccessErrorKind::PermissionDenied,
-    AccessErrorKind::InternalError,
-];
-
-/// What `pallet.query` can refuse with. Read only by the contract test in
-/// `error`, which holds this list to the operation's generated contract.
-#[cfg(test)]
-pub(crate) const QUERY_REFUSALS: &[AccessErrorKind] = &[
-    AccessErrorKind::InvalidInput,
-    AccessErrorKind::Retry,
-    AccessErrorKind::Timeout,
-    AccessErrorKind::PermissionDenied,
-    AccessErrorKind::InternalError,
-];
-
 const MAX_PAGE_SIZE: i64 = 100;
 const STATUSES: [&str; 3] = ["available", "held", "consumed"];
 
