@@ -1,7 +1,6 @@
 //! Loopback HTTP shell for locally assembled application releases.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -26,6 +25,9 @@ use wash_runtime::wasmtime::component::{Component, Linker};
 use wasmtime_wasi_http::p3::bindings::Service;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
+mod assembly;
+pub use assembly::LocalPackage;
+
 /// Production adapters required by the shipped flow-http component.
 #[derive(Clone)]
 pub struct LocalApplicationRuntime {
@@ -35,8 +37,49 @@ pub struct LocalApplicationRuntime {
     pub bridge: Arc<RouterDeliveryBridge>,
 }
 
+impl std::fmt::Debug for LocalApplicationRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalApplicationRuntime")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Published identities returned with the local HTTP endpoint.
-pub struct LocalApplicationConfig {
+pub struct LocalApplicationConfig<'a> {
+    pub system_database_url: &'a str,
+    pub database_url: &'a str,
+    pub scratch: &'a std::path::Path,
+    pub component_directory: &'a std::path::Path,
+    pub flow_http_wasm: &'a std::path::Path,
+    pub tenant: &'a str,
+    pub org: &'a str,
+    pub project: &'a str,
+    pub environment: &'a str,
+    pub schema: &'a str,
+    pub caller_role: &'a str,
+    pub route_host: &'a str,
+    pub packages: &'a [LocalPackage<'a>],
+    pub attachments: &'a std::collections::BTreeMap<String, wamn_catalog::ServingAttachment>,
+}
+
+impl std::fmt::Debug for LocalApplicationConfig<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalApplicationConfig")
+            .field("tenant", &self.tenant)
+            .field("org", &self.org)
+            .field("project", &self.project)
+            .field("environment", &self.environment)
+            .field("schema", &self.schema)
+            .field("caller_role", &self.caller_role)
+            .field("route_host", &self.route_host)
+            .field("packages", &self.packages)
+            .finish_non_exhaustive()
+    }
+}
+
+pub(crate) struct PreparedLocalApplication {
     pub runtime: LocalApplicationRuntime,
     pub route_host: String,
     pub bearer: String,
@@ -48,7 +91,7 @@ pub struct LocalApplicationConfig {
 
 /// A loopback endpoint backed by a fresh flow-http store for every request.
 pub struct LocalApplication {
-    endpoint: String,
+    pub endpoint: String,
     pub route_host: String,
     pub bearer: String,
     pub caller_secret_path: PathBuf,
@@ -58,16 +101,31 @@ pub struct LocalApplication {
     task: JoinHandle<()>,
 }
 
+impl std::fmt::Debug for LocalApplication {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalApplication")
+            .field("endpoint", &self.endpoint)
+            .field("route_host", &self.route_host)
+            .field("tenant", &self.tenant)
+            .field("caller_role", &self.caller_role)
+            .field("component_digests", &self.component_digests)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Response and guest-memory observation from one flow-http invocation.
+#[derive(Debug)]
 pub struct LocalInvocation {
     pub response: Response<Bytes>,
     pub shell_bytes: u64,
     pub peak_bytes: u64,
+    pub in_use_before_drop: u64,
 }
 
 impl LocalApplication {
-    pub async fn start(config: LocalApplicationConfig) -> anyhow::Result<Self> {
-        let LocalApplicationConfig {
+    pub async fn start(config: LocalApplicationConfig<'_>) -> anyhow::Result<Self> {
+        let PreparedLocalApplication {
             runtime,
             route_host,
             bearer,
@@ -75,22 +133,32 @@ impl LocalApplication {
             tenant,
             caller_role,
             component_digests,
-        } = config;
+        } = assembly::assemble(config).await?;
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .context("bind the local application HTTP endpoint")?;
         let address = listener.local_addr()?;
         let task = tokio::spawn(async move {
+            let mut requests = tokio::task::JoinSet::new();
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     break;
                 };
                 let runtime = runtime.clone();
-                tokio::spawn(async move {
-                    let service = service_fn(move |request| {
+                requests.spawn(async move {
+                    let service = service_fn(move |request: Request<hyper::body::Incoming>| {
                         let runtime = runtime.clone();
                         async move {
-                            let invocation = invoke_request(runtime, request).await?;
+                            let request = request
+                                .map(|body| body.map_err(|_| ErrorCode::ConnectionTerminated));
+                            let invocation = invoke_request(
+                                runtime.engine.as_ref(),
+                                &runtime.flow_http,
+                                Arc::clone(&runtime.routing),
+                                Arc::clone(&runtime.bridge),
+                                request,
+                            )
+                            .await?;
                             Ok::<_, anyhow::Error>(invocation.response.map(Full::new))
                         }
                     });
@@ -101,10 +169,11 @@ impl LocalApplication {
                         tracing::debug!(%error, "local application HTTP connection ended");
                     }
                 });
+                while requests.try_join_next().is_some() {}
             }
         });
         Ok(Self {
-            endpoint: endpoint(address),
+            endpoint: format!("http://{address}"),
             route_host,
             bearer,
             caller_secret_path,
@@ -115,8 +184,13 @@ impl LocalApplication {
         })
     }
 
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
+    pub async fn shutdown(mut self) -> anyhow::Result<()> {
+        self.task.abort();
+        match (&mut self.task).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.is_cancelled() => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 
@@ -126,19 +200,18 @@ impl Drop for LocalApplication {
     }
 }
 
-fn endpoint(address: SocketAddr) -> String {
-    format!("http://{address}")
-}
-
 pub async fn invoke_request<B>(
-    runtime: LocalApplicationRuntime,
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: Arc<FlowHttpRouting>,
+    bridge: Arc<RouterDeliveryBridge>,
     request: Request<B>,
 ) -> anyhow::Result<LocalInvocation>
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Into<ErrorCode>,
 {
-    let raw = runtime.engine.inner();
+    let raw = engine.inner();
     let mut linker = Linker::new(raw);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
@@ -152,7 +225,7 @@ where
         "local-application",
         "wamn",
         "flow-http",
-        runtime.flow_http,
+        flow_http.clone(),
         linker,
         Vec::new(),
         LocalResources::default(),
@@ -162,26 +235,24 @@ where
     let imports = workload.world().imports;
     {
         let mut item = WorkloadItem::Component(&mut workload);
-        runtime
-            .routing
+        routing
             .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
             .await
             .context("bind released HTTP routing")?;
-        runtime
-            .bridge
+        bridge
             .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
             .await
             .context("bind router delivery")?;
     }
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
-    plugins.insert(FLOW_HTTP_ROUTING_ID, runtime.routing);
-    plugins.insert(ROUTER_DELIVERY_ID, runtime.bridge);
+    plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
+    plugins.insert(ROUTER_DELIVERY_ID, bridge);
     let ctx = Ctx::builder(workload.workload_id().to_owned(), workload.id().to_owned())
         .with_plugins(plugins)
         .build();
     let mut store = Store::new(
         raw,
-        SharedCtx::new(ctx).with_guest_memory(runtime.engine.guest_memory()),
+        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
     );
     wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
     store.set_epoch_deadline(u64::MAX / 2);
@@ -228,10 +299,12 @@ where
         .await
         .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
     let shell_bytes = store.data().memory_limiter.charged();
-    let peak_bytes = store.data().memory_limiter.peak();
+    let peak_bytes = engine.guest_memory().high_water();
+    let in_use_before_drop = engine.guest_memory().in_use();
     Ok(LocalInvocation {
         response,
         shell_bytes,
         peak_bytes,
+        in_use_before_drop,
     })
 }

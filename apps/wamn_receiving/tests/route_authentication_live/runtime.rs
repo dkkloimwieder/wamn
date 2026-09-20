@@ -495,118 +495,23 @@ where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Into<ErrorCode>,
 {
-    let raw = engine.inner();
-    let mut linker = Linker::new(raw);
-    wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-        .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
-    wasmtime_wasi_http::p3::add_to_linker(&mut linker)
-        .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
-    let loopback = Arc::new(std::sync::Mutex::new(
-        wash_runtime::sockets::loopback::Network::default(),
-    ));
-    let mut workload = WorkloadComponent::new(
-        "receiving-route-live",
-        "receiving-route-live",
-        "wamn",
-        "flow-http",
-        flow_http.clone(),
-        linker,
-        Vec::new(),
-        LocalResources::default(),
-        loopback,
-        InstancePolicy::Ephemeral,
-    );
-    let imports = workload.world().imports;
-    {
-        let mut item = WorkloadItem::Component(&mut workload);
-        routing
-            .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-            .await
-            .context("bind the released HTTP routing plugin")?;
-        bridge
-            .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-            .await
-            .context("bind the production router-delivery bridge")?;
-    }
-
-    let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
-    plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
-    plugins.insert(ROUTER_DELIVERY_ID, bridge);
-    let workload_id = workload.workload_id().to_owned();
-    let component_id = workload.id().to_owned();
-    let ctx = Ctx::builder(workload_id, component_id)
-        .with_plugins(plugins)
-        .build();
-    let mut store = Store::new(
-        raw,
-        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
-    );
-    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
-    store.set_epoch_deadline(u64::MAX / 2);
-    let compiled = workload.component().clone();
-    let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
-        .await
-        .map_err(|error| anyhow::anyhow!("instantiate shipped flow-http: {error}"))?;
-
-    let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
-    // Keep the fresh store driving P3 streams until the response body is collected.
-    let response = store
-        .run_concurrent(async |accessor| {
-            let handle = async {
-                let response = service
-                    .handle(accessor, request)
-                    .await
-                    .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
-                    .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
-                let (finish_tx, finish_rx) =
-                    tokio::sync::oneshot::channel::<Result<(), ErrorCode>>();
-                let response = accessor
-                    .with(|store| {
-                        response.into_http(store, async move {
-                            finish_rx
-                                .await
-                                .unwrap_or(Err(ErrorCode::ConnectionTerminated))
-                        })
-                    })
-                    .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
-                let (parts, body) = response.into_parts();
-                let body = body.collect().await;
-                let _ = finish_tx.send(body.as_ref().map(|_| ()).map_err(Clone::clone));
-                let body =
-                    body.map_err(|error| anyhow::anyhow!("collect flow-http response: {error:?}"))?;
-                Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
-            };
-            let io = async {
-                // An early typed refusal may abandon its request body.
-                if let Err(error) = request_io.await {
-                    tracing::debug!(
-                        ?error,
-                        "flow-http request body processing ended with an error"
-                    );
-                }
-                Ok::<_, anyhow::Error>(())
-            };
-            let (response, ()) = tokio::try_join!(handle, io)?;
-            Ok::<_, anyhow::Error>(response)
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
-    let shell_bytes = store.data().memory_limiter.charged();
+    let invocation = wamn_integration_tests::local_application::invoke_request(
+        engine, flow_http, routing, bridge, request,
+    )
+    .await?;
     anyhow::ensure!(
-        engine.guest_memory().in_use() == shell_bytes,
+        invocation.in_use_before_drop == invocation.shell_bytes,
         "Receiving invocation retained memory outside its flow-http store"
     );
-    let memory = JourneyGuestMemory {
-        shell_bytes,
-        peak_bytes: engine.guest_memory().high_water(),
-    };
-    drop(store);
     anyhow::ensure!(
         engine.guest_memory().in_use() == 0,
         "Receiving invocation retained guest memory after its stores dropped"
     );
-    let mut response = response;
-    response.extensions_mut().insert(memory);
+    let mut response = invocation.response;
+    response.extensions_mut().insert(JourneyGuestMemory {
+        shell_bytes: invocation.shell_bytes,
+        peak_bytes: invocation.peak_bytes,
+    });
     Ok(response)
 }
 

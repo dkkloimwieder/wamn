@@ -6115,6 +6115,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "hyper",
+ "hyper-util",
  "libc",
  "oci-client",
  "opentelemetry",
@@ -6131,6 +6132,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "url",
  "uuid",
  "wamn-catalog",
  "wamn-client",
@@ -6551,6 +6553,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-execution-contract",
  "wamn-gate-harness",
+ "wamn-integration-tests",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]

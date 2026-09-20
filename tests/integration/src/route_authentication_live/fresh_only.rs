@@ -162,7 +162,13 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     });
     let declaration_path = root.join("parent.json");
     write_json(&declaration_path, &declaration)?;
-    let bytes = parent_component()?;
+    let fixture_path = test.inputs.component_directory.join("prior_commit.wasm");
+    let bytes = std::fs::read(&fixture_path).with_context(|| {
+        format!(
+            "read virtualized prior-commit fixture {}",
+            fixture_path.display()
+        )
+    })?;
     let parent_digest = wamn_runtime::component_admission::component_digest(&bytes);
     let component_path = root.join("parent.wasm");
     std::fs::write(&component_path, bytes)?;
@@ -825,36 +831,12 @@ fn fixture_manifest(base_digest: &str) -> Value {
 }
 
 fn parent_component() -> anyhow::Result<Vec<u8>> {
-    if let Some(path) = std::env::var_os("WAMN_PRIOR_COMMIT_COMPONENT") {
-        return std::fs::read(&path).with_context(|| {
-            format!(
-                "read WAMN_PRIOR_COMMIT_COMPONENT {}",
-                std::path::Path::new(&path).display()
-            )
-        });
-    }
-    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map(std::path::PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                repository.join(path)
-            }
-        })
-        .unwrap_or_else(|| repository.join("apps/target"));
-    let release = target.join("virtualized/std-empty-environment/prior_commit.wasm");
-    let path = if release.is_file() {
-        release
-    } else {
-        target.join("wasm32-wasip2/debug/prior_commit.wasm")
-    };
+    let path = std::env::var_os("WAMN_PRIOR_COMMIT_COMPONENT")
+        .context("WAMN_PRIOR_COMMIT_COMPONENT must name the virtualized fixture")?;
     std::fs::read(&path).with_context(|| {
         format!(
-            "read virtualized prior-commit fixture {}; build it with \
-             `tools/build-components all` or set WAMN_PRIOR_COMMIT_COMPONENT",
-            path.display()
+            "read WAMN_PRIOR_COMMIT_COMPONENT {}",
+            std::path::Path::new(&path).display()
         )
     })
 }

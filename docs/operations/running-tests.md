@@ -73,6 +73,52 @@ Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 `tools/repo-lint run` runs the source guard, formatting, and Clippy across all three workspaces.
 It reports each command and returns a nonzero status if any command fails.
 
+## Local application business tests
+
+Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
+They share the in-process runtime setup in `tests/integration/src/local_application.rs`.
+These tests need no registry, broker, cluster, gate binary, or container image.
+Deployment tests retain startup, restart, queue, CDC/materializer, and label delivery assertions.
+
+Build only the components that these tests use:
+
+```bash
+cargo build --manifest-path apps/Cargo.toml --locked --offline \
+  --target wasm32-wasip2 -p receiving -p client-acme-receiving -p wms -p http-route -p prior-commit
+cargo build --locked --offline -p wamn-component-virtualizer
+mkdir -p target/virtualized/std-empty-environment
+for component in receiving client_acme_receiving wms prior_commit; do
+  target/debug/wamn-component-virtualizer \
+    --input "apps/target/wasm32-wasip2/debug/$component.wasm" \
+    --output "target/virtualized/std-empty-environment/$component.wasm"
+done
+```
+
+These paths use the default Cargo target directories.
+If you set `CARGO_TARGET_DIR`, use that directory for both workspace build outputs.
+
+Run the local business assertions:
+
+The Receiving transfer passes. WMS currently exposes the integer JSON mismatch tracked in `wamn-dr5z.4`.
+WMS keeps its deployed business assertions until that local test passes.
+
+```bash
+WAMN_APPLICATION_COMPONENTS="$PWD/target/virtualized/std-empty-environment" \
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+  cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
+    --lib local_business:: -- --ignored --test-threads=1
+```
+
+Run the prior-commit fixture admission and exact forwarding assertions:
+
+```bash
+WAMN_PRIOR_COMMIT_COMPONENT="$PWD/target/virtualized/std-empty-environment/prior_commit.wasm" \
+  cargo test --locked --offline -p wamn-receiving-tests --lib counter_parent_ -- --ignored
+```
+
+The fixture uses generated typed Receiving bindings and the current asynchronous PostgreSQL interface.
+The existing deployed prior-commit case retains its real commit and refusal assertions.
+
 ## Test-database isolation
 
 Tests never connect to or change an interactive development database.

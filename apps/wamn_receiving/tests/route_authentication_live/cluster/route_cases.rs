@@ -1,61 +1,14 @@
-//! Receiving command histories and human membership on the deployed route.
+//! Human membership on the deployed route.
 
 use std::fs;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 
 use super::{
     ReceivingCluster, apply, assert_source_unchanged, checked, evidence_directory, kubectl,
-    materializer_case, postcommit_case, released_http, resources, start, write_private,
+    released_http, resources, start, write_private,
 };
-
-#[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
-async fn command_histories() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
-    let evidence = evidence_directory()?;
-    Box::pin(super::with_signals(&evidence, run_histories(&evidence))).await
-}
-
-async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
-    let mut cluster = start(evidence, true).await?;
-    let result = async {
-        let (route, _, _, _) = released_http(&cluster, 3).await?;
-        let endpoint = materializer_case::endpoint(&cluster, "receiving-correctness-nodeport").await?;
-        postcommit_case::assert_unknown_route(&cluster, &endpoint).await?;
-        let mut digests = serde_json::Map::new();
-        for component in ["receiving", "client_acme_receiving"] {
-            let bytes = fs::read(cluster.artifacts.components.join(format!("{component}.wasm")))?;
-            digests.insert(component.into(), json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))));
-        }
-        let package: Value = serde_json::from_slice(&fs::read(cluster.resources.repository
-            .join("apps/wamn_receiving/generated/package-weld.json"))?)?;
-        let path = evidence.join("receiving-correctness.jsonl");
-        let inputs = serde_json::from_value(json!({
-            "project_pg_url":route.database_url,"route_endpoint":endpoint,
-            "route_host":cluster.inputs.route_host,"route_caller_secret":cluster.inputs.route_caller_secret_output,
-            "tenant":super::super::TENANT,"caller_role":"route-caller","evidence_file":path,
-            "source_commit":cluster.resources.source,"component_digests":digests,
-            "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,
-        }))?;
-        let cancellation = pg_walstream::CancellationToken::new();
-        let _cancel_on_exit = cancellation.clone().drop_guard();
-        tokio::task::spawn_blocking(move || super::super::command_histories::assert_histories_with_cancellation(&inputs, &cancellation))
-            .await.context("join the bounded Receiving command histories")??;
-        let summaries = fs::read_to_string(path)?.lines().map(serde_json::from_str::<Value>)
-            .collect::<Result<Vec<_>, _>>()?.into_iter().filter(|row| row["case"] == "summary").collect::<Vec<_>>();
-        ensure!(summaries.len() == 1 && summaries[0]["result"] == "pass"
-            && summaries[0]["generated_cases"] == 16 && summaries[0]["boundary_cases"] == 7
-            && summaries[0]["explicit_histories"].as_u64().is_some_and(|count| count > 0)
-            && summaries[0].get("reproduction").is_none_or(|value| value == false),
-            "Receiving command history results are absent or incomplete");
-        fs::write(evidence.join("receiving-correctness-summary.json"), serde_json::to_vec_pretty(&summaries[0])?)?;
-        assert_source_unchanged(&cluster.resources).await
-    }.await;
-    finish(&mut cluster, result).await
-}
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]

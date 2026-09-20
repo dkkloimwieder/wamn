@@ -28,14 +28,17 @@ const REQUEST_ID_B: &str = "contention-b";
 const REQUEST_ID_REPLAY: &str = "contention-replay";
 const OCCURRED_AT: &str = "2026-09-05T12:00:00.000000Z";
 
-struct Route {
+pub(crate) struct Route {
     endpoint: String,
     host: String,
     bearer: String,
 }
 
 impl Route {
-    fn from_document(document: &JourneyDocument, runtime: &RuntimePhase) -> anyhow::Result<Self> {
+    pub(crate) fn from_document(
+        document: &JourneyDocument,
+        runtime: &RuntimePhase,
+    ) -> anyhow::Result<Self> {
         let secret: Value = serde_json::from_slice(
             &std::fs::read(&document.route_caller_secret_output).with_context(|| {
                 format!("read {}", document.route_caller_secret_output.display())
@@ -52,6 +55,14 @@ impl Route {
             host: document.route_host.clone(),
             bearer,
         })
+    }
+
+    pub(crate) fn local(endpoint: String, host: String, bearer: String) -> Self {
+        Self {
+            endpoint,
+            host,
+            bearer,
+        }
     }
 
     async fn post(
@@ -124,13 +135,9 @@ fn item<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
 }
 
 pub(crate) async fn assert_contention_and_replay(
-    document: &JourneyDocument,
+    route: &Route,
+    runtime: &RuntimePhase,
 ) -> anyhow::Result<Value> {
-    let runtime = document.runtime.as_ref().context(
-        "the journey document carries no runtime phase: the route must be reachable and the \
-         fixture seeded before these assertions run",
-    )?;
-    let route = Route::from_document(document, runtime)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -250,13 +257,9 @@ fn uuid(value: &Value) -> anyhow::Result<String> {
 }
 
 pub(crate) async fn assert_remaining_operations(
-    document: &JourneyDocument,
+    route: &Route,
+    runtime: &RuntimePhase,
 ) -> anyhow::Result<Value> {
-    let runtime = document.runtime.as_ref().context(
-        "the journey document carries no runtime phase: the route must be reachable and the \
-         fixture seeded before these assertions run",
-    )?;
-    let route = Route::from_document(document, runtime)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()

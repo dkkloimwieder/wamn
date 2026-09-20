@@ -8,7 +8,7 @@ See [database tests](database-tests.md) for state and authority observations.
 The [owned delivery tests](../operations/delivery.md#owned-application-acceptance) invoke the same application cases with supplied release artifacts.
 Those cases compare the freshly minted manifest with the exact candidate before publication.
 They report success only after application assertions and owned resource cleanup pass.
-Receiving runs command histories and baseline overlay compatibility, while WMS runs its released routes.
+Receiving retains baseline overlay compatibility, while WMS runs its released routes.
 
 The [local saved-edit case](../operations/running-tests.md#local-saved-edit-acceptance) runs the existing Receiving developer command against owned services.
 It keeps an authenticated mutation through code and SQL edits, and it observes the changed application response.
@@ -28,6 +28,8 @@ Record the source, tools, machine limits, commands, and sample count without a f
 ## Receiving commands
 
 The [Receiving history tests](../../apps/wamn_receiving/tests/receiving_command_histories_live.rs) exercise `receiving.record_receipt` and `purchase_order.update`.
+The [local test](../../apps/wamn_receiving/tests/route_authentication_live/local_business.rs) supplies real components, authenticated HTTP, and disposable PostgreSQL without cluster or image setup.
+See the [focused commands](../operations/running-tests.md#local-application-business-tests).
 Their required observations are:
 
 - Accepted receipts accumulate without exceeding the order, with matching status, revisions, and committed receipt history.

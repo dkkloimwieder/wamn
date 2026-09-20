@@ -386,8 +386,9 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
                         "REC-HISTORY/commit-response",
                         &outcome,
                     )?;
+                    let expected_revision = revision.to_string();
                     history_assert(
-                        value["row_version"] == revision,
+                        value["row_version"].as_str() == Some(expected_revision.as_str()),
                         "REC-REVISION/response",
                         &outcome,
                         format_args!("REC-HISTORY revision at step {index}: {value}"),

@@ -20,6 +20,7 @@ uuid = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
+wamn-integration-tests = { workspace = true }
 
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 wamn-control = { workspace = true }
