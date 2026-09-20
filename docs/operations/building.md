@@ -40,7 +40,13 @@ The build tool requires `jq` and `sha256sum`.
 `build-only app APP_DIRECTORY...` and `build-only all` emit an artifact plan to stdout.
 `virtualize-only ARTIFACT_PLAN` refuses changed inputs or raw hashes before it updates outputs.
 `watch-roots app APP_DIRECTORY...` lists selected source dependencies without building them.
+It also includes the shared platform WIT sources, so interface edits rebuild the selected components.
 For a manifest-only change, inspect `cargo metadata --no-deps` before deciding whether compilation is needed.
+
+WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
+The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream, flow routing, and blobstore contracts.
+The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
+Application contracts remain under each package's `generated/wit` directory. Do not copy platform WIT into application directories.
 
 ## Isolated worktrees
 

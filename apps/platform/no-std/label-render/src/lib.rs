@@ -55,8 +55,8 @@ mod guest_runtime;
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "label-render",
-        path: "wit",
+        world: "wamn:label-render/label-render@0.1.0",
+        path: ["../../../../crates/execution/router/wit", "wit"],
         generate_all,
         std_feature,
     });

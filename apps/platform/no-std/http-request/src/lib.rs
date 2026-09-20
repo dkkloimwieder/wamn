@@ -22,8 +22,12 @@ use bindings::wamn::node::types::{ErrorDetail, RateLimitDetail};
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "http-request",
-        path: "wit",
+        world: "wamn:http-request/http-request@0.1.0",
+        path: [
+            "../../../../crates/platform/runtime/wit/deps/wamn-connection",
+            "../../../../crates/execution/router/wit",
+            "wit",
+        ],
         generate_all,
         async: [
             "import:wamn:connection/http@0.1.0#send",

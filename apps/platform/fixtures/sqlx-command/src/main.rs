@@ -2,8 +2,8 @@
 
 mod bindings {
     wit_bindgen::generate!({
-        world: "sqlx-command",
-        path: "wit",
+        world: "wamn:sqlx-command/sqlx-command@0.1.0",
+        path: ["../../execution/materializer/wit/deps/wasi-cli", "wit"],
         generate_all,
     });
 }

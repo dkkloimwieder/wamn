@@ -10,8 +10,12 @@ use wamn::connection::http::Request;
 use wamn::node::types::ErrorDetail;
 
 wit_bindgen::generate!({
-    world: "http-request",
-    path: "../../no-std/http-request/wit",
+    world: "wamn:http-request/http-request@0.1.0",
+    path: [
+        "../../../../crates/platform/runtime/wit/deps/wamn-connection",
+        "../../../../crates/execution/router/wit",
+        "../../no-std/http-request/wit",
+    ],
     generate_all,
     async: [
         "import:wamn:connection/http@0.1.0#send",

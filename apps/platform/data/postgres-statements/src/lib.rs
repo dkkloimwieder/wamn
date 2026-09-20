@@ -6,8 +6,11 @@
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "postgres-statements",
-        path: "wit",
+        world: "wamn:postgres-statements/postgres-statements@0.1.0",
+        path: [
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres",
+            "wit",
+        ],
         generate_all,
     });
 }

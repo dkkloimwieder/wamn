@@ -17,8 +17,8 @@ mod bindings {
             }
         "#,
         path: [
-            "../../../wamn_receiving/data/wit/deps/wamn-node",
-            "../../../wamn_receiving/data/wit/deps/wamn-postgres",
+            "../../../../crates/execution/router/wit",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres",
             "../../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
         ],
         generate_all,

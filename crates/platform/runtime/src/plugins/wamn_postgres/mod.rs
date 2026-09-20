@@ -1,7 +1,7 @@
 //! Real `wamn:postgres` host plugin (S2).
 //!
-//! Contract source of truth: `crates/platform/runtime/wit/deps/wamn-postgres/package.wit` — the
-//! in-tree authority `tests/postgres_wit_coherence.rs` pins every vendored copy against.
+//! Contract source of truth: `crates/platform/runtime/wit/deps/wamn-postgres/package.wit`.
+//! Guest bindgen paths reference that canonical package directly.
 //! Host-enforced invariants:
 //!
 //! - The guest never holds a socket. Connections live in a deadpool pool

@@ -46,8 +46,8 @@ wit_bindgen::generate!({
         }
     "#,
     path: [
-        "../../wamn_receiving/data/wit/deps/wamn-node",
-        "../../wamn_receiving/data/wit/deps/wamn-postgres",
+        "../../../crates/execution/router/wit",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres",
         "../generated/wit/deps/client-acme-receiving-purchase-order",
         "../generated/wit/deps/client-acme-receiving-quality",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",

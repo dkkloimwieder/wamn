@@ -48,8 +48,12 @@
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "blob-put",
-        path: "wit",
+        world: "wamn:blob-put/blob-put@0.1.0",
+        path: [
+            "../../../../crates/execution/router/wit",
+            "../../../../crates/platform/runtime/wit/deps/wasmcloud-blobstore",
+            "wit",
+        ],
         generate_all,
         async: ["export:wamn:node/async-handler@0.1.0#run"],
     });

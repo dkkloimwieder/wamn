@@ -6,8 +6,14 @@
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "materializer",
-        path: "wit",
+        world: "wamn:materializer/materializer@0.1.0",
+        path: [
+            "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
+            "../../../../crates/platform/runtime/wit/deps/wamn-jetstream",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres",
+            "../../../../crates/execution/host/wit/deps/wamn-router-delivery",
+            "wit",
+        ],
         generate_all,
     });
 }

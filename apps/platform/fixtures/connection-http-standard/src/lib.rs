@@ -81,8 +81,11 @@ unsafe extern "C" fn cabi_realloc(
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "connection-http-standard",
-        path: "wit",
+        world: "wamn:connection-http-standard-fixture/connection-http-standard@0.1.0",
+        path: [
+            "../../../../crates/platform/runtime/wit/deps/wamn-connection",
+            "wit",
+        ],
         generate_all,
         async: [
             "import:wamn:connection/http@0.1.0#send",

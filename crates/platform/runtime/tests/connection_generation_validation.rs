@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::Path;
 
 use serde_json::{Value, json};
 use wamn_runtime::connection_authority::{AuthorityError, DnsResolver, NetworkPolicy};
@@ -59,6 +61,67 @@ fn definition() -> Value {
         "proxy-transport": null,
         "credential-set-handle": "erp-api"
     })
+}
+
+#[test]
+fn frozen_http_surface_is_relative_typed_and_extension_free() {
+    let authority = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("wit/deps/wamn-connection/package.wit"),
+    )
+    .expect("authoritative connection WIT reads");
+    for required in [
+        "package wamn:connection@0.1.0;",
+        "requirement: string,",
+        "path-and-query: string,",
+        "idempotency-key: option<string>,",
+        "send: async func(request: request) -> result<response, connection-error>;",
+        "authority-denied,",
+        "attestation-invalid,",
+        "credential-unavailable,",
+    ] {
+        assert!(
+            authority.contains(required),
+            "missing frozen WIT line {required:?}"
+        );
+    }
+    let code = authority
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
+    for forbidden in [
+        "absolute-uri",
+        "authority:",
+        "scheme:",
+        "host:",
+        "port:",
+        "proxy",
+        "socket",
+        "json",
+        "extensions",
+    ] {
+        assert!(
+            !code.contains(forbidden),
+            "forbidden connection surface {forbidden:?} entered the frozen WIT"
+        );
+    }
+}
+
+#[test]
+fn host_adapter_and_trusted_runner_worlds_pin_the_authority_split() {
+    let host = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("wit/world.wit"))
+        .expect("host world reads");
+    assert_eq!(
+        host.matches("import wamn:connection/http@0.1.0;").count(),
+        1
+    );
+    assert_eq!(
+        host.matches("import wamn:runner/http-effect@0.1.0;")
+            .count(),
+        1
+    );
 }
 
 struct Fixture {

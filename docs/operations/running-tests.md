@@ -234,7 +234,7 @@ If the user requests the separate contract command, run it after the sweep, incl
 tools/contract-diff run > "$WAMN_RESULTS/contract-diff.log" 2>&1
 ```
 
-It runs the authoring contract, runtime routing contract, and guest `http-route` adversarial tests.
+It runs the authoring contract and guest `http-route` adversarial tests.
 The guest test belongs to another workspace, so the root sweep cannot reach it.
 `tools/contract-diff dry-run` only prints the commands.
 

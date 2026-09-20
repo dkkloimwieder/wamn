@@ -1369,6 +1369,8 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::path::Path;
 
     use wamn_catalog::{
         DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingRegistration,
@@ -1377,6 +1379,28 @@ mod tests {
 
     use super::*;
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
+
+    #[test]
+    fn contract_declares_host_registration() {
+        let contract = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("wit/deps/wamn-jetstream/package.wit"),
+        )
+        .expect("authoritative jetstream WIT reads");
+        for required in [
+            "package wamn:jetstream@0.1.0;",
+            "record consumer-config {",
+            "durable: string,",
+            "filter-subject: string,",
+            "ack-wait-ms: u64,",
+            "max-deliver: u32,",
+            "prepare: async func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;",
+        ] {
+            assert!(
+                contract.contains(required),
+                "wamn:jetstream contract is missing the host registration line: {required:?}"
+            );
+        }
+    }
 
     fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
         DerivedPublishRequest {

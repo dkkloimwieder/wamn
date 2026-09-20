@@ -30,8 +30,8 @@ use crate::{RouterDriver, RouterDriverRequest};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        path: "wit",
-        world: "router-delivery-plugin",
+        path: ["../../platform/runtime/wit/deps/wamn-flow-http-routing", "wit"],
+        world: "wamn:execution-host/router-delivery-plugin@0.1.0",
         imports: { default: async | trappable | tracing },
         with: {
             "wamn:flow-http-routing/routing.authenticated-caller": super::AuthenticatedCaller,

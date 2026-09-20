@@ -233,19 +233,19 @@ Retain intentional real-application release acceptance. Do not replace Receiving
 
 ### B9. Establish one WIT source/materialization path
 
-The repository currently has multiple copied WIT dependency trees guarded by coherence tests.
+The repository previously had multiple copied WIT dependency trees guarded by coherence tests.
+The migration:
 
-Do not delete the coherence tests first.
+1. enumerated every WIT authority and vendored copy;
+2. identified why each copy existed as a build input;
+3. chose one canonical source for each platform WIT package;
+4. defined direct canonical paths for consumers that require local WIT directories;
+5. updated guest and platform build consumers to use those paths;
+6. removed copy-only coherence tests after the independently editable copies were gone.
 
-First:
-
-1. enumerate every WIT authority and vendored copy;
-2. identify why each copy exists as a build input;
-3. choose one canonical source for each platform WIT package;
-4. define one materialization/dependency path for consumers that require local WIT directories;
-5. update guest/platform build consumers to use that path.
-
-Only after independently editable copies are gone should the corresponding `*_wit_coherence.rs` tests be deleted.
+The materializer owns the full `wasi:clocks@0.3.0` package. The HTTP route uses
+its exact shared-types prefix and `duration` type through that canonical path;
+it does not claim to implement the materializer's full clock package.
 
 No WIT registry or second interface-description system is introduced.
 

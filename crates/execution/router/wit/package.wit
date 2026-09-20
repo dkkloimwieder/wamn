@@ -12,8 +12,8 @@ package wamn:node@0.1.0;
 /// ("0.1.x admits only additive or clarifying changes; any breaking change waits
 /// for 0.2") is not violated here. That clause governs the EVOLUTION of a live
 /// package, and the archived one is not live: it was deleted, and the
-/// vendored-copy scan in `tests/conformance/src/invocation.rs` checks that
-/// nothing in the tree binds the archived shape. There is no deployed 0.1.0
+/// ABI checks in `tests/conformance/src/invocation.rs` reject the archived
+/// shape. There is no deployed 0.1.0
 /// consumer for a version bump to protect. So the MVP
 /// version-identity rule governs instead — every first-party `wamn:*` WIT
 /// package sits at @0.1.0 for the MVP identity window
@@ -21,10 +21,8 @@ package wamn:node@0.1.0;
 /// for this package. A reader diffing the archive against this file finds the
 /// supersession recorded here, not a silent redefinition.
 ///
-/// SETTLED LOCATION. This package lives with the router crate that invokes it
-/// and owns it. Consumers vendor it the usual way, at
-/// `<consumer>/wit/deps/wamn-node/package.wit`, and every such copy is
-/// registered in the repo-level drift guard before it is bound.
+/// SETTLED LOCATION. This package lives with the router crate that invokes and
+/// owns it. Consumer bindgen paths reference this canonical file directly.
 ///
 /// What the router does with a node is the entire justification for this
 /// surface, and nothing here serves any other reader: resolve the wiring's

@@ -16,8 +16,8 @@ mod guest_runtime;
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "transform",
-        path: "wit",
+        world: "wamn:transform/transform@0.1.0",
+        path: ["../../../../crates/execution/router/wit", "wit"],
         generate_all,
         std_feature,
     });

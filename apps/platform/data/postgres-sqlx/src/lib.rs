@@ -6,8 +6,11 @@
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "postgres-sqlx",
-        path: "wit",
+        world: "wamn:postgres-sqlx/postgres-sqlx@0.1.0",
+        path: [
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres",
+            "wit",
+        ],
         generate_all,
     });
 }

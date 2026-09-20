@@ -893,8 +893,8 @@ mod execution_tests {
                 }
             "#,
             path: [
-                "../../../apps/wamn_receiving/data/wit/deps/wamn-node",
-                "../../../apps/wamn_receiving/data/wit/deps/wamn-postgres",
+                "../../../crates/execution/router/wit",
+                "../../../crates/platform/runtime/wit/deps/wamn-postgres",
                 "../../../apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
             ],
             additional_derives: [PartialEq],

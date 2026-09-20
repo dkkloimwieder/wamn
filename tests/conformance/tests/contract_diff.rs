@@ -11,24 +11,23 @@
 //! `tools/contract-diff run` does and what this file never does:
 //!
 //!   * `-p wamn-authoring-model --test contract`
-//!   * `-p wamn-runtime --test flow_http_routing_wit_coherence`
 //!   * `-p http-route --test adversarial` (the components workspace)
 //!
 //! Read a green here as "the orchestration is intact", never as "the contracts
 //! have not drifted".
 //! A separate case uses a small libtest executable to exercise result refusal.
 //!
-//! The first two legs are root-workspace default members, so `cargo test
-//! --workspace` also runs them. The third is NOT a root workspace member at
+//! The first leg is a root-workspace default member, so `cargo test
+//! --workspace` also runs it. The second is NOT a root workspace member at
 //! all — `http-route` lives in `apps/platform/`, and no root sweep reaches it.
-//! `tools/contract-diff run` is therefore the only runner of record for leg 3,
+//! `tools/contract-diff run` is therefore the only runner of record for leg 2,
 //! and `docs/operations/running-tests.md#the-full-sweep` records its separate
 //! command. Do not read this file's green as covering it (wamn-0h0g.15.138).
 //!
-//! The third leg was written here as `-p flow-http` until wamn-0h0g.15.138. No
+//! The second leg was written here as `-p flow-http` until wamn-0h0g.15.138. No
 //! package by that name exists in either workspace, so anyone following this
 //! list hit the package-name trap: a bad `-p` ERRORS and greps as zero
-//! failures. Keep these three names in step with `tools/contract-diff` itself.
+//! failures. Keep these two names in step with `tools/contract-diff` itself.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -37,11 +36,11 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/contract-diff";
-// authoring, runtime-vendored-flow-http-routing, flow-http. The flow-schema
+// authoring and flow-http. The flow-schema
 // leg went with wamn-0h0g.26.5: it regenerated
 // docs/archive/contracts/flow-schema.schema.json, and both the generator and
 // the committed file are gone.
-const LEG_COUNT: usize = 3;
+const LEG_COUNT: usize = 2;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -155,18 +154,6 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "contract".into(),
         ],
         vec![
-            root.clone(),
-            "test".into(),
-            "--manifest-path".into(),
-            root_manifest.clone(),
-            "--locked".into(),
-            "--offline".into(),
-            "-p".into(),
-            "wamn-runtime".into(),
-            "--test".into(),
-            "flow_http_routing_wit_coherence".into(),
-        ],
-        vec![
             root,
             "test".into(),
             "--manifest-path".into(),
@@ -232,11 +219,7 @@ fn contract_diff_dry_run_prints_the_complete_plan_without_cargo() {
     let lines = stdout.lines().collect::<Vec<_>>();
     assert_eq!(lines.len(), LEG_COUNT + 1, "{stdout}");
     assert_eq!(lines[0], format!("working-directory: {}", root.display()));
-    for (line, label) in lines[1..].iter().zip([
-        "authoring",
-        "runtime-vendored-flow-http-routing",
-        "http-route",
-    ]) {
+    for (line, label) in lines[1..].iter().zip(["authoring", "http-route"]) {
         assert!(line.starts_with(&format!("{label}: ")), "{line}");
         assert!(line.contains(" --locked --offline "), "{line}");
     }

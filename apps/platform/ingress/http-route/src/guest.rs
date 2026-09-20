@@ -6,8 +6,13 @@
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "flow-http",
-        path: "wit",
+        world: "wamn:flow-http/flow-http@0.1.0",
+        path: [
+            "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
+            "../../../../crates/execution/host/wit/deps/wamn-router-delivery",
+            "../../execution/materializer/wit/deps/wasi-clocks",
+            "wit",
+        ],
         generate_all,
         async: [
             "export:wasi:http/handler@0.3.0#handle",
