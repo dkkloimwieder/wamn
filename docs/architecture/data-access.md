@@ -49,6 +49,50 @@ Control-store projections retain their separate tenant-scoped policies.
 `wamn-run-state` supplies the host queue worker's actual `CURRENT_USER` membership query.
 The native runtime refuses absent membership at the existing guest error boundary.
 
+## Application declarations
+
+`wamn.json` declares application choices that another source cannot determine exactly.
+The generator supplies fixed protocol rules. It rejects their former authored fields.
+Receiving, Acme, and WMS use the same declaration format.
+
+The following map covers the Receiving manifest fields and their nested declarations.
+A schema fact describes the database. A permission or writable-field list selects authority over that database.
+The generator compares those choices with the schema and SQL. It does not replace them with broader inferred authority.
+
+| Declaration | Authoritative source and treatment |
+| --- | --- |
+| `package.id`, `package.version` | WAMN package identity. Cargo names an artifact and does not determine this coordinate. Retain. |
+| `required_platform_policy_contract.id`, `.state` | WAMN policy requirement. Retain independently of migration shape. |
+| `models.*.schema`, `.table`, `.owner` | Application relation selection and package ownership. PostgreSQL supplies the selected relation's schema. Retain selection and ownership. |
+| `server_owned_fields`, `client_field_extensible`, `enum_fields` | Application exposure, extension, and value policies. Database defaults and checks do not determine all these choices. Retain. |
+| `audit_log.columns`, `.retention` | Application history policy. Retain. |
+| `operations` keys, `permission`, `writable_fields`, `revision_field`, `result` | Application operation, authority, revision, and result choices. Retain. |
+| CRUD `error_details` | Generator-owned error vocabulary and details, derived from operation kind and applicable database constraints. Remove from authored input. |
+| `authored_sql.default`, `.variants[].field`, `.direction`, `.path` | Application selection of exact SQL for each supported ordering. SQL files own statement bytes. Retain mappings. |
+| `filters[].field`, `sort.fields`, `.directions`, `pagination.default_sort`, `.tie_breaker`, `limit.default`, `.minimum`, `.maximum` | Application query bounds and selection. Retain within supported generator rules. |
+| Filter `binding`, sort `max_fields`, pagination `kind`, `.cursor`, and limit `invalid` | Fixed query protocol, including cursor version, canonical JSON, encoding, opacity, and refusal. Derive in generated contracts. |
+| `internal_relations.*.schema`, `.table`, `.cdc` | Application relation selection and event-publication policy. PostgreSQL owns relation shape. Retain. |
+| Custom operation `kind`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |
+| `transaction`, `automatic_retry`, `idempotent_by`, `claim.*` | Application transaction and replay choices, including claim statements and generated identities. Retain. |
+| `pre_commit`, `participant` | Application participation contract and selection. Retain. |
+| `input.raw_body_maximum`, `.envelope.minimum`, `.maximum`, `.line.minimum`, `.maximum` | Application input bounds. Retain. |
+| Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
+| Input/result `fields[].path`, `.type`, `.nullable`, `.values`, `.revision`, and result `class` | Application boundary contract. Generated WIT consumes these fields, so it cannot replace their source. Retain. |
+| Canonicalization `excluded_fields`, `line_order` | Application command-identity choices. Retain. |
+| Canonicalization `payload`, `uuid`, `timestamptz`, `numeric`, `duplicate_line` | Fixed platform codecs and duplicate-line refusal. Derive. |
+| Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. Retain. Derive fixed details for standard platform errors. |
+| `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.lock`, `.constraints` | Declared SQL authority. Compare with the SQL corpus and PostgreSQL. Retain the authority boundary. |
+| `statements.*.path`, `.fetch`, `.parameters`, `.row` | Static SQL selection and accessor contract. PostgreSQL checks types, privileges, and transaction requirements. Retain names and declared shape. |
+| Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
+| `connections` aliases | Application database-capability selection. Retain alias names as an array. The PostgreSQL interface is fixed, so remove repeated interface records. |
+| `components` keys and `.connections` | Component grouping and declared capability selection before compilation. Retain. Cargo artifact names do not determine operation grouping. |
+
+Compiled component metadata owns actual WIT imports and exports for runtime admission.
+Those bytes exist after generation, so reading them to generate the same component creates a circular dependency.
+The manifest does not duplicate native deployment replicas, credentials, database targets, or workload bindings.
+Those facts remain with the existing deployment and binding owners.
+This change does not generate new component worlds or change deployment representation.
+
 ## Generated SQL and contracts
 
 Each package combines generated CRUD, lock, and mutation SQL with authored static query and projection SQL.

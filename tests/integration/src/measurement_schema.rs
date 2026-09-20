@@ -59,7 +59,7 @@ pub fn write_package_directory(root: &Path, schema: &str) -> anyhow::Result<()> 
             "state": "unsatisfied"
         },
         "models": models,
-        "connections": {},
+        "connections": [],
         "components": {}
     });
     std::fs::create_dir_all(root.join("migrations"))?;

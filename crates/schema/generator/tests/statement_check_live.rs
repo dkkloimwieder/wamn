@@ -198,13 +198,7 @@ async fn generation_refuses_whole_row_references_as_the_application_role() {
             "fields": [{"path": "image", "type": "text", "nullable": false}]
         },
         "errors": ["invalid_input", "retry", "timeout", "permission_denied", "internal_error"],
-        "error_details": {
-            "invalid_input": {"required": ["field"]},
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {"required": ["operation"]},
-            "internal_error": {}
-        },
+
         "constraint_errors": {},
         "relations": [{
             "schema": "receiving",

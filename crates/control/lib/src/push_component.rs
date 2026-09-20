@@ -2297,8 +2297,7 @@ mod tests {
         {
             operation["component"] = serde_json::json!(primary);
         }
-        document["connections"]["secondary_only"] =
-            serde_json::json!({"interface": "wamn:secondary@0.1.0"});
+        document["connections"] = serde_json::json!(["postgres", "secondary_only"]);
         document["components"]["secondary"] =
             serde_json::json!({"connections": ["postgres", "secondary_only"]});
         document["custom_operations"]["quality.create_inspection"]["component"] =

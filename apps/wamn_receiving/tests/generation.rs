@@ -340,12 +340,6 @@ fn event_handler_operation() -> Value {
             ]
         },
         "errors": ["invalid_input", "retry", "timeout", "internal_error"],
-        "error_details": {
-            "invalid_input": {"required": ["field"]},
-            "retry": {},
-            "timeout": {},
-            "internal_error": {}
-        },
         "relations": [{
             "schema": "receiving",
             "table": "location",
@@ -688,9 +682,7 @@ fn exclusion_owner_fixture() -> (CatalogIr, Value) {
         )
         .unwrap(),
     ]);
-    let mut manifest = overlay_manifest();
-    manifest["models"]["purchase_order"]["operations"]["update"]["error_details"]["exclusion_violation"] =
-        json!({"required": ["constraint"]});
+    let manifest = overlay_manifest();
     (replacing_table(&catalog, purchase_order), manifest)
 }
 
@@ -844,8 +836,6 @@ fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
         .as_array_mut()
         .unwrap()
         .push(json!("permission_denied"));
-    handler_permission_error["custom_operations"]["quality.create_inspection"]["error_details"]["permission_denied"] =
-        json!({"required": ["operation"]});
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&handler_permission_error))
             .expect_err("a private handler permission error was accepted")
@@ -896,61 +886,13 @@ fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
 }
 
 #[test]
-fn operation_error_details_are_required_closed_and_exact() {
-    let mut missing_declaration = manifest();
-    missing_declaration["models"]["purchase_order"]["operations"]["get"]
-        .as_object_mut()
-        .unwrap()
-        .remove("error_details");
-    assert!(
-        PackageManifest::from_slice(&serde_json::to_vec(&missing_declaration).unwrap()).is_err(),
-        "an operation without its error-detail declaration was accepted"
-    );
-
-    let mut unknown_code = manifest();
-    unknown_code["models"]["purchase_order"]["operations"]["get"]["error_details"]["database_error"] =
-        json!({});
-    assert!(
-        PackageManifest::from_slice(&serde_json::to_vec(&unknown_code).unwrap()).is_err(),
-        "an undeclared error code was accepted"
-    );
-
-    let mut unknown_schema_key = manifest();
-    unknown_schema_key["models"]["purchase_order"]["operations"]["get"]["error_details"]["invalid_input"]
-        ["sqlstate"] = json!(true);
-    assert!(
-        PackageManifest::from_slice(&serde_json::to_vec(&unknown_schema_key).unwrap()).is_err(),
-        "an open-ended detail declaration was accepted"
-    );
-
-    let mut missing_code = manifest();
-    missing_code["models"]["purchase_order"]["operations"]["get"]["error_details"]
-        .as_object_mut()
-        .unwrap()
-        .remove("not_found");
+fn custom_error_details_are_business_only_and_exact() {
+    let mut legacy_platform_detail = shipped_manifest();
+    legacy_platform_detail["custom_operations"]["receiving.record_receipt"]["error_details"]["invalid_input"] =
+        json!({"required": ["field"]});
     assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&missing_code))
-            .expect_err("an incomplete error-code set was accepted")
-            .kind(),
-        GenerateErrorKind::InvalidOperation
-    );
-
-    let mut wrong_detail = manifest();
-    wrong_detail["models"]["purchase_order"]["operations"]["update"]["error_details"]["concurrency_conflict"]
-        ["required"] = json!(["expected_row_version", "id"]);
-    assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&wrong_detail))
-            .expect_err("incorrect concurrency detail keys were accepted")
-            .kind(),
-        GenerateErrorKind::InvalidOperation
-    );
-
-    let mut repeated_detail = manifest();
-    repeated_detail["models"]["purchase_order"]["operations"]["query"]["error_details"]["invalid_input"]
-        ["optional"] = json!(["minimum", "maximum", "observed", "observed"]);
-    assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&repeated_detail))
-            .expect_err("a repeated detail key was accepted")
+        validate_operation_vocabulary(&parsed_manifest(&legacy_platform_detail))
+            .expect_err("an authored platform error detail was accepted")
             .kind(),
         GenerateErrorKind::InvalidOperation
     );
@@ -1005,11 +947,6 @@ fn operation_error_details_are_required_closed_and_exact() {
         .as_array_mut()
         .unwrap()
         .retain(|error| error.as_str() != Some("permission_denied"));
-    public_without_permission_refusal["custom_operations"]["receiving.record_receipt"]
-        ["error_details"]
-        .as_object_mut()
-        .unwrap()
-        .remove("permission_denied");
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&public_without_permission_refusal))
             .expect_err("a public operation omitted its permission refusal")
@@ -1980,7 +1917,6 @@ fn a_lineless_command_canonicalizes_without_a_line_profile() {
         .as_object_mut()
         .expect("canonicalization");
     canonicalization.remove("line_order");
-    canonicalization.remove("duplicate_line");
 
     validate_operation_vocabulary(&parsed_manifest(&manifest))
         .expect("a lineless command canonicalizes its top-level fields alone");
@@ -2003,7 +1939,6 @@ fn a_line_profile_and_a_line_input_must_agree() {
                 .as_object_mut()
                 .expect("canonicalization");
         canonicalization.remove("line_order");
-        canonicalization.remove("duplicate_line");
     };
 
     for (label, mutate) in [
@@ -2020,26 +1955,6 @@ fn a_line_profile_and_a_line_input_must_agree() {
             refusal.kind(),
             GenerateErrorKind::InvalidOperation,
             "{label}"
-        );
-    }
-}
-
-/// `line_order` and `duplicate_line` are declared together: a command that
-/// said how to order lines but not what a repeat costs would leave half a rule.
-#[test]
-fn the_two_line_members_are_declared_together() {
-    for member in ["line_order", "duplicate_line"] {
-        let mut manifest = shipped_manifest();
-        manifest["custom_operations"]["receiving.record_receipt"]["canonicalization"]
-            .as_object_mut()
-            .expect("canonicalization")
-            .remove(member);
-        let refusal = validate_operation_vocabulary(&parsed_manifest(&manifest))
-            .expect_err("half a line profile refuses");
-        assert_eq!(
-            refusal.kind(),
-            GenerateErrorKind::InvalidOperation,
-            "{member}"
         );
     }
 }

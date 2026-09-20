@@ -68,51 +68,10 @@
       "operations": {
         "get": {
           "permission": "purchase_order.get",
-          "error_details": {
-            "invalid_input": {
-              "required": [
-                "field"
-              ]
-            },
-            "not_found": {
-              "required": [
-                "field",
-                "id"
-              ]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {
-              "required": [
-                "operation"
-              ]
-            },
-            "internal_error": {}
-          },
           "result": "one"
         },
         "query": {
           "permission": "purchase_order.query",
-          "error_details": {
-            "invalid_input": {
-              "required": [
-                "field"
-              ],
-              "optional": [
-                "minimum",
-                "maximum",
-                "observed"
-              ]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {
-              "required": [
-                "operation"
-              ]
-            },
-            "internal_error": {}
-          },
           "authored_sql": {
             "default": "query/open_purchase_order.sql",
             "variants": [
@@ -150,12 +109,10 @@
           },
           "filters": [
             {
-              "field": "supplier_id",
-              "binding": "json_array"
+              "field": "supplier_id"
             },
             {
-              "field": "status",
-              "binding": "json_array"
+              "field": "status"
             }
           ],
           "sort": {
@@ -167,18 +124,9 @@
             "directions": [
               "ascending",
               "descending"
-            ],
-            "max_fields": 1
+            ]
           },
           "pagination": {
-            "kind": "keyset",
-            "cursor": {
-              "version": 1,
-              "payload": "canonical_compact_json",
-              "encoding": "base64url_unpadded",
-              "opaque": true,
-              "invalid": "invalid_input"
-            },
             "default_sort": {
               "field": "created_at",
               "direction": "ascending"
@@ -190,40 +138,12 @@
           "limit": {
             "default": 100,
             "minimum": 1,
-            "maximum": 100,
-            "invalid": "invalid_input"
+            "maximum": 100
           },
           "result": "page"
         },
         "update": {
           "permission": "purchase_order.update",
-          "error_details": {
-            "invalid_input": {
-              "required": [
-                "field"
-              ]
-            },
-            "not_found": {
-              "required": [
-                "field",
-                "id"
-              ]
-            },
-            "concurrency_conflict": {
-              "required": [
-                "expected_row_version",
-                "observed_row_version"
-              ]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {
-              "required": [
-                "operation"
-              ]
-            },
-            "internal_error": {}
-          },
           "writable_fields": [
             "supplier_id"
           ],
@@ -269,60 +189,11 @@
       "operations": {
         "get": {
           "permission": "receipt.get",
-          "error_details": {
-            "invalid_input": {
-              "required": [
-                "field"
-              ]
-            },
-            "not_found": {
-              "required": [
-                "field",
-                "id"
-              ]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {
-              "required": [
-                "operation"
-              ]
-            },
-            "internal_error": {}
-          },
           "result": "one"
         },
         "query": {
           "permission": "receipt.query",
-          "error_details": {
-            "invalid_input": {
-              "required": [
-                "field"
-              ],
-              "optional": [
-                "minimum",
-                "maximum",
-                "observed"
-              ]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {
-              "required": [
-                "operation"
-              ]
-            },
-            "internal_error": {}
-          },
           "pagination": {
-            "kind": "keyset",
-            "cursor": {
-              "version": 1,
-              "payload": "canonical_compact_json",
-              "encoding": "base64url_unpadded",
-              "opaque": true,
-              "invalid": "invalid_input"
-            },
             "default_sort": {
               "field": "created_at",
               "direction": "ascending"
@@ -334,8 +205,7 @@
           "limit": {
             "default": 100,
             "minimum": 1,
-            "maximum": 100,
-            "invalid": "invalid_input"
+            "maximum": 100
           },
           "result": "page"
         }
@@ -399,14 +269,11 @@
         "raw_body_maximum": 1048576,
         "envelope": {
           "minimum": 1,
-          "maximum": 100,
-          "invalid": "invalid_input"
+          "maximum": 100
         },
-        "item_semantics": "per_input",
         "line": {
           "minimum": 1,
-          "maximum": 100,
-          "invalid": "invalid_input"
+          "maximum": 100
         },
         "fields": [
           {
@@ -482,16 +349,11 @@
         ]
       },
       "canonicalization": {
-        "payload": "canonical_compact_json",
         "excluded_fields": [
           "request_id",
           "value.idempotency_key"
         ],
-        "line_order": "purchase_order_line_id_ascending",
-        "duplicate_line": "invalid_input",
-        "uuid": "lowercase_hyphenated",
-        "timestamptz": "utc_rfc3339_six_fractional_digits",
-        "numeric": "postgresql_lexical_scale_preserved"
+        "line_order": "purchase_order_line_id_ascending"
       },
       "errors": [
         "invalid_input",
@@ -509,16 +371,6 @@
         "internal_error"
       ],
       "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ],
-          "optional": [
-            "minimum",
-            "maximum",
-            "observed"
-          ]
-        },
         "purchase_order_not_found": {
           "required": [
             "field"
@@ -562,15 +414,7 @@
           "required": [
             "field"
           ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
+        }
       },
       "constraint_errors": {
         "receipt_purchase_order_id_receipt_reference_key": "receipt_reference_conflict"
@@ -1043,27 +887,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ]
-        },
-        "not_found": {
-          "required": [
-            "field",
-            "id"
-          ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
-      },
       "constraint_errors": {},
       "relations": [
         {
@@ -1282,21 +1105,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
-      },
       "constraint_errors": {},
       "relations": [
         {
@@ -1450,21 +1258,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
-      },
       "constraint_errors": {},
       "relations": [
         {
@@ -1501,11 +1294,9 @@
       }
     }
   },
-  "connections": {
-    "postgres": {
-      "interface": "wamn:postgres@0.1.0"
-    }
-  },
+  "connections": [
+    "postgres"
+  ],
   "components": {
     "receiving": {
       "connections": [

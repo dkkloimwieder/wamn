@@ -119,14 +119,7 @@ pub(super) fn projection_operation() -> Value {
             "invalid_input", "not_found", "retry", "timeout", "permission_denied",
             "internal_error"
         ],
-        "error_details": {
-            "invalid_input": {"required": ["field"]},
-            "not_found": {"required": ["field", "id"]},
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {"required": ["operation"]},
-            "internal_error": {}
-        },
+
         "relations": [{
             "schema": "receiving",
             "table": "purchase_order",
@@ -204,28 +197,12 @@ pub(super) fn manifest() -> Value {
                 "operations": {
                     "get": {
                         "permission": "purchase_order.get",
-                        "error_details": {
-                            "invalid_input": {"required": ["field"]},
-                            "not_found": {"required": ["field", "id"]},
-                            "retry": {},
-                            "timeout": {},
-                            "permission_denied": {"required": ["operation"]},
-                            "internal_error": {}
-                        },
+
                         "result": "one"
                     },
                     "query": {
                         "permission": "purchase_order.query",
-                        "error_details": {
-                            "invalid_input": {
-                                "required": ["field"],
-                                "optional": ["minimum", "maximum", "observed"]
-                            },
-                            "retry": {},
-                            "timeout": {},
-                            "permission_denied": {"required": ["operation"]},
-                            "internal_error": {}
-                        },
+
                         "authored_sql": {
                             "default": "query/open_purchase_order.sql",
                             "variants": [
@@ -238,47 +215,27 @@ pub(super) fn manifest() -> Value {
                             ]
                         },
                         "filters": [
-                            {"field": "supplier_id", "binding": "json_array"},
-                            {"field": "status", "binding": "json_array"}
+                            {"field": "supplier_id"},
+                            {"field": "status"}
                         ],
                         "sort": {
                             "fields": ["purchase_order_number", "status", "created_at"],
-                            "directions": ["ascending", "descending"],
-                            "max_fields": 1
+                            "directions": ["ascending", "descending"]
                         },
                         "pagination": {
-                            "kind": "keyset",
-                            "cursor": {
-                                "version": 1,
-                                "payload": "canonical_compact_json",
-                                "encoding": "base64url_unpadded",
-                                "opaque": true,
-                                "invalid": "invalid_input"
-                            },
                             "default_sort": {"field": "created_at", "direction": "ascending"},
                             "tie_breaker": {"field": "id"}
                         },
                         "limit": {
                             "default": 100,
                             "minimum": 1,
-                            "maximum": 100,
-                            "invalid": "invalid_input"
+                            "maximum": 100
                         },
                         "result": "page"
                     },
                     "update": {
                         "permission": "purchase_order.update",
-                        "error_details": {
-                            "invalid_input": {"required": ["field"]},
-                            "not_found": {"required": ["field", "id"]},
-                            "concurrency_conflict": {
-                                "required": ["expected_row_version", "observed_row_version"]
-                            },
-                            "retry": {},
-                            "timeout": {},
-                            "permission_denied": {"required": ["operation"]},
-                            "internal_error": {}
-                        },
+
                         "writable_fields": ["supplier_id"],
                         "revision_field": "row_version",
                         "result": "one"
@@ -286,7 +243,7 @@ pub(super) fn manifest() -> Value {
                 }
             }
         },
-        "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
+        "connections": ["postgres"],
         "components": {
             "receiving": {
                 "connections": ["postgres"]

@@ -24,7 +24,7 @@ pub struct PackageManifest {
     pub internal_relations: BTreeMap<String, InternalRelationDeclaration>,
     #[serde(default)]
     pub custom_operations: BTreeMap<String, CustomOperationDeclaration>,
-    pub connections: BTreeMap<String, ConnectionDeclaration>,
+    pub connections: BTreeSet<String>,
     pub components: BTreeMap<String, ComponentDeclaration>,
 }
 
@@ -53,6 +53,7 @@ pub struct CustomOperationDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<CustomOperationResultDeclaration>,
     pub errors: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub error_details: BTreeMap<String, OperationErrorDetailDeclaration>,
     #[serde(default)]
     pub constraint_errors: BTreeMap<String, String>,
@@ -215,17 +216,8 @@ pub struct CustomOperationInputDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub envelope: Option<CountLimitDeclaration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub item_semantics: Option<ItemSemantics>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<CountLimitDeclaration>,
     pub fields: Vec<ContractFieldDeclaration>,
-}
-
-/// Independent result semantics for each array-envelope item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ItemSemantics {
-    PerInput,
 }
 
 /// One explicit count bound whose refusal stays at the operation layer.
@@ -234,7 +226,6 @@ pub enum ItemSemantics {
 pub struct CountLimitDeclaration {
     pub minimum: u32,
     pub maximum: u32,
-    pub invalid: InputRefusal,
 }
 
 /// One typed leaf in an input or result contract.
@@ -259,26 +250,13 @@ pub struct CustomOperationResultDeclaration {
     pub fields: Vec<ContractFieldDeclaration>,
 }
 
-/// Byte-stable command identity rules consumed by the runtime implementation.
+/// Application choices for canonical command identity.
 ///
-/// # CANONICALIZE, THEN HASH. Validation is not canonicalization.
-///
-/// The spellings below are what an implementation must NORMALIZE its inputs
-/// TO before hashing them — not a shape to check them against. The difference
-/// is invisible until a retry: an uppercase UUID validates perfectly, reaches
-/// the command bytes in the spelling the caller sent, and canonicalizes to
-/// DIFFERENT bytes than the same move sent lowercase. The idempotency key then
-/// keys two different bodies, the replay path sees a mismatch, and a second
-/// delivery of one operator action is refused as a conflicting command — or,
-/// worse, executed as a new one.
-///
-/// Nothing fails at the boundary, so nothing points at the cause. An
-/// implementation therefore parses and RE-SPELLS every member the rules name,
-/// and hashes what it re-spelled.
+/// Generated codecs normalize JSON and primitive values before hashing.
+/// Exclusions and line ordering retain the command's own identity semantics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandCanonicalization {
-    pub payload: CursorPayload,
     pub excluded_fields: Vec<String>,
     /// How a LINE SET is ordered before hashing, when the command has one.
     ///
@@ -288,13 +266,6 @@ pub struct CommandCanonicalization {
     /// be a null wearing a name, and every command would have to pick one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_order: Option<CommandLineOrder>,
-    /// What a repeated line is refused with. Absent with `line_order`, for the
-    /// same reason: a command with no lines cannot repeat one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duplicate_line: Option<InputRefusal>,
-    pub uuid: UuidSpelling,
-    pub timestamptz: TimestamptzSpelling,
-    pub numeric: NumericSpelling,
 }
 
 /// Closed canonicalized line profile implemented by command generation.
@@ -302,27 +273,6 @@ pub struct CommandCanonicalization {
 #[serde(rename_all = "snake_case")]
 pub enum CommandLineOrder {
     PurchaseOrderLineIdAscending,
-}
-
-/// Frozen UUID spelling at durable JSON boundaries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UuidSpelling {
-    LowercaseHyphenated,
-}
-
-/// Frozen timestamp spelling at durable JSON boundaries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TimestamptzSpelling {
-    UtcRfc3339SixFractionalDigits,
-}
-
-/// Frozen numeric identity rule; scale is semantic command input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NumericSpelling {
-    PostgresqlLexicalScalePreserved,
 }
 
 /// Closed operation-error detail keys serialized on per-item refusals.
@@ -366,25 +316,6 @@ pub enum AccessOperationErrorLiteral {
     Timeout,
     PermissionDenied,
     InternalError,
-}
-
-impl AccessOperationErrorLiteral {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::InvalidInput => "invalid_input",
-            Self::NotFound => "not_found",
-            Self::ConcurrencyConflict => "concurrency_conflict",
-            Self::IdempotencyConflict => "idempotency_conflict",
-            Self::UniqueViolation => "unique_violation",
-            Self::ForeignKeyViolation => "foreign_key_violation",
-            Self::CheckViolation => "check_violation",
-            Self::ExclusionViolation => "exclusion_violation",
-            Self::Retry => "retry",
-            Self::Timeout => "timeout",
-            Self::PermissionDenied => "permission_denied",
-            Self::InternalError => "internal_error",
-        }
-    }
 }
 
 /// One migration-derived relation consumed by static custom-operation SQL.
@@ -510,7 +441,6 @@ pub fn validate_operation_vocabulary(
                 ));
             }
             component_by_operation.insert(identity.clone(), operation.component.as_deref());
-            validate_access_error_details(&identity, *action, &operation.error_details)?;
         }
     }
     for (operation_name, operation) in &manifest.custom_operations {
@@ -761,7 +691,7 @@ fn validate_component_groups(
             ));
         }
         for connection in &requirements {
-            if !manifest.connections.contains_key(*connection) {
+            if !manifest.connections.contains(*connection) {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidComponent,
                     format!("{name} references unknown connection {connection}"),
@@ -858,7 +788,6 @@ fn validate_custom_operation(
             || operation.claim.is_none()
             || pre_commit.raw_body_maximum.is_some()
             || pre_commit.envelope.is_some()
-            || pre_commit.item_semantics.is_some()
             || pre_commit.line.is_some()
         {
             return Err(GenerateError::new(
@@ -943,7 +872,6 @@ fn validate_custom_operation_kind(
                     || operation.visibility != OperationVisibility::Public
                     || operation.input.raw_body_maximum.is_some()
                     || operation.input.envelope.is_some()
-                    || operation.input.item_semantics.is_some()
                     || operation.input.line.is_some())
             {
                 return Err(GenerateError::new(
@@ -1319,11 +1247,7 @@ fn validate_custom_operation_input(
     input: &CustomOperationInputDeclaration,
 ) -> Result<(), GenerateError> {
     validate_contract_fields(operation_name, "input", &input.fields)?;
-    let envelope_fields = [
-        input.raw_body_maximum.is_some(),
-        input.envelope.is_some(),
-        input.item_semantics.is_some(),
-    ];
+    let envelope_fields = [input.raw_body_maximum.is_some(), input.envelope.is_some()];
     if envelope_fields.iter().any(|present| *present)
         && !envelope_fields.iter().all(|present| *present)
     {
@@ -1419,17 +1343,11 @@ fn validate_command_canonicalization(
     canonicalization: &CommandCanonicalization,
 ) -> Result<(), GenerateError> {
     // THE INPUT DECIDES, not a separate flag: a command with a line set
-    // declares how its lines are ordered and what a repeat is refused with,
-    // and a command without one declares neither. Tying the two together this
+    // declares how its lines are ordered,
+    // and a command without one declares no ordering. Tying the two together this
     // way is what keeps a lineless command from having to name an ordering
     // over lines it does not have.
     let declares_lines = canonicalization.line_order.is_some();
-    if declares_lines != canonicalization.duplicate_line.is_some() {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation_name} line_order and duplicate_line must be declared together"),
-        ));
-    }
     if declares_lines != operation.input.line.is_some() {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
@@ -1508,16 +1426,23 @@ fn validate_custom_operation_errors(
     for error in &operation.errors {
         validate_identifier(error, "custom-operation error")?;
     }
+    let authored_errors = errors
+        .iter()
+        .copied()
+        .filter(|error| shared_custom_error_detail(operation, error).is_none())
+        .collect::<BTreeSet<_>>();
     if operation
         .error_details
         .keys()
         .map(String::as_str)
         .collect::<BTreeSet<_>>()
-        != errors
+        != authored_errors
     {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
-            format!("{operation_name} error details must match its exact error set"),
+            format!(
+                "{operation_name} error details must contain exactly its business error set; platform error details are derived"
+            ),
         ));
     }
     for (error, detail) in &operation.error_details {
@@ -1533,8 +1458,6 @@ fn validate_custom_operation_errors(
                 &[OperationErrorDetailKey::Constraint],
                 &[],
             )?;
-        } else if let Some((required, optional)) = shared_custom_error_detail(operation, error) {
-            validate_detail_keys(operation_name, error, detail, required, optional)?;
         } else {
             validate_unconstrained_detail_keys(operation_name, error, detail)?;
         }
@@ -1576,6 +1499,23 @@ fn validate_custom_operation_errors(
         }
     }
     Ok(())
+}
+
+pub(crate) fn custom_operation_error_detail(
+    operation: &CustomOperationDeclaration,
+    error: &str,
+) -> OperationErrorDetailDeclaration {
+    if let Some((required, optional)) = shared_custom_error_detail(operation, error) {
+        return OperationErrorDetailDeclaration {
+            required: required.to_vec(),
+            optional: optional.to_vec(),
+        };
+    }
+    operation
+        .error_details
+        .get(error)
+        .expect("manifest validation closed custom-operation error details")
+        .clone()
 }
 
 fn shared_custom_error_detail(
@@ -1681,7 +1621,7 @@ fn validate_static_sql_declarations(
         .as_deref()
         .expect("complete local SQL shape has a connection");
     validate_identifier(connection, "custom-operation connection")?;
-    if !manifest.connections.contains_key(connection) {
+    if !manifest.connections.contains(connection) {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
             format!("{operation_name} references unknown connection {connection}"),
@@ -1849,70 +1789,33 @@ fn validate_static_sql_values(
     Ok(())
 }
 
-fn validate_access_error_details(
-    operation: &str,
+pub(crate) fn access_operation_error_detail(
     action: CrudAction,
-    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
-) -> Result<(), GenerateError> {
+    code: AccessOperationErrorLiteral,
+) -> OperationErrorDetailDeclaration {
     use AccessOperationErrorLiteral as Code;
     use OperationErrorDetailKey as Key;
 
-    let mut expected = BTreeSet::from([
-        Code::InvalidInput,
-        Code::Retry,
-        Code::Timeout,
-        Code::PermissionDenied,
-        Code::InternalError,
-    ]);
-    if matches!(
-        action,
-        CrudAction::Get | CrudAction::Update | CrudAction::Delete
-    ) {
-        expected.insert(Code::NotFound);
-    }
-    if matches!(action, CrudAction::Update | CrudAction::Delete) {
-        expected.insert(Code::ConcurrencyConflict);
-    }
-    if action == CrudAction::Create {
-        expected.insert(Code::IdempotencyConflict);
-    }
-    for constraint in [
-        Code::UniqueViolation,
-        Code::ForeignKeyViolation,
-        Code::CheckViolation,
-        Code::ExclusionViolation,
-    ] {
-        if details.contains_key(&constraint) {
-            expected.insert(constraint);
+    let (required, optional): (&[Key], &[Key]) = match code {
+        Code::InvalidInput if action == CrudAction::Query => {
+            (&[Key::Field], &[Key::Minimum, Key::Maximum, Key::Observed])
         }
+        // A key rebound to a different request names the field that
+        // carried it, exactly as any other refused input does.
+        Code::InvalidInput | Code::IdempotencyConflict => (&[Key::Field], &[]),
+        Code::NotFound => (&[Key::Field, Key::Id], &[]),
+        Code::ConcurrencyConflict => (&[Key::ExpectedRowVersion, Key::ObservedRowVersion], &[]),
+        Code::UniqueViolation
+        | Code::ForeignKeyViolation
+        | Code::CheckViolation
+        | Code::ExclusionViolation => (&[Key::Constraint], &[]),
+        Code::PermissionDenied => (&[Key::Operation], &[]),
+        Code::Retry | Code::Timeout | Code::InternalError => (&[], &[]),
+    };
+    OperationErrorDetailDeclaration {
+        required: required.to_vec(),
+        optional: optional.to_vec(),
     }
-    if details.keys().copied().collect::<BTreeSet<_>>() != expected {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation} must declare its exact closed error-detail code set"),
-        ));
-    }
-
-    for (code, detail) in details {
-        let (required, optional): (&[Key], &[Key]) = match code {
-            Code::InvalidInput if action == CrudAction::Query => {
-                (&[Key::Field], &[Key::Minimum, Key::Maximum, Key::Observed])
-            }
-            // A key rebound to a different request names the field that
-            // carried it, exactly as any other refused input does.
-            Code::InvalidInput | Code::IdempotencyConflict => (&[Key::Field], &[]),
-            Code::NotFound => (&[Key::Field, Key::Id], &[]),
-            Code::ConcurrencyConflict => (&[Key::ExpectedRowVersion, Key::ObservedRowVersion], &[]),
-            Code::UniqueViolation
-            | Code::ForeignKeyViolation
-            | Code::CheckViolation
-            | Code::ExclusionViolation => (&[Key::Constraint], &[]),
-            Code::PermissionDenied => (&[Key::Operation], &[]),
-            Code::Retry | Code::Timeout | Code::InternalError => (&[], &[]),
-        };
-        validate_detail_keys(operation, code.as_str(), detail, required, optional)?;
-    }
-    Ok(())
 }
 
 fn validate_detail_keys(
@@ -2355,7 +2258,6 @@ pub struct OperationDeclaration {
     pub fresh_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
-    pub error_details: BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
     #[serde(default)]
     pub authored_sql: Option<AuthoredSqlDeclaration>,
     #[serde(default)]
@@ -2439,14 +2341,6 @@ pub enum ResultClass {
 #[serde(deny_unknown_fields)]
 pub struct FilterDeclaration {
     pub field: String,
-    pub binding: FilterBinding,
-}
-
-/// Frozen filter binding strategies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FilterBinding {
-    JsonArray,
 }
 
 /// Finite query sorting vocabulary with at most one requested field.
@@ -2455,49 +2349,14 @@ pub enum FilterBinding {
 pub struct SortDeclaration {
     pub fields: Vec<String>,
     pub directions: Vec<CursorDirection>,
-    pub max_fields: u8,
 }
 
 /// Keyset pagination and opaque cursor contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaginationDeclaration {
-    pub kind: PaginationKind,
-    pub cursor: CursorDeclaration,
     pub default_sort: SortKey,
     pub tie_breaker: TieBreakerDeclaration,
-}
-
-/// Supported pagination strategy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaginationKind {
-    Keyset,
-}
-
-/// Opaque, versioned wire cursor declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CursorDeclaration {
-    pub version: u8,
-    pub payload: CursorPayload,
-    pub encoding: CursorEncoding,
-    pub opaque: bool,
-    pub invalid: InputRefusal,
-}
-
-/// Canonical payload serialized before cursor encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CursorPayload {
-    CanonicalCompactJson,
-}
-
-/// Supported wire cursor encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CursorEncoding {
-    Base64urlUnpadded,
 }
 
 /// One field and direction used by deterministic keyset ordering.
@@ -2522,14 +2381,6 @@ pub struct LimitDeclaration {
     pub default: u32,
     pub minimum: u32,
     pub maximum: u32,
-    pub invalid: InputRefusal,
-}
-
-/// Typed refusal used for malformed operation inputs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InputRefusal {
-    InvalidInput,
 }
 
 /// Closed sort direction vocabulary.
@@ -2538,13 +2389,6 @@ pub enum InputRefusal {
 pub enum CursorDirection {
     Ascending,
     Descending,
-}
-
-/// One package-required connection capability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectionDeclaration {
-    pub interface: String,
 }
 
 /// Import requirements for one package-local component group.

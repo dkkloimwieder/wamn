@@ -211,7 +211,7 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     );
 
     let mut distinct = manifest();
-    distinct["connections"]["reporting"] = json!({"interface": "wamn:postgres@0.1.0"});
+    distinct["connections"] = json!(["postgres", "reporting"]);
     distinct["components"]["reporting"] = json!({"connections": ["reporting"]});
     distinct["models"]["purchase_order"]["operations"]["query"]["component"] = json!("reporting");
     let error = validate_operation_vocabulary(&parsed_manifest(&distinct))
@@ -1000,9 +1000,6 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
 
 const CLAIM_TABLE: &str = "purchase_order_command";
 
-/// One labelled way to break the create's closed error vocabulary.
-type ErrorVocabularyMutant = (&'static str, Box<dyn Fn(&mut Value)>);
-
 fn claim_columns() -> Vec<Column> {
     vec![
         Column::new("canonical_command", ColumnType::Bytes, false, None, None),
@@ -1054,16 +1051,6 @@ fn claim_manifest() -> Value {
     let mut manifest = manifest();
     manifest["models"]["purchase_order"]["operations"]["create"] = json!({
         "permission": "purchase_order.create",
-        "error_details": {
-            "invalid_input": {"required": ["field"]},
-            "idempotency_conflict": {"required": ["field"]},
-            "unique_violation": {"required": ["constraint"]},
-            "check_violation": {"required": ["constraint"]},
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {"required": ["operation"]},
-            "internal_error": {}
-        },
         "writable_fields": ["supplier_id"],
         "claim": {
             "table": CLAIM_TABLE,
@@ -1142,15 +1129,6 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                 "operations": {
                     "create": {
                         "permission": "inventory_item.create",
-                        "error_details": {
-                            "invalid_input": {"required": ["field"]},
-                            "idempotency_conflict": {"required": ["field"]},
-                            "unique_violation": {"required": ["constraint"]},
-                            "retry": {},
-                            "timeout": {},
-                            "permission_denied": {"required": ["operation"]},
-                            "internal_error": {}
-                        },
                         "writable_fields": ["sku", "note", "priority"],
                         "claim": {
                             "table": CLAIM_TABLE,
@@ -1160,34 +1138,12 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                     },
                     "update": {
                         "permission": "inventory_item.update",
-                        "error_details": {
-                            "invalid_input": {"required": ["field"]},
-                            "not_found": {"required": ["field", "id"]},
-                            "concurrency_conflict": {
-                                "required": ["expected_row_version", "observed_row_version"]
-                            },
-                            "retry": {},
-                            "timeout": {},
-                            "permission_denied": {"required": ["operation"]},
-                            "internal_error": {}
-                        },
                         "writable_fields": ["priority"],
                         "revision_field": "sequence_number",
                         "result": "one"
                     },
                     "delete": {
                         "permission": "inventory_item.delete",
-                        "error_details": {
-                            "invalid_input": {"required": ["field"]},
-                            "not_found": {"required": ["field", "id"]},
-                            "concurrency_conflict": {
-                                "required": ["expected_row_version", "observed_row_version"]
-                            },
-                            "retry": {},
-                            "timeout": {},
-                            "permission_denied": {"required": ["operation"]},
-                            "internal_error": {}
-                        },
                         "revision_field": "sequence_number",
                         "result": "one"
                     }
@@ -1197,7 +1153,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
         "internal_relations": {
             CLAIM_TABLE: {"schema": "receiving", "table": CLAIM_TABLE, "cdc": "excluded"}
         },
-        "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
+        "connections": ["postgres"],
         "components": {"inventory": {"connections": ["postgres"]}}
     });
     (CatalogIr::new(vec![model, claim]), manifest)
@@ -1980,47 +1936,6 @@ fn a_model_identity_the_claim_does_not_mint_refuses() {
     );
 }
 
-/// EXIT GATE: `idempotency_conflict` is a required, exactly-shaped member of
-/// the create's closed error vocabulary, and belongs to no other action.
-#[test]
-fn idempotency_conflict_is_closed_to_the_create() {
-    let cases: [ErrorVocabularyMutant; 3] = [
-        (
-            "a create that does not declare the refusal",
-            Box::new(|manifest: &mut Value| {
-                manifest["models"]["purchase_order"]["operations"]["create"]["error_details"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("idempotency_conflict");
-            }),
-        ),
-        (
-            "a create whose refusal carries the wrong structured detail",
-            Box::new(|manifest: &mut Value| {
-                manifest["models"]["purchase_order"]["operations"]["create"]["error_details"]["idempotency_conflict"] =
-                    json!({"required": ["constraint"]});
-            }),
-        ),
-        (
-            "an update that claims the refusal",
-            Box::new(|manifest: &mut Value| {
-                manifest["models"]["purchase_order"]["operations"]["update"]["error_details"]["idempotency_conflict"] =
-                    json!({"required": ["field"]});
-            }),
-        ),
-    ];
-    for (label, mutate) in cases {
-        let mut manifest = claim_manifest();
-        mutate(&mut manifest);
-        let refusal = run(&claim_catalog(), &manifest, &QUERY_SOURCES).expect_err(label);
-        assert_eq!(
-            refusal.kind(),
-            GenerateErrorKind::InvalidOperation,
-            "{label}"
-        );
-    }
-}
-
 /// wamn-10yt.54. An exclusion violation is SQLSTATE 23P01. The generated
 /// operation names it exactly as it names a unique or foreign-key violation,
 /// carrying the constraint name in the `{constraint}` detail the matrix already
@@ -2066,10 +1981,7 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
     ]);
     let catalog = replacing_table(&base, with_exclusions);
 
-    let mut manifest = manifest();
-    manifest["models"]["purchase_order"]["operations"]["update"]["error_details"]["exclusion_violation"] =
-        json!({"required": ["constraint"]});
-
+    let manifest = manifest();
     let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
     let errors = artifact_json(
         &package,
@@ -2093,20 +2005,6 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
         })],
         "the reachable exclusion is named once, in the same case shape a unique \
          violation uses"
-    );
-
-    // The refusal vocabulary stays closed: an operation that can violate an
-    // exclusion must declare it, exactly as it must for the other three.
-    let mut undeclared = manifest.clone();
-    undeclared["models"]["purchase_order"]["operations"]["update"]["error_details"]
-        .as_object_mut()
-        .unwrap()
-        .remove("exclusion_violation");
-    assert_eq!(
-        run(&catalog, &undeclared, &QUERY_SOURCES)
-            .unwrap_err()
-            .kind(),
-        GenerateErrorKind::InvalidOperation
     );
 }
 
@@ -2181,17 +2079,7 @@ fn overlay_manifest() -> Value {
 fn delete_operation() -> Value {
     json!({
         "permission": "purchase_order.delete",
-        "error_details": {
-            "invalid_input": {"required": ["field"]},
-            "not_found": {"required": ["field", "id"]},
-            "concurrency_conflict": {
-                "required": ["expected_row_version", "observed_row_version"]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {"required": ["operation"]},
-            "internal_error": {}
-        },
+
         "revision_field": "row_version",
         "result": "one"
     })
@@ -2822,12 +2710,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
             "connection": "postgres",
             "input": {"fields": [{"path": "new.id", "type": "uuid", "nullable": false}]},
             "errors": ["invalid_input", "retry", "timeout", "internal_error"],
-            "error_details": {
-                "invalid_input": {"required": ["field"]},
-                "retry": {},
-                "timeout": {},
-                "internal_error": {}
-            },
+
             "relations": [{
                 "schema": "receiving",
                 "table": "purchase_order_history",

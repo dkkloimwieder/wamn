@@ -2477,7 +2477,7 @@ mod tests {
             "package": {"id": id, "version": version},
             "required_platform_policy_contract": {"id": "receiving_data_access", "state": "satisfied"},
             "models": {},
-            "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
+            "connections": ["postgres"],
             "components": {(component): {"connections": ["postgres"]}}
         }))
         .expect("fixture package manifest");

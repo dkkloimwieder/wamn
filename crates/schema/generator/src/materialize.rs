@@ -663,20 +663,12 @@ mod tests {
                 "operations":{
                     "get":{
                         "permission":"thing.get",
-                        "error_details":{
-                            "invalid_input":{"required":["field"]},
-                            "not_found":{"required":["field","id"]},
-                            "retry":{},
-                            "timeout":{},
-                            "permission_denied":{"required":["operation"]},
-                            "internal_error":{}
-                        },
                         "result":"one"
                     }
                 }
             }
         },
-        "connections":{"postgres":{"interface":"wamn:postgres@0.1.0"}},
+        "connections":["postgres"],
         "components":{"test_package":{"connections":["postgres"]}}
     }"#;
 

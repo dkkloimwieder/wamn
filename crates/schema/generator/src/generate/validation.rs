@@ -1,16 +1,14 @@
 //! Manifest, claim, query, and authored SQL validation.
 
 use super::{
-    AccessOperationErrorLiteral, AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet,
-    CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN, CURSOR_VERSION, CatalogIr, Column, ColumnDefault,
-    ColumnType, Constraint, ConstraintKind, CrudAction, CursorDirection,
-    CustomOperationDeclaration, DeleteMode, GenerateError, GenerateErrorKind, GenerationInput,
-    ModelDeclaration, OperationDeclaration, POSTGRES_INTERFACE, PackageManifest, QUERY_LIMIT,
-    RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch, Table, TombstoneColumn,
-    column, constraint_error_code, contains_schema_qualified_reference,
-    custom_operation_constraint_origin, logged_history_tables, operation_constraints,
-    operation_exclusions, relation, rust_identifier, server_owned_fields, sql, validate_identifier,
-    validate_operation_vocabulary,
+    AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet, CLAIM_COMMAND_COLUMN,
+    CLAIM_KEY_COLUMN, CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind,
+    CrudAction, CursorDirection, CustomOperationDeclaration, DeleteMode, GenerateError,
+    GenerateErrorKind, GenerationInput, ModelDeclaration, OperationDeclaration, PackageManifest,
+    QUERY_LIMIT, RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch, Table,
+    TombstoneColumn, column, contains_schema_qualified_reference,
+    custom_operation_constraint_origin, logged_history_tables, relation, rust_identifier,
+    server_owned_fields, sql, validate_identifier, validate_operation_vocabulary,
 };
 use wamn_record_history::HISTORY_COLUMNS;
 
@@ -288,56 +286,7 @@ fn validate_operation(
             require_mutation_shape(&context, operation, true)?;
         }
     }
-    validate_constraint_error_details(
-        catalog,
-        &context,
-        table,
-        action,
-        operation,
-        model.delete_mode,
-    )?;
     Ok(())
-}
-
-fn validate_constraint_error_details(
-    catalog: &CatalogIr,
-    context: &str,
-    table: &Table,
-    action: CrudAction,
-    operation: &OperationDeclaration,
-    delete_mode: Option<DeleteMode>,
-) -> Result<(), GenerateError> {
-    use AccessOperationErrorLiteral as Code;
-
-    let mut expected = operation_constraints(catalog, table, action, operation, delete_mode)
-        .into_iter()
-        .map(|constraint| constraint_error_code(constraint.kind()))
-        .collect::<BTreeSet<_>>();
-    if !operation_exclusions(table, action, operation).is_empty() {
-        expected.insert(Code::ExclusionViolation);
-    }
-    let declared = operation
-        .error_details
-        .keys()
-        .copied()
-        .filter(|code| {
-            matches!(
-                code,
-                Code::UniqueViolation
-                    | Code::ForeignKeyViolation
-                    | Code::CheckViolation
-                    | Code::ExclusionViolation
-            )
-        })
-        .collect::<BTreeSet<_>>();
-    if declared == expected {
-        Ok(())
-    } else {
-        Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} must declare error details for its exact constraint kinds"),
-        ))
-    }
 }
 
 fn require_result(
@@ -776,13 +725,12 @@ fn validate_query(
     if let Some(sort) = &operation.sort {
         if sort.fields.is_empty()
             || sort.directions.is_empty()
-            || sort.max_fields != 1
             || sort.fields.iter().collect::<BTreeSet<_>>().len() != sort.fields.len()
             || sort.directions.iter().collect::<BTreeSet<_>>().len() != sort.directions.len()
         {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
-                format!("{context} sort must be a nonempty finite product with max_fields 1"),
+                format!("{context} sort must be a nonempty finite product"),
             ));
         }
         for field in &sort.fields {
@@ -807,9 +755,7 @@ fn validate_query(
             format!("{context} requires keyset pagination"),
         )
     })?;
-    if pagination.cursor.version != CURSOR_VERSION
-        || !pagination.cursor.opaque
-        || pagination.default_sort.field != "created_at"
+    if pagination.default_sort.field != "created_at"
         || pagination.default_sort.direction != CursorDirection::Ascending
         || pagination.tie_breaker.field != "id"
         || operation.sort.as_ref().is_some_and(|sort| {
@@ -1296,14 +1242,8 @@ fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError>
             "manifest declares no database connection",
         ));
     }
-    for (name, connection) in &manifest.connections {
+    for name in &manifest.connections {
         validate_identifier(name, "connection")?;
-        if connection.interface != POSTGRES_INTERFACE {
-            return Err(GenerateError::new(
-                GenerateErrorKind::InvalidConnection,
-                format!("{name} must import {POSTGRES_INTERFACE}"),
-            ));
-        }
     }
     Ok(())
 }

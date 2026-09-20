@@ -816,16 +816,9 @@ fn fixture_manifest(base_digest: &str) -> Value {
             "schema": PACKAGE, "table": "counter", "owner": PACKAGE,
             "audit_log": {"columns": [], "retention": "none"},
             "operations": {"get": {
-                "permission": "counter.get", "result": "one",
-                "error_details": {
-                    "invalid_input": {"required": ["field"]},
-                    "not_found": {"required": ["field", "id"]},
-                    "retry": {}, "timeout": {},
-                    "permission_denied": {"required": ["operation"]}, "internal_error": {}
-                }
-            }}
+                "permission": "counter.get", "result": "one"}}
         }},
-        "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
+        "connections": ["postgres"],
         "components": {"data": {"connections": ["postgres"]}}
     })
 }

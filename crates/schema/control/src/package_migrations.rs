@@ -754,7 +754,7 @@ mod tests {
 
     fn manifest(version: &str) -> Vec<u8> {
         format!(
-            r#"{{"package":{{"id":"orders","version":"{version}"}},"required_platform_policy_contract":{{"id":"orders_access","state":"unsatisfied"}},"models":{{"purchase_order":{{"schema":"receiving","table":"purchase_order","owner":"orders","audit_log":{{"columns":[],"retention":"none"}},"operations":{{"get":{{"permission":"purchase_order.get","error_details":{{"invalid_input":{{"required":["field"]}},"not_found":{{"required":["field","id"]}},"retry":{{}},"timeout":{{}},"permission_denied":{{"required":["operation"]}},"internal_error":{{}}}},"result":"one"}}}}}}}},"connections":{{"postgres":{{"interface":"wamn:postgres@0.1.0"}}}},"components":{{"data":{{"connections":["postgres"]}}}}}}"#
+            r#"{{"package":{{"id":"orders","version":"{version}"}},"required_platform_policy_contract":{{"id":"orders_access","state":"unsatisfied"}},"models":{{"purchase_order":{{"schema":"receiving","table":"purchase_order","owner":"orders","audit_log":{{"columns":[],"retention":"none"}},"operations":{{"get":{{"permission":"purchase_order.get","result":"one"}}}}}}}},"connections":["postgres"],"components":{{"data":{{"connections":["postgres"]}}}}}}"#
         )
         .into_bytes()
     }
@@ -794,11 +794,8 @@ mod tests {
             r#""models":{"purchase_order":{"schema":"receiving","table":"purchase_order","#,
             r#""owner":"orders","audit_log":{"columns":[],"retention":"none"},"#,
             r#""operations":{"get":{"permission":"purchase_order.get","#,
-            r#""error_details":{"invalid_input":{"required":["field"]},"#,
-            r#""not_found":{"required":["field","id"]},"retry":{},"timeout":{},"#,
-            r#""permission_denied":{"required":["operation"]},"internal_error":{}},"#,
             r#""result":"one"}}}},"#,
-            r#""connections":{"postgres":{"interface":"wamn:postgres@0.1.0"}},"#,
+            r#""connections":["postgres"],"#,
             r#""components":{"data":{"connections":["postgres"]}}}"#,
         );
         const PINNED_MIGRATION: &str = "SELECT 1;";
@@ -811,7 +808,7 @@ mod tests {
 
         assert_eq!(
             plan.manifest_sha256,
-            "sha256:4cb4a5dbfe22df459e6876b430f7462bc12547bc4451e10a119dbc50e441ab9e"
+            "sha256:31ede60a43f1acbf644936a11fefb496dd36562f1cc0f64255dad2a011163354"
         );
         assert_eq!(
             plan.pending[0].sha256,
@@ -933,8 +930,7 @@ mod tests {
                 "permission": "quality.create_inspection",
                 "input": {"fields": []},
                 "result": {"class": "one", "fields": []},
-                "errors": [],
-                "error_details": {}
+                "errors": []
             }
         });
         directory.manifest_bytes = serde_json::to_vec(&manifest).expect("serialize manifest");

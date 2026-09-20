@@ -69,52 +69,11 @@
         "get": {
           "permission": "pallet.get",
           "revision_field": "row_version",
-          "error_details": {
-            "invalid_input": {
-              "required": [
-                "field"
-              ]
-            },
-            "not_found": {
-              "required": [
-                "field",
-                "id"
-              ]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {
-              "required": [
-                "operation"
-              ]
-            },
-            "internal_error": {}
-          },
           "result": "one"
         },
         "query": {
           "permission": "pallet.query",
           "revision_field": "row_version",
-          "error_details": {
-            "invalid_input": {
-              "required": [
-                "field"
-              ],
-              "optional": [
-                "minimum",
-                "maximum",
-                "observed"
-              ]
-            },
-            "retry": {},
-            "timeout": {},
-            "permission_denied": {
-              "required": [
-                "operation"
-              ]
-            },
-            "internal_error": {}
-          },
           "authored_sql": {
             "default": "query/open_pallet.sql",
             "variants": [
@@ -162,16 +121,13 @@
           },
           "filters": [
             {
-              "field": "status",
-              "binding": "json_array"
+              "field": "status"
             },
             {
-              "field": "location_id",
-              "binding": "json_array"
+              "field": "location_id"
             },
             {
-              "field": "pallet_code",
-              "binding": "json_array"
+              "field": "pallet_code"
             }
           ],
           "sort": {
@@ -184,18 +140,9 @@
             "directions": [
               "ascending",
               "descending"
-            ],
-            "max_fields": 1
+            ]
           },
           "pagination": {
-            "kind": "keyset",
-            "cursor": {
-              "version": 1,
-              "payload": "canonical_compact_json",
-              "encoding": "base64url_unpadded",
-              "opaque": true,
-              "invalid": "invalid_input"
-            },
             "default_sort": {
               "field": "created_at",
               "direction": "ascending"
@@ -207,8 +154,7 @@
           "limit": {
             "default": 100,
             "minimum": 1,
-            "maximum": 100,
-            "invalid": "invalid_input"
+            "maximum": 100
           },
           "result": "page"
         }
@@ -287,10 +233,8 @@
         "raw_body_maximum": 1048576,
         "envelope": {
           "minimum": 1,
-          "maximum": 100,
-          "invalid": "invalid_input"
+          "maximum": 100
         },
-        "item_semantics": "per_input",
         "fields": [
           {
             "path": "request_id",
@@ -362,14 +306,10 @@
         ]
       },
       "canonicalization": {
-        "payload": "canonical_compact_json",
         "excluded_fields": [
           "request_id",
           "value.idempotency_key"
-        ],
-        "uuid": "lowercase_hyphenated",
-        "timestamptz": "utc_rfc3339_six_fractional_digits",
-        "numeric": "postgresql_lexical_scale_preserved"
+        ]
       },
       "errors": [
         "invalid_input",
@@ -383,16 +323,6 @@
         "internal_error"
       ],
       "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ],
-          "optional": [
-            "minimum",
-            "maximum",
-            "observed"
-          ]
-        },
         "pallet_not_found": {
           "required": [
             "field",
@@ -405,25 +335,11 @@
             "id"
           ]
         },
-        "concurrency_conflict": {
-          "required": [
-            "expected_row_version",
-            "observed_row_version"
-          ]
-        },
         "idempotency_conflict": {
           "required": [
             "field"
           ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
+        }
       },
       "constraint_errors": {},
       "relations": [
@@ -801,10 +717,8 @@
         "raw_body_maximum": 1048576,
         "envelope": {
           "minimum": 1,
-          "maximum": 100,
-          "invalid": "invalid_input"
+          "maximum": 100
         },
-        "item_semantics": "per_input",
         "fields": [
           {
             "path": "request_id",
@@ -895,14 +809,10 @@
         ]
       },
       "canonicalization": {
-        "payload": "canonical_compact_json",
         "excluded_fields": [
           "request_id",
           "value.idempotency_key"
-        ],
-        "uuid": "lowercase_hyphenated",
-        "timestamptz": "utc_rfc3339_six_fractional_digits",
-        "numeric": "postgresql_lexical_scale_preserved"
+        ]
       },
       "errors": [
         "invalid_input",
@@ -916,16 +826,6 @@
         "internal_error"
       ],
       "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ],
-          "optional": [
-            "minimum",
-            "maximum",
-            "observed"
-          ]
-        },
         "pallet_not_found": {
           "required": [
             "field",
@@ -938,25 +838,11 @@
             "id"
           ]
         },
-        "concurrency_conflict": {
-          "required": [
-            "expected_row_version",
-            "observed_row_version"
-          ]
-        },
         "idempotency_conflict": {
           "required": [
             "field"
           ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
+        }
       },
       "constraint_errors": {},
       "relations": [
@@ -1301,10 +1187,8 @@
         "raw_body_maximum": 1048576,
         "envelope": {
           "minimum": 1,
-          "maximum": 100,
-          "invalid": "invalid_input"
+          "maximum": 100
         },
-        "item_semantics": "per_input",
         "fields": [
           {
             "path": "request_id",
@@ -1376,14 +1260,10 @@
         ]
       },
       "canonicalization": {
-        "payload": "canonical_compact_json",
         "excluded_fields": [
           "request_id",
           "value.idempotency_key"
-        ],
-        "uuid": "lowercase_hyphenated",
-        "timestamptz": "utc_rfc3339_six_fractional_digits",
-        "numeric": "postgresql_lexical_scale_preserved"
+        ]
       },
       "errors": [
         "invalid_input",
@@ -1396,41 +1276,17 @@
         "internal_error"
       ],
       "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ],
-          "optional": [
-            "minimum",
-            "maximum",
-            "observed"
-          ]
-        },
         "pallet_not_found": {
           "required": [
             "field",
             "id"
           ]
         },
-        "concurrency_conflict": {
-          "required": [
-            "expected_row_version",
-            "observed_row_version"
-          ]
-        },
         "idempotency_conflict": {
           "required": [
             "field"
           ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
+        }
       },
       "constraint_errors": {},
       "relations": [
@@ -1865,10 +1721,8 @@
         "raw_body_maximum": 1048576,
         "envelope": {
           "minimum": 1,
-          "maximum": 100,
-          "invalid": "invalid_input"
+          "maximum": 100
         },
-        "item_semantics": "per_input",
         "fields": [
           {
             "path": "request_id",
@@ -1964,14 +1818,10 @@
         ]
       },
       "canonicalization": {
-        "payload": "canonical_compact_json",
         "excluded_fields": [
           "request_id",
           "value.idempotency_key"
-        ],
-        "uuid": "lowercase_hyphenated",
-        "timestamptz": "utc_rfc3339_six_fractional_digits",
-        "numeric": "postgresql_lexical_scale_preserved"
+        ]
       },
       "errors": [
         "invalid_input",
@@ -1987,16 +1837,6 @@
         "internal_error"
       ],
       "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ],
-          "optional": [
-            "minimum",
-            "maximum",
-            "observed"
-          ]
-        },
         "pallet_not_found": {
           "required": [
             "field",
@@ -2024,25 +1864,11 @@
             "observed"
           ]
         },
-        "concurrency_conflict": {
-          "required": [
-            "expected_row_version",
-            "observed_row_version"
-          ]
-        },
         "idempotency_conflict": {
           "required": [
             "field"
           ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
+        }
       },
       "constraint_errors": {},
       "relations": [
@@ -2557,21 +2383,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {
-        "invalid_input": {
-          "required": [
-            "field"
-          ]
-        },
-        "retry": {},
-        "timeout": {},
-        "permission_denied": {
-          "required": [
-            "operation"
-          ]
-        },
-        "internal_error": {}
-      },
       "constraint_errors": {},
       "relations": [
         {
@@ -2638,11 +2449,9 @@
       }
     }
   },
-  "connections": {
-    "postgres": {
-      "interface": "wamn:postgres@0.1.0"
-    }
-  },
+  "connections": [
+    "postgres"
+  ],
   "components": {
     "wms": {
       "connections": [

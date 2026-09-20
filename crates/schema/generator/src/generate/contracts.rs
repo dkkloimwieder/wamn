@@ -93,7 +93,7 @@ pub(super) fn emit_model(
             &wamn_api,
         )?;
     }
-    emit_model_wit(files, manifest, model_name, model, table)?;
+    emit_model_wit(files, catalog, manifest, model_name, model, table)?;
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
     emit_parity(files, model_name, table, &wamn_api)?;
     emit_projection(
@@ -363,17 +363,26 @@ fn emit_custom_operation_contracts(
         );
     }
     if let Some(envelope) = &operation.input.envelope {
-        input_contract.insert("envelope".to_owned(), json!(envelope));
-    }
-    if let Some(item_semantics) = operation.input.item_semantics {
-        input_contract.insert("item_semantics".to_owned(), json!(item_semantics));
+        input_contract.insert("envelope".to_owned(), count_contract(envelope));
+        input_contract.insert("item_semantics".to_owned(), json!("per_input"));
     }
     if let Some(line) = &operation.input.line {
-        input_contract.insert("line".to_owned(), json!(line));
+        input_contract.insert("line".to_owned(), count_contract(line));
     }
     input_contract.insert("fields".to_owned(), json!(operation.input.fields));
     if let Some(canonicalization) = &operation.canonicalization {
-        input_contract.insert("canonicalization".to_owned(), json!(canonicalization));
+        let mut contract = json!({
+            "payload": "canonical_compact_json",
+            "excluded_fields": canonicalization.excluded_fields,
+            "uuid": "lowercase_hyphenated",
+            "timestamptz": "utc_rfc3339_six_fractional_digits",
+            "numeric": "postgresql_lexical_scale_preserved",
+        });
+        if let Some(order) = canonicalization.line_order {
+            contract["line_order"] = json!(order);
+            contract["duplicate_line"] = json!("invalid_input");
+        }
+        input_contract.insert("canonicalization".to_owned(), contract);
     }
     insert_json(
         files,
@@ -728,12 +737,9 @@ fn custom_operation_error_contract(
                 .expect("error contract case is an object")
                 .insert(
                     "detail".to_owned(),
-                    error_detail_contract(
-                        operation
-                            .error_details
-                            .get(literal)
-                            .expect("manifest validation closed custom-operation error details"),
-                    ),
+                    error_detail_contract(&crate::manifest::custom_operation_error_detail(
+                        operation, literal,
+                    )),
                 );
             case
         })
@@ -755,7 +761,7 @@ fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal
             if operation
                 .canonicalization
                 .as_ref()
-                .is_some_and(|canonical| canonical.duplicate_line.is_some())
+                .is_some_and(|canonical| canonical.line_order.is_some())
             {
                 sources.push("duplicate_line");
             }
@@ -1186,13 +1192,33 @@ fn input_contract(
                     let column = column(table, &filter.field).expect("validated filter column");
                     json!({
                         "field": filter.field,
-                        "binding": filter.binding,
+                        "binding": "json_array",
                         "type": column.column_type().as_str(),
                     })
                 }).collect::<Vec<_>>(),
-                "sort": operation.sort,
-                "pagination": operation.pagination,
-                "limit": operation.limit,
+                "sort": operation.sort.as_ref().map(|sort| json!({
+                    "fields": sort.fields,
+                    "directions": sort.directions,
+                    "max_fields": 1,
+                })),
+                "pagination": operation.pagination.as_ref().map(|pagination| json!({
+                    "kind": "keyset",
+                    "cursor": {
+                        "version": CURSOR_VERSION,
+                        "payload": "canonical_compact_json",
+                        "encoding": "base64url_unpadded",
+                        "opaque": true,
+                        "invalid": "invalid_input",
+                    },
+                    "default_sort": pagination.default_sort,
+                    "tie_breaker": pagination.tie_breaker,
+                })),
+                "limit": operation.limit.as_ref().map(|limit| json!({
+                    "default": limit.default,
+                    "minimum": limit.minimum,
+                    "maximum": limit.maximum,
+                    "invalid": "invalid_input",
+                })),
                 "validation_order": ["cursor", "limit", "sql"],
                 "invalid_cursor": "invalid_input",
                 "invalid_limit": "invalid_input",
@@ -1318,12 +1344,9 @@ fn error_contract(
                 .expect("error contract case is an object")
                 .insert(
                     "detail".to_owned(),
-                    error_detail_contract(
-                        operation
-                            .error_details
-                            .get(&code)
-                            .expect("manifest validation closed access error details"),
-                    ),
+                    error_detail_contract(&crate::manifest::access_operation_error_detail(
+                        action, code,
+                    )),
                 );
             case
         })
@@ -1492,4 +1515,12 @@ fn merge_json(mut left: Value, right: &Value) -> Value {
             .clone(),
     );
     Value::Object(left.clone())
+}
+
+fn count_contract(limit: &crate::CountLimitDeclaration) -> Value {
+    json!({
+        "minimum": limit.minimum,
+        "maximum": limit.maximum,
+        "invalid": "invalid_input",
+    })
 }

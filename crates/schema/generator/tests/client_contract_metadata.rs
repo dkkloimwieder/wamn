@@ -24,21 +24,11 @@ fn manifest() -> Value {
     for action in ["get", "update"] {
         let mut operation = json!({
             "permission": format!("entry.{action}"),
-            "error_details": {
-                "invalid_input": {"required": ["field"]},
-                "not_found": {"required": ["field", "id"]},
-                "retry": {},
-                "timeout": {},
-                "permission_denied": {"required": ["operation"]},
-                "internal_error": {}
-            },
+
             "result": "one"
         });
         if action != "get" {
             operation["revision_field"] = json!("edit_version");
-            operation["error_details"]["concurrency_conflict"] = json!({
-                "required": ["expected_row_version", "observed_row_version"]
-            });
         }
         if action == "update" {
             operation["writable_fields"] = json!(["title"]);
@@ -58,7 +48,7 @@ fn manifest() -> Value {
                 "operations": operations
             }
         },
-        "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
+        "connections": ["postgres"],
         "components": {"example": {"connections": ["postgres"]}}
     })
 }
@@ -127,7 +117,7 @@ fn custom_state_metadata_preserves_the_guard_without_inventing_a_record_link() {
                 {"path": "edit_version", "type": "int64", "nullable": false}
             ]},
             "errors": ["permission_denied"],
-            "error_details": {"permission_denied": {"required": ["operation"]}},
+
             "relations": [{
                 "schema": "inventory", "table": "stock",
                 "select_fields": ["id", "edit_version"],

@@ -233,7 +233,7 @@ fn declared_operator_keeps_generated_library_bytes_without_a_launcher() {
 fn two_declared_components_render_only_their_owned_operations() {
     let ir = release("wamn_receiving");
     let mut value = serde_json::to_value(manifest("wamn_receiving")).unwrap();
-    value["connections"]["reporting"] = value["connections"]["postgres"].clone();
+    value["connections"] = json!(["postgres", "reporting"]);
     value["components"]["reports"] = json!({"connections":["postgres", "reporting"]});
     for model in value["models"].as_object_mut().unwrap().values_mut() {
         for operation in model["operations"].as_object_mut().unwrap().values_mut() {

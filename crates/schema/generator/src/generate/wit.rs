@@ -16,6 +16,7 @@ use crate::manifest::OperationErrorDetailKey;
 /// Emit typed boundaries for every declared model operation.
 pub(super) fn emit_model_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
+    catalog: &super::CatalogIr,
     manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
@@ -47,10 +48,12 @@ pub(super) fn emit_model_wit(
     insert_bytes(
         files,
         &format!("{directory}/package.wit"),
-        emit_model_package_wit(manifest, model_name, model, table, &results).into_bytes(),
+        emit_model_package_wit(catalog, manifest, model_name, model, table, &results).into_bytes(),
     )?;
     for (action, operation) in &model.operations {
-        let codec = emit_crud_codec(*action, table, operation, &results[action].fields);
+        let details =
+            super::operation_error_details(catalog, table, *action, operation, model.delete_mode);
+        let codec = emit_crud_codec(*action, table, operation, &results[action].fields, &details);
         insert_bytes(
             files,
             &format!("generated/wit/{model_name}_{}_codec.rs", action.as_str()),
@@ -61,6 +64,7 @@ pub(super) fn emit_model_wit(
 }
 
 fn emit_model_package_wit(
+    catalog: &super::CatalogIr,
     manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
@@ -74,12 +78,16 @@ fn emit_model_package_wit(
         manifest.package.version
     );
     for action in model.operations.keys() {
+        let operation = &model.operations[action];
+        let details =
+            super::operation_error_details(catalog, table, *action, operation, model.delete_mode);
         emit_crud_interface(
             &mut source,
             *action,
             table,
-            &model.operations[action],
+            operation,
             &results[action].fields,
+            &details,
         );
     }
     source
@@ -91,9 +99,10 @@ fn emit_crud_interface(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) {
     if action == CrudAction::Update {
-        emit_update_interface(source, table, operation);
+        emit_update_interface(source, table, operation, details);
         return;
     }
     let name = action.as_str();
@@ -143,7 +152,7 @@ fn emit_crud_interface(
             .expect("writing to a String cannot fail");
     }
     source.push_str("  }\n\n");
-    emit_operation_errors(source, name, operation);
+    emit_operation_errors(source, name, details);
     writeln!(source, "  record {name}-item {{\n    request-id: string,\n    input: result<{name}-request, invalid-input-detail>,\n  }}\n")
         .expect("writing to a String cannot fail");
     emit_crud_result(source, name, action, fields, operation.result);
@@ -166,14 +175,18 @@ fn emit_writable_fields(source: &mut String, table: &Table, operation: &Operatio
     }
 }
 
-fn emit_operation_errors(source: &mut String, name: &str, operation: &OperationDeclaration) {
-    for (literal, detail) in &operation.error_details {
+fn emit_operation_errors(
+    source: &mut String,
+    name: &str,
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+) {
+    for (literal, detail) in details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
             emit_error_detail(source, access_error_literal(*literal), detail);
         }
     }
     writeln!(source, "  variant {name}-error {{").expect("writing to a String cannot fail");
-    for (literal, detail) in &operation.error_details {
+    for (literal, detail) in details {
         let literal = access_error_literal(*literal);
         if detail.required.is_empty() && detail.optional.is_empty() {
             writeln!(source, "    {},", wit_name(literal))
@@ -221,7 +234,12 @@ fn emit_crud_result(
     source.push_str("  }\n\n");
 }
 
-fn emit_update_interface(source: &mut String, table: &Table, operation: &OperationDeclaration) {
+fn emit_update_interface(
+    source: &mut String,
+    table: &Table,
+    operation: &OperationDeclaration,
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+) {
     source.push_str("interface update {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n\n  record update-change {\n");
     emit_writable_fields(source, table, operation);
     let revision = operation
@@ -232,13 +250,13 @@ fn emit_update_interface(source: &mut String, table: &Table, operation: &Operati
     writeln!(source, "    expected-{}: s64,", wit_name(revision))
         .expect("writing to a String cannot fail");
     source.push_str("    change: update-change,\n  }\n\n");
-    for (literal, detail) in &operation.error_details {
+    for (literal, detail) in details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
             emit_error_detail(source, access_error_literal(*literal), detail);
         }
     }
     source.push_str("  variant update-error {\n");
-    for (literal, detail) in &operation.error_details {
+    for (literal, detail) in details {
         let literal = access_error_literal(*literal);
         if detail.required.is_empty() && detail.optional.is_empty() {
             writeln!(source, "    {},", wit_name(literal))
@@ -294,6 +312,7 @@ fn emit_update_codec(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
     let mut source = codec_prelude("UpdateItem", 1, 100);
     let revision = operation
@@ -329,7 +348,7 @@ fn emit_update_codec(
         .expect("writing to a String cannot fail");
     }
     source.push_str(&UPDATE_CODEC_VALIDATE_PREFIX.replace("expected_revision", &expected_revision));
-    emit_crud_invalid_detail(&mut source, operation);
+    emit_crud_invalid_detail(&mut source, details);
     source.push_str(UPDATE_CODEC_ENCODE_PREFIX);
     for column in table.columns() {
         emit_codec_result_field(
@@ -341,7 +360,7 @@ fn emit_update_codec(
         );
     }
     source.push_str(UPDATE_CODEC_ERROR_PREFIX);
-    for (literal, detail) in &operation.error_details {
+    for (literal, detail) in details {
         emit_codec_error_arm(
             &mut source,
             "UpdateError",
@@ -360,8 +379,7 @@ fn emit_update_codec(
     ));
     source.push_str(&emit_error_mapper(
         "UpdateError",
-        operation
-            .error_details
+        details
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
     ));
@@ -374,13 +392,16 @@ fn emit_crud_codec(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
     if action == CrudAction::Update {
-        return emit_update_codec(table, operation, fields);
+        return emit_update_codec(table, operation, fields, details);
     }
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(&format!("{type_name}Item"), 1, 100);
-    source.push_str(&emit_crud_json_codec(action, table, operation, fields));
+    source.push_str(&emit_crud_json_codec(
+        action, table, operation, fields, details,
+    ));
     source.push_str(&emit_crud_normalizer(action, table, operation, fields));
     source.push_str(&emit_handler(&type_name));
     source.push_str(&emit_row_adapter(
@@ -390,8 +411,7 @@ fn emit_crud_codec(
     ));
     source.push_str(&emit_error_mapper(
         &format!("{type_name}Error"),
-        operation
-            .error_details
+        details
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
     ));
@@ -404,6 +424,7 @@ fn emit_crud_json_codec(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
     let type_name = rust_type_identifier(action.as_str());
     let mut source = String::from("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
@@ -441,8 +462,8 @@ fn emit_crud_json_codec(
     emit_crud_request_assignments(&mut source, action, table, operation);
     writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
         .expect("writing to a String cannot fail");
-    emit_crud_invalid_detail(&mut source, operation);
-    emit_crud_encoder(&mut source, action, fields, operation);
+    emit_crud_invalid_detail(&mut source, details);
+    emit_crud_encoder(&mut source, action, fields, operation, details);
     source
 }
 
@@ -703,8 +724,11 @@ fn emit_crud_request_assignments(
     }
 }
 
-fn emit_crud_invalid_detail(source: &mut String, operation: &OperationDeclaration) {
-    let detail = &operation.error_details[&AccessOperationErrorLiteral::InvalidInput];
+fn emit_crud_invalid_detail(
+    source: &mut String,
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+) {
+    let detail = &details[&AccessOperationErrorLiteral::InvalidInput];
     source.push_str("fn invalid(field: &str) -> contract::InvalidInputDetail { contract::InvalidInputDetail {\n");
     for key in &detail.required {
         if *key == OperationErrorDetailKey::Field {
@@ -723,6 +747,7 @@ fn emit_crud_encoder(
     action: CrudAction,
     fields: &[ContractFieldDeclaration],
     operation: &OperationDeclaration,
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) {
     let type_name = rust_type_identifier(action.as_str());
     writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ \"request_id\": item.request_id, \"value\":")
@@ -750,7 +775,7 @@ fn emit_crud_encoder(
     source.push_str("        }),\n        Err(error) => json!({ \"request_id\": item.request_id, \"error\": error_value(error) }),\n    }).collect::<Vec<_>>();\n    serde_json::to_string(&values).expect(\"typed operation outcomes always serialize\")\n}\n\n");
     writeln!(source, "fn error_value(error: &contract::{type_name}Error) -> Value {{\n    let (code, detail) = match error {{")
         .expect("writing to a String cannot fail");
-    for (literal, detail) in &operation.error_details {
+    for (literal, detail) in details {
         emit_codec_error_arm(
             source,
             &format!("{type_name}Error"),
@@ -1211,17 +1236,24 @@ fn emit_owned_interface(
         source.push_str("  }\n\n");
     }
 
-    for (literal, detail) in &operation.error_details {
+    let details = operation
+        .errors
+        .iter()
+        .map(|literal| {
+            (
+                literal.as_str(),
+                crate::manifest::custom_operation_error_detail(operation, literal),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for (literal, detail) in &details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
             emit_error_detail(&mut source, literal, detail);
         }
     }
     writeln!(source, "  variant {interface}-error {{").expect("writing to a String cannot fail");
     for literal in &operation.errors {
-        let detail = operation
-            .error_details
-            .get(literal)
-            .expect("validated error has a detail declaration");
+        let detail = &details[literal.as_str()];
         if detail.required.is_empty() && detail.optional.is_empty() {
             writeln!(source, "    {},", wit_name(literal))
                 .expect("writing to a String cannot fail");
@@ -1520,7 +1552,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             &mut source,
             "RecordReceiptError",
             literal,
-            &operation.error_details[literal],
+            &crate::manifest::custom_operation_error_detail(operation, literal),
         );
     }
     source.push_str(RECEIPT_CODEC_FOOTER);
@@ -1533,12 +1565,21 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             .iter()
             .map(|field| (field.path.as_str(), field.ty, field.nullable)),
     ));
+    let error_details = operation
+        .errors
+        .iter()
+        .map(|literal| {
+            (
+                literal.as_str(),
+                crate::manifest::custom_operation_error_detail(operation, literal),
+            )
+        })
+        .collect::<Vec<_>>();
     source.push_str(&emit_error_mapper(
         &format!("{type_name}Error"),
-        operation
-            .errors
+        error_details
             .iter()
-            .map(|literal| (literal.as_str(), &operation.error_details[literal])),
+            .map(|(literal, detail)| (*literal, detail)),
     ));
     source.push_str(&emit_export_adapter(
         &type_name,
@@ -1878,7 +1919,7 @@ fn codec_rust_type(ty: ColumnType, nullable: bool) -> String {
 }
 
 fn emit_invalid_detail(source: &mut String, operation: &CustomOperationDeclaration) {
-    let detail = &operation.error_details["invalid_input"];
+    let detail = crate::manifest::custom_operation_error_detail(operation, "invalid_input");
     source.push_str("fn invalid(field: &str) -> contract::InvalidInputDetail {\n    contract::InvalidInputDetail {\n");
     for key in &detail.required {
         let name = detail_name(*key).replace('-', "_");

@@ -534,7 +534,7 @@ async fn seed_with_client(
         "models": {},
         "custom_operations": {},
         "queries": {},
-        "connections": {},
+        "connections": [],
         "components": {},
     });
     let package_manifest_sha256 = wamn_execution_contract::canonical_json_sha256(&package_manifest);
@@ -829,7 +829,7 @@ async fn seed_additional_wirings(
     let package_version = &component.scope.package_version;
     if package != PACKAGE {
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
-            "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
+            "models": {}, "custom_operations": {}, "queries": {}, "connections": [], "components": {}});
         client.execute(
             "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256) \
              VALUES ($1, $2, $3, $4)",

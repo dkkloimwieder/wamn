@@ -26,6 +26,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 Receiving and Acme combine generated screens with the same application-owned Rust workflow.
 Each UI crate owns its entrypoint. Its generated crate supplies a library.
 Both launchers use the Receiving runtime for login and transport.
+Acme intentionally depends on `wamn-receiving-tui` for application composition.
 The generator creates no second launcher for either application.
 WMS still declares `wamn-wms-tui` in its generated UI crate.
 The development command selects the operator from its Cargo declaration.

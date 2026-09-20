@@ -35,7 +35,6 @@ use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
 use crate::{GenerateError, GenerateErrorKind};
 
-const POSTGRES_INTERFACE: &str = "wamn:postgres@0.1.0";
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
 /// The claim column carrying the caller's idempotency key, under the claim's
@@ -566,6 +565,53 @@ fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
         ConstraintKind::ForeignKey { .. } => AccessOperationErrorLiteral::ForeignKeyViolation,
         ConstraintKind::Check { .. } => AccessOperationErrorLiteral::CheckViolation,
     }
+}
+
+fn operation_error_details(
+    catalog: &CatalogIr,
+    table: &Table,
+    action: CrudAction,
+    operation: &OperationDeclaration,
+    delete_mode: Option<DeleteMode>,
+) -> BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration> {
+    use AccessOperationErrorLiteral as Code;
+
+    let mut codes = BTreeSet::from([
+        Code::InvalidInput,
+        Code::Retry,
+        Code::Timeout,
+        Code::PermissionDenied,
+        Code::InternalError,
+    ]);
+    if matches!(
+        action,
+        CrudAction::Get | CrudAction::Update | CrudAction::Delete
+    ) {
+        codes.insert(Code::NotFound);
+    }
+    if matches!(action, CrudAction::Update | CrudAction::Delete) {
+        codes.insert(Code::ConcurrencyConflict);
+    }
+    if action == CrudAction::Create {
+        codes.insert(Code::IdempotencyConflict);
+    }
+    codes.extend(
+        operation_constraints(catalog, table, action, operation, delete_mode)
+            .into_iter()
+            .map(|constraint| constraint_error_code(constraint.kind())),
+    );
+    if !operation_exclusions(table, action, operation).is_empty() {
+        codes.insert(Code::ExclusionViolation);
+    }
+    codes
+        .into_iter()
+        .map(|code| {
+            (
+                code,
+                crate::manifest::access_operation_error_detail(action, code),
+            )
+        })
+        .collect()
 }
 
 /// Constraints the operation can violate.

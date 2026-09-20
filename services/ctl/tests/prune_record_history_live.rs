@@ -127,14 +127,7 @@ fn write_package(root: &Path) {
     models["shipment"]["operations"] = serde_json::json!({
         "get": {
             "permission": "shipment.get",
-            "error_details": {
-                "invalid_input": {"required": ["field"]},
-                "not_found": {"required": ["field", "id"]},
-                "retry": {},
-                "timeout": {},
-                "permission_denied": {"required": ["operation"]},
-                "internal_error": {}
-            },
+
             "result": "one"
         }
     });
@@ -145,7 +138,7 @@ fn write_package(root: &Path) {
             "state": "unsatisfied"
         },
         "models": models,
-        "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
+        "connections": ["postgres"],
         "components": {"data": {"connections": ["postgres"]}}
     });
     let migration = RELATIONS
