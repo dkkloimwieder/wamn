@@ -1182,7 +1182,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 let liveness = queue.liveness();
                 wamn_runtime::lifecycle::watch_liveness(
                     &liveness,
-                    &probe_state,
+                    None,
                     Duration::from_millis(args.queue_lease_ttl_ms).saturating_mul(3),
                 )
                 .await
@@ -1192,7 +1192,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 _ = sigterm.recv() => Ok(()),
                 error = identity_failure => Err(error),
                 error = queue_failure => Err(error),
-                error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => Err(error),
+                error = wamn_runtime::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
                 () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
                 task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
                     Err(probe_listener_failure(task.as_ref()))

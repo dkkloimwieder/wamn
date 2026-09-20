@@ -460,7 +460,7 @@ async fn assert_missing_first_beat(
     let started = Instant::now();
     let observed = timeout(
         silence_budget + REQUEST_BUDGET,
-        watch_liveness(&liveness, &probes, silence_budget),
+        watch_liveness(&liveness, Some(&probes), silence_budget),
     )
     .await;
     let observation_time = started.elapsed();

@@ -30,14 +30,16 @@ pub async fn bounded_cleanup(
         .context("service cleanup exceeded its shutdown budget")?
 }
 
-/// Supervise real loop progress and announce startup only after the first beat.
+/// Supervise real loop progress and optionally announce startup after the first beat.
 ///
 /// Native liveness intentionally permits an unstarted host indefinitely. Once
 /// native startup has returned, a command task that never subscribes must still
-/// fail within its normal silence budget. This observer never writes a beat.
+/// fail within its normal silence budget. Pass no probe state for secondary
+/// loops whose progress must not announce process startup. This observer never
+/// writes a beat.
 pub async fn watch_liveness(
     liveness: &Liveness,
-    probes: &ProbeState,
+    probes: Option<&ProbeState>,
     silence_budget: Duration,
 ) -> anyhow::Error {
     let started = tokio::time::Instant::now();
@@ -46,7 +48,11 @@ pub async fn watch_liveness(
     loop {
         check.tick().await;
         match liveness_progress(liveness.silence(), started.elapsed(), silence_budget) {
-            Ok(true) => probes.started(),
+            Ok(true) => {
+                if let Some(probes) = probes {
+                    probes.started();
+                }
+            }
             Ok(false) => {}
             Err(error) => return error,
         }
@@ -100,7 +106,8 @@ mod tests {
     #[tokio::test]
     async fn missing_first_beat_fails_without_creating_a_beat() {
         let liveness = Liveness::new(Duration::ZERO);
-        let error = watch_liveness(&liveness, &ProbeState::default(), Duration::ZERO).await;
+        let probes = ProbeState::default();
+        let error = watch_liveness(&liveness, Some(&probes), Duration::ZERO).await;
         assert!(error.to_string().contains("first liveness beat"));
         assert_eq!(liveness.silence(), None);
     }
