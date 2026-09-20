@@ -150,7 +150,7 @@
     "package-id": "wamn_wms",
     "wiring-id": "inventory_move_and_label",
     "wiring-version": 1,
-    "definition-hash": "sha256:e828d1908ab670d3c36a8eb9d4c50d737645f3f84f3c0629659f6425f0af26a2",
+    "definition-hash": "sha256:83278f1ec79a92cc94a82a21823793eddcf1fece05a8e038315fb05d8d7ec561",
     "definition": {
       "id": "inventory-move-http",
       "kind": "http",
@@ -224,7 +224,7 @@
     "package-id": "wamn_wms",
     "wiring-id": "inventory_adjust",
     "wiring-version": 1,
-    "definition-hash": "sha256:589b42e0f60c375c971c5f6876a2efc38c07b09d6ed922d758ee0e51c6129941",
+    "definition-hash": "sha256:8158a98d8ffe68b2571e244cefc7459d8e63b22de87b62d085b46414326b68f3",
     "definition": {
       "id": "inventory-adjust-http",
       "kind": "http",
@@ -316,7 +316,7 @@
     "package-id": "wamn_wms",
     "wiring-id": "inventory_merge",
     "wiring-version": 1,
-    "definition-hash": "sha256:feb15bcd58123fab1b6417cffe524fe00431e62d736e8690d1e96bd0c4b2c764",
+    "definition-hash": "sha256:b0cbdf56d60604817efe855934be40c13911176e6ee917cc86524190e7d3200d",
     "definition": {
       "id": "inventory-merge-http",
       "kind": "http",
@@ -390,7 +390,7 @@
     "package-id": "wamn_wms",
     "wiring-id": "inventory_split",
     "wiring-version": 1,
-    "definition-hash": "sha256:462375b85c380e00c7bfe57005655ec157e510204e661e112840707dd87cc634",
+    "definition-hash": "sha256:e0c8e16e8797c2a014d1f430408e038afee709e268faee7e6d1c17f8933f187a",
     "definition": {
       "id": "inventory-split-http",
       "kind": "http",

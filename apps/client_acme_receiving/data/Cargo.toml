@@ -8,7 +8,7 @@ license = "Apache-2.0"
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-uuid = "1"
+uuid.workspace = true
 wamn-postgres-statements = { workspace = true }
 
 [dev-dependencies]
