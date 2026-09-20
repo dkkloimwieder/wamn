@@ -965,7 +965,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
         // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
         // the plugin still links and returns connection-unavailable on use.
-        Arc::clone(&postgres),
+        postgres.clone(),
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
         // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
@@ -1165,9 +1165,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     tokio::pin!(queue_serving);
 
     // Polling cleanup requests shutdown. Observe the retained native state instead.
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let stopped = async {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let identity_failure = async {
             let Some(connection) = identity_connection.as_mut() else {
                 return std::future::pending::<anyhow::Error>().await;
@@ -1187,25 +1186,23 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .await
         };
         tokio::select! {
-            signal = tokio::signal::ctrl_c() => (signal.context("receive SIGINT"), false),
-            _ = sigterm.recv() => (Ok(()), false),
-            error = identity_failure => (Err(error), false),
-            error = queue_failure => (Err(error), false),
-            error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => (Err(error), false),
-            () = ingress_stopped(ingress_connections.as_ref()) => (Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")), false),
+            signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
+            _ = sigterm.recv() => Ok(()),
+            error = identity_failure => Err(error),
+            error = queue_failure => Err(error),
+            error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => Err(error),
+            () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
             task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
-                (Err(probe_listener_failure(task.as_ref())), false)
+                Err(probe_listener_failure(task.as_ref()))
             }
-            result = &mut queue_serving => (
-                result.and(Err(anyhow::anyhow!("durable queue loop stopped unexpectedly"))),
-                true,
-            ),
         }
     };
+    let queue_enabled = queue.is_some();
     let result = stop_combined_after(
         stopped,
         cleanup,
         &mut queue_serving,
+        queue_enabled,
         stop_queue,
         &probe_state,
         args.drain_delay,
@@ -1348,9 +1345,10 @@ async fn ingress_stopped(connections: Option<&ConnectionLimit>) {
 }
 
 async fn stop_combined_after<Q, N>(
-    stopped: impl std::future::Future<Output = (anyhow::Result<()>, bool)>,
+    stopped: impl std::future::Future<Output = anyhow::Result<()>>,
     native_cleanup: N,
     mut queue_serving: std::pin::Pin<&mut Q>,
+    queue_enabled: bool,
     stop_queue: tokio::sync::watch::Sender<bool>,
     probes: &ProbeState,
     drain_delay: Duration,
@@ -1360,7 +1358,14 @@ where
     Q: std::future::Future<Output = anyhow::Result<()>>,
     N: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let (result, queue_finished) = stopped.await;
+    tokio::pin!(stopped);
+    let (result, queue_finished) = tokio::select! {
+        result = &mut stopped => (result, false),
+        result = &mut queue_serving, if queue_enabled => (
+            result.and(Err(anyhow::anyhow!("durable queue loop stopped unexpectedly"))),
+            true,
+        ),
+    };
     // This is the single admission cut: readiness drains before either HTTP
     // cleanup or queue cleanup can wait, and both stop accepting new work.
     probes.drain();
@@ -1368,7 +1373,7 @@ where
     tracing::info!("shutting down wamn-host");
     let cleanup_result = wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, async {
         let queue_cleanup = async {
-            if queue_finished {
+            if !queue_enabled || queue_finished {
                 Ok(())
             } else {
                 queue_serving.as_mut().await
@@ -1386,6 +1391,7 @@ where
     result.and(cleanup_result)
 }
 
+#[cfg(test)]
 async fn stop_after(
     stopped: impl std::future::Future<Output = anyhow::Result<()>>,
     cleanup: impl std::future::Future<Output = anyhow::Result<()>>,
@@ -1553,7 +1559,7 @@ mod tests {
         };
         tokio::pin!(queue);
         stop_combined_after(
-            async { (Ok(()), false) },
+            async { Ok(()) },
             async {
                 assert!(
                     *native_stopping.borrow(),
@@ -1562,6 +1568,7 @@ mod tests {
                 Ok(())
             },
             &mut queue,
+            true,
             stop_queue,
             &probes,
             Duration::ZERO,
@@ -1575,12 +1582,13 @@ mod tests {
     async fn failed_queue_is_not_polled_again_during_cleanup() {
         let probes = ProbeState::default();
         let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
-        let queue = async { panic!("completed queue future was polled twice") };
+        let queue = async { Err(anyhow::anyhow!("queue failed")) };
         tokio::pin!(queue);
         stop_combined_after(
-            async { (Err(anyhow::anyhow!("queue failed")), true) },
+            std::future::pending(),
             async { Ok(()) },
             &mut queue,
+            true,
             stop_queue,
             &probes,
             Duration::ZERO,
