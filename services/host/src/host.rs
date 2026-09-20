@@ -1148,10 +1148,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             Err(error) => Err(error),
         };
         if let Err(error) = started {
-            if let Some(handler) = ingress_handler.as_ref() {
-                handler.stop().await.context("stop HTTP admission")?;
-            }
-            wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, native_cleanup).await?;
+            let had_ingress = ingress_handler.is_some();
+            let explicit_stop = match ingress_handler.as_ref() {
+                Some(handler) => handler.stop().await.context("stop HTTP admission"),
+                None => Ok(()),
+            };
+            let native_result =
+                wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, native_cleanup).await;
+            let native_result = normalize_explicit_ingress_stop(
+                native_result,
+                had_ingress && explicit_stop.is_ok(),
+            );
+            explicit_stop.and(native_result)?;
             return Err(error);
         }
     }
@@ -1413,17 +1421,8 @@ where
         let propagation = tokio::time::sleep(propagation_delay);
         let (queue_result, native_result, ()) =
             tokio::join!(queue_cleanup, native_cleanup, propagation);
-        let native_result = match native_result {
-            Err(error)
-                if had_ingress
-                    && ingress_result.is_ok()
-                    && error.to_string()
-                        == "HTTP ingress stopped accepting connections; the host can no longer serve traffic" =>
-            {
-                Ok(())
-            }
-            result => result,
-        };
+        let native_result =
+            normalize_explicit_ingress_stop(native_result, had_ingress && ingress_result.is_ok());
         ingress_result.and(queue_result).and(native_result)
     })
     .await;
@@ -1431,6 +1430,22 @@ where
         tracing::error!(%error, "combined host cleanup failed; durable queue remains fenced for recovery");
     }
     result.and(cleanup_result)
+}
+
+fn normalize_explicit_ingress_stop(
+    result: anyhow::Result<()>,
+    explicitly_stopped: bool,
+) -> anyhow::Result<()> {
+    match result {
+        Err(error)
+            if explicitly_stopped
+                && error.to_string()
+                    == "HTTP ingress stopped accepting connections; the host can no longer serve traffic" =>
+        {
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 #[cfg(test)]
