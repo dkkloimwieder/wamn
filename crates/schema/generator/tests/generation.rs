@@ -480,7 +480,7 @@ fn generated_operations_ship_a_result_contract_with_closed_domains() {
                     "nullable": false,
                     "values": []
                 },
-                {"path": "row_version", "type": "int64", "nullable": false, "values": []},
+                {"path": "row_version", "type": "int64", "nullable": false, "values": [], "revision": true},
                 {
                     "path": "status",
                     "type": "text",
@@ -938,8 +938,8 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
     let ir = catalog(false);
     let mut duplicate = manifest();
     duplicate["models"]["purchase_order"]["operations"]["query"]["filters"] = json!([
-        {"field": "status", "binding": "json_array"},
-        {"field": "status", "binding": "json_array"}
+        {"field": "status"},
+        {"field": "status"}
     ]);
     assert_eq!(
         run(&ir, &duplicate, &QUERY_SOURCES).unwrap_err().kind(),

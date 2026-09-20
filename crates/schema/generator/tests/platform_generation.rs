@@ -20,6 +20,9 @@ mod platform_wit;
 #[path = "support/platform_client_ir.rs"]
 mod platform_client_ir;
 
+#[path = "support/platform_protocol.rs"]
+mod platform_protocol;
+
 #[path = "support/platform_errors.rs"]
 mod platform_errors;
 
