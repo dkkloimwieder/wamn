@@ -123,15 +123,45 @@ Run one integrated packaged Receiving/Acme journey after the topology settles, r
 Report removed processes and configuration, executed checks, and remaining limitations for owner review.
 Do not set a crate-count target or expand the later extension epic before that review.
 
-## 5. Later feature — transactional application extension
+## 5. Transactional application extension
 
-**Schedule separately after simplification. No preparatory hook machinery in steps 1–4.** Add one base-owned pre-commit extension point using the established async interface and PostgreSQL implementation.
+This separately scheduled feature follows simplification. Beads epic `wamn-kc2v` owns its implementation and dependencies.
+Build one reusable participation mechanism. Receiving and Acme supply the first consumer, not platform-specific hook logic.
 
-One runner owns commit/rollback. The extension receives an execution-only view, limited to its admitted statements, original caller, compatible database identity and invocation lifetime. No participant may commit independently. Failure before commit aborts the whole item; a lost commit response remains uncertain. Existing claims cover the complete extended intent and result.
+### Interface and native linking first
 
-Conditional QC stays ordinary application logic: not required → succeed without QC writes; required and satisfied → permitted work and success; unsatisfied → refuse. Evaluate commit-time conditions under the necessary locks. The application owns entrypoint exposure; permitted direct base calls retain base behavior. No automatic override or bypass-detection system.
+Define one base-owned extension point before commit, its exact application/release binding, and an execution-only transaction view.
+The view permits admitted statements within the owner's transaction. It grants no independent commit or rollback operation.
+First establish that actual components can pass and use this view through the pinned native linker.
+Native resource transfer support alone does not establish support for the application call path.
+Settle the interface from that result before expanding generation. If the pinned linker cannot support the required path, report that constraint before changing the design.
+Reuse the existing PostgreSQL transaction implementation and native dispatch. Add no fork, manual dispatch path, or second transaction manager.
 
-Feature-specific tests cover these branches, joint rollback, complete-intent replay, participant authorization/handle lifetime and relevant contention. No distributed transactions, cross-item atomicity, queued continuation or general extension framework.
+### Transaction and authority ownership
+
+One runner owns one transaction and commit decision per command item.
+Limit each participant to its own admitted statements and permissions under the original caller, tenant, and compatible database identity.
+Sharing a connection grants no additional authority. Access expires when participation returns, fails, or is canceled.
+Keep deadlines and cancellation cleanup within the existing transaction lifecycle.
+
+### Application policy and completion
+
+Acme evaluates quality control (QC) in ordinary application code.
+When inspection is not required, succeed without QC writes. When requirements are satisfied, perform permitted work and succeed. Otherwise, refuse.
+Evaluate commit-time conditions under appropriate locks. Preserve existing base invariants and lock order.
+The application owns entrypoint exposure. Permitted direct base calls retain base behavior. Optional confirmation remains post-commit.
+
+Required extension failure before commit rolls back the whole item.
+Finalize the claim and result only after extension success. Replay identifies the complete extended intent and returns its stored result without repeating writes.
+Changed intent refuses. A lost commit response remains uncertain.
+Update affected generated contracts, bindings, callers, and replaced conversions together.
+
+### Focused acceptance
+
+Reuse existing local component/PostgreSQL tests for the three QC branches, joint rollback, same-intent replay, and changed-intent refusal.
+Cover participant authorization, expired access, cancellation, and relevant contention through those same fixtures.
+Run focused compilation and affected cases. Add no cluster campaign or separate suite per generated operation.
+Do not add a general hook registry, conditional-rule language, distributed transactions, cross-item transactions, queued continuations, UI redesign, or numeric-contract changes.
 
 ## Completion
 
