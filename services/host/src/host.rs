@@ -1186,31 +1186,27 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             )
             .await
         };
-        let result = tokio::select! {
-            signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
-            _ = sigterm.recv() => Ok(()),
-            error = identity_failure => Err(error),
-            error = queue_failure => Err(error),
-            error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => Err(error),
-            () = ingress_stopped(ingress_connections.as_ref()) => anyhow::bail!("native HTTP ingress stopped unexpectedly"),
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => (signal.context("receive SIGINT"), false),
+            _ = sigterm.recv() => (Ok(()), false),
+            error = identity_failure => (Err(error), false),
+            error = queue_failure => (Err(error), false),
+            error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => (Err(error), false),
+            () = ingress_stopped(ingress_connections.as_ref()) => (Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")), false),
             task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
-                Err(probe_listener_failure(task.as_ref()))
+                (Err(probe_listener_failure(task.as_ref())), false)
             }
-            result = &mut queue_serving => result.and(Err(anyhow::anyhow!(
-                "durable queue loop stopped unexpectedly"
-            ))),
-        };
-        let _ = stop_queue.send(true);
-        let queue_cleanup = wamn_runtime::lifecycle::bounded_cleanup(
-            wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
-            &mut queue_serving,
-        )
-        .await;
-        result.and(queue_cleanup)
+            result = &mut queue_serving => (
+                result.and(Err(anyhow::anyhow!("durable queue loop stopped unexpectedly"))),
+                true,
+            ),
+        }
     };
-    let result = stop_after(
+    let result = stop_combined_after(
         stopped,
         cleanup,
+        &mut queue_serving,
+        stop_queue,
         &probe_state,
         args.drain_delay,
         cleanup_budget,
@@ -1219,6 +1215,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(queue) = &queue {
         queue.revoke();
     }
+    drop(queue);
     // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
     let identity_result = wamn_runtime::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         if let Some(mut connection) = identity_connection.take() {
@@ -1348,6 +1345,45 @@ async fn ingress_stopped(connections: Option<&ConnectionLimit>) {
         Some(connections) => connections.stopped().await,
         None => std::future::pending().await,
     }
+}
+
+async fn stop_combined_after<Q, N>(
+    stopped: impl std::future::Future<Output = (anyhow::Result<()>, bool)>,
+    native_cleanup: N,
+    mut queue_serving: std::pin::Pin<&mut Q>,
+    stop_queue: tokio::sync::watch::Sender<bool>,
+    probes: &ProbeState,
+    drain_delay: Duration,
+    cleanup_budget: Duration,
+) -> anyhow::Result<()>
+where
+    Q: std::future::Future<Output = anyhow::Result<()>>,
+    N: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let (result, queue_finished) = stopped.await;
+    // This is the single admission cut: readiness drains before either HTTP
+    // cleanup or queue cleanup can wait, and both stop accepting new work.
+    probes.drain();
+    let _ = stop_queue.send(true);
+    tracing::info!("shutting down wamn-host");
+    let cleanup_result = wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, async {
+        let queue_cleanup = async {
+            if queue_finished {
+                Ok(())
+            } else {
+                queue_serving.as_mut().await
+            }
+        };
+        let propagation = tokio::time::sleep(drain_delay);
+        let (queue_result, native_result, ()) =
+            tokio::join!(queue_cleanup, native_cleanup, propagation);
+        queue_result.and(native_result)
+    })
+    .await;
+    if let Err(error) = &cleanup_result {
+        tracing::error!(%error, "combined host cleanup failed; durable queue remains fenced for recovery");
+    }
+    result.and(cleanup_result)
 }
 
 async fn stop_after(
@@ -1503,6 +1539,55 @@ mod tests {
         stop.send(()).unwrap();
         running.await.unwrap();
         assert!(cleanup_polled.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn combined_shutdown_stops_queue_before_polling_both_cleanups() {
+        let probes = ProbeState::default();
+        let (stop_queue, mut stopping) = tokio::sync::watch::channel(false);
+        let native_stopping = stopping.clone();
+        let queue = async {
+            stopping.changed().await.expect("queue stop sender");
+            assert!(*stopping.borrow(), "queue stop precedes cleanup");
+            Ok(())
+        };
+        tokio::pin!(queue);
+        stop_combined_after(
+            async { (Ok(()), false) },
+            async {
+                assert!(
+                    *native_stopping.borrow(),
+                    "HTTP/native cleanup starts after queue admission closes"
+                );
+                Ok(())
+            },
+            &mut queue,
+            stop_queue,
+            &probes,
+            Duration::ZERO,
+            Duration::from_secs(1),
+        )
+        .await
+        .expect("combined cleanup");
+    }
+
+    #[tokio::test]
+    async fn failed_queue_is_not_polled_again_during_cleanup() {
+        let probes = ProbeState::default();
+        let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
+        let queue = async { panic!("completed queue future was polled twice") };
+        tokio::pin!(queue);
+        stop_combined_after(
+            async { (Err(anyhow::anyhow!("queue failed")), true) },
+            async { Ok(()) },
+            &mut queue,
+            stop_queue,
+            &probes,
+            Duration::ZERO,
+            Duration::from_secs(1),
+        )
+        .await
+        .expect_err("queue failure remains the host result");
     }
 
     #[tokio::test]
