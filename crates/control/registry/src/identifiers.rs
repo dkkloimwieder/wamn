@@ -1,20 +1,6 @@
-//! Identity-format validators — the ONE owner for the charsets the tenant /
-//! project / runner / schema claims must match (R16b, wamn-2jkm.20).
-//!
-//! Both the `wamn:postgres` plugin (claim injection, `wamn-host`) and the flow
-//! dispatcher (its pinned per-project session, `wamn-dispatcher`) import these,
-//! so a config value is held to the SAME shape on both sides. They live in this
-//! pure crate — not either consumer — so the dispatcher artifact never links
-//! the runtime (SR9, wamn-2jkm.22). The pre-R16b divergence was a dispatch-local
-//! `valid_tenant` with NO length bound while the plugin's bounded at 64 — a
-//! 65-char tenant that the plugin rejected the dispatcher would have accepted.
-//!
-//! Since R2 these are no longer the injection boundary on the PLUGIN path (claim
-//! values bind as parameters there); they define what a *legal* id is and fail
-//! closed on a malformed one. The dispatcher still interpolates its pinned
-//! session `SET`s, so on that path they remain the boundary — one more reason the
-//! two sides must share exactly one rule. The `valid_schema` no-hyphen rule also
-//! still matters where a schema name is quoted into DDL elsewhere.
+//! Shared validators for tenant, project, runner, and schema identifiers.
+//! PostgreSQL claims use bound parameters. Schema names also use these
+//! validators before interpolation into DDL.
 //!
 //! Organization, project, and environment identifiers share this module's
 //! character, length, and hyphen rules (wamn-0h0g.9.20).

@@ -969,7 +969,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
         // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
-        // posture); the doorbell rings on the control-plane client above.
+        // posture).
         // wamn-0h0g.15.95: READER 4 of the loaded release. Delivery is gated on the serving
         // release's registration projection, so an event whose registration
         // identity is not in this release never reaches a component. The plugin
@@ -1347,6 +1347,10 @@ async fn ingress_stopped(connections: Option<&ConnectionLimit>) {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the single shutdown owner, both execution paths, and their shared budget explicit"
+)]
 async fn stop_combined_after<Q, N>(
     stopped: impl std::future::Future<Output = anyhow::Result<()>>,
     native_cleanup: N,
@@ -1559,7 +1563,7 @@ mod tests {
                 );
                 Ok(())
             },
-            &mut queue,
+            queue.as_mut(),
             true,
             stop_queue,
             &probes,
@@ -1579,7 +1583,7 @@ mod tests {
         stop_combined_after(
             std::future::pending(),
             async { Ok(()) },
-            &mut queue,
+            queue.as_mut(),
             true,
             stop_queue,
             &probes,

@@ -546,10 +546,16 @@ Do not use the frozen cluster as a fixture.
 
 ## Host and package runtime
 
-Run the combined host's library tests:
+Run the combined host's lifecycle tests:
 
 ```bash
-cargo test --locked --offline -p wamn-host --lib
+cargo test --locked --offline -p wamn-host --bin wamn-host host::tests::
+```
+
+The shared queue tests retain real admission, active-work cancellation, lease recovery, and authority cleanup:
+
+```bash
+cargo test --locked --offline -p wamn-execution-host --lib queue::automation_live:: -- --nocapture
 ```
 
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).

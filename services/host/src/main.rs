@@ -2,9 +2,9 @@
 //!
 //! MVP outcome: crash floor · M0 execution · flow composition.
 //!
-//! `host` — ClusterHost driven by the runtime-operator over NATS. The
-//! long-lived services live in their own artifacts (SR9): `wamn-dispatcher`,
-//! `wamn-run-worker`, `wamn-cdc-reader`.
+//! `host` combines HTTP and durable queue execution in one runtime.
+//! The runtime-operator controls ClusterHost over NATS. Identity and CDC
+//! remain separate services.
 //!
 //! The one-shot control-plane verbs (provision*, apply-package, publish/promote,
 //! dump/restore/copy-project-env, enable-cdc-project-env) live in `wamn-ctl`

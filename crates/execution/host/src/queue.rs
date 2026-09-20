@@ -58,6 +58,15 @@ pub struct QueueService {
     liveness: Arc<Liveness>,
 }
 
+impl std::fmt::Debug for QueueService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueueService")
+            .field("scope", &self.scope)
+            .field("lease_ttl_ms", &self.lease_ttl_ms)
+            .finish_non_exhaustive()
+    }
+}
+
 impl QueueService {
     pub async fn bind(
         driver: Arc<RouterDriver>,

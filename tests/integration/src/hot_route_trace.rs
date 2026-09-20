@@ -44,7 +44,7 @@ mod tests {
 
     /// The in-tree pattern (`crates/execution/host/src/router_driver.rs`,
     /// `crates/platform/runtime/src/plugins/connection_http.rs`,
-    /// `services/executor/src/lib.rs`): a real OTel layer, because
+    /// `crates/execution/host/src/queue.rs`): a real OTel layer, because
     /// `inject_trace_context` has NO no-OTel fallback — without the layer the
     /// host injects nothing and the wire assertion would pass or fail for the
     /// wrong reason.

@@ -118,7 +118,7 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 - A nested call binds the executing principal of its parent.
 - A post-commit registration delivery binds `wamn:materializer`.
 - An automation delivery binds its admitted service principal.
-- A queue delivery binds its admitted service principal.
+- A legacy queue delivery or management candidate case binds `wamn:executor`.
 
 The same transaction binds the executing operation as `app.operation`.
 A node binds the operation token that it runs, so a nested call binds its own token.
@@ -440,7 +440,7 @@ Queue liveness follows durable polls and successful lease renewals in each host 
 No timer creates a synthetic beat.
 An absent first beat fails through the normal silence budget.
 
-The host drains readiness before its configured signal delay and native shutdown.
+The host drains readiness, stops queue claims, and starts native HTTP shutdown together.
 One shutdown signal stops HTTP admission and queue polling, bounds active work in both paths, and then performs shared cleanup.
 Ingress failure, probe failure, or command-task failure follows the failure cleanup path.
 The process bounds plugin coordination, auxiliary task cleanup, telemetry flush, and final runtime shutdown.
@@ -453,7 +453,7 @@ The [enqueue-run command](../operations/queued-automation.md) admits production 
 The host reads that principal and its current application permissions before each delivery.
 The normal operation checks also apply to nested calls.
 The legacy `fresh-only` restriction still refuses queued service callers. Human session support does not widen queued automation.
-SIGTERM and SIGINT use the same five-second native drain budget during active guest work.
+SIGTERM and SIGINT share the host cleanup budget. The budget retains the native drain and plugin shutdown allowances.
 An aborted call loses its invocation authority, and native teardown releases its store.
 After the lease expires, recovery takes a new lease generation. The old generation cannot complete the run.
 The [runtime tests](../operations/running-tests.md#host-and-package-runtime) cover the retained host and package paths.

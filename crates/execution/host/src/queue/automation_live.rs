@@ -276,7 +276,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         release,
         ComponentArtifactSource::local(scratch.path().to_owned()),
         RouterDriverConfig {
-            warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
+            warm_reuse: crate::warm_reuse::WarmReuse::default(),
             owner_prefix: "automation-live".to_owned(),
             project: "default".to_owned(),
             schema: Some("wamn_run".to_owned()),

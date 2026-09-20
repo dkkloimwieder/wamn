@@ -5,7 +5,7 @@
 //! is a pass/fail GATE: it shows the JetStream substrate the CDC reader
 //! (l5i9.10) publishes onto and the materializer (l5i9.17) consumes from behaves
 //! to the v3 contract, on the dedicated data-plane cluster (deploy/nats-
-//! jetstream.yaml), leaving the control-plane/doorbell NATS untouched.
+//! jetstream.yaml), leaving the control-plane NATS untouched.
 //!
 //! It asserts the four load-bearing claims of the stand-up:
 //!   * **publish → the EVT_ stream** (subjects `evt.<org>.<project>.<env>.
@@ -28,7 +28,7 @@
 //! (§11); the subject namespace already reserves per-org isolation.
 //!
 //! Pure NATS client (no wasm, no Postgres): the substrate is a NATS mechanism.
-//! `async-nats` 0.47 is already a workspace dependency for dispatcher doorbells.
+//! `async-nats` is the existing workspace broker client.
 
 use std::time::{Duration, Instant};
 
