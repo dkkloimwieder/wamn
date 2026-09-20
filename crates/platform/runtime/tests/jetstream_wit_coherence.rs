@@ -25,7 +25,7 @@ fn component_copies_match_the_built_contract() {
 }
 
 #[test]
-fn contract_declares_host_registration_and_retained_publishers() {
+fn contract_declares_host_registration() {
     // The materializer (l5i9.17) binds exactly these; a rename/removal of any
     // load-bearing line is a breaking change that must move the plugin too.
     let built = fs::read_to_string(root().join("wit/deps/wamn-jetstream/package.wit"))
@@ -38,9 +38,6 @@ fn contract_declares_host_registration_and_retained_publishers() {
         "ack-wait-ms: u64,",
         "max-deliver: u32,",
         "prepare: async func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;",
-        // l5i9.17: the post-commit doorbell takeover — run-id only; the tenant
-        // is host-derived from the workload's wamn.tenant, never a parameter.
-        "ring: async func(run-id: string) -> result<_, js-error>;",
     ] {
         assert!(
             built.contains(needle),

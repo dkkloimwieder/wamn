@@ -22,12 +22,11 @@ world runner-http-effect-plugin {
   import wamn:runner/http-effect@0.1.0;
 }
 
-/// Host-owned registration provisioning and the existing scheduler hint.
+/// Host-owned registration provisioning.
 /// Native wasmcloud:nats owns materializer attachment, delivery and settlement.
 world jetstream-plugin {
   import wamn:jetstream/types@0.1.0;
   import wamn:jetstream/registration@0.1.0;
-  import wamn:jetstream/doorbell@0.1.0;
 }
 
 /// Host-side bindgen world for the S5 `wamn:logging` plugin: the host

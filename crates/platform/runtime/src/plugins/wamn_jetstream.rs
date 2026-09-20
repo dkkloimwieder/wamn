@@ -2,8 +2,8 @@
 //!
 //! Native `wasmcloud:nats` owns materializer attachment, delivery and settlement.
 //! This module retains exact release-registration selection, durable drift
-//! checks, host-only derived-event and router-tap publication, and the existing
-//! scheduler doorbell interface. Broker advisories replace the payload DLQ.
+//! checks, and host-only derived-event and router-tap publication. Broker
+//! advisories replace the payload DLQ.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -29,9 +29,6 @@ use wamn_control_provision::events::{
     source_stream_config, stream_config_matches,
 };
 use wamn_control_registry::Triple;
-use wamn_control_registry::identifiers::{
-    ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
-};
 use wamn_event_wire::{
     Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject, subject_token,
 };
@@ -58,7 +55,6 @@ mod bindings {
     });
 }
 
-use bindings::wamn::jetstream::doorbell;
 use bindings::wamn::jetstream::registration;
 use bindings::wamn::jetstream::types::JsError;
 
@@ -451,13 +447,12 @@ fn prepare_router_tap(
     })
 }
 
-/// Link host-owned registration checks and the retained scheduler hint
-/// directly. The host path calls this from [`HostPlugin::on_workload_item_bind`];
+/// Link host-owned registration checks directly.
+/// The host path calls this from [`HostPlugin::on_workload_item_bind`];
 /// a Service (the materializer, l5i9.17) or a hand-built store links it the same
 /// way `wamn:postgres` is linked.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     registration::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-    doorbell::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
     Ok(())
 }
 
@@ -528,13 +523,6 @@ pub struct WamnJetstream {
     /// `OnceCell`) so a transient connect failure is retried on the next call
     /// instead of memoized forever; only a successful connect is stored.
     ctx: Mutex<Option<Context>>,
-    /// CONTROL-plane core-NATS client for `doorbell.ring` (the washlet injects
-    /// its own scheduler client). `None` ⇒ ring returns `connection-unavailable`
-    /// (best-effort by contract: the caller counts it and continues).
-    doorbell_nats: Option<async_nats::Client>,
-    /// Per-component execution target for the doorbell subject, registered at
-    /// workload bind by the trusted MVP placement adapter — never guest-supplied.
-    execution_targets: std::sync::RwLock<HashMap<String, ExecutionTargetId>>,
     /// Per-component tenant/project/environment claim, registered at workload
     /// bind from the same trusted `wamn.*` config the `wamn:postgres`
     /// claims read. It exists only to enrich this plugin's effect spans: before
@@ -700,9 +688,9 @@ fn prepare_derived_publication(
 ///
 /// Only `publish-derived` passes a `wiring`. It is the one operation this plugin
 /// performs on behalf of an admitted Emit terminal, and its native callers hand
-/// the coordinates down with the request. The other three — `router-tap`,
-/// `prepare-registration` and `doorbell.ring` — are plugin-initiated control
-/// work standing at no wiring node, so they record the keys EMPTY through
+/// the coordinates down with the request. The other two — `router-tap` and
+/// `prepare-registration` — are plugin-initiated control work standing at no
+/// wiring node, so they record the keys EMPTY through
 /// [`record_wiring`]'s `None`, which reads as "this effect holds no such claim"
 /// rather than as dropped instrumentation.
 ///
@@ -720,9 +708,6 @@ fn js_span(
     operation: &'static str,
     wiring: Option<&DerivedPublishWiring>,
 ) -> tracing::Span {
-    // The span name is the host capability, not the wire: `doorbell.ring`
-    // publishes on the CONTROL-plane core-NATS connection and is still
-    // `wamn.jetstream`, because this plugin is what an operator would open next.
     let span = effect_span!(
         "wamn.jetstream",
         EffectIdentity {
@@ -765,8 +750,6 @@ impl WamnJetstream {
                     environment: scope.env.as_str().into(),
                 }),
             ctx: Mutex::new(None),
-            doorbell_nats: None,
-            execution_targets: std::sync::RwLock::new(HashMap::new()),
             claims: std::sync::RwLock::new(HashMap::new()),
             release: None,
         }
@@ -818,15 +801,6 @@ impl WamnJetstream {
         ])
     }
 
-    /// Attach the CONTROL-plane core-NATS client `doorbell.ring` publishes on
-    /// (formatted by `wamn-control-registry`). The washlet passes its scheduler
-    /// client — the same control plane the dispatcher's doorbells and the
-    /// run-worker's subscription ride — so no second connection is opened.
-    pub fn with_doorbell(mut self, client: async_nats::Client) -> Self {
-        self.doorbell_nats = Some(client);
-        self
-    }
-
     /// Attach the release this process serves — reader 3 of the release-manifest
     /// loaded release, consulted by reference. This plugin never loads, parses or
     /// digest-verifies a manifest, and keeps no copy of one: the loaded release already
@@ -840,7 +814,6 @@ impl WamnJetstream {
     /// decide that an event belongs to one, and delivering it anyway would hand
     /// the identity back to the guest sweep this gate took it from.
     ///
-    /// The retained scheduler `doorbell::ring` does not require a release.
     pub fn with_release(mut self, release: Option<Arc<LoadedRelease>>) -> Self {
         self.release = release;
         self
@@ -849,22 +822,6 @@ impl WamnJetstream {
     /// The serving release's manifest, or `None` on a release-less process.
     fn serving_manifest(&self) -> Option<&ServingManifest> {
         self.release.as_deref().map(LoadedRelease::manifest)
-    }
-
-    /// Register a validated doorbell execution target for a component id.
-    pub fn set_execution_target(&self, component_id: &str, execution_target_id: ExecutionTargetId) {
-        self.execution_targets
-            .write()
-            .expect("execution targets lock poisoned")
-            .insert(component_id.to_string(), execution_target_id);
-    }
-
-    fn execution_target_for(&self, component_id: &str) -> Option<ExecutionTargetId> {
-        self.execution_targets
-            .read()
-            .expect("execution targets lock poisoned")
-            .get(component_id)
-            .cloned()
     }
 
     /// Register a component's bind-time scope claim. All values come from the
@@ -1180,7 +1137,6 @@ impl HostPlugin for WamnJetstream {
             imports: HashSet::from([
                 WitInterface::from("wamn:jetstream/types@0.1.0"),
                 WitInterface::from("wamn:jetstream/registration@0.1.0"),
-                WitInterface::from("wamn:jetstream/doorbell@0.1.0"),
             ]),
             exports: HashSet::new(),
         }
@@ -1191,14 +1147,9 @@ impl HostPlugin for WamnJetstream {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if !interfaces.contains("wamn", "jetstream", &["registration"])
-            && !interfaces.contains("wamn", "jetstream", &["doorbell"])
-        {
+        if !interfaces.contains("wamn", "jetstream", &["registration"]) {
             return Ok(());
         }
-        // The sole MVP placement adapter maps the same trusted `wamn.tenant`
-        // config the postgres claims use into a distinct validated execution
-        // target. The guest supplies neither the tenant nor the target.
         let (tenant, project, environment) = {
             let config = &item.local_resources().config;
             (
@@ -1213,38 +1164,6 @@ impl HostPlugin for WamnJetstream {
             project.as_deref(),
             environment.as_deref(),
         );
-        if let Some(tenant) = tenant {
-            // THE MVP TENANT-TO-TARGET ADAPTER, DELIBERATE AND RECORDED HERE
-            // (wamn-0h0g.10.11). The other two doorbell configs take the
-            // execution target as a STATED field — the waker requires its
-            // `<execution-target-id>=<Deployment>` mapping, and the
-            // dispatcher's `project_spec` falls back to this adapter only when
-            // the field is absent. This bind DERIVES it instead, because the
-            // workload config it reads names a tenant, a project and an
-            // environment and NO target; that absence is why
-            // `deploy/platform/materializer.example.yaml` is the one manifest
-            // wamn-0h0g.10.5 could not rewrite to an explicit target.
-            //
-            // RETIREMENT TRIGGER: the first component that must ring a target
-            // which is not its own tenant. Placement is wamn-0h0g.5's. Until it
-            // yields a second target, a config key here would state nothing
-            // this line does not already state, and it would give the doorbell
-            // subject two sources where the comment above depends on it having
-            // one.
-            let execution_target_id = mvp_execution_target_id(&tenant)?;
-            self.set_execution_target(item.id(), execution_target_id.clone());
-            tracing::debug!(
-                component = item.id(),
-                tenant,
-                execution_target_id = %execution_target_id,
-                "wamn:jetstream doorbell execution target registered"
-            );
-        } else if interfaces.contains("wamn", "jetstream", &["doorbell"]) {
-            tracing::warn!(
-                component = item.id(),
-                "component imports wamn:jetstream/doorbell but sets no wamn.tenant; no MVP execution target can be assigned and ring will be refused"
-            );
-        }
         add_to_linker(item.linker())?;
         Ok(())
     }
@@ -1440,56 +1359,6 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
             &JETSTREAM_DURATION_MS,
             EFFECT_OPERATION,
             "prepare-registration",
-            &claim.project,
-            started.elapsed(),
-        );
-        Ok(result)
-    }
-}
-
-impl doorbell::Host for ActiveCtx<'_> {}
-
-impl<T: 'static + Send> doorbell::HostWithStore<T> for SharedCtx {
-    async fn ring(
-        accessor: &Accessor<T, Self>,
-        run_id: String,
-    ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
-        let (plugin, component_id) = accessor.with(|mut access| {
-            let ctx = access.get();
-            Ok::<_, wash_runtime::wasmtime::Error>((plugin_of(&ctx)?, ctx.component_id.to_string()))
-        })?;
-        // The target comes from the workload's bind-time MVP placement adapter.
-        // A component with no registered target gets a refusal, not a default.
-        let Some(execution_target_id) = plugin.execution_target_for(&component_id) else {
-            return Ok(Err(JsError::Other(
-                "no doorbell execution target registered for this component (set wamn.tenant)"
-                    .into(),
-            )));
-        };
-        let Some(nats) = plugin.doorbell_nats.as_ref() else {
-            return Ok(Err(JsError::ConnectionUnavailable));
-        };
-        let subject = doorbell_subject(&execution_target_id);
-        let claim = plugin.claim_for(&component_id);
-        let span = js_span(&claim, &component_id, "doorbell.ring", None);
-        let started = std::time::Instant::now();
-        // Publish + flush: the hint must be ON THE WIRE when ring returns, or a
-        // buffered publish could outlive the caller's interest (the async-nats
-        // client buffers while disconnected — flushing surfaces that as an err).
-        let result = async {
-            nats.publish(subject, run_id.into_bytes().into())
-                .await
-                .map_err(|e| JsError::Other(format!("doorbell publish: {e}")))?;
-            nats.flush()
-                .await
-                .map_err(|e| JsError::Other(format!("doorbell flush: {e}")))
-        }
-        .instrument(span)
-        .await;
-        record_effect_ms(
-            &JETSTREAM_DURATION_MS,
-            EFFECT_OPERATION,
-            "doorbell.ring",
             &claim.project,
             started.elapsed(),
         );
@@ -1775,19 +1644,6 @@ mod tests {
                 .expect_err("missing or foreign event coordinates must refuse before connection");
             assert_eq!(error.kind(), DerivedPublishErrorKind::UnboundScope);
         }
-    }
-
-    #[test]
-    fn doorbell_registration_uses_the_mvp_target_adapter() {
-        let plugin = WamnJetstream::new(WamnJetstreamConfig::default());
-        assert!(mvp_execution_target_id("evil.>").is_err());
-        assert!(plugin.execution_target_for("c1").is_none());
-        let target = mvp_execution_target_id("tenant-a").expect("tenant-safe target");
-        plugin.set_execution_target("c1", target.clone());
-        assert_eq!(plugin.execution_target_for("c1"), Some(target.clone()));
-        assert_eq!(doorbell_subject(&target), "wamn.doorbell.tenant-a");
-        // Unregistered components resolve to none — ring refuses, never defaults.
-        assert!(plugin.execution_target_for("c2").is_none());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 package wamn:jetstream@0.1.0;
 
-/// Host-owned registration provisioning and the retained scheduler hint.
+/// Host-owned registration provisioning.
 /// Native wasmcloud:nats owns materializer delivery and settlement.
 interface types {
   variant js-error {
@@ -23,13 +23,4 @@ interface registration {
 
   /// Create the admitted registration consumer or refuse configuration drift.
   prepare: async func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;
-}
-
-interface doorbell {
-  use types.{js-error};
-
-  /// Ring the caller's tenant doorbell with one run id (the enqueued run),
-  /// strictly AFTER the enqueue transaction committed — a hint for uncommitted
-  /// work would wake a runner into an empty claim.
-  ring: async func(run-id: string) -> result<_, js-error>;
 }

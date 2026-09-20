@@ -173,7 +173,6 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         "registration::Host",
         &[("prepare", Surface::Effect)],
     ),
-    (JETSTREAM, "doorbell::Host", &[("ring", Surface::Effect)]),
 ];
 
 fn repository_root() -> PathBuf {
