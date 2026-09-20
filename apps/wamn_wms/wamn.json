@@ -2437,12 +2437,12 @@
             {
               "name": "quantity",
               "type": "numeric",
-              "nullable": false
+              "nullable": true
             },
             {
               "name": "pallet_count",
               "type": "int64",
-              "nullable": false
+              "nullable": true
             }
           ]
         }

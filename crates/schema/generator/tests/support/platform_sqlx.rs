@@ -1,0 +1,51 @@
+use std::fs;
+
+use wamn_schema_generator::stage_sqlx_verifier;
+
+use super::fixture;
+
+#[test]
+fn platform_sql_corpus_stages_real_sqlx_macros_without_an_operation_list() {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repository root");
+    let scratch = repository
+        .join("target/platform-sqlx-fixture")
+        .join(std::process::id().to_string());
+    let package = scratch.join("package");
+    let verifier = scratch.join("verifier");
+    fixture::materialize_fixture(&package);
+
+    let staged = stage_sqlx_verifier(&package, &verifier, repository)
+        .expect("stage the generated SQLx verifier");
+    let source = fs::read_to_string(verifier.join("src/lib.rs")).expect("read verifier source");
+    assert_eq!(
+        staged.queries,
+        source.matches("sqlx::query_file_as!").count(),
+        "every discovered accessor has one real SQLx macro"
+    );
+    assert!(
+        staged.queries >= 6,
+        "CRUD and custom SQL are both discovered"
+    );
+    assert!(source.contains("native::widget::WidgetRow"));
+    assert!(source.contains("native::widget_archive::ArchiveRow"));
+    assert_eq!(
+        fs::read(verifier.join("command/widget/archive.sql")).unwrap(),
+        fs::read(package.join("command/widget/archive.sql")).unwrap(),
+        "the macro compiles the exact runtime SQL bytes"
+    );
+    let metadata = std::process::Command::new("cargo")
+        .current_dir(&verifier)
+        .args(["metadata", "--locked", "--offline", "--no-deps"])
+        .output()
+        .expect("resolve the staged verifier manifest");
+    assert!(
+        metadata.status.success(),
+        "staged verifier must resolve from the committed lockfile: {}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
+
+    fs::remove_dir_all(scratch).expect("remove platform SQLx fixture");
+}

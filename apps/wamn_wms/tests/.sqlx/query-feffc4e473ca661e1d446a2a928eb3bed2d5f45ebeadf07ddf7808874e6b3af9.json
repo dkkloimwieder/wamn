@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pallet\nSET\n    location_id = $2,\n    row_version = row_version + 1\nWHERE id = $1\nRETURNING location_id, row_version, status;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "feffc4e473ca661e1d446a2a928eb3bed2d5f45ebeadf07ddf7808874e6b3af9"
+}

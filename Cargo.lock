@@ -5652,9 +5652,7 @@ dependencies = [
 name = "wamn-client-acme-receiving-tests"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "sqlx",
- "uuid",
+ "wamn-schema-generator",
 ]
 
 [[package]]
@@ -6176,12 +6174,10 @@ dependencies = [
  "proptest",
  "reqwest",
  "ring",
- "rust_decimal",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2 0.11.0",
- "sqlx",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -6209,6 +6205,7 @@ dependencies = [
  "wamn-runtime",
  "wamn-schema-control",
  "wamn-schema-generator",
+ "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6381,6 +6378,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "toml 0.9.12+spec-1.1.0",
+ "url",
  "wamn-catalog",
  "wamn-event-wire",
  "wamn-execution-contract",
@@ -6494,6 +6492,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-gate-harness",
  "wamn-integration-tests",
+ "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]

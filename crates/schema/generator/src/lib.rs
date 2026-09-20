@@ -31,6 +31,7 @@ mod parity;
 mod rustfmt;
 mod sql;
 mod sql_lex;
+mod sqlx_metadata;
 
 pub use cursor::{
     CursorError, CursorErrorKind, CursorV1, CursorValue, decode_cursor, encode_cursor,
@@ -68,4 +69,7 @@ pub use materialize::{
     materialize_package_verified, materialize_package_verified_with_catalog,
 };
 pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
+pub use sqlx_metadata::{
+    SqlxMetadataMode, SqlxVerifier, package_database_url, stage_sqlx_verifier, verify_sqlx_metadata,
+};
 pub use wamn_schema_introspection::ir::CatalogIr;

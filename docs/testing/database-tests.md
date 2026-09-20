@@ -8,9 +8,9 @@ This page defines the assertions at the database boundary.
 SQLx checks SQL and type compatibility against the selected schema.
 It does not establish permissions, business behavior, rollback, or locking.
 The complete generated and authored application SQL corpus must match the SQL used during execution.
-Use the application's native verifier and its committed SQLx metadata through the documented commands.
+Use the platform verifier and committed application SQLx metadata through the documented commands.
 
-The [Receiving verifier](../../apps/wamn_receiving/tests/receiving_sqlx_verifier.rs) compiles the exact generated SQL files.
+The [platform verifier](../../crates/schema/generator/src/sqlx_metadata.rs) compiles the exact authored and generated SQL files.
 Its successful compilation does not mean that the application command executed.
 Guest tests must cross the real capability and transaction paths when those paths are the subject.
 

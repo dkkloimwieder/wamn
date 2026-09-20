@@ -677,9 +677,10 @@ impl ProductionDevStageRunner {
             }
         }
         let selected = self.package_inputs()?;
-        if selected.iter().any(|package| {
-            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
-        }) {
+        if selected
+            .iter()
+            .any(|package| crate::delivery::sqlx::requires_verifier(&package.manifest))
+        {
             let output = super::execute_preparation(
                 Command::new("cargo").args(["sqlx", "--version"]),
                 super::INPUT_COMMAND_TIMEOUT,
@@ -693,7 +694,7 @@ impl ProductionDevStageRunner {
         }
         for package in selected {
             let package_id = &package.manifest.package.id;
-            if let Some(verifier) = crate::delivery::sqlx::verifier_for(package_id) {
+            if crate::delivery::sqlx::requires_verifier(&package.manifest) {
                 let current =
                     sqlx_metadata_inputs_on_disk(self.git.repository_root(), &package.root)
                         .map_err(|source| {
@@ -713,17 +714,10 @@ impl ProductionDevStageRunner {
                 }
                 // Until a preparation succeeds, the metadata on disk is unknown.
                 self.sqlx_metadata_inputs.insert(package_id.clone(), None);
-                let database_url = crate::delivery::sqlx::package_database_url(
-                    self.config.target_database_url(),
-                    &package.manifest,
-                )
-                .map_err(|source| {
-                    ProductionDevStageError::owner("scope SQLx to the package schemas", source)
-                })?;
                 let mut command = crate::delivery::sqlx::prepare_command(
-                    &package.root.join("tests"),
-                    &database_url,
-                    verifier,
+                    self.git.repository_root(),
+                    &package.root,
+                    self.config.target_database_url(),
                     false,
                 );
                 let output = super::execute_preparation(&mut command, super::PREPARATION_TIMEOUT)
@@ -1377,9 +1371,11 @@ impl ProductionDevStageRunner {
         ] {
             inputs.push((path.display().to_string(), file_digest(path)?));
         }
-        if self.package_inputs()?.iter().any(|package| {
-            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
-        }) {
+        if self
+            .package_inputs()?
+            .iter()
+            .any(|package| crate::delivery::sqlx::requires_verifier(&package.manifest))
+        {
             let path = std::env::var_os("PATH")
                 .and_then(|path| {
                     std::env::split_paths(&path)
@@ -1661,7 +1657,7 @@ fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, Product
     let mut files = Vec::new();
     for package in packages {
         let mut roots = vec![("generated", package.root.join("generated"))];
-        if crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some() {
+        if crate::delivery::sqlx::requires_verifier(&package.manifest) {
             roots.push(("sqlx", package.root.join("tests/.sqlx")));
         }
         for (kind, root) in roots {

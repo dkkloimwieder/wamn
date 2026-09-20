@@ -71,15 +71,27 @@ mod aggregate {
         connection: &mut wamn_postgres_statements::Connection,
         _: contract::AggregateRequest,
     ) -> Result<contract::AggregateResult, contract::AggregateError> {
-        inventory_aggregate::execute(connection)
+        let rows = inventory_aggregate::execute(connection)
             .await
-            .map(|rows| contract::AggregateResult {
-                rows: rows
-                    .into_iter()
-                    .map(|row| codec::row!(row, contract::AggregateRow))
-                    .collect(),
+            .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))?;
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                Ok(contract::AggregateRow {
+                    product_id: row.product_id.0,
+                    location_id: row.location_id.0,
+                    status: row.status,
+                    quantity: row
+                        .quantity
+                        .ok_or(contract::AggregateError::InternalError)?
+                        .0,
+                    pallet_count: row
+                        .pallet_count
+                        .ok_or(contract::AggregateError::InternalError)?,
+                })
             })
-            .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+            .collect::<Result<_, contract::AggregateError>>()?;
+        Ok(contract::AggregateResult { rows })
     }
     codec::export_operation!(
         crate::Component,

@@ -62,10 +62,9 @@ cargo test --locked --offline -p wamn-receiving-tui
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
   -p wamn-receiving-data-access --all-targets
-cargo test --locked --offline \
-  -p wamn-receiving-tests --test receiving_sqlx_verifier
-cargo test --locked --offline \
-  -p wamn-client-acme-receiving-tests --test client_acme_sqlx_verifier
+cargo test --locked --offline -p wamn-receiving-tests \
+  -p wamn-client-acme-receiving-tests -p wamn-wms-tests --lib \
+  committed_sqlx_metadata_compiles_offline -- --exact
 ```
 
 The application READMEs identify additional tests and binary owners.
@@ -452,12 +451,15 @@ Pass `--history-manifest apps/client_acme_receiving/wamn.json`, and use `apps/cl
 For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
 Pass `--history-manifest apps/wamn_wms/wamn.json`, and use `apps/wamn_wms` as the input.
 
-`.cargo/config.toml` sets `SQLX_OFFLINE=true`, so the Receiving and Acme verifiers compile from their committed `tests/.sqlx/` directories and need no database.
+The platform verifier discovers queries and Rust types from generated source maps.
+It compiles the exact SQL through SQLx macros.
+The `compile` mode uses committed `tests/.sqlx/` metadata and needs no database.
+Each application retains a small offline acceptance test that calls this shared mechanism.
 A `DATABASE_URL` in the environment does not change this.
 A query that has no matching metadata fails to compile until the metadata is prepared again.
 `cargo sqlx prepare` sets `SQLX_OFFLINE=false` for its own build, so it still reaches its database.
 
-The development loop prepares the metadata of Receiving and Acme in its Generate stage.
+The development loop prepares metadata for every package with SQL declarations in its Generate stage.
 It prepares an application only when one of these inputs changed:
 
 - the emitted SQL, `application_sql_corpus_identity` in `generated/package-weld.json`
@@ -470,8 +472,8 @@ At the start of a session, it compares them with the committed files at `HEAD`.
 A failed or interrupted preparation runs again in the next cycle.
 A Rust-only change does not prepare.
 
-To prepare the metadata manually after a Receiving SQL change, run SQLx CLI 0.9.0 under the runner.
-`cargo sqlx prepare` reads the database URL from `DATABASE_URL`:
+To prepare metadata after a Receiving SQL change, run the platform verifier under the PostgreSQL runner.
+The verifier requires SQLx CLI 0.9.0 and reads the database URL from `DATABASE_URL`:
 
 ```bash
 cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
@@ -479,15 +481,15 @@ cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgre
   --migration-dir apps/wamn_receiving/migrations \
   --history-manifest apps/wamn_receiving/wamn.json \
   --url-env DATABASE_URL -- \
-  sh -c 'cd apps/wamn_receiving/tests && CARGO_NET_OFFLINE=true cargo sqlx prepare -- \
-    --test receiving_sqlx_verifier --locked --offline'
+  cargo run --locked --offline -p wamn-schema-generator --example sqlx_metadata -- \
+    prepare apps/wamn_receiving
 ```
 
-For Acme, use its runner arguments, `apps/client_acme_receiving/tests`, and the `client_acme_sqlx_verifier` target.
-For an explicit metadata comparison, use the same command with `prepare --check`.
+For Acme or WMS, use the runner arguments above and pass the corresponding application directory.
+For a metadata comparison, replace `prepare` with `check`.
 That comparison writes temporary output under the target and preserves committed metadata.
-The CLI only warns about a query file that no query uses, and it still exits zero.
-Treat `potentially unused queries found in .sqlx` as a failure and prepare again, because release qualification refuses it.
+The platform verifier refuses missing, changed, and unused metadata.
+If it reports `potentially unused queries found in .sqlx`, prepare the metadata again.
 
 Release qualification runs this comparison against a fresh database for each verifier.
 To run that check without a candidate, run:

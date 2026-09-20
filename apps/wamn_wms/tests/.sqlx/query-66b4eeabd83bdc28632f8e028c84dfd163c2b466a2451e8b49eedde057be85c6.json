@@ -1,0 +1,129 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    pallet.created_at,\n    pallet.created_by,\n    pallet.id,\n    pallet.location_id,\n    pallet.pallet_code,\n    pallet.row_version,\n    pallet.status,\n    pallet.updated_at,\n    pallet.updated_by\nFROM pallet AS pallet\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR pallet.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR pallet.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR pallet.pallet_code IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $4::uuid IS NULL\n        OR pallet.location_id > $4::uuid\n        OR (\n            pallet.location_id = $4::uuid\n            AND pallet.id > $5::uuid\n        )\n    )\nORDER BY\n    pallet.location_id ASC,\n    pallet.id ASC\nLIMIT $6::int8;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "pallet_code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "pallet_code"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "updated_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "66b4eeabd83bdc28632f8e028c84dfd163c2b466a2451e8b49eedde057be85c6"
+}

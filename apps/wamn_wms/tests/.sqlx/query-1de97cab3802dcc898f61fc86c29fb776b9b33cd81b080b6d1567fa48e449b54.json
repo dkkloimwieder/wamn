@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    canonical_command,\n    movement_id,\n    pallet_id,\n    pallet_status,\n    row_version\nFROM inventory_move_command\nWHERE idempotency_key = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "inventory_move_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "movement_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_move_command",
+            "name": "movement_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "pallet_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_move_command",
+            "name": "pallet_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "pallet_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_move_command",
+            "name": "pallet_status"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "inventory_move_command",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "1de97cab3802dcc898f61fc86c29fb776b9b33cd81b080b6d1567fa48e449b54"
+}

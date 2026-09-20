@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde_json::{Value, json};
 use wamn_schema_generator::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
@@ -22,6 +23,37 @@ const FINALIZE_SQL: &[u8] = b"SELECT widget_id FROM widget_command WHERE idempot
 
 pub(crate) fn generate_fixture() -> GeneratedPackage {
     generate_with(&catalog(), &manifest())
+}
+
+pub(crate) fn materialize_fixture(root: &Path) {
+    std::fs::create_dir_all(root).expect("create platform fixture root");
+    std::fs::write(
+        root.join("wamn.json"),
+        serde_json::to_vec(&manifest()).expect("serialize platform fixture manifest"),
+    )
+    .expect("write platform fixture manifest");
+    for (path, bytes) in [
+        ("query/widget.sql", QUERY_SQL),
+        (
+            "query/widget_by_created_at_descending.sql",
+            QUERY_DESCENDING_SQL,
+        ),
+        ("command/widget/archive.sql", ARCHIVE_SQL),
+        ("command/widget/claim.sql", CLAIM_SQL),
+        ("command/widget/replay.sql", REPLAY_SQL),
+        ("command/widget/finalize.sql", FINALIZE_SQL),
+    ] {
+        let destination = root.join(path);
+        std::fs::create_dir_all(destination.parent().expect("fixture SQL parent"))
+            .expect("create fixture SQL parent");
+        std::fs::write(destination, bytes).expect("write fixture SQL");
+    }
+    for file in generate_fixture().files() {
+        let destination = root.join(file.path());
+        std::fs::create_dir_all(destination.parent().expect("generated fixture parent"))
+            .expect("create generated fixture parent");
+        std::fs::write(destination, file.bytes()).expect("write generated fixture artifact");
+    }
 }
 
 pub(crate) fn generate_with(catalog: &CatalogIr, value: &Value) -> GeneratedPackage {

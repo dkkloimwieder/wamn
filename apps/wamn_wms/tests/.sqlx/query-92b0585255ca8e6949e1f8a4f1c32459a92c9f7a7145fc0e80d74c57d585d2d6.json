@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- TOMBSTONE, not deletion. The platform refuses DELETE in command SQL\n-- (sql_lex.rs refuse_unsupported_effects), so a merge does not remove the\n-- source pallet or its quantity rows: it marks the pallet consumed and leaves\n-- the rows as history — what this pallet held when it was absorbed.\n--\n-- The consequence every reader must honour: LIVE STOCK EXCLUDES CONSUMED\n-- PALLETS. A query that counted them would double-count everything a merge\n-- moved, because the quantity now exists on the target as well.\nUPDATE pallet\nSET\n    status = 'consumed',\n    row_version = row_version + 1\nWHERE id = $1\nRETURNING row_version;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pallet",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "92b0585255ca8e6949e1f8a4f1c32459a92c9f7a7145fc0e80d74c57d585d2d6"
+}

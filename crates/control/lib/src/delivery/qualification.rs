@@ -17,6 +17,7 @@ const RECEIVING_CASES: &[&str] = &[
     "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress",
 ];
 const WMS_CASES: &[&str] = &["cluster::released_wms_routes"];
+const WMS_SCHEMAS: &[(&str, &str)] = &[("wamn_wms", "wms")];
 const RECEIVING_SCHEMAS: &[(&str, &str)] = &[
     ("wamn_receiving", "receiving"),
     ("client_acme_receiving", "receiving"),
@@ -103,7 +104,7 @@ fn application(candidate: &Candidate) -> anyhow::Result<Application> {
         Ok(Application {
             package: "wamn-wms-tests",
             cases: WMS_CASES,
-            schemas: &[("wamn_wms", "wms")],
+            schemas: WMS_SCHEMAS,
             evidence_env: "WAMN_WMS_EVIDENCE_DIR",
         })
     } else if packages.contains(&"wamn_receiving")
@@ -147,17 +148,18 @@ pub(super) fn require_complete_checks(result: &Qualification) -> anyhow::Result<
                     .any(|arg| arg.ends_with(&format!("apps/{package}")))),
             "qualification lacks generated output comparison for {package}"
         );
-        if let Some(verifier) = sqlx::verifier_for(package) {
-            ensure!(
-                result
-                    .checks
+        ensure!(
+            result.checks.iter().any(|check| check
+                .command
+                .iter()
+                .any(|arg| arg == "sqlx_metadata")
+                && check.command.iter().any(|arg| arg == "check")
+                && check
+                    .command
                     .iter()
-                    .any(|check| check.command.iter().any(|arg| arg == verifier)
-                        && check.command.iter().any(|arg| arg == "--check")
-                        && check.command.iter().any(|arg| arg == "prepare")),
-                "qualification lacks SQLx metadata comparison for {verifier}"
-            );
-        }
+                    .any(|arg| arg.ends_with(&format!("apps/{package}")))),
+            "qualification lacks SQLx metadata comparison for {package}"
+        );
     }
     Ok(())
 }
@@ -374,10 +376,7 @@ async fn check_generated_outputs(
         checks,
     )
     .await?;
-    if schemas
-        .iter()
-        .any(|(package, _)| sqlx::verifier_for(package).is_some())
-    {
+    if !schemas.is_empty() {
         let sqlx = run(
             root,
             &strings(&["cargo", "sqlx", "--version"]),
@@ -405,13 +404,11 @@ async fn check_generated_outputs(
         ]));
         generate.push(app_root.display().to_string());
         run(root, &generate, &target_env, checks).await?;
-        if let Some(verifier) = sqlx::verifier_for(package) {
-            prefix.extend(sqlx::prepare_arguments(verifier, true));
-            let mut prepare_env = target_env.clone();
-            prepare_env.push(("SQLX_OFFLINE".to_owned(), "false".to_owned()));
-            let output = run(&app_root.join("tests"), &prefix, &prepare_env, checks).await?;
-            sqlx::require_current_metadata(&output.stdout)?;
-        }
+        prefix.extend(sqlx::prepare_arguments(root, &app_root, true));
+        let mut prepare_env = target_env.clone();
+        prepare_env.push(("SQLX_OFFLINE".to_owned(), "false".to_owned()));
+        let output = run(root, &prefix, &prepare_env, checks).await?;
+        sqlx::require_current_metadata(&output.stdout)?;
     }
     Ok(())
 }
@@ -831,9 +828,6 @@ mod tests {
             1
         );
         assert!(receiving.contains(&"/r/apps/wamn_receiving/migrations".to_owned()));
-        for (package, _) in RECEIVING_SCHEMAS {
-            assert!(sqlx::verifier_for(package).is_some());
-        }
     }
 
     #[tokio::test]
@@ -851,16 +845,22 @@ mod tests {
             .await
             .expect("the committed SQLx metadata matches fresh databases");
         for (package, _) in RECEIVING_SCHEMAS {
-            let verifier = sqlx::verifier_for(package).expect("the package has a verifier");
             assert_eq!(
                 checks
                     .iter()
                     .filter(|check| check.result == "pass"
-                        && check.command.iter().any(|argument| argument == "--check")
-                        && check.command.iter().any(|argument| argument == verifier))
+                        && check.command.iter().any(|argument| argument == "check")
+                        && check
+                            .command
+                            .iter()
+                            .any(|argument| argument == "sqlx_metadata")
+                        && check
+                            .command
+                            .iter()
+                            .any(|argument| argument.ends_with(&format!("apps/{package}"))))
                     .count(),
                 1,
-                "one passing SQLx metadata check for {verifier}"
+                "one passing SQLx metadata check for {package}"
             );
         }
     }

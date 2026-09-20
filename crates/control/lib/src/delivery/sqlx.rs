@@ -2,62 +2,39 @@
 
 use std::path::Path;
 
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use tokio::process::Command;
 use wamn_schema_generator::PackageManifest;
 
-/// Use the package's existing SQL search path without changing other connection options.
-pub fn package_database_url(
-    database_url: &str,
-    manifest: &PackageManifest,
-) -> anyhow::Result<String> {
-    let schemas = wamn_schema_generator::data_access_schemas(&serde_json::to_vec(manifest)?)
-        .context("resolve the package SQLx schemas")?;
-    let connection = database_url
-        .parse::<tokio_postgres::Config>()
-        .context("parse SQLx connection options")?;
-    let mut url = url::Url::parse(database_url).context("parse the SQLx database URL")?;
-    // The schema owner validates these as bare identifiers. The final setting
-    // wins over any inherited search_path, like the generator's session SET.
-    let options = format!(
-        "{} -csearch_path={},public",
-        connection.get_options().unwrap_or_default(),
-        schemas.join(",")
-    );
-    // PostgreSQL decodes percent escapes in URLs; '+' is a literal character.
-    let encoded = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("options", options.trim())
-        .finish()
-        .replace('+', "%20");
-    let query = match url.query().filter(|query| !query.is_empty()) {
-        Some(query) => format!("{query}&{encoded}"),
-        None => encoded,
-    };
-    url.set_query(Some(&query));
-    Ok(url.into())
+/// Select SQL verification from declarations rather than package identity.
+pub fn requires_verifier(manifest: &PackageManifest) -> bool {
+    manifest
+        .models
+        .values()
+        .any(|model| !model.operations.is_empty())
+        || manifest
+            .custom_operations
+            .values()
+            .any(|operation| !operation.statements.is_empty())
 }
 
-/// Return the existing verifier target for an application package.
-pub fn verifier_for(package_id: &str) -> Option<&'static str> {
-    match package_id {
-        "wamn_receiving" => Some("receiving_sqlx_verifier"),
-        "client_acme_receiving" => Some("client_acme_sqlx_verifier"),
-        _ => None,
-    }
-}
-
-/// Build the complete command arguments for the selected SQLx verifier.
-pub fn prepare_arguments(verifier: &str, check: bool) -> Vec<String> {
-    let mut arguments = vec!["cargo".to_owned(), "sqlx".to_owned(), "prepare".to_owned()];
-    if check {
-        arguments.push("--check".to_owned());
-    }
-    arguments.extend(
-        ["--", "--test", verifier, "--locked", "--offline"]
-            .into_iter()
-            .map(str::to_owned),
-    );
-    arguments
+/// Build the platform verifier command for one package.
+pub fn prepare_arguments(repository_root: &Path, package_root: &Path, check: bool) -> Vec<String> {
+    vec![
+        "cargo".to_owned(),
+        "run".to_owned(),
+        "--manifest-path".to_owned(),
+        repository_root.join("Cargo.toml").display().to_string(),
+        "--locked".to_owned(),
+        "--offline".to_owned(),
+        "-p".to_owned(),
+        "wamn-schema-generator".to_owned(),
+        "--example".to_owned(),
+        "sqlx_metadata".to_owned(),
+        "--".to_owned(),
+        if check { "check" } else { "prepare" }.to_owned(),
+        package_root.display().to_string(),
+    ]
 }
 
 /// Require the pinned CLI version before preparing metadata.
@@ -86,16 +63,16 @@ pub fn require_current_metadata(stdout: &[u8]) -> anyhow::Result<()> {
 
 /// Configure preparation while leaving execution and cleanup to the caller.
 pub fn prepare_command(
-    test_dir: &Path,
+    repository_root: &Path,
+    package_root: &Path,
     database_url: &str,
-    verifier: &str,
     check: bool,
 ) -> Command {
-    let arguments = prepare_arguments(verifier, check);
+    let arguments = prepare_arguments(repository_root, package_root, check);
     let mut command = Command::new(&arguments[0]);
     command
         .args(&arguments[1..])
-        .current_dir(test_dir)
+        .current_dir(repository_root)
         .env("DATABASE_URL", database_url)
         .env("SQLX_OFFLINE", "false")
         .env("CARGO_NET_OFFLINE", "true");
@@ -108,11 +85,8 @@ mod tests {
 
     #[test]
     fn package_search_path_preserves_other_connection_options() {
-        let manifest = PackageManifest::from_slice(include_bytes!(
-            "../../../../../apps/wamn_receiving/wamn.json"
-        ))
-        .expect("read the existing package schema owner");
-        let database_url = package_database_url(
+        let manifest = manifest();
+        let database_url = wamn_schema_generator::package_database_url(
             "postgresql://user:password@127.0.0.1:5432/test?application_name=local%2Bcheck&options=-cstatement_timeout%3D2500%20-csearch_path%3Dold&connect_timeout=5",
             &manifest,
         ).expect("scope SQLx to the package schemas");
@@ -127,56 +101,71 @@ mod tests {
         );
         assert_eq!(
             connection.get_options(),
-            Some("-cstatement_timeout=2500 -csearch_path=old -csearch_path=receiving,public")
+            Some("-cstatement_timeout=2500 -csearch_path=old -csearch_path=inventory,public")
         );
         assert_eq!(connection.get_user(), Some("user"));
         assert_eq!(connection.get_password(), Some(b"password".as_slice()));
-        let plain = package_database_url("postgresql://127.0.0.1/test", &manifest)
-            .expect("scope the unconfigured local connection");
+        let plain =
+            wamn_schema_generator::package_database_url("postgresql://127.0.0.1/test", &manifest)
+                .expect("scope the unconfigured local connection");
         assert_eq!(
             plain
                 .parse::<tokio_postgres::Config>()
                 .unwrap()
                 .get_options(),
-            Some("-csearch_path=receiving,public")
+            Some("-csearch_path=inventory,public")
         );
     }
 
+    fn manifest() -> PackageManifest {
+        serde_json::from_value(serde_json::json!({
+            "package": {"id": "sqlx_fixture", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "fixture_access", "state": "unsatisfied"},
+            "models": {"widget": {"schema": "inventory", "table": "widget", "owner": "sqlx_fixture",
+                "operations": {"get": {"permission": "widget.get", "result": "one"}}}},
+            "connections": ["postgres"], "components": {"fixture": {"connections": ["postgres"]}}
+        }))
+        .unwrap()
+    }
+
     #[test]
-    fn prepare_and_check_name_each_verifier_and_force_online() {
-        for package in ["wamn_receiving", "client_acme_receiving"] {
-            let verifier = verifier_for(package).expect("the package has a verifier");
+    fn prepare_and_check_use_the_platform_verifier_for_any_sql_package() {
+        let mut manifest = manifest();
+        assert!(requires_verifier(&manifest));
+        manifest.package.id = "another_package".to_owned();
+        assert!(requires_verifier(&manifest));
+        manifest
+            .models
+            .get_mut("widget")
+            .unwrap()
+            .operations
+            .clear();
+        assert!(!requires_verifier(&manifest));
+        let repository = Path::new("/repository");
+        let package = Path::new("/application");
+        for check in [false, true] {
+            let arguments = prepare_arguments(repository, package, check);
             assert_eq!(
-                prepare_arguments(verifier, false),
+                arguments,
                 [
                     "cargo",
-                    "sqlx",
-                    "prepare",
-                    "--",
-                    "--test",
-                    verifier,
+                    "run",
+                    "--manifest-path",
+                    "/repository/Cargo.toml",
                     "--locked",
-                    "--offline"
+                    "--offline",
+                    "-p",
+                    "wamn-schema-generator",
+                    "--example",
+                    "sqlx_metadata",
+                    "--",
+                    if check { "check" } else { "prepare" },
+                    "/application"
                 ]
             );
-            assert_eq!(
-                prepare_arguments(verifier, true),
-                [
-                    "cargo",
-                    "sqlx",
-                    "prepare",
-                    "--check",
-                    "--",
-                    "--test",
-                    verifier,
-                    "--locked",
-                    "--offline"
-                ]
-            );
-            let directory = Path::new("/apps/package/tests");
-            let command = prepare_command(directory, "postgresql://verify", verifier, false);
+            let command = prepare_command(repository, package, "postgresql://verify", check);
             let command = command.as_std();
-            assert_eq!(command.get_current_dir(), Some(directory));
+            assert_eq!(command.get_current_dir(), Some(repository));
             let envs: Vec<_> = command.get_envs().collect();
             assert!(envs.contains(&(
                 "DATABASE_URL".as_ref(),
@@ -184,7 +173,6 @@ mod tests {
             )));
             assert!(envs.contains(&("SQLX_OFFLINE".as_ref(), Some("false".as_ref()))));
         }
-        assert_eq!(verifier_for("wamn_wms"), None);
         let warning = b"warning: potentially unused queries found in .sqlx; you may want to re-run sqlx prepare\n";
         assert!(require_current_metadata(warning).is_err());
         assert!(require_current_metadata(b"").is_ok());

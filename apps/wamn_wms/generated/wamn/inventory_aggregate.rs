@@ -7,8 +7,8 @@ pub struct InventoryAggregateRow {
     pub product_id: wamn_postgres_statements::Uuid,
     pub location_id: wamn_postgres_statements::Uuid,
     pub status: String,
-    pub quantity: wamn_postgres_statements::Numeric,
-    pub pallet_count: i64,
+    pub quantity: Option<wamn_postgres_statements::Numeric>,
+    pub pallet_count: Option<i64>,
 }
 
 pub(crate) const INVENTORY_AGGREGATE_DIGEST: &str =

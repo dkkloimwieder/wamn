@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE inventory_move_command\nSET\n    pallet_status = $4,\n    row_version = $5\nWHERE idempotency_key = $1\n    AND canonical_command = $2\n    AND movement_id = $3\n    AND pallet_status IS NULL\n    AND row_version IS NULL\nRETURNING pallet_status, row_version;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pallet_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_move_command",
+            "name": "pallet_status"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "inventory_move_command",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea",
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "25ad208233b35158b2a8b6e86a2168259833ddefe767314378bef992efa4113e"
+}

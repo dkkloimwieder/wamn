@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    canonical_command,\n    movement_id,\n    pallet_id,\n    adjusted_quantity,\n    row_version\nFROM inventory_adjust_command\nWHERE idempotency_key = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "inventory_adjust_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "movement_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_adjust_command",
+            "name": "movement_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "pallet_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_adjust_command",
+            "name": "pallet_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "adjusted_quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "inventory_adjust_command",
+            "name": "adjusted_quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "inventory_adjust_command",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "982241a393ffb1d4289136cbee42de40f91dda86a47188c34665eed34ecd69e6"
+}

@@ -23,6 +23,9 @@ mod platform_client_ir;
 #[path = "support/platform_protocol.rs"]
 mod platform_protocol;
 
+#[path = "support/platform_sqlx.rs"]
+mod platform_sqlx;
+
 #[path = "support/platform_errors.rs"]
 mod platform_errors;
 

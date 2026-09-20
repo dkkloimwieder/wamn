@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO inventory_movement (\n    idempotency_key,\n    pallet_id,\n    product_id,\n    kind,\n    quantity,\n    occurred_at\n)\nVALUES ($1, $2, $3, 'split', $4, $5)\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_movement",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Numeric",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e4ccda97b9ef5cb01093515c83086ba546dec9f46691c2f3ca477764991ad3ef"
+}

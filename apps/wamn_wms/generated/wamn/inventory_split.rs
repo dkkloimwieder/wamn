@@ -115,6 +115,16 @@ impl FinalizedClaim {
     }
 }
 
+impl PendingClaim {
+    /// Select the exact nested operation admitted to use this transaction.
+    pub(crate) async fn select_participant(
+        &mut self,
+        operation: &str,
+    ) -> Result<(), wamn_postgres_statements::StatementError> {
+        self.transaction.select_participant(operation).await
+    }
+}
+
 pub(crate) async fn claim_command(
     claim: &mut PendingClaim,
     idempotency_key: String,
