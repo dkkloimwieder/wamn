@@ -132,11 +132,11 @@ Build one reusable participation mechanism. Receiving and Acme supply the first 
 
 Define one base-owned extension point before commit, its exact application/release binding, and an execution-only transaction view.
 The view permits admitted statements within the owner's transaction. It grants no independent commit or rollback operation.
-First establish that actual components can pass and use this view through the pinned native linker.
-Native resource transfer support alone does not establish support for the application call path.
-Use an unpredictable opaque typed token for the view. The host enforces its authority and lifetime because the token is copyable guest data.
+First establish that an authorized participant can obtain and use its own WIT resource through the pinned native linker.
+The base selects the participant. The participant obtains an execution-only resource directly from `wamn:postgres`.
+No resource crosses the application operation interface. The host binds the resource to the existing transaction and participant invocation.
 The tested borrowed-resource contract failed with `mismatched resource types` on the current pin. This result does not establish a general native-resource limitation.
-Keep bounded view state inside `wamn:postgres`, referencing its existing transaction. Add no signing infrastructure, database table, or resource/token compatibility path.
+Keep bounded view state inside `wamn:postgres`, referencing its existing transaction. Add no signing infrastructure, database table, or token compatibility path.
 Reuse the existing PostgreSQL transaction implementation and native dispatch. Add no fork, manual dispatch path, or second transaction manager.
 
 ### Transaction and authority ownership
@@ -144,9 +144,9 @@ Reuse the existing PostgreSQL transaction implementation and native dispatch. Ad
 One runner owns one transaction and commit decision per command item.
 Limit each participant to its own admitted statements and permissions under the original caller, tenant, and compatible database identity.
 Sharing a connection grants no additional authority. Match the exact participant operation and invocation, original caller, tenant, release, database identity, and deadline on every use.
-Token possession alone grants no access. Participants cannot delegate their view.
+A retained resource grants no access outside its authorized invocation. Participants cannot delegate their view.
 Revoke access on return, trap, cancellation, deadline, or transaction completion. Coordinate revocation with active SQL before finalization.
-Keep access sequential on the same held connection. A copied token cannot prolong access or transaction lifetime.
+Keep access sequential on the same held connection. A retained resource cannot prolong access or transaction lifetime.
 Keep deadlines and cancellation cleanup within the existing transaction lifecycle.
 
 ### Application policy and completion

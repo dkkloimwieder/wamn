@@ -1210,13 +1210,15 @@ impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'
 impl statement_wit::Host for ActiveCtx<'_> {}
 
 impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
-    async fn run_view(
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async WIT method acquires only a local resource"
+    )]
+    async fn participant_view(
         accessor: &Accessor<T, Self>,
-        view: statement_wit::TransactionView,
-        statement_digest: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        super::transaction_views::run(accessor, view, statement_digest, binds).await
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<super::PgTransactionView>, StatementError>>
+    {
+        super::transaction_views::acquire(accessor)
     }
 
     async fn run(
@@ -1300,13 +1302,12 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
         clippy::unused_async_trait_impl,
         reason = "the native async WIT method only issues local transaction state"
     )]
-    async fn view(
+    async fn select_participant(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
         participant_operation: String,
-    ) -> wash_runtime::wasmtime::Result<Result<statement_wit::TransactionView, StatementError>>
-    {
-        super::transaction_views::issue(accessor, &rep, participant_operation)
+    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
+        super::transaction_views::select(accessor, &rep, participant_operation)
     }
 
     async fn run(
@@ -1531,6 +1532,31 @@ pub async fn retained_transaction_for_test(
         .get(0);
     connection.restore(&transaction.state);
     Ok((transaction, pid))
+}
+
+impl<T: 'static + Send> statement_wit::HostTransactionViewWithStore<T> for SharedCtx {
+    async fn run(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<super::PgTransactionView>,
+        statement_digest: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+        super::transaction_views::run(accessor, rep, statement_digest, binds).await
+    }
+}
+
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the resource destructor only removes local view state"
+)]
+impl statement_wit::HostTransactionView for ActiveCtx<'_> {
+    async fn drop(
+        &mut self,
+        rep: Resource<super::PgTransactionView>,
+    ) -> wash_runtime::wasmtime::Result<()> {
+        self.table.delete(rep)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

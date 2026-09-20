@@ -122,13 +122,16 @@ The transaction resource never crosses a wiring edge, and separate outer items h
 A composed write followed by a projection is not one transaction.
 Atomic extension of a base command requires a separate future contract.
 
-`wamn:postgres/statements` provides a typed transaction view, an opaque reference with call-scoped access.
-The token grants no authority by itself. The native dispatcher binds one admitted participant invocation to the existing transaction owner.
+`wamn:postgres/statements` provides an execution-only `transaction-view` resource with call-scoped access.
+The base calls `transaction.select-participant` before its nested call. The native dispatcher binds the admitted participant to the existing transaction owner.
+The participant calls `participant-view` to obtain a resource in its own store. No resource crosses the application operation interface.
+The resource holds no connection. Retaining it cannot extend the transaction lifetime.
 Each use checks that invocation, its operation, the original caller, tenant, release, database identity, deadline, and admitted statements.
 The participant cannot commit, roll back, open an independent SQL connection, or delegate its view.
 SQL uses the same held connection and records the participant operation before restoring the owner operation.
 Return, trap, cancellation, deadline, or transaction completion revokes access. Finalization cancels and waits for active view SQL before using the connection.
-The borrowed-resource contract tested on the current runtime pin failed with `mismatched resource types`; that result does not describe all native resource contracts.
+The earlier cross-component borrowed-resource contract failed with `mismatched resource types` on the current pin.
+That result does not describe participant-local resources. Explicit resource transfer between stores remains unimplemented.
 
 The host owns begin, commit, rollback, and connection cleanup.
 An error, trap, cancellation, or deadline destroys unfinished transaction state before another request can acquire the connection.

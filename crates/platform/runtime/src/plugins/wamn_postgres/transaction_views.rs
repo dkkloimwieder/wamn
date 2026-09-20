@@ -12,9 +12,7 @@ use super::resources::{
     admit_transaction_statement, db_span_for_project, plugin_of, record_query_ms,
     run_verified_query, take_conn,
 };
-use super::{
-    PgError, RowSet, SessionClaims, SqlValue, StatementError, WamnPostgres, statement_wit,
-};
+use super::{PgError, RowSet, SessionClaims, SqlValue, StatementError, WamnPostgres};
 
 #[derive(Debug, Default)]
 pub(super) struct TransactionViews {
@@ -29,6 +27,13 @@ pub(super) struct TransactionViews {
 /// even if native dispatch has not activated the participant yet.
 #[derive(Debug, Clone)]
 pub struct TransactionParticipation(Arc<TransactionViewLease>);
+
+/// Execution-only resource held in the authorized participant's resource table.
+#[derive(Debug, Clone)]
+pub struct PgTransactionView {
+    lease: Arc<TransactionViewLease>,
+    scope: String,
+}
 
 #[derive(Debug)]
 struct ViewInvocation {
@@ -58,7 +63,6 @@ impl ViewIdentity {
 }
 
 pub(super) struct TransactionViewLease {
-    opaque: String,
     owner: String,
     operation: String,
     identity: ViewIdentity,
@@ -215,7 +219,7 @@ impl WamnPostgres {
         deadline: Instant,
         participation: Option<&TransactionParticipation>,
     ) -> anyhow::Result<()> {
-        // Non-release calls retain ordinary SQL, but cannot redeem a view.
+        // Non-release calls retain ordinary SQL, but cannot acquire a view.
         let identity = match self.view_identity(scope) {
             Ok(identity) => identity,
             Err(_) if participation.is_none() => return Ok(()),
@@ -293,12 +297,12 @@ impl WamnPostgres {
         }
     }
 
-    fn issue_transaction_view(
+    fn select_transaction_participant(
         &self,
         scope: &str,
         transaction: &PgStatementTransaction,
         operation: String,
-    ) -> Result<statement_wit::TransactionView, StatementError> {
+    ) -> Result<(), StatementError> {
         let identity = self.view_identity(scope)?;
         if transaction.owner_scope != scope {
             return Err(denied());
@@ -335,9 +339,7 @@ impl WamnPostgres {
         if state.finished || state.conn.is_none() {
             return Err(denied());
         }
-        let opaque = uuid::Uuid::new_v4().to_string();
         let view = Arc::new(TransactionViewLease {
-            opaque: opaque.clone(),
             owner: scope.to_owned(),
             operation,
             identity,
@@ -354,13 +356,36 @@ impl WamnPostgres {
         });
         state.view = Some(Arc::downgrade(&view));
         views.owners.insert(scope.to_owned(), view);
-        Ok(statement_wit::TransactionView { opaque })
+        Ok(())
+    }
+
+    fn acquire_transaction_view(&self, scope: &str) -> Result<PgTransactionView, StatementError> {
+        let identity = self.view_identity(scope)?;
+        let views = self
+            .transaction_views
+            .lock()
+            .expect("transaction views lock poisoned");
+        let invocation = views.scopes.get(scope).ok_or_else(denied)?;
+        let view = invocation.participant.as_ref().ok_or_else(denied)?;
+        let access = view.access.lock().expect("transaction view lock poisoned");
+        if invocation.identity != identity
+            || Instant::now() >= invocation.deadline
+            || Instant::now() >= view.deadline
+            || !access.active
+            || access.participant.as_deref() != Some(scope)
+        {
+            return Err(denied());
+        }
+        Ok(PgTransactionView {
+            lease: Arc::clone(view),
+            scope: scope.to_owned(),
+        })
     }
 
     async fn run_transaction_view(
         &self,
         scope: &str,
-        token: &statement_wit::TransactionView,
+        resource: &PgTransactionView,
         digest: &str,
         binds: &[SqlValue],
     ) -> Result<RowSet, StatementError> {
@@ -385,7 +410,8 @@ impl WamnPostgres {
             if !access.active
                 || access.participant.as_deref() != Some(scope)
                 || access.in_flight
-                || token.opaque != view.opaque
+                || resource.scope != scope
+                || !Arc::ptr_eq(&resource.lease, &view)
                 || !view.identity.same_transaction(&identity)
                 || view.operation != identity.operation
                 || Instant::now() >= view.deadline
@@ -455,15 +481,15 @@ pub(super) async fn finish_view(state: &SharedTxnState) {
     }
 }
 
-pub(super) fn issue<T: 'static>(
+pub(super) fn select<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
     rep: &Resource<PgStatementTransaction>,
     operation: String,
-) -> wash_runtime::wasmtime::Result<Result<statement_wit::TransactionView, StatementError>> {
+) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
     accessor.with(|mut access| {
         let ctx = access.get();
         let transaction = ctx.table.get(rep)?;
-        Ok(plugin_of(&ctx)?.issue_transaction_view(
+        Ok(plugin_of(&ctx)?.select_transaction_participant(
             ctx.component_id.as_ref(),
             transaction,
             operation,
@@ -471,18 +497,31 @@ pub(super) fn issue<T: 'static>(
     })
 }
 
+pub(super) fn acquire<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
+) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransactionView>, StatementError>> {
+    accessor.with(|mut access| {
+        let ctx = access.get();
+        match plugin_of(&ctx)?.acquire_transaction_view(ctx.component_id.as_ref()) {
+            Ok(view) => Ok(Ok(ctx.table.push(view)?)),
+            Err(error) => Ok(Err(error)),
+        }
+    })
+}
+
 pub(super) async fn run<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
-    token: statement_wit::TransactionView,
+    resource: Resource<PgTransactionView>,
     digest: String,
     binds: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-    let (plugin, scope, trace) = accessor.with(|mut access| {
+    let (plugin, scope, trace, view) = accessor.with(|mut access| {
         let ctx = access.get();
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
             crate::plugins::invocation_trace::invocation_trace(&ctx),
+            ctx.table.get(&resource)?.clone(),
         ))
     })?;
     trace
@@ -491,7 +530,7 @@ pub(super) async fn run<T: 'static>(
             let span = db_span_for_project(&plugin, &scope, &project, "statement.view.run");
             let started = std::time::Instant::now();
             let result = plugin
-                .run_transaction_view(&scope, &token, &digest, &binds)
+                .run_transaction_view(&scope, &view, &digest, &binds)
                 .instrument(span)
                 .await;
             record_query_ms("statement.view.run", &project, started.elapsed());

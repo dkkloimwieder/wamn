@@ -53,7 +53,6 @@ opentelemetry_sdk = { workspace = true, features = ["logs"] }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "logs"] }
 oci-client = { workspace = true }
 rand_core = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
 reqwest = { workspace = true, features = ["rustls"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-platform-verifier = { workspace = true }

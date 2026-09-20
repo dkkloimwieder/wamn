@@ -98,7 +98,7 @@ pub use statements::{
     PreparedStatementSet, StatementField, StatementValueType, VerifiedStatement,
     VerifiedStatementSet,
 };
-pub use transaction_views::TransactionParticipation;
+pub use transaction_views::{PgTransactionView, TransactionParticipation};
 pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this
@@ -116,6 +116,7 @@ mod bindings {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
+            "wamn:postgres/statements.transaction-view": super::PgTransactionView,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -133,6 +134,7 @@ mod bindings {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
+            "wamn:postgres/statements.transaction-view": super::PgTransactionView,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });

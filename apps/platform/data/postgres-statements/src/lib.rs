@@ -272,17 +272,14 @@ impl fmt::Debug for Transaction {
 }
 
 impl Transaction {
-    /// Issue one opaque view for an exact nested participant operation.
-    pub async fn view(
+    /// Select the exact nested operation that can obtain a transaction view.
+    pub async fn select_participant(
         &mut self,
         participant_operation: &str,
-    ) -> Result<TransactionView, StatementError> {
+    ) -> Result<(), StatementError> {
         self.inner
-            .view(participant_operation.to_string())
+            .select_participant(participant_operation.to_string())
             .await
-            .map(|view| TransactionView {
-                opaque: view.opaque,
-            })
             .map_err(StatementError::from_wire)
     }
 
@@ -312,28 +309,31 @@ impl Transaction {
     }
 }
 
-/// Opaque authority to run admitted statements in an owner transaction.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Execution-only resource for the current participant invocation.
+#[derive(Debug)]
 pub struct TransactionView {
-    pub opaque: String,
+    inner: host::TransactionView,
+}
+
+/// Obtain the transaction view selected for this authorized invocation.
+pub async fn participant_view() -> Result<TransactionView, StatementError> {
+    host::participant_view()
+        .await
+        .map(|inner| TransactionView { inner })
+        .map_err(StatementError::from_wire)
 }
 
 impl TransactionView {
     /// Run one admitted statement through this transaction view.
     pub async fn run(
-        &self,
+        &mut self,
         statement_digest: &str,
         params: Vec<SqlValue>,
     ) -> Result<RowSet, StatementError> {
-        host::run_view(
-            host::TransactionView {
-                opaque: self.opaque.clone(),
-            },
-            statement_digest.to_string(),
-            params,
-        )
-        .await
-        .map_err(StatementError::from_wire)
+        self.inner
+            .run(statement_digest.to_string(), params)
+            .await
+            .map_err(StatementError::from_wire)
     }
 }
 
