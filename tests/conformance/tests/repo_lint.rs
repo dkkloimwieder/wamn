@@ -12,7 +12,7 @@ const HTTP_SOURCE: &str = "crates/platform/runtime/src/plugins/connection_http.r
 const HTTP_TRANSPORT: &str = "crates/platform/runtime/src/plugins/connection_http/transport.rs";
 const COMPONENT_MANIFEST: &str = "apps/Cargo.toml";
 const NO_STD_MANIFEST: &str = "apps/platform/no-std/Cargo.toml";
-const LEG_LABELS: [&str; 10] = [
+const LEG_LABELS: [&str; 11] = [
     "connection HTTP scoped retained clients",
     "root rustfmt",
     "components rustfmt",
@@ -20,6 +20,7 @@ const LEG_LABELS: [&str; 10] = [
     "root Clippy",
     "components native Clippy",
     "connection-http-standard native Clippy",
+    "connection-http-standard wasm Clippy",
     "components wasm Clippy",
     "no-std native Clippy",
     "no-std wasm Clippy",
@@ -244,9 +245,25 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
                 root_path.clone(),
                 "clippy".into(),
                 "--manifest-path".into(),
+                component_manifest_path.clone(),
+                "--locked".into(),
+                "--package".into(),
+                "connection-http-standard".into(),
+                "--target".into(),
+                "wasm32-wasip2".into(),
+                "--".into(),
+                "-D".into(),
+                "warnings".into(),
+            ],
+            vec![
+                root_path.clone(),
+                "clippy".into(),
+                "--manifest-path".into(),
                 component_manifest_path,
                 "--locked".into(),
                 "--workspace".into(),
+                "--exclude".into(),
+                "connection-http-standard".into(),
                 "--target".into(),
                 "wasm32-wasip2".into(),
                 "--".into(),
@@ -292,6 +309,7 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
             "",
             "-C panic=abort",
             "",
+            "",
             "-C panic=abort",
             ""
         ]
@@ -313,7 +331,7 @@ fn repo_lint_reports_every_leg_when_an_early_leg_fails() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        9,
+        10,
         "an early failure must not hide a later Cargo leg"
     );
     assert_leg_statuses(&output, Some(("root rustfmt", 23)));
@@ -340,7 +358,7 @@ fn scope_fixture_output(relative: &str, before: &str, after: &str) -> Output {
     let output = run_tool(&root, &directory, &["run"]);
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        9,
+        10,
         "a static-leg failure must not hide any Cargo leg"
     );
     output
@@ -497,14 +515,14 @@ fn repo_lint_returns_failure_when_the_last_leg_fails() {
     executable(&directory.path("fake cargo"), FAKE_CARGO);
 
     let output = tool_command(&root, &directory)
-        .env("WAMN_FAKE_CARGO_FAIL_AT", "9")
+        .env("WAMN_FAKE_CARGO_FAIL_AT", "10")
         .arg("run")
         .output()
         .expect("run failing repo-lint tool");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        9,
+        10,
         "the final Cargo leg must run"
     );
     assert_leg_statuses(&output, Some(("no-std wasm Clippy", 23)));

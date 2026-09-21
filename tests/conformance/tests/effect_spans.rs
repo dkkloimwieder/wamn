@@ -80,43 +80,55 @@ enum Surface {
     /// A guest-invoked operation that leaves the host. Must open a span and
     /// instrument the awaited effect with it.
     Effect,
+    /// An effect implemented by one named helper in another source file.
+    DelegatedEffect {
+        file: &'static str,
+        function: &'static str,
+    },
     /// Not an effect, carrying the reason so a failure explains the ruling.
     Local(&'static str),
 }
 
 const DESTRUCTOR: Surface =
     Surface::Local("resource destructor: the host reclaims what the guest let go");
+const LOCAL_STATE: Surface = Surface::Local("reads or updates only host-local transaction state");
+const TRANSACTION_VIEW_RUN: Surface = Surface::DelegatedEffect {
+    file: "crates/platform/runtime/src/plugins/wamn_postgres/transaction_views.rs",
+    function: "run",
+};
 
 /// The methods of one host trait, each classified as an effect or not.
 type MethodSurfaces = &'static [(&'static str, Surface)];
 
 /// Every `impl … for ActiveCtx` of the instrumented plugins, and every method.
 const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
+    (POSTGRES, "client::Host", &[]),
     (
         POSTGRES,
-        "client::Host",
+        "client::HostWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
             ("begin", Surface::Effect),
         ],
     ),
+    (POSTGRES, "client::HostTransaction", &[("drop", DESTRUCTOR)]),
     (
         POSTGRES,
-        "client::HostTransaction",
+        "client::HostTransactionWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
             ("open_cursor", Surface::Effect),
             ("commit", Surface::Effect),
             ("rollback", Surface::Effect),
-            ("drop", DESTRUCTOR),
         ],
     ),
+    (POSTGRES, "client::HostCursor", &[("drop", DESTRUCTOR)]),
     (
         POSTGRES,
-        "client::HostCursor",
-        &[("fetch", Surface::Effect), ("drop", DESTRUCTOR)],
+        "client::HostCursorWithStore",
+        &[("fetch", Surface::Effect)],
     ),
     // The named-imports world (`wasm_component_model_implements`) is the SAME
     // three DB surfaces reached with an explicit project, so it is the same set
@@ -126,6 +138,11 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     (
         POSTGRES,
         "bindings::named_imports::wamn::postgres::client::Host",
+        &[],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::client::HostWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
@@ -135,42 +152,74 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     (
         POSTGRES,
         "bindings::named_imports::wamn::postgres::client::HostTransaction",
+        &[("drop", DESTRUCTOR)],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::client::HostTransactionWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
             ("open_cursor", Surface::Effect),
             ("commit", Surface::Effect),
             ("rollback", Surface::Effect),
-            ("drop", DESTRUCTOR),
         ],
     ),
     (
         POSTGRES,
         "bindings::named_imports::wamn::postgres::client::HostCursor",
-        &[("fetch", Surface::Effect), ("drop", DESTRUCTOR)],
+        &[("drop", DESTRUCTOR)],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::client::HostCursorWithStore",
+        &[("fetch", Surface::Effect)],
     ),
     // The SQL-by-reference world. A guest names a statement digest instead of
     // sending text, but what crosses the host boundary is the same database
     // round trip, so the classification is the same as `client::*` above.
+    (POSTGRES, "statement_wit::Host", &[]),
     (
         POSTGRES,
-        "statement_wit::Host",
-        &[("run", Surface::Effect), ("begin", Surface::Effect)],
+        "statement_wit::HostWithStore",
+        &[
+            ("selected_participation", LOCAL_STATE),
+            ("participant_view", LOCAL_STATE),
+            ("run", Surface::Effect),
+            ("begin", Surface::Effect),
+        ],
     ),
     (
         POSTGRES,
         "statement_wit::HostTransaction",
+        &[("drop", DESTRUCTOR)],
+    ),
+    (
+        POSTGRES,
+        "statement_wit::HostTransactionWithStore",
         &[
+            ("select_participant", LOCAL_STATE),
             ("run", Surface::Effect),
             ("commit", Surface::Effect),
             ("rollback", Surface::Effect),
-            ("drop", DESTRUCTOR),
         ],
     ),
-    (HTTP, "http::Host", &[("send", Surface::Effect)]),
+    (
+        POSTGRES,
+        "statement_wit::HostTransactionView",
+        &[("drop", DESTRUCTOR)],
+    ),
+    (
+        POSTGRES,
+        "statement_wit::HostTransactionViewWithStore",
+        &[("run", TRANSACTION_VIEW_RUN)],
+    ),
+    (HTTP, "http::Host", &[]),
+    (HTTP, "http::HostWithStore", &[("send", Surface::Effect)]),
+    (JETSTREAM, "registration::Host", &[]),
     (
         JETSTREAM,
-        "registration::Host",
+        "registration::HostWithStore",
         &[("prepare", Surface::Effect)],
     ),
 ];
@@ -258,14 +307,15 @@ fn calls_of(block: &syn::Block) -> Calls {
     calls
 }
 
-/// Is `ty` the `ActiveCtx` the host traits are implemented for?
-fn is_active_ctx(ty: &Type) -> bool {
+/// Is `ty` one of the contexts the host traits are implemented for?
+fn is_host_ctx(ty: &Type) -> bool {
     match ty {
-        Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "ActiveCtx"),
+        Type::Path(path) => path.path.segments.last().is_some_and(|segment| {
+            matches!(
+                segment.ident.to_string().as_str(),
+                "ActiveCtx" | "SharedCtx"
+            )
+        }),
         _ => false,
     }
 }
@@ -352,7 +402,7 @@ fn every_effect_surface_opens_the_shared_span() {
             let Some((_, path, _)) = &implementation.trait_ else {
                 continue;
             };
-            if !is_active_ctx(&implementation.self_ty) {
+            if !is_host_ctx(&implementation.self_ty) {
                 continue;
             }
             found
@@ -387,6 +437,9 @@ fn every_effect_surface_opens_the_shared_span() {
                 .iter()
                 .map(|(name, surface)| match surface {
                     Surface::Effect => format!("{name} — effect, must open a span"),
+                    Surface::DelegatedEffect { file, function } => {
+                        format!("{name} — effect delegated to {file}::{function}")
+                    }
                     Surface::Local(reason) => format!("{name} — not an effect: {reason}"),
                 })
                 .collect();
@@ -398,7 +451,6 @@ fn every_effect_surface_opens_the_shared_span() {
             );
 
             for &(name, surface) in methods {
-                let Surface::Effect = surface else { continue };
                 let function = items
                     .iter()
                     .find_map(|item| match item {
@@ -407,6 +459,29 @@ fn every_effect_surface_opens_the_shared_span() {
                     })
                     .expect("method sets were just confirmed equal");
                 let calls = calls_of(&function.block);
+
+                if let Surface::DelegatedEffect {
+                    file,
+                    function: delegate,
+                } = surface
+                {
+                    assert!(
+                        calls.functions.contains(delegate),
+                        "{file}: `{host_trait}::{name}` must call its declared effect delegate {delegate}"
+                    );
+                    let delegated = parse(file);
+                    assert!(
+                        reaching(&delegated, |calls| {
+                            calls.functions.contains("db_span_for_project")
+                        })
+                        .contains(delegate)
+                            && reaching(&delegated, |calls| calls.methods.contains("instrument"))
+                                .contains(delegate),
+                        "{file}::{delegate} must open and instrument the delegated effect span"
+                    );
+                    continue;
+                }
+                let Surface::Effect = surface else { continue };
 
                 let via_wrapper = calls.functions.intersection(&openers).next().is_some();
                 assert!(

@@ -115,16 +115,7 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     // every remaining component ships to the gates image alone. The service
     // images carry native binaries only; a component COPY appearing in one is a
     // regression, and `stage` fails closed when a stage name disappears.
-    for image_stage in [
-        "host",
-        "identity",
-        "executor",
-        "ctl",
-        "dispatcher",
-        "scenario-worker",
-        "cdc-reader",
-        "waker",
-    ] {
+    for image_stage in ["host", "identity", "ctl", "scenario-worker", "cdc-reader"] {
         assert!(
             !stage(DOCKERFILE, image_stage).contains(".wasm"),
             "{image_stage} service image must not carry component bytes"
@@ -238,7 +229,7 @@ fn build_graph_has_one_source_stage_and_no_retired_leg() {
         .collect();
     assert_eq!(
         targets.len(),
-        9,
+        6,
         "every native build stage owns one target cache, got {targets:?}"
     );
 

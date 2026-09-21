@@ -29,14 +29,12 @@ const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
 const RECEIVING_HOST_VALUES: &str = "deploy/platform/values-host-receiving-pat.yaml";
 const WMS_HOST_VALUES: &str = "deploy/platform/values-host-wms-pat.yaml";
 const EVENTS_RBAC: &str = "deploy/platform/runtime-operator-events-rbac.example.yaml";
-const EXECUTOR: &str = "deploy/platform/executor.yaml";
 const SOCKPROBE: &str = "apps/platform/fixtures/sockprobe/src/main.rs";
 const EXPECTED_CHART_VERSION: &str = "2.9.0";
 static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const EXPECTED_RUNTIME_REVISION: &str = "68ebece9";
 const DEPLOYMENT: (&str, &str) = ("apps/v1", "Deployment");
 const NETWORK_POLICY: (&str, &str) = ("networking.k8s.io/v1", "NetworkPolicy");
-const POD_DISRUPTION_BUDGET: (&str, &str) = ("policy/v1", "PodDisruptionBudget");
 const ROLE: (&str, &str) = ("rbac.authorization.k8s.io/v1", "Role");
 const ROLE_BINDING: (&str, &str) = ("rbac.authorization.k8s.io/v1", "RoleBinding");
 
@@ -339,47 +337,6 @@ fn assert_native_host_controls(
     assert!(network_policy["spec"].get("egress").is_none());
 }
 
-fn assert_executor_native_controls(root: &Path) {
-    let source = read_repository_file(root, EXECUTOR);
-    let manifest = decode_manifest(source.as_bytes(), &[DEPLOYMENT, POD_DISRUPTION_BUDGET]);
-    let deployment = manifest["items"]
-        .as_array()
-        .expect("executor manifest contains a Deployment and disruption budget")
-        .iter()
-        .find(|object| object["kind"] == "Deployment")
-        .expect("executor Deployment is present");
-    let pod = &deployment["spec"]["template"]["spec"];
-    // Five seconds to drain, one to stop probes, two to flush, one to stop Tokio.
-    assert!(
-        pod["terminationGracePeriodSeconds"]
-            .as_u64()
-            .is_some_and(|seconds| seconds > 9),
-        "executor grace must exceed its complete nine-second shutdown envelope"
-    );
-    let container = host_container(deployment);
-    assert_eq!(
-        environment_entry(container, "WASH_GUEST_MEMORY_MODE")
-            .and_then(|entry| entry["value"].as_str()),
-        Some("count")
-    );
-    for (name, path) in [
-        ("startupProbe", "/livez"),
-        ("livenessProbe", "/livez"),
-        ("readinessProbe", "/readyz"),
-    ] {
-        assert_eq!(container[name]["httpGet"]["path"], path);
-        assert_eq!(container[name]["httpGet"]["port"], "readiness");
-        assert!(container[name].get("tcpSocket").is_none());
-    }
-    assert!(
-        container["ports"]
-            .as_array()
-            .expect("executor exposes its health port")
-            .iter()
-            .any(|port| port["name"] == "readiness" && port["containerPort"] == 8089)
-    );
-}
-
 fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
     let values = read_repository_file(root, VALUES);
     let overlay = read_repository_file(root, EVENTS_RBAC);
@@ -557,10 +514,9 @@ fn operator_install_command_pins_the_upstream_chart() {
 }
 
 #[test]
-fn host_and_executor_use_the_native_v2_9_memory_contract() {
+fn host_uses_the_native_v2_9_memory_contract() {
     let root = repository_root();
     let host_values = read_repository_file(&root, HOST_VALUES);
-    let executor = read_repository_file(&root, EXECUTOR);
 
     for marker in [
         "memory: \"4Gi\"",
@@ -572,20 +528,6 @@ fn host_and_executor_use_the_native_v2_9_memory_contract() {
             "{HOST_VALUES} must carry the native v2.9 memory setting {marker:?}"
         );
     }
-    for marker in [
-        "name: WASH_HOST_MAX_GUEST_MEMORY",
-        "resource: limits.memory",
-        "name: WASH_DEFAULT_HEAP_MEMORY",
-        "value: \"256MiB\"",
-        "name: WASH_CORE_INSTANCES",
-        "value: \"512\"",
-    ] {
-        assert!(
-            executor.contains(marker),
-            "{EXECUTOR} must carry the native v2.9 memory setting {marker:?}"
-        );
-    }
-
     for legacy in [
         "WAMN_MEMORY_CEILING_MB",
         "WAMN_DISABLE_INSTANCE_POOLING",
@@ -593,7 +535,7 @@ fn host_and_executor_use_the_native_v2_9_memory_contract() {
         "--pool-memory-cap-bytes",
     ] {
         assert!(
-            !host_values.contains(legacy) && !executor.contains(legacy),
+            !host_values.contains(legacy),
             "the native memory cutover must remove legacy setting {legacy:?}"
         );
     }
@@ -651,7 +593,7 @@ fn synchronous_host_groups_keep_a_warm_replica() {
 #[test]
 fn legacy_raw_socket_opt_in_is_absent_from_the_shipped_contract() {
     let root = repository_root();
-    for path in [HOST_VALUES, EXECUTOR, SOCKPROBE] {
+    for path in [HOST_VALUES, SOCKPROBE] {
         let source = read_repository_file(&root, path);
         for legacy in ["wamn.allow-raw-sockets", "WAMN_ALLOW_RAW_SOCKETS"] {
             assert!(
@@ -841,7 +783,6 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
     assert_native_host_controls(&base, &base_policy, "4", "2", "6");
     assert_native_host_controls(&receiving, &receiving_policy, "4", "2", "6");
     assert_native_host_controls(&wms, &wms_policy, "1", "250m", "2");
-    assert_executor_native_controls(&root);
     assert_events_overlay_remains_namespace_scoped(&root);
     let base_container = host_container(&base);
     let receiving_container = host_container(&receiving);

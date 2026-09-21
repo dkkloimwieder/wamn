@@ -139,17 +139,19 @@ fn is_test_gated_module(repository: &Path, relative: &str) -> bool {
 
 /// Does `source` declare `mod <name>;` immediately under a `#[cfg(test)]`?
 fn declares_module_under_cfg_test(source: &str, name: &str) -> bool {
-    let declarations = [format!("mod {name};"), format!("pub mod {name};")];
+    let private = format!("mod {name};");
+    let public = format!("pub mod {name};");
     let mut gated = false;
     for line in source.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }
-        if declarations
-            .iter()
-            .any(|declaration| trimmed == declaration)
-        {
+        let restricted_public = trimmed
+            .strip_prefix("pub(")
+            .and_then(|declaration| declaration.split_once(") "))
+            .is_some_and(|(_, declaration)| declaration == private);
+        if trimmed == private || trimmed == public || restricted_public {
             return gated;
         }
         gated = trimmed == "#[cfg(test)]";
