@@ -22,6 +22,8 @@ pub mod client_ir;
 pub mod client_plan;
 mod client_route;
 pub mod client_rust;
+/// The TypeScript client emitter. Browser bindings from the same contract IR.
+pub mod client_ts;
 pub mod client_tui;
 mod cursor;
 mod data_access;
