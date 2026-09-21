@@ -319,7 +319,7 @@ pub struct HostArgs {
     )]
     pub session_instance_suffix: Option<String>,
 
-    /// Optional database search path installed at node checkout.
+    /// Optional application data search path installed at node checkout.
     #[arg(long, env = "WAMN_SCHEMA")]
     pub schema: Option<String>,
 
@@ -1009,7 +1009,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 release,
                 QueueServiceConfig {
                     project: args.project.clone(),
-                    schema: args.schema.clone(),
                     runner: router_owner,
                     lease_ttl_ms: args.queue_lease_ttl_ms,
                 },

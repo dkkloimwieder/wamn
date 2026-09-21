@@ -108,6 +108,7 @@ Native callbacks restore the trace context from that scope.
 Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
 Candidate execution still refuses nested calls.
 The host owns durable queue claims and settlement through the existing run-state libraries.
+The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases; replicas need no wake service or process-local handoff.
 

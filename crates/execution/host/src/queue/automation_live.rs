@@ -107,6 +107,9 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     let (mut admin, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
     tokio::spawn(connection);
     let schema = BareSchemaName::new("wamn_run")?;
+    admin
+        .batch_execute("CREATE SCHEMA application_data")
+        .await?;
     wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
     admin.batch_execute("ALTER TABLE wamn_run.runs DROP COLUMN service_principal_id CASCADE; ALTER TABLE wamn_run.runs ALTER COLUMN run_id DROP DEFAULT").await?;
     wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
@@ -226,6 +229,12 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
                 "2099-01-01T00:00:00Z",
             ))
             .await?;
+        // Ambient application lookup must not select the queue's storage.
+        admin
+            .batch_execute(&format!(
+                "ALTER ROLE \"{role}\" SET search_path = application_data"
+            ))
+            .await?;
         let mut url = url::Url::parse(database.url())?;
         url.set_username(&role).unwrap();
         url.set_password(Some("automation-test-only")).unwrap();
@@ -279,7 +288,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
             warm_reuse: crate::warm_reuse::WarmReuse::default(),
             owner_prefix: "automation-live".to_owned(),
             project: "default".to_owned(),
-            schema: Some("wamn_run".to_owned()),
+            schema: Some("application_data".to_owned()),
             cache_capacity: WiringCacheCapacity::default(),
         },
     )?);
@@ -326,13 +335,16 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         &release,
         QueueServiceConfig {
             project: "default".to_owned(),
-            schema: Some("wamn_run".to_owned()),
             runner: "automation-live-first".to_owned(),
             lease_ttl_ms: 30_000,
         },
     )
     .await?;
     let run = enqueue(&mut admin, &schema, &request).await?;
+    assert!(admin.query_one(
+        "SELECT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id=$1) AND to_regclass('application_data.run_queue') IS NULL",
+        &[&run],
+    ).await?.get::<_, bool>(0));
     assert_eq!(enqueue(&mut admin, &schema, &request).await?, run);
     request.input = json!({"different":true});
     assert!(enqueue(&mut admin, &schema, &request).await.is_err());
@@ -349,7 +361,6 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         &release,
         QueueServiceConfig {
             project: "default".to_owned(),
-            schema: Some("wamn_run".to_owned()),
             runner: "automation-live-second".to_owned(),
             lease_ttl_ms: 30_000,
         },

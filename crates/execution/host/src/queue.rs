@@ -44,7 +44,6 @@ enum QueueDriverRequest {
 #[derive(Debug, Clone)]
 pub struct QueueServiceConfig {
     pub project: String,
-    pub schema: Option<String>,
     pub runner: String,
     pub lease_ttl_ms: u64,
 }
@@ -97,7 +96,8 @@ impl QueueService {
                 &SessionClaims {
                     tenant: scope.tenant_id.clone(),
                     project: Some(config.project.clone()),
-                    schema: config.schema,
+                    // Queue state belongs to the run plane, never the application schema.
+                    schema: Some("wamn_run".to_owned()),
                     runner: Some(config.runner),
                     role: None,
                     user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
