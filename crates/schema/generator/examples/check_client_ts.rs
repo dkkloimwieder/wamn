@@ -8,14 +8,16 @@
 //! ```
 //!
 //! It emits the fixture bindings into a temporary directory, writes a strict
-//! `tsconfig.json` beside them, and runs `tsc` from `PATH`. Pass a directory to
-//! keep the emitted source.
+//! `tsconfig.json` beside them, and runs `tsc` from `PATH`. The emitted
+//! modules import the hand-written runtime, so the configuration maps that
+//! specifier to `web/runtime` in this checkout. Pass a directory to keep the
+//! emitted source.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
-use wamn_schema_generator::client_ts::emit_ts_client;
+use wamn_schema_generator::client_ts::{RUNTIME_PACKAGE, emit_ts_client};
 
 #[path = "../tests/support/platform_fixture.rs"]
 mod fixture;
@@ -27,6 +29,10 @@ const MINIMUM_TSC: &str = "5.5";
 const PACKAGE_JSON: &str = "{ \"type\": \"module\" }\n";
 
 /// Strict means every option that turns a silent `any` into a refusal.
+///
+/// The two markers take the runtime's package name and the path of
+/// `web/runtime/src/index.ts` in this checkout, because the emitted modules
+/// import the runtime by name and this directory installs nothing.
 const TSCONFIG: &str = r#"{
   "compilerOptions": {
     "target": "ES2022",
@@ -41,7 +47,9 @@ const TSCONFIG: &str = r#"{
     "noUnusedLocals": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": []
+    "types": [],
+    "baseUrl": ".",
+    "paths": { "RUNTIME_PACKAGE": ["RUNTIME_PATH"] }
   },
   "include": ["**/*.ts"]
 }
@@ -62,7 +70,13 @@ fn main() -> Result<()> {
     }
     std::fs::create_dir_all(&root)?;
     std::fs::write(root.join("package.json"), PACKAGE_JSON)?;
-    std::fs::write(root.join("tsconfig.json"), TSCONFIG)?;
+    let runtime = repository_root()?.join("web/runtime/src/index.ts");
+    std::fs::write(
+        root.join("tsconfig.json"),
+        TSCONFIG
+            .replace("RUNTIME_PACKAGE", RUNTIME_PACKAGE)
+            .replace("RUNTIME_PATH", &runtime.display().to_string()),
+    )?;
     for file in &files {
         // Every emitted path starts with `generated/client-ts/`. The check
         // needs the modules beside each other, not that prefix.
@@ -84,6 +98,15 @@ fn main() -> Result<()> {
     }
     println!("the generated bindings type-check under tsc strict");
     Ok(())
+}
+
+/// The checkout that holds `web/runtime`, from this crate's own location.
+fn repository_root() -> Result<PathBuf> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .map(Path::to_path_buf)
+        .context("the generator crate sits three directories below the repository root")
 }
 
 fn tsc_version() -> Result<String> {

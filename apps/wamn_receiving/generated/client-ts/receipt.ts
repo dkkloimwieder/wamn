@@ -2,8 +2,8 @@
 //
 // `receipt` operations of package `wamn_receiving`.
 
-import type { FieldMap, Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "./wire.js";
-import { reviveOutcome, toWire } from "./wire.js";
+import type { FieldMap, Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:receipt/get@1.0.0`. */
 export interface ReceiptGetRequest {

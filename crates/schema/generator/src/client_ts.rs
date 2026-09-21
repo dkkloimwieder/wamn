@@ -174,204 +174,17 @@ pub fn to_snake(member: &str) -> String {
     name
 }
 
-/// The path of the shared module inside a generated package.
-pub const WIRE_MODULE_PATH: &str = "generated/client-ts/wire.ts";
-
-/// Emit the shared module that every generated binding imports.
+/// The hand-written package that every generated binding imports.
 ///
-/// It declares the type aliases, the transport interface, the four outcomes of
-/// one intent, and the pair that renames keys from a field map. It declares no
-/// operation and no deployment fact, so its bytes do not depend on the
-/// contract.
-#[must_use]
-pub fn wire_module() -> String {
-    let mut source = String::new();
-    writeln!(
-        source,
-        "// @generated from the client-contract IR; do not edit."
-    )
-    .expect("writing to a String cannot fail");
-    source.push_str(WIRE_MODULE_BODY);
-    source
-}
+/// It holds the wire contract and the transport. `web/runtime` is its source,
+/// and the application's own configuration resolves the specifier.
+pub const RUNTIME_PACKAGE: &str = "@wamn/web-runtime";
 
-/// The body of the shared module.
+/// The runtime version that generated bindings require.
 ///
-/// It holds no name rule. [`to_camel`] decides every member name at emission,
-/// and each operation's field map carries the result to the run time.
-const WIRE_MODULE_BODY: &str = r#"
-/** A UUID in hyphenated form. */
-export type Uuid = string;
-
-/** An RFC 3339 timestamp in UTC, to microseconds. */
-export type Timestamptz = string;
-
-/** A 64-bit integer as a decimal string. A number loses precision above 2^53. */
-export type Int64 = string;
-
-/** An exact decimal as a canonical string. */
-export type Numeric = string;
-
-/** Any JSON value. */
-export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly JsonValue[]
-  | { readonly [key: string]: JsonValue };
-
-/** What one operation's response contract states. A transport classifies with it. */
-export interface ResponseContract {
-  /** `one`, `bounded_list`, `page`, `none`, or null when the release states none. */
-  readonly resultClass: string | null;
-  /** The partial completion schema, as published JSON text. */
-  readonly partialSchema: string | null;
-  /** Every refusal literal the operation declares. */
-  readonly errors: readonly string[];
-  /** The replay guarantee the release serves. */
-  readonly replay: "claim" | "state" | null;
-}
-
-/** One request. It carries no host, no base URL and no credential. */
-export interface WireRequest {
-  /** The exact canonical operation identity. */
-  readonly operation: string;
-  /** The method the release publishes. */
-  readonly method: string;
-  /** The path template the release publishes. */
-  readonly template: string;
-  /** Whether the operation admits only a fresh credential. */
-  readonly freshOnly: boolean;
-  /** What the response must satisfy. */
-  readonly contract: ResponseContract;
-  /** The submitted items, in wire spelling. */
-  readonly items: readonly JsonValue[];
-}
-
-/**
- * The outcome of one submitted intent.
- *
- * The four members carry the whole meaning: the intent completed, it completed
- * in part, the operation refused it, or its completion is unknown. A caller
- * branches on `status` and never catches an exception.
- */
-export type Outcome<T> =
-  | { readonly status: "completed"; readonly value: T }
-  | {
-      readonly status: "partiallyCompleted";
-      readonly committedResult: T;
-      readonly failedOutcome: JsonValue;
-    }
-  | { readonly status: "refused"; readonly code: string; readonly detail: JsonValue }
-  | {
-      readonly status: "uncertain";
-      readonly reason: string;
-      readonly retryRefusal: JsonValue | null;
-    };
-
-/** Everything one operation sends except its items. */
-export type OperationRoute = Omit<WireRequest, "items">;
-
-/**
- * The transport an application supplies.
- *
- * It owns the URL, the credential, the request envelope and the classification
- * of the response into one `Outcome`. The bindings only state what to send.
- */
-export interface Transport {
-  invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
-}
-
-/**
- * What one declared shape calls its members, on the wire and in TypeScript.
- *
- * The key is the wire key. A string value is the member name. An object value
- * is a declared object or array, and its `fields` describe each value inside
- * it. A key that no map declares keeps its spelling, so the inside of a `json`
- * value is never renamed.
- */
-export type FieldMap = { readonly [wireKey: string]: string | NestedFields };
-
-/** One declared object or array, and the members inside it. */
-export interface NestedFields {
-  /** The TypeScript member name. */
-  readonly member: string;
-  /** What each value inside carries. */
-  readonly fields: FieldMap;
-}
-
-/** The renamed key, and the map to walk with, or null to copy the value. */
-type Rename = (fields: FieldMap, name: string) => readonly [string, FieldMap | null];
-
-function walk(value: unknown, fields: FieldMap, rename: Rename): JsonValue {
-  if (Array.isArray(value)) {
-    return value.map((item) => walk(item, fields, rename));
-  }
-  if (value !== null && typeof value === "object") {
-    const converted: { [name: string]: JsonValue } = {};
-    for (const [name, member] of Object.entries(value)) {
-      const [renamed, nested] = rename(fields, name);
-      converted[renamed] =
-        nested === null ? (member as JsonValue) : walk(member, nested, rename);
-    }
-    return converted;
-  }
-  return value as JsonValue;
-}
-
-/** Convert the wire keys of one declared shape to TypeScript members. */
-export function fromWire(value: unknown, fields: FieldMap): JsonValue {
-  return walk(value, fields, (map, name) => {
-    const entry = map[name];
-    if (entry === undefined) {
-      return [name, null];
-    }
-    return typeof entry === "string" ? [entry, null] : [entry.member, entry.fields];
-  });
-}
-
-/** Convert the TypeScript members of one declared shape to wire keys. */
-export function toWire(value: unknown, fields: FieldMap): JsonValue {
-  return walk(value, fields, (map, member) => {
-    for (const [name, entry] of Object.entries(map)) {
-      if (typeof entry === "string") {
-        if (entry === member) {
-          return [name, null];
-        }
-      } else if (entry.member === member) {
-        return [name, entry.fields];
-      }
-    }
-    return [member, null];
-  });
-}
-
-/**
- * Rename the keys inside one outcome and state its result type.
- *
- * The cast is unchecked, exactly as the Rust client returns a JSON value that
- * the caller reads through its declared result type. The transport already
- * held the response to the operation's contract.
- *
- * A refusal detail and a failed outcome keep their wire spelling. Neither one
- * declares a field tree, so nothing states which of their keys is a name.
- */
-export function reviveOutcome<T>(outcome: Outcome<JsonValue>, fields: FieldMap): Outcome<T> {
-  switch (outcome.status) {
-    case "completed":
-      return { status: "completed", value: fromWire(outcome.value, fields) as T };
-    case "partiallyCompleted":
-      return {
-        status: "partiallyCompleted",
-        committedResult: fromWire(outcome.committedResult, fields) as T,
-        failedOutcome: outcome.failedOutcome,
-      };
-    default:
-      return outcome;
-  }
-}
-"#;
+/// The bindings and the runtime move together, so a package that generates
+/// against this release states the range here rather than guessing.
+pub const RUNTIME_VERSION_RANGE: &str = "^0.1.0";
 
 /// Words that cannot name a TypeScript function or constant.
 ///
@@ -436,11 +249,12 @@ const PRIVATE_KIND: &str = "event_handler";
 /// or two names that take the same TypeScript name.
 pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, ClientTsError> {
     let mut files = BTreeMap::new();
-    files.insert(WIRE_MODULE_PATH.to_owned(), wire_module());
     let mut models: Vec<_> = ir.models.iter().collect();
     models.sort_by(|left, right| left.name.cmp(&right.name));
-    let mut index = String::from("// @generated from the client-contract IR; do not edit.\n\n");
-    index.push_str("export * from \"./wire.js\";\n");
+    let mut index = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
+    index.push_str("// The wire contract lives in `");
+    index.push_str(RUNTIME_PACKAGE);
+    index.push_str("`, which this package depends on.\n\n");
     let mut namespaces = BTreeSet::new();
     for model in &models {
         let namespace = ts_name(&model.name)?;
@@ -482,14 +296,17 @@ pub const PACKAGE_JSON_PATH: &str = "generated/client-ts/package.json";
 /// Emit the distribution manifest for the generated bindings.
 ///
 /// The name is authored in the package manifest and never inferred. The
-/// version is the release's own. The distribution declares no dependency,
-/// because the bindings import nothing.
+/// version is the release's own. The one dependency is the hand-written
+/// runtime that the modules import, and the application's own configuration
+/// resolves it.
 #[must_use]
 pub fn emit_ts_package_json(distribution_name: &str, version: &str) -> GeneratedFile {
     let source = format!(
-        "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }}\n}}\n",
+        "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }},\n  \"dependencies\": {{\n    {runtime}: {range}\n  }}\n}}\n",
         name = serde_json::Value::String(distribution_name.to_owned()),
         version = serde_json::Value::String(version.to_owned()),
+        runtime = serde_json::Value::String(RUNTIME_PACKAGE.to_owned()),
+        range = serde_json::Value::String(RUNTIME_VERSION_RANGE.to_owned()),
     );
     GeneratedFile::new(
         PACKAGE_JSON_PATH.into(),
@@ -556,13 +373,17 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
         if !types.is_empty() {
             writeln!(
                 source,
-                "\nimport type {{ {} }} from \"./wire.js\";",
+                "\nimport type {{ {} }} from \"{RUNTIME_PACKAGE}\";",
                 types.into_iter().collect::<Vec<_>>().join(", ")
             )
             .expect("writing to a String cannot fail");
         }
         if served {
-            source.push_str("import { reviveOutcome, toWire } from \"./wire.js\";\n");
+            writeln!(
+                source,
+                "import {{ reviveOutcome, toWire }} from \"{RUNTIME_PACKAGE}\";"
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     source.push_str(&body);
@@ -1140,60 +961,5 @@ mod tests {
         );
         assert!(members.pointer("/value/line_1").is_some());
         assert_eq!(convert(&members, to_snake), wire);
-    }
-
-    #[test]
-    fn the_shared_module_is_byte_stable_and_states_no_deployment_fact() {
-        let first = wire_module();
-        assert_eq!(first, wire_module());
-        assert!(first.starts_with("// @generated from the client-contract IR; do not edit.\n"));
-        for declaration in [
-            "export type Uuid = string;",
-            "export type Int64 = string;",
-            "export type Numeric = string;",
-            "export type Timestamptz = string;",
-            "export type JsonValue =",
-            "export interface ResponseContract {",
-            "export interface WireRequest {",
-            "export type Outcome<T> =",
-            "export type OperationRoute = Omit<WireRequest, \"items\">;",
-            "export interface Transport {",
-            "export type FieldMap = { readonly [wireKey: string]: string | NestedFields };",
-            "export interface NestedFields {",
-            "export function fromWire(value: unknown, fields: FieldMap): JsonValue {",
-            "export function toWire(value: unknown, fields: FieldMap): JsonValue {",
-            "export function reviveOutcome<T>(outcome: Outcome<JsonValue>, fields: FieldMap): Outcome<T> {",
-        ] {
-            assert!(first.contains(declaration), "{declaration}");
-        }
-        let union = first
-            .split("export type Outcome<T> =")
-            .nth(1)
-            .expect("the module declares the outcome union")
-            .split("\n\n")
-            .next()
-            .expect("the union ends at a blank line");
-        for status in [
-            "readonly status: \"completed\";",
-            "readonly status: \"partiallyCompleted\";",
-            "readonly status: \"refused\";",
-            "readonly status: \"uncertain\";",
-        ] {
-            assert_eq!(union.matches(status).count(), 1, "{status}");
-        }
-        for absent in [
-            "http",
-            "localhost",
-            "Authorization",
-            "Bearer",
-            "baseUrl",
-            "fetch(",
-            "import ",
-        ] {
-            assert!(
-                !first.contains(absent),
-                "deployment or framework fact {absent}"
-            );
-        }
     }
 }

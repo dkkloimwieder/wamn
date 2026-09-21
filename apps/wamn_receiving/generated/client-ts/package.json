@@ -5,5 +5,8 @@
   "private": true,
   "exports": {
     ".": "./index.ts"
+  },
+  "dependencies": {
+    "@wamn/web-runtime": "^0.1.0"
   }
 }

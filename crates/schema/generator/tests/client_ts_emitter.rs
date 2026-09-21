@@ -42,7 +42,6 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
         [
             "generated/client-ts/index.ts",
             "generated/client-ts/widget.ts",
-            "generated/client-ts/wire.ts",
         ]
     );
     let widget = widget(&files);
@@ -85,8 +84,9 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
     assert_eq!(
         source(&files, "generated/client-ts/index.ts"),
         concat!(
-            "// @generated from the client-contract IR; do not edit.\n\n",
-            "export * from \"./wire.js\";\n",
+            "// @generated from the client-contract IR; do not edit.\n//\n",
+            "// The wire contract lives in `@wamn/web-runtime`, which this package",
+            " depends on.\n\n",
             "export * as widget from \"./widget.js\";\n",
         )
     );
@@ -230,9 +230,8 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
         );
     }
     assert!(
-        source(&files, "generated/client-ts/wire.ts")
-            .contains("export function fromWire(value: unknown, fields: FieldMap): JsonValue {"),
-        "one generic pair reads a map"
+        widget.contains("import { reviveOutcome, toWire } from \"@wamn/web-runtime\";"),
+        "one generic pair reads a map, and it lives in the runtime package"
     );
 }
 
@@ -480,14 +479,17 @@ fn a_distribution_manifest_carries_the_authored_name_and_the_release_version() {
             "  \"private\": true,\n",
             "  \"exports\": {\n",
             "    \".\": \"./index.ts\"\n",
+            "  },\n",
+            "  \"dependencies\": {\n",
+            "    \"@wamn/web-runtime\": \"^0.1.0\"\n",
             "  }\n",
             "}\n",
         )
     );
     let parsed: serde_json::Value = serde_json::from_str(source).unwrap();
-    assert!(
-        parsed.get("dependencies").is_none(),
-        "the bindings import nothing"
+    assert_eq!(
+        parsed["dependencies"]["@wamn/web-runtime"], "^0.1.0",
+        "the bindings import the hand-written runtime and nothing else"
     );
 }
 

@@ -1,4 +1,14 @@
-// @generated from the client-contract IR; do not edit.
+/**
+ * The wire contract that every generated binding imports.
+ *
+ * It declares the type aliases, the field map that carries the member names,
+ * the request envelope, the four outcomes of one intent, and the transport
+ * interface that an application supplies. It holds no name rule: the generator
+ * decides every member name and emits a field map beside each operation.
+ *
+ * This file is hand-written. `crates/schema/generator/src/client_ts.rs` emits
+ * the modules that import it, and neither one repeats the other.
+ */
 
 /** A UUID in hyphenated form. */
 export type Uuid = string;
