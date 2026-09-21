@@ -145,6 +145,88 @@ fn a_collection_result_is_typed_as_the_envelope_the_release_serves() {
     }
 }
 
+/// Defect 2 of the Epic 2 review. The run time renames the members that a
+/// field map declares and nothing else, so a `json` value keeps its own keys.
+#[test]
+fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
+    let ir = release();
+    let files = emit_ts_client(&ir).unwrap();
+    let widget = widget(&files);
+
+    assert!(
+        widget.contains(concat!(
+            "export const WIDGET_LIST_REQUEST_FIELDS: FieldMap = {\n",
+            "  \"request_id\": \"requestId\",\n",
+            "  \"selector\": \"selector\",\n",
+            "};\n",
+        )),
+        "a json member is a plain entry, so the run time copies its value"
+    );
+    assert!(
+        widget.contains(concat!(
+            "export const WIDGET_QUERY_REQUEST_FIELDS: FieldMap = {\n",
+            "  \"filter\": {\n",
+            "    member: \"filter\",\n",
+            "    fields: {\n",
+            "      \"code\": \"code\",\n",
+            "    },\n",
+            "  },\n",
+            "  \"request_id\": \"requestId\",\n",
+            "};\n",
+        )),
+        "a declared object carries the members inside it"
+    );
+    assert!(
+        widget.contains(concat!(
+            "export const WIDGET_LIST_RESULT_FIELDS: FieldMap = {\n",
+            "  \"rows\": {\n",
+            "    member: \"rows\",\n",
+            "    fields: {\n",
+            "      \"attributes\": \"attributes\",\n",
+            "      \"edit_version\": \"editVersion\",\n",
+            "      \"id\": \"id\",\n",
+            "    },\n",
+            "  },\n",
+            "};\n",
+        )),
+        "the result map describes the envelope, and the rows one level down"
+    );
+    assert!(
+        widget.contains("  \"next_cursor\": \"nextCursor\",\n"),
+        "a page names its cursor beside the rows"
+    );
+    assert_eq!(
+        widget.matches(": FieldMap = ").count(),
+        14,
+        "seven operations carry one input map and one result map each"
+    );
+    assert!(
+        widget.contains(
+            "      items: items.map((item) => toWire(item, WIDGET_LIST_REQUEST_FIELDS)),\n"
+        )
+    );
+    assert!(widget.contains("    WIDGET_LIST_RESULT_FIELDS,\n"));
+
+    let combined = combined(&files);
+    for absent in [
+        "toCamel",
+        "toSnake",
+        "toUpperCase",
+        "toLowerCase",
+        "replace(",
+    ] {
+        assert!(
+            !combined.contains(absent),
+            "the emitted TypeScript holds no name rule: {absent}"
+        );
+    }
+    assert!(
+        source(&files, "generated/client-ts/wire.ts")
+            .contains("export function fromWire(value: unknown, fields: FieldMap): JsonValue {"),
+        "one generic pair reads a map"
+    );
+}
+
 #[test]
 fn the_release_route_supplies_the_method_and_the_template() {
     let ir = release();

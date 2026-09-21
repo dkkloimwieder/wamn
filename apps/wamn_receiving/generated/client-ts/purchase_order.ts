@@ -2,7 +2,7 @@
 //
 // `purchase_order` operations of package `wamn_receiving`.
 
-import type { Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "./wire.js";
+import type { FieldMap, Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "./wire.js";
 import { reviveOutcome, toWire } from "./wire.js";
 
 /** Input for `wamn-receiving:purchase-order/get@1.0.0`. */
@@ -12,6 +12,12 @@ export interface PurchaseOrderGetRequest {
   /** `string` */
   readonly requestId: string;
 }
+
+/** What `wamn-receiving:purchase-order/get@1.0.0` calls its input members. */
+export const PURCHASE_ORDER_GET_REQUEST_FIELDS: FieldMap = {
+  "id": "id",
+  "request_id": "requestId",
+};
 
 /** Result of `wamn-receiving:purchase-order/get@1.0.0`. */
 export interface PurchaseOrderGetResult {
@@ -34,6 +40,19 @@ export interface PurchaseOrderGetResult {
   /** `uuid` */
   readonly updatedBy: Uuid;
 }
+
+/** What `wamn-receiving:purchase-order/get@1.0.0` calls its result members. */
+export const PURCHASE_ORDER_GET_RESULT_FIELDS: FieldMap = {
+  "created_at": "createdAt",
+  "created_by": "createdBy",
+  "id": "id",
+  "purchase_order_number": "purchaseOrderNumber",
+  "row_version": "rowVersion",
+  "status": "status",
+  "supplier_id": "supplierId",
+  "updated_at": "updatedAt",
+  "updated_by": "updatedBy",
+};
 
 /**
  * Where the release publishes `wamn-receiving:purchase-order/get@1.0.0`.
@@ -67,7 +86,11 @@ export async function get(
   items: readonly PurchaseOrderGetRequest[],
 ): Promise<Outcome<PurchaseOrderGetResult>> {
   return reviveOutcome<PurchaseOrderGetResult>(
-    await transport.invoke({ ...PURCHASE_ORDER_GET_ROUTE, items: items.map(toWire) }),
+    await transport.invoke({
+      ...PURCHASE_ORDER_GET_ROUTE,
+      items: items.map((item) => toWire(item, PURCHASE_ORDER_GET_REQUEST_FIELDS)),
+    }),
+    PURCHASE_ORDER_GET_RESULT_FIELDS,
   );
 }
 
@@ -99,6 +122,27 @@ export interface PurchaseOrderQueryRequestSort {
   readonly field: string;
 }
 
+/** What `wamn-receiving:purchase-order/query@1.0.0` calls its input members. */
+export const PURCHASE_ORDER_QUERY_REQUEST_FIELDS: FieldMap = {
+  "cursor": "cursor",
+  "filter": {
+    member: "filter",
+    fields: {
+      "status": "status",
+      "supplier_id": "supplierId",
+    },
+  },
+  "limit": "limit",
+  "request_id": "requestId",
+  "sort": {
+    member: "sort",
+    fields: {
+      "direction": "direction",
+      "field": "field",
+    },
+  },
+};
+
 /** One row of `wamn-receiving:purchase-order/query@1.0.0`. */
 export interface PurchaseOrderQueryRow {
   /** `timestamptz` */
@@ -128,6 +172,25 @@ export interface PurchaseOrderQueryResult {
   /** The next page's cursor, or null at the last page. */
   readonly nextCursor: string | null;
 }
+
+/** What `wamn-receiving:purchase-order/query@1.0.0` calls its result members. */
+export const PURCHASE_ORDER_QUERY_RESULT_FIELDS: FieldMap = {
+  "item": {
+    member: "item",
+    fields: {
+      "created_at": "createdAt",
+      "created_by": "createdBy",
+      "id": "id",
+      "purchase_order_number": "purchaseOrderNumber",
+      "row_version": "rowVersion",
+      "status": "status",
+      "supplier_id": "supplierId",
+      "updated_at": "updatedAt",
+      "updated_by": "updatedBy",
+    },
+  },
+  "next_cursor": "nextCursor",
+};
 
 /**
  * Where the release publishes `wamn-receiving:purchase-order/query@1.0.0`.
@@ -160,7 +223,11 @@ export async function query(
   items: readonly PurchaseOrderQueryRequest[],
 ): Promise<Outcome<PurchaseOrderQueryResult>> {
   return reviveOutcome<PurchaseOrderQueryResult>(
-    await transport.invoke({ ...PURCHASE_ORDER_QUERY_ROUTE, items: items.map(toWire) }),
+    await transport.invoke({
+      ...PURCHASE_ORDER_QUERY_ROUTE,
+      items: items.map((item) => toWire(item, PURCHASE_ORDER_QUERY_REQUEST_FIELDS)),
+    }),
+    PURCHASE_ORDER_QUERY_RESULT_FIELDS,
   );
 }
 
@@ -180,6 +247,19 @@ export interface PurchaseOrderUpdateRequestChange {
   /** `uuid`, omittable */
   readonly supplierId?: Uuid;
 }
+
+/** What `wamn-receiving:purchase-order/update@1.0.0` calls its input members. */
+export const PURCHASE_ORDER_UPDATE_REQUEST_FIELDS: FieldMap = {
+  "change": {
+    member: "change",
+    fields: {
+      "supplier_id": "supplierId",
+    },
+  },
+  "expected_row_version": "expectedRowVersion",
+  "id": "id",
+  "request_id": "requestId",
+};
 
 /** Result of `wamn-receiving:purchase-order/update@1.0.0`. */
 export interface PurchaseOrderUpdateResult {
@@ -202,6 +282,19 @@ export interface PurchaseOrderUpdateResult {
   /** `uuid` */
   readonly updatedBy: Uuid;
 }
+
+/** What `wamn-receiving:purchase-order/update@1.0.0` calls its result members. */
+export const PURCHASE_ORDER_UPDATE_RESULT_FIELDS: FieldMap = {
+  "created_at": "createdAt",
+  "created_by": "createdBy",
+  "id": "id",
+  "purchase_order_number": "purchaseOrderNumber",
+  "row_version": "rowVersion",
+  "status": "status",
+  "supplier_id": "supplierId",
+  "updated_at": "updatedAt",
+  "updated_by": "updatedBy",
+};
 
 /**
  * Where the release publishes `wamn-receiving:purchase-order/update@1.0.0`.
@@ -236,6 +329,10 @@ export async function update(
   items: readonly PurchaseOrderUpdateRequest[],
 ): Promise<Outcome<PurchaseOrderUpdateResult>> {
   return reviveOutcome<PurchaseOrderUpdateResult>(
-    await transport.invoke({ ...PURCHASE_ORDER_UPDATE_ROUTE, items: items.map(toWire) }),
+    await transport.invoke({
+      ...PURCHASE_ORDER_UPDATE_ROUTE,
+      items: items.map((item) => toWire(item, PURCHASE_ORDER_UPDATE_REQUEST_FIELDS)),
+    }),
+    PURCHASE_ORDER_UPDATE_RESULT_FIELDS,
   );
 }

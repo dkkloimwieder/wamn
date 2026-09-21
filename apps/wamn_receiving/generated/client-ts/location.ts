@@ -2,7 +2,7 @@
 //
 // `location` operations of package `wamn_receiving`.
 
-import type { OperationRoute, Outcome, Transport, Uuid } from "./wire.js";
+import type { FieldMap, OperationRoute, Outcome, Transport, Uuid } from "./wire.js";
 import { reviveOutcome, toWire } from "./wire.js";
 
 /** Input for `wamn-receiving:location/list@1.0.0`. */
@@ -10,6 +10,11 @@ export interface LocationListRequest {
   /** `text` */
   readonly requestId: string;
 }
+
+/** What `wamn-receiving:location/list@1.0.0` calls its input members. */
+export const LOCATION_LIST_REQUEST_FIELDS: FieldMap = {
+  "request_id": "requestId",
+};
 
 /** One row of `wamn-receiving:location/list@1.0.0`. */
 export interface LocationListRow {
@@ -24,6 +29,17 @@ export interface LocationListResult {
   /** Every row the release served. */
   readonly rows: readonly LocationListRow[];
 }
+
+/** What `wamn-receiving:location/list@1.0.0` calls its result members. */
+export const LOCATION_LIST_RESULT_FIELDS: FieldMap = {
+  "rows": {
+    member: "rows",
+    fields: {
+      "id": "id",
+      "location_code": "locationCode",
+    },
+  },
+};
 
 /**
  * Where the release publishes `wamn-receiving:location/list@1.0.0`.
@@ -56,6 +72,10 @@ export async function list(
   items: readonly LocationListRequest[],
 ): Promise<Outcome<LocationListResult>> {
   return reviveOutcome<LocationListResult>(
-    await transport.invoke({ ...LOCATION_LIST_ROUTE, items: items.map(toWire) }),
+    await transport.invoke({
+      ...LOCATION_LIST_ROUTE,
+      items: items.map((item) => toWire(item, LOCATION_LIST_REQUEST_FIELDS)),
+    }),
+    LOCATION_LIST_RESULT_FIELDS,
   );
 }

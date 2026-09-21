@@ -83,36 +83,68 @@ export interface Transport {
   invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
 }
 
-function convertKeys(value: unknown, key: (name: string) => string): JsonValue {
+/**
+ * What one declared shape calls its members, on the wire and in TypeScript.
+ *
+ * The key is the wire key. A string value is the member name. An object value
+ * is a declared object or array, and its `fields` describe each value inside
+ * it. A key that no map declares keeps its spelling, so the inside of a `json`
+ * value is never renamed.
+ */
+export type FieldMap = { readonly [wireKey: string]: string | NestedFields };
+
+/** One declared object or array, and the members inside it. */
+export interface NestedFields {
+  /** The TypeScript member name. */
+  readonly member: string;
+  /** What each value inside carries. */
+  readonly fields: FieldMap;
+}
+
+/** The renamed key, and the map to walk with, or null to copy the value. */
+type Rename = (fields: FieldMap, name: string) => readonly [string, FieldMap | null];
+
+function walk(value: unknown, fields: FieldMap, rename: Rename): JsonValue {
   if (Array.isArray(value)) {
-    return value.map((item) => convertKeys(item, key));
+    return value.map((item) => walk(item, fields, rename));
   }
   if (value !== null && typeof value === "object") {
     const converted: { [name: string]: JsonValue } = {};
     for (const [name, member] of Object.entries(value)) {
-      converted[key(name)] = convertKeys(member, key);
+      const [renamed, nested] = rename(fields, name);
+      converted[renamed] =
+        nested === null ? (member as JsonValue) : walk(member, nested, rename);
     }
     return converted;
   }
   return value as JsonValue;
 }
 
-function toCamel(name: string): string {
-  return name.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+/** Convert the wire keys of one declared shape to TypeScript members. */
+export function fromWire(value: unknown, fields: FieldMap): JsonValue {
+  return walk(value, fields, (map, name) => {
+    const entry = map[name];
+    if (entry === undefined) {
+      return [name, null];
+    }
+    return typeof entry === "string" ? [entry, null] : [entry.member, entry.fields];
+  });
 }
 
-function toSnake(member: string): string {
-  return member.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-}
-
-/** Convert wire keys to TypeScript members. */
-export function fromWire(value: unknown): JsonValue {
-  return convertKeys(value, toCamel);
-}
-
-/** Convert TypeScript members to wire keys. */
-export function toWire(value: unknown): JsonValue {
-  return convertKeys(value, toSnake);
+/** Convert the TypeScript members of one declared shape to wire keys. */
+export function toWire(value: unknown, fields: FieldMap): JsonValue {
+  return walk(value, fields, (map, member) => {
+    for (const [name, entry] of Object.entries(map)) {
+      if (typeof entry === "string") {
+        if (entry === member) {
+          return [name, null];
+        }
+      } else if (entry.member === member) {
+        return [name, entry.fields];
+      }
+    }
+    return [member, null];
+  });
 }
 
 /**
@@ -121,15 +153,18 @@ export function toWire(value: unknown): JsonValue {
  * The cast is unchecked, exactly as the Rust client returns a JSON value that
  * the caller reads through its declared result type. The transport already
  * held the response to the operation's contract.
+ *
+ * A refusal detail and a failed outcome keep their wire spelling. Neither one
+ * declares a field tree, so nothing states which of their keys is a name.
  */
-export function reviveOutcome<T>(outcome: Outcome<JsonValue>): Outcome<T> {
+export function reviveOutcome<T>(outcome: Outcome<JsonValue>, fields: FieldMap): Outcome<T> {
   switch (outcome.status) {
     case "completed":
-      return { status: "completed", value: fromWire(outcome.value) as T };
+      return { status: "completed", value: fromWire(outcome.value, fields) as T };
     case "partiallyCompleted":
       return {
         status: "partiallyCompleted",
-        committedResult: fromWire(outcome.committedResult) as T,
+        committedResult: fromWire(outcome.committedResult, fields) as T,
         failedOutcome: outcome.failedOutcome,
       };
     default:

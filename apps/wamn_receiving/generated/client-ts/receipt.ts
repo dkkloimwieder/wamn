@@ -2,7 +2,7 @@
 //
 // `receipt` operations of package `wamn_receiving`.
 
-import type { Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "./wire.js";
+import type { FieldMap, Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "./wire.js";
 import { reviveOutcome, toWire } from "./wire.js";
 
 /** Input for `wamn-receiving:receipt/get@1.0.0`. */
@@ -12,6 +12,12 @@ export interface ReceiptGetRequest {
   /** `string` */
   readonly requestId: string;
 }
+
+/** What `wamn-receiving:receipt/get@1.0.0` calls its input members. */
+export const RECEIPT_GET_REQUEST_FIELDS: FieldMap = {
+  "id": "id",
+  "request_id": "requestId",
+};
 
 /** Result of `wamn-receiving:receipt/get@1.0.0`. */
 export interface ReceiptGetResult {
@@ -30,6 +36,17 @@ export interface ReceiptGetResult {
   /** `text` */
   readonly receiptReference: string;
 }
+
+/** What `wamn-receiving:receipt/get@1.0.0` calls its result members. */
+export const RECEIPT_GET_RESULT_FIELDS: FieldMap = {
+  "created_at": "createdAt",
+  "created_by": "createdBy",
+  "id": "id",
+  "idempotency_key": "idempotencyKey",
+  "occurred_at": "occurredAt",
+  "purchase_order_id": "purchaseOrderId",
+  "receipt_reference": "receiptReference",
+};
 
 /**
  * Where the release publishes `wamn-receiving:receipt/get@1.0.0`.
@@ -63,7 +80,11 @@ export async function get(
   items: readonly ReceiptGetRequest[],
 ): Promise<Outcome<ReceiptGetResult>> {
   return reviveOutcome<ReceiptGetResult>(
-    await transport.invoke({ ...RECEIPT_GET_ROUTE, items: items.map(toWire) }),
+    await transport.invoke({
+      ...RECEIPT_GET_ROUTE,
+      items: items.map((item) => toWire(item, RECEIPT_GET_REQUEST_FIELDS)),
+    }),
+    RECEIPT_GET_RESULT_FIELDS,
   );
 }
 
@@ -76,6 +97,13 @@ export interface ReceiptQueryRequest {
   /** `string` */
   readonly requestId: string;
 }
+
+/** What `wamn-receiving:receipt/query@1.0.0` calls its input members. */
+export const RECEIPT_QUERY_REQUEST_FIELDS: FieldMap = {
+  "cursor": "cursor",
+  "limit": "limit",
+  "request_id": "requestId",
+};
 
 /** One row of `wamn-receiving:receipt/query@1.0.0`. */
 export interface ReceiptQueryRow {
@@ -102,6 +130,23 @@ export interface ReceiptQueryResult {
   /** The next page's cursor, or null at the last page. */
   readonly nextCursor: string | null;
 }
+
+/** What `wamn-receiving:receipt/query@1.0.0` calls its result members. */
+export const RECEIPT_QUERY_RESULT_FIELDS: FieldMap = {
+  "item": {
+    member: "item",
+    fields: {
+      "created_at": "createdAt",
+      "created_by": "createdBy",
+      "id": "id",
+      "idempotency_key": "idempotencyKey",
+      "occurred_at": "occurredAt",
+      "purchase_order_id": "purchaseOrderId",
+      "receipt_reference": "receiptReference",
+    },
+  },
+  "next_cursor": "nextCursor",
+};
 
 /**
  * Where the release publishes `wamn-receiving:receipt/query@1.0.0`.
@@ -134,6 +179,10 @@ export async function query(
   items: readonly ReceiptQueryRequest[],
 ): Promise<Outcome<ReceiptQueryResult>> {
   return reviveOutcome<ReceiptQueryResult>(
-    await transport.invoke({ ...RECEIPT_QUERY_ROUTE, items: items.map(toWire) }),
+    await transport.invoke({
+      ...RECEIPT_QUERY_ROUTE,
+      items: items.map((item) => toWire(item, RECEIPT_QUERY_REQUEST_FIELDS)),
+    }),
+    RECEIPT_QUERY_RESULT_FIELDS,
   );
 }

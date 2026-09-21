@@ -265,18 +265,22 @@ pub(crate) fn manifest() -> Value {
         },
         "custom_operations": {
             // The one bounded-list read. `widget.query` serves a page, and the
-            // two result envelopes differ, so the fixture declares both.
+            // two result envelopes differ, so the fixture declares both. It
+            // also carries the fixture's only `json` members, on both sides,
+            // because a json value keeps its own keys.
             "widget.list": {
                 "kind": "projection",
                 "visibility": "public",
                 "permission": "widget.list",
                 "connection": "postgres",
                 "input": {"fields": [
-                    {"path": "request_id", "type": "text", "nullable": false}
+                    {"path": "request_id", "type": "text", "nullable": false},
+                    {"path": "selector", "type": "json", "nullable": false}
                 ]},
                 "result": {"class": "bounded_list", "fields": [
                     {"path": "id", "type": "uuid", "nullable": false},
-                    {"path": "edit_version", "type": "int64", "nullable": false}
+                    {"path": "edit_version", "type": "int64", "nullable": false},
+                    {"path": "attributes", "type": "json", "nullable": false}
                 ]},
                 "errors": [
                     "invalid_input", "retry", "timeout", "permission_denied", "internal_error"

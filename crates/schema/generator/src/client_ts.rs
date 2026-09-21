@@ -22,10 +22,16 @@
 //! # Names
 //!
 //! The contract is snake_case and the wire keeps it. TypeScript members are
-//! camelCase. [`to_camel`] decides the member names at emission, and the
-//! emitted `fromWire` applies the same rule at run time. The rule is
-//! reversible: an underscore becomes a capital only when a lowercase letter
-//! follows it, so `line_1` keeps its underscore.
+//! camelCase. [`to_camel`] decides every member name here, at emission, and it
+//! is the only place that decides one. The rule is reversible: an underscore
+//! becomes a capital only when a lowercase letter follows it, so `line_1`
+//! keeps its underscore.
+//!
+//! The emitted module holds no name rule. Each operation carries a field map
+//! that states, for one declared shape, the wire key and the member beside it.
+//! The emitted `fromWire` and `toWire` rename the keys that a map declares and
+//! leave every other key exactly as it arrived, so the inside of a `json`
+//! value is never renamed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -168,8 +174,9 @@ pub const WIRE_MODULE_PATH: &str = "generated/client-ts/wire.ts";
 /// Emit the shared module that every generated binding imports.
 ///
 /// It declares the type aliases, the transport interface, the four outcomes of
-/// one intent, and the one name mapping pair. It declares no operation and no
-/// deployment fact, so its bytes do not depend on the contract.
+/// one intent, and the pair that renames keys from a field map. It declares no
+/// operation and no deployment fact, so its bytes do not depend on the
+/// contract.
 #[must_use]
 pub fn wire_module() -> String {
     let mut source = String::new();
@@ -184,8 +191,8 @@ pub fn wire_module() -> String {
 
 /// The body of the shared module.
 ///
-/// One place holds the TypeScript spelling of the name mapping. [`to_camel`]
-/// and [`to_snake`] hold the same rule for emission.
+/// It holds no name rule. [`to_camel`] decides every member name at emission,
+/// and each operation's field map carries the result to the run time.
 const WIRE_MODULE_BODY: &str = r#"
 /** A UUID in hyphenated form. */
 export type Uuid = string;
@@ -270,36 +277,68 @@ export interface Transport {
   invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
 }
 
-function convertKeys(value: unknown, key: (name: string) => string): JsonValue {
+/**
+ * What one declared shape calls its members, on the wire and in TypeScript.
+ *
+ * The key is the wire key. A string value is the member name. An object value
+ * is a declared object or array, and its `fields` describe each value inside
+ * it. A key that no map declares keeps its spelling, so the inside of a `json`
+ * value is never renamed.
+ */
+export type FieldMap = { readonly [wireKey: string]: string | NestedFields };
+
+/** One declared object or array, and the members inside it. */
+export interface NestedFields {
+  /** The TypeScript member name. */
+  readonly member: string;
+  /** What each value inside carries. */
+  readonly fields: FieldMap;
+}
+
+/** The renamed key, and the map to walk with, or null to copy the value. */
+type Rename = (fields: FieldMap, name: string) => readonly [string, FieldMap | null];
+
+function walk(value: unknown, fields: FieldMap, rename: Rename): JsonValue {
   if (Array.isArray(value)) {
-    return value.map((item) => convertKeys(item, key));
+    return value.map((item) => walk(item, fields, rename));
   }
   if (value !== null && typeof value === "object") {
     const converted: { [name: string]: JsonValue } = {};
     for (const [name, member] of Object.entries(value)) {
-      converted[key(name)] = convertKeys(member, key);
+      const [renamed, nested] = rename(fields, name);
+      converted[renamed] =
+        nested === null ? (member as JsonValue) : walk(member, nested, rename);
     }
     return converted;
   }
   return value as JsonValue;
 }
 
-function toCamel(name: string): string {
-  return name.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+/** Convert the wire keys of one declared shape to TypeScript members. */
+export function fromWire(value: unknown, fields: FieldMap): JsonValue {
+  return walk(value, fields, (map, name) => {
+    const entry = map[name];
+    if (entry === undefined) {
+      return [name, null];
+    }
+    return typeof entry === "string" ? [entry, null] : [entry.member, entry.fields];
+  });
 }
 
-function toSnake(member: string): string {
-  return member.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-}
-
-/** Convert wire keys to TypeScript members. */
-export function fromWire(value: unknown): JsonValue {
-  return convertKeys(value, toCamel);
-}
-
-/** Convert TypeScript members to wire keys. */
-export function toWire(value: unknown): JsonValue {
-  return convertKeys(value, toSnake);
+/** Convert the TypeScript members of one declared shape to wire keys. */
+export function toWire(value: unknown, fields: FieldMap): JsonValue {
+  return walk(value, fields, (map, member) => {
+    for (const [name, entry] of Object.entries(map)) {
+      if (typeof entry === "string") {
+        if (entry === member) {
+          return [name, null];
+        }
+      } else if (entry.member === member) {
+        return [name, entry.fields];
+      }
+    }
+    return [member, null];
+  });
 }
 
 /**
@@ -308,15 +347,18 @@ export function toWire(value: unknown): JsonValue {
  * The cast is unchecked, exactly as the Rust client returns a JSON value that
  * the caller reads through its declared result type. The transport already
  * held the response to the operation's contract.
+ *
+ * A refusal detail and a failed outcome keep their wire spelling. Neither one
+ * declares a field tree, so nothing states which of their keys is a name.
  */
-export function reviveOutcome<T>(outcome: Outcome<JsonValue>): Outcome<T> {
+export function reviveOutcome<T>(outcome: Outcome<JsonValue>, fields: FieldMap): Outcome<T> {
   switch (outcome.status) {
     case "completed":
-      return { status: "completed", value: fromWire(outcome.value) as T };
+      return { status: "completed", value: fromWire(outcome.value, fields) as T };
     case "partiallyCompleted":
       return {
         status: "partiallyCompleted",
-        committedResult: fromWire(outcome.committedResult) as T,
+        committedResult: fromWire(outcome.committedResult, fields) as T,
         failedOutcome: outcome.failedOutcome,
       };
     default:
@@ -485,6 +527,8 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     .expect("writing to a String cannot fail");
     if !operations.is_empty() {
         let mut types: BTreeSet<&str> = used.iter().copied().collect();
+        // Every operation carries its field maps, served or not.
+        types.insert("FieldMap");
         if served {
             types.extend(["OperationRoute", "Outcome", "Transport"]);
         }
@@ -528,6 +572,9 @@ fn emit_operation(
             route.response.fields.as_slice()
         });
 
+    let request_fields = format!("{}_REQUEST_FIELDS", route_const.trim_end_matches("_ROUTE"));
+    let result_fields_const = format!("{}_RESULT_FIELDS", route_const.trim_end_matches("_ROUTE"));
+
     writeln!(source, "\n/** Input for `{}`. */", operation.operation).expect("write");
     write_interface(
         source,
@@ -535,6 +582,13 @@ fn emit_operation(
         &operation.input_fields,
         used,
     )?;
+    writeln!(
+        source,
+        "\n/** What `{}` calls its input members. */",
+        operation.operation
+    )
+    .expect("write");
+    write_field_map(source, &request_fields, &operation.input_fields)?;
     let result_class = operation.route.as_ref().map_or_else(
         || Some(operation.result_class.as_str()),
         |route| route.response.result_class.as_deref(),
@@ -547,6 +601,13 @@ fn emit_operation(
         result_fields,
         used,
     )?;
+    writeln!(
+        source,
+        "\n/** What `{}` calls its result members. */",
+        operation.operation
+    )
+    .expect("write");
+    write_result_field_map(source, &result_fields_const, result_class, result_fields)?;
 
     let Some(route) = &operation.route else {
         // Stated, not silently omitted, for the reason `client_rust.rs` gives.
@@ -616,9 +677,101 @@ fn emit_operation(
     .expect("write");
     writeln!(
         source,
-        "  return reviveOutcome<{type_stem}Result>(\n    await transport.invoke({{ ...{route_const}, items: items.map(toWire) }}),\n  );\n}}"
+        "  return reviveOutcome<{type_stem}Result>(\n    await transport.invoke({{\n      ...{route_const},\n      items: items.map((item) => toWire(item, {request_fields})),\n    }}),\n    {result_fields_const},\n  );\n}}"
     )
     .expect("write");
+    Ok(())
+}
+
+/// Emit the field map of one operation's result.
+///
+/// A bounded list and a page carry their rows inside an envelope, so the map
+/// describes the envelope: the row collection under its own key, and the page
+/// cursor beside it. The row members sit one level down, exactly where the
+/// wire carries them.
+fn write_result_field_map(
+    source: &mut String,
+    name: &str,
+    result_class: Option<&str>,
+    fields: &[FieldIr],
+) -> Result<(), ClientTsError> {
+    let key = match result_class {
+        Some("bounded_list") => "rows",
+        Some("page") => "item",
+        _ => return write_field_map(source, name, fields),
+    };
+    writeln!(source, "export const {name}: FieldMap = {{").expect("write");
+    writeln!(source, "  {key:?}: {{").expect("write");
+    writeln!(source, "    member: {key:?},").expect("write");
+    if fields.is_empty() {
+        writeln!(source, "    fields: {{}},").expect("write");
+    } else {
+        writeln!(source, "    fields: {{").expect("write");
+        write_map_members(source, fields, 3)?;
+        writeln!(source, "    }},").expect("write");
+    }
+    writeln!(source, "  }},").expect("write");
+    if key == "item" {
+        writeln!(source, "  \"next_cursor\": \"nextCursor\",").expect("write");
+    }
+    writeln!(source, "}};").expect("write");
+    Ok(())
+}
+
+/// Emit one declared shape's field map.
+///
+/// The key is the wire key, quoted. A string value is the member name. An
+/// object value is a declared object or array, whose members sit under
+/// `fields`. A `json` member has no members to declare, so it is a plain
+/// string entry and the run time copies its value untouched.
+fn write_field_map(
+    source: &mut String,
+    name: &str,
+    fields: &[FieldIr],
+) -> Result<(), ClientTsError> {
+    if fields.is_empty() {
+        writeln!(source, "export const {name}: FieldMap = {{}};").expect("write");
+        return Ok(());
+    }
+    writeln!(source, "export const {name}: FieldMap = {{").expect("write");
+    write_map_members(source, fields, 1)?;
+    writeln!(source, "}};").expect("write");
+    Ok(())
+}
+
+fn write_map_members(
+    source: &mut String,
+    fields: &[FieldIr],
+    depth: usize,
+) -> Result<(), ClientTsError> {
+    let indent = "  ".repeat(depth);
+    for field in fields {
+        let leaf = field
+            .path
+            .rsplit('.')
+            .next()
+            .unwrap_or(&field.path)
+            .trim_end_matches("[]");
+        if leaf.is_empty() {
+            continue;
+        }
+        let member = ts_member(leaf, &field.path)?;
+        // The one array shape that carries no members: repeated scalars.
+        let scalar_items = field.children.len() == 1 && field.children[0].path == field.path;
+        if matches!(field.type_name.as_str(), "object" | "array")
+            && !field.children.is_empty()
+            && !scalar_items
+        {
+            writeln!(source, "{indent}{leaf:?}: {{").expect("write");
+            writeln!(source, "{indent}  member: {member:?},").expect("write");
+            writeln!(source, "{indent}  fields: {{").expect("write");
+            write_map_members(source, &field.children, depth + 2)?;
+            writeln!(source, "{indent}  }},").expect("write");
+            writeln!(source, "{indent}}},").expect("write");
+        } else {
+            writeln!(source, "{indent}{leaf:?}: {member:?},").expect("write");
+        }
+    }
     Ok(())
 }
 
@@ -907,9 +1060,11 @@ mod tests {
             "export type Outcome<T> =",
             "export type OperationRoute = Omit<WireRequest, \"items\">;",
             "export interface Transport {",
-            "export function fromWire(value: unknown): JsonValue {",
-            "export function toWire(value: unknown): JsonValue {",
-            "export function reviveOutcome<T>(outcome: Outcome<JsonValue>): Outcome<T> {",
+            "export type FieldMap = { readonly [wireKey: string]: string | NestedFields };",
+            "export interface NestedFields {",
+            "export function fromWire(value: unknown, fields: FieldMap): JsonValue {",
+            "export function toWire(value: unknown, fields: FieldMap): JsonValue {",
+            "export function reviveOutcome<T>(outcome: Outcome<JsonValue>, fields: FieldMap): Outcome<T> {",
         ] {
             assert!(first.contains(declaration), "{declaration}");
         }
