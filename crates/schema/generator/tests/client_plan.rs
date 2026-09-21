@@ -1,6 +1,8 @@
 use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
-use wamn_schema_generator::client_plan::{ClientPlan, NoRole, Role, ScreenPlan, SuppliedKind};
+use wamn_schema_generator::client_plan::{
+    ClientPlan, LinkReason, NoRole, Role, RowLink, Rows, ScreenPlan, SuppliedKind,
+};
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
@@ -281,4 +283,180 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         4,
         "the other screens keep their role"
     );
+}
+
+fn paths<'a>(fields: &[&'a FieldIr]) -> Vec<&'a str> {
+    fields.iter().map(|field| field.path.as_str()).collect()
+}
+
+#[test]
+fn columns_are_the_served_result_leaves_in_contract_order() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    for name in ["create", "get", "query", "update"] {
+        assert_eq!(
+            paths(&screen(&plan, name).columns),
+            ["code", "created_at", "edit_version", "id", "note"],
+            "{name}"
+        );
+    }
+    assert_eq!(paths(&screen(&plan, "delete").columns), ["outcome"]);
+    assert_eq!(
+        paths(&screen(&plan, "archive").columns),
+        ["edit_version", "id", "note"]
+    );
+
+    let mut served = release();
+    let route = operation(&mut served, "get")
+        .route
+        .as_mut()
+        .expect("the read serves a route");
+    route.response.fields.retain(|field| field.path == "code");
+    let plan = ClientPlan::from_ir(&served);
+    assert_eq!(
+        paths(&screen(&plan, "get").columns),
+        ["code"],
+        "the served result fields win over the declared ones"
+    );
+}
+
+#[test]
+fn inputs_drop_the_supplied_revision_and_cursor_paths() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    assert_eq!(
+        paths(&screen(&plan, "delete").inputs),
+        ["id"],
+        "request_id is supplied and expected_edit_version is a revision"
+    );
+    assert_eq!(paths(&screen(&plan, "create").inputs), ["code", "note"]);
+    assert_eq!(paths(&screen(&plan, "query").inputs), ["filter.code[]"]);
+    assert_eq!(
+        paths(&screen(&plan, "update").inputs),
+        ["change.code", "change.note"]
+    );
+
+    let mut paged = release();
+    let query = operation(&mut paged, "query");
+    let template = query.input_fields[0].clone();
+    query.input_fields.push(FieldIr {
+        path: "cursor".to_owned(),
+        children: Vec::new(),
+        revision: false,
+        ..template
+    });
+    let plan = ClientPlan::from_ir(&paged);
+    assert_eq!(paths(&screen(&plan, "query").inputs), ["filter.code[]"]);
+    assert_eq!(
+        screen(&plan, "query")
+            .paging
+            .expect("a paged query declares paging")
+            .cursor_input,
+        Some("cursor"),
+        "a page result with a cursor input pages"
+    );
+}
+
+#[test]
+fn rows_come_from_the_served_result_class() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    assert_eq!(screen(&plan, "query").rows, Rows::List { key: "item" });
+    for name in ["archive", "create", "delete", "get", "update"] {
+        assert_eq!(screen(&plan, name).rows, Rows::Single, "{name}");
+    }
+
+    let mut bounded = release();
+    operation(&mut bounded, "query")
+        .route
+        .as_mut()
+        .expect("the query serves a route")
+        .response
+        .result_class = Some("bounded_list".to_owned());
+    let plan = ClientPlan::from_ir(&bounded);
+    assert_eq!(screen(&plan, "query").rows, Rows::List { key: "rows" });
+}
+
+#[test]
+fn paging_carries_the_declared_filters_sort_and_limit() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    let paging = screen(&plan, "query")
+        .paging
+        .expect("the query declares filters, sort and a limit");
+    assert_eq!(
+        paging
+            .filters
+            .iter()
+            .map(|f| f.field.as_str())
+            .collect::<Vec<_>>(),
+        ["code"]
+    );
+    let sort = paging.sort.expect("the query sorts");
+    assert_eq!(sort.fields, ["created_at"]);
+    assert_eq!(sort.directions, ["ascending", "descending"]);
+    let limit = paging.limit.expect("the query limits its rows");
+    assert_eq!((limit.default, limit.minimum, limit.maximum), (100, 1, 100));
+    assert_eq!(
+        paging.cursor_input, None,
+        "the fixture query declares no cursor input"
+    );
+    for name in ["archive", "create", "delete", "get", "update"] {
+        assert!(screen(&plan, name).paging.is_none(), "{name}");
+    }
+}
+
+#[test]
+fn row_links_open_the_record_read_and_the_revision_command() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    for name in ["create", "delete", "query", "update"] {
+        assert_eq!(
+            screen(&plan, name).row_links,
+            [RowLink {
+                operation: "platform-fixture:widget/get@1.0.0",
+                reason: LinkReason::Record,
+            }],
+            "{name} rows open the record read"
+        );
+    }
+    assert_eq!(
+        screen(&plan, "get").row_links,
+        [RowLink {
+            operation: "platform-fixture:widget/delete@1.0.0",
+            reason: LinkReason::Revision,
+        }],
+        "a read row opens the command that sends the revision it read"
+    );
+    assert!(
+        screen(&plan, "archive").row_links.is_empty(),
+        "an operation with no record link opens nothing"
+    );
+
+    let mut unserved = release();
+    operation(&mut unserved, "get").route = None;
+    let plan = ClientPlan::from_ir(&unserved);
+    assert!(
+        plan.screens().all(|screen| screen
+            .row_links
+            .iter()
+            .all(|link| link.operation != "platform-fixture:widget/get@1.0.0")),
+        "an unserved operation is no link target"
+    );
+}
+
+#[test]
+fn reads_and_confirmed_deletes_follow_from_kind_and_role() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    for name in ["get", "query"] {
+        assert!(screen(&plan, name).is_read(), "{name}");
+    }
+    for name in ["archive", "create", "delete", "update"] {
+        assert!(!screen(&plan, name).is_read(), "{name}");
+    }
+    assert!(screen(&plan, "delete").confirms());
+    for name in ["archive", "create", "get", "query", "update"] {
+        assert!(!screen(&plan, name).confirms(), "{name}");
+    }
 }

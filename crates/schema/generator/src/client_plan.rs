@@ -9,7 +9,10 @@
 //! The plan borrows its contract facts from [`ClientContractIr`]. It is a plain
 //! Rust value: generation does not serialize it, and it carries no version.
 
-use crate::client_ir::{ClientContractIr, ModelIr, OperationIr, leaf_fields, revision_inputs};
+use crate::client_ir::{
+    ClientContractIr, FieldIr, FilterIr, LimitIr, ModelIr, OperationIr, SortIr, leaf_fields,
+    revision_inputs,
+};
 
 /// Contract input paths that carry a platform value instead of operator input.
 const SUPPLIED_PATHS: [(&str, SuppliedKind); 5] = [
@@ -22,6 +25,12 @@ const SUPPLIED_PATHS: [(&str, SuppliedKind); 5] = [
 
 /// The operation kind that no operator calls.
 const PRIVATE_KIND: &str = "event_handler";
+
+/// Operation kinds that read without changing a record.
+const READ_KINDS: [&str; 3] = ["get", "query", "projection"];
+
+/// The input path that carries a page cursor.
+const CURSOR_INPUT: &str = "cursor";
 
 /// What an operator does on one screen.
 ///
@@ -107,6 +116,49 @@ pub struct RecordLink<'a> {
     pub key_input: Option<&'a str>,
 }
 
+/// Where one screen's result rows come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rows {
+    /// The whole result value is the one row.
+    Single,
+    /// Each element of the named result array is one row.
+    List {
+        /// Result key that holds the array.
+        key: &'static str,
+    },
+}
+
+/// How a screen asks the release for the next page of rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Paging<'a> {
+    /// Declared filters, ordered by field.
+    pub filters: &'a [FilterIr],
+    /// Sortable fields and the permitted directions.
+    pub sort: Option<&'a SortIr>,
+    /// Row limit bounds and default.
+    pub limit: Option<&'a LimitIr>,
+    /// Input path that carries the cursor, when the release serves pages.
+    pub cursor_input: Option<&'a str>,
+}
+
+/// Why a result row can open another screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkReason {
+    /// The target reads the same record by its key.
+    Record,
+    /// The target sends a revision that this screen reads.
+    Revision,
+}
+
+/// Another screen that one result row opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowLink<'a> {
+    /// Canonical identity of the operation that the row opens.
+    pub operation: &'a str,
+    /// Why the row can open it.
+    pub reason: LinkReason,
+}
+
 /// The read operation that supplies a command's key and current revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevisionBinding<'a> {
@@ -141,6 +193,22 @@ pub struct ScreenPlan<'a> {
     /// the class it declared. A route whose terminal contract is absent states
     /// no class at all.
     pub result_class: Option<&'a str>,
+    /// Result leaf fields in contract order, one column for each.
+    ///
+    /// A served route states its own result fields. An operation with no route
+    /// keeps the fields it declared.
+    pub columns: Vec<&'a FieldIr>,
+    /// Input leaf fields that the operator fills, in contract order.
+    ///
+    /// The reserved paths are absent: the supplied fields, the revision
+    /// inputs, and the page cursor.
+    pub inputs: Vec<&'a FieldIr>,
+    /// Where the result rows come from.
+    pub rows: Rows,
+    /// Filters, sort, limit, and the cursor input.
+    pub paging: Option<Paging<'a>>,
+    /// Screens that one result row opens, in plan order.
+    pub row_links: Vec<RowLink<'a>>,
     /// Reserved input paths, in contract order.
     pub supplied: Vec<SuppliedField<'a>>,
     /// Input paths that carry a declared or platform revision, sorted by path.
@@ -178,9 +246,26 @@ impl<'a> ClientPlan<'a> {
     pub fn from_ir(ir: &'a ClientContractIr) -> Self {
         let mut models: Vec<_> = ir.models.iter().map(ModelPlan::from_ir).collect();
         models.sort_by(|left, right| left.model.name.cmp(&right.model.name));
-        Self {
+        let mut plan = Self {
             package: &ir.package,
             models,
+        };
+        plan.link_rows();
+        plan
+    }
+
+    /// Bind each screen's row links once every screen exists.
+    fn link_rows(&mut self) {
+        let targets: Vec<_> = self.screens().map(Target::of).collect();
+        let links: Vec<_> = targets
+            .iter()
+            .map(|source| row_links(source, &targets))
+            .collect();
+        let mut links = links.into_iter();
+        for model in &mut self.models {
+            for screen in &mut model.screens {
+                screen.row_links = links.next().expect("one link list for each screen");
+            }
         }
     }
 
@@ -218,7 +303,7 @@ impl<'a> ModelPlan<'a> {
 
 impl<'a> ScreenPlan<'a> {
     fn from_ir(model: &'a str, operation: &'a OperationIr) -> Self {
-        let supplied = leaf_fields(&operation.input_fields)
+        let supplied: Vec<SuppliedField<'a>> = leaf_fields(&operation.input_fields)
             .into_iter()
             .filter_map(|field| {
                 SUPPLIED_PATHS
@@ -250,18 +335,126 @@ impl<'a> ScreenPlan<'a> {
             || Some(operation.result_class.as_str()),
             |route| route.response.result_class.as_deref(),
         );
+        let result_fields = operation
+            .route
+            .as_ref()
+            .map_or(operation.result_fields.as_slice(), |route| {
+                route.response.fields.as_slice()
+            });
+        let revision_inputs = revision_inputs(operation);
+        let input_leaves = leaf_fields(&operation.input_fields);
+        let cursor_input = (result_class == Some("page")
+            && input_leaves.iter().any(|field| field.path == CURSOR_INPUT))
+        .then_some(CURSOR_INPUT);
+        let inputs = input_leaves
+            .iter()
+            .filter(|field| {
+                let path = field.path.as_str();
+                !supplied.iter().any(|field| field.path == path)
+                    && !revision_inputs.contains(&path)
+                    && cursor_input != Some(path)
+            })
+            .copied()
+            .collect();
+        let rows = match result_class {
+            Some("bounded_list") => Rows::List { key: "rows" },
+            Some("page") => Rows::List { key: "item" },
+            _ => Rows::Single,
+        };
+        let paging = (operation.paging.is_some() || cursor_input.is_some()).then(|| Paging {
+            filters: operation
+                .paging
+                .as_ref()
+                .map_or(&[][..], |paging| paging.filters.as_slice()),
+            sort: operation
+                .paging
+                .as_ref()
+                .and_then(|paging| paging.sort.as_ref()),
+            limit: operation
+                .paging
+                .as_ref()
+                .and_then(|paging| paging.limit.as_ref()),
+            cursor_input,
+        });
         Self {
             model,
             name: &operation.name,
             contract: operation,
             role: role(&operation.kind, result_class),
             result_class,
+            columns: leaf_fields(result_fields),
+            inputs,
+            rows,
+            paging,
+            row_links: Vec::new(),
             supplied,
-            revision_inputs: revision_inputs(operation),
+            revision_inputs,
             record,
             revision,
         }
     }
+
+    /// Whether the screen reads without changing a record.
+    ///
+    /// A read clears its rows when the operator changes an input.
+    #[must_use]
+    pub fn is_read(&self) -> bool {
+        READ_KINDS.contains(&self.contract.kind.as_str())
+    }
+
+    /// Whether the operator confirms before the screen submits.
+    #[must_use]
+    pub const fn confirms(&self) -> bool {
+        matches!(self.role, Role::Delete)
+    }
+}
+
+/// The facts that one screen shows to another when rows link.
+struct Target<'a> {
+    operation: &'a str,
+    kind: &'a str,
+    served: bool,
+    record: Option<RecordLink<'a>>,
+    revision_read: Option<&'a str>,
+}
+
+impl<'a> Target<'a> {
+    fn of(screen: &ScreenPlan<'a>) -> Self {
+        Self {
+            operation: screen.contract.operation.as_str(),
+            kind: screen.contract.kind.as_str(),
+            served: screen.contract.route.is_some(),
+            record: screen.record,
+            revision_read: screen.revision.map(|revision| revision.read_operation),
+        }
+    }
+}
+
+/// Select the screens that one screen's result row opens.
+fn row_links<'a>(from: &Target<'a>, targets: &[Target<'a>]) -> Vec<RowLink<'a>> {
+    targets
+        .iter()
+        .filter(|to| to.served && to.operation != from.operation)
+        .filter_map(|to| {
+            let reason = if to.revision_read == Some(from.operation) {
+                LinkReason::Revision
+            } else if to.kind == "get"
+                && from.record.zip(to.record).is_some_and(|(from, to)| {
+                    from.relation == to.relation
+                        && from.key_field == to.key_field
+                        && to.key_input.is_some()
+                })
+            {
+                LinkReason::Record
+            } else {
+                return None;
+            };
+            Some(RowLink {
+                operation: to.operation,
+                reason,
+            })
+        })
+        .collect()
 }
 
 /// Select the screen role for one contract shape.
