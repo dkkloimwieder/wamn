@@ -397,11 +397,7 @@ fn emit_operation(
     function: &str,
     used: &mut BTreeSet<&'static str>,
 ) -> Result<(), ClientTsError> {
-    let type_stem = format!(
-        "{}{}",
-        pascal_case(&model.name),
-        pascal_case(&operation.name)
-    );
+    let type_stem = type_stem(&model.name, &operation.name);
     let route_const = format!(
         "{}_{}_ROUTE",
         model.name.to_uppercase(),
@@ -803,6 +799,40 @@ fn record<'a>(spelling: &'a str, used: &mut BTreeSet<&'static str>) -> &'a str {
         used.insert(alias);
     }
     spelling
+}
+
+/// The type stem that one operation's interfaces share.
+///
+/// The component emitter names the same types, so the rule lives here beside
+/// the emitter that writes them.
+#[must_use]
+pub fn type_stem(model: &str, operation: &str) -> String {
+    format!("{}{}", pascal_case(model), pascal_case(operation))
+}
+
+/// The type stem of one operation, from its canonical identity.
+///
+/// A row link states the operation it opens by identity, and a component names
+/// that operation's types.
+#[must_use]
+pub fn operation_stem(identity: &str) -> String {
+    let after_package = identity.split_once(':').map_or(identity, |(_, rest)| rest);
+    let without_version = after_package
+        .split_once('@')
+        .map_or(after_package, |(name, _)| name);
+    match without_version.split_once('/') {
+        Some((model, operation)) => type_stem(model, operation),
+        None => pascal_case(without_version),
+    }
+}
+
+/// The exported function name of one operation.
+///
+/// # Errors
+///
+/// [`ClientTsError`] names a contract name with no TypeScript spelling.
+pub fn function_name(operation: &str) -> Result<String, ClientTsError> {
+    ts_name(operation)
 }
 
 /// The PascalCase type stem for one contract name.

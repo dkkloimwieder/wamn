@@ -16,6 +16,7 @@
 //! search path frozen by
 //! `crates/platform/runtime/wit/deps/wamn-postgres/package.wit`.
 
+pub mod client_component;
 mod client_fields;
 pub mod client_ir;
 /// The UI-neutral screen plan. Every client emitter reads its rules.

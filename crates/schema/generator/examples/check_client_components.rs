@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
+use wamn_schema_generator::client_component::emit_ts_components;
+use wamn_schema_generator::client_plan::ClientPlan;
 use wamn_schema_generator::client_ts::emit_ts_client;
 
 #[path = "../tests/support/platform_fixture.rs"]
@@ -32,8 +34,14 @@ fn main() -> Result<()> {
         );
     }
     let output = harness.join("fixture");
-    let files = emit_ts_client(&fixture::client_release())
-        .map_err(|error| anyhow::anyhow!("the platform fixture emits: {error}"))?;
+    let release = fixture::client_release();
+    let mut files = emit_ts_client(&release)
+        .map_err(|error| anyhow::anyhow!("the platform fixture emits its bindings: {error}"))?;
+    files.extend(
+        emit_ts_components(&ClientPlan::from_ir(&release)).map_err(|error| {
+            anyhow::anyhow!("the platform fixture emits its components: {error}")
+        })?,
+    );
 
     if output.exists() {
         std::fs::remove_dir_all(&output)
