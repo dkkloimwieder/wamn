@@ -386,8 +386,20 @@ The bindings carry a request type, a result type, the published route and one fu
 A private event handler is absent, and an operation the release does not publish carries its types without a function.
 The application supplies a transport that owns the URL and the credential.
 That transport also classifies one response into a completion, a partial completion, a refusal or an uncertainty.
-The contract stays snake_case on the wire, the TypeScript members are camelCase, and one pair of functions maps between them.
+The contract stays snake_case on the wire, and the TypeScript members are camelCase.
+The generator decides every member name and emits a field map beside each operation, so the browser holds no name rule.
+A key that no map declares keeps its spelling, so the inside of a `json` value is never renamed.
+A bounded list returns its rows under `rows`, and a page returns them under `item` beside a `nextCursor`.
 An `int64` and a `numeric` are strings in TypeScript, because that is what the wire carries and a number loses precision above 2^53.
+A field that declares a closed value domain types as a union of its literals.
+
+The [web runtime](../../web/runtime/) is the hand-written package that the bindings import.
+It is TypeScript source, it builds nothing, and a generated package declares it as its one dependency.
+It implements the transport: the URL, the credential the application supplies, the request envelope, and the classification of one reply.
+The rule it follows is `classify()` in `crates/client/tui/src/submission.rs`, which the terminal uses.
+Both clients read one case table at `crates/client/tui/tests/data/classification-cases.json`.
+The browser trusts the platform for the values inside a reply, so it holds no schema validator and no copy of the wire spelling rules.
+A reply whose value violates its own field contract therefore reads as completed in the browser and as uncertain in the terminal.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.

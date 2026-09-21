@@ -533,6 +533,32 @@ Strict here means `strict`, `noImplicitAny`, `strictNullChecks`, `exactOptionalP
 Pass a directory as the one argument to keep the emitted source for reading.
 The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and names it.
 It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
+The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
+
+### Web runtime
+
+The runtime is hand-written TypeScript, and its own tests run under Node.
+Install its dependencies once:
+
+```bash
+cd web/runtime && npm install
+```
+
+To type-check the runtime and its tests, run:
+
+```bash
+cd web/runtime && npm run check
+```
+
+To run its tests, run:
+
+```bash
+cd web/runtime && npm test
+```
+
+The tests read the shared case table at `crates/client/tui/tests/data/classification-cases.json`.
+`crates/client/tui/tests/classification_table.rs` reads the same file, so one table holds both clients to one rule.
+If you change the table, run both.
 
 ## Cleanup
 

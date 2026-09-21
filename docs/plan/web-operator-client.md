@@ -62,17 +62,23 @@ flowchart LR
 
 ## 4. Current state
 
-Facts from the code at `963857d5`, after Epics 1 and 2.
+Facts from the code at `d1b2310c`, after Epics 1, 2, and 3A.
 
 - `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (Rust bindings), `client_ts.rs` (TypeScript bindings), `client_route.rs`, `client_tui.rs`.
-- `client_ts.rs` writes `generated/client-ts/`. `wire.ts` holds the type aliases, the transport interface, the four-outcome union and the one name mapping pair. Beside it sit one module per model, an index and a `package.json`. A package opts in with `npm_distribution` in its manifest. Receiving declares `@wamn/receiving-client`. WMS and Acme declare none and generate no TypeScript.
-- The TypeScript check is the hand-run command `cargo run -p wamn-schema-generator --example check_client_ts`. No test and no build needs Node.
-- `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging, row links, supplied fields, record link, revision binding. It is built from the IR, borrows its contract values, and is not serialized.
+- `client_ts.rs` writes `generated/client-ts/`: one module per model, an index, and a `package.json`. A package opts in with `npm_distribution` in its manifest. Receiving declares `@wamn/receiving-client`. WMS and Acme declare none and generate no TypeScript.
+- The wire contract is hand-written and lives in `web/runtime`, as the package `@wamn/web-runtime`. Every generated module imports it by name, and the emitted `package.json` declares it as the one dependency. An application resolves the name through its own configuration.
+- The runtime implements the transport: the URL, the credential the application supplies, the request envelope, and the classification of one reply into the four outcomes. It also supplies the request identity, the idempotency key, and the time the intent started.
+- One case table at `crates/client/tui/tests/data/classification-cases.json` holds both clients to one rule. A Rust test and the runtime's own tests read it.
+- The browser trusts the platform for the values inside a reply. It holds no schema validator and no copy of the wire spelling rules. A reply whose value violates its own field contract reads as completed there and as uncertain in the terminal.
+- Names: the generator decides every member name and emits a field map beside each operation, so no name rule exists at run time. A key that no map declares keeps its spelling, which leaves a `json` value alone. A contract name that does not reverse is refused at emit.
+- A bounded list returns `{ rows }`, and a page returns `{ item, nextCursor }`. A declared value domain types as a union of its literals.
+- `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging with the input path of every page control, row links, supplied fields, record link, revision binding. It is built from the IR, borrows its contract values, and is not serialized.
 - `client_tui.rs` `emit_model` writes one `ScreenSpec` constant per operation from the plan. No screen code.
-- The TUI renders from that data at run time: one generic `Screen` in `crates/client/tui` (`screen.rs`, 804 lines), with `table.rs` and `form.rs`.
-- The run time and the terminal operator still hold their own copy of the rules the plan states. `screen.rs`: read or write by `kind` (`:637`), paging (`:640`), delete confirm (`:371`), rows by `result_class` (`:710`). `operator.rs` in `crates/client/terminal`: reserved inputs (`reserved`), row links (`link_targets`), detail or table by `result_class`. The TUI reads the plan in the "TUI matches" epic.
-- `client_rust.rs` keeps its own copy of the effective-result-fields rule (`:202-207`).
-- No TypeScript in the repo. No CORS, no cookie session, no static hosting.
+- The TUI renders from that data at run time: one generic `Screen` in `crates/client/tui` (`screen.rs`), with `table.rs` and `form.rs`.
+- The run time and the terminal operator still hold their own copy of the rules the plan states. The TUI reads the plan in the "TUI matches" epic.
+- `client_rust.rs` keeps its own copy of the effective-result-fields rule.
+- The checks are local commands: `check_client_ts` for the generated bindings, and `npm run check` with `npm test` in `web/runtime`. No test and no build needs Node.
+- No components, no CORS, no cookie session, and no static hosting.
 - No labels or descriptions in `wamn.json` or the IR.
 - Admin functions are `ctl` verbs only. No HTTP admin API. No HTTP read API for runs (grep only).
 
@@ -104,9 +110,20 @@ Each epic below gives a goal, a done-when, and what stays out. The epic spec fil
 
 ### Epic 3: web runtime and components
 
-- **Goal.** The hand-written web runtime, and the component emitter: one component per operation by plan role. Unsupported shapes are reported, not forced into a table or form.
-- **Done when.** Components for the fixture compile. A testing method for a generated component is written down and used once.
+The epic split in two at its scope. The runtime came first, and the component emitter follows it.
+
+**Epic 3A: Epic 2 fixes and the hand-written web runtime.** Done.
+
+- **Goal.** The three fixes the Epic 2 review named, one screen plan change, and the hand-written runtime that implements the transport.
+- **Done when.** The fixes have generator tests, the runtime classifies the four outcomes the same as `classify()`, and one case table holds both clients.
+- **Out.** The component emitter. Cookie login. Customizing.
+
+**Epic 3B: generated SolidJS components.**
+
+- **Goal.** One component per operation by plan role. Unsupported shapes are reported, not forced into a table or form. The runtime gains the page state, the input helpers, and the cell helpers that the components call.
+- **Done when.** Components for the fixture compile. A testing method for a generated component is written down and used once. Receiving components generate.
 - **Out.** Exact visual format. Cookie login. Customizing.
+- **Input validation.** What an operator types is checked in the browser with `zod`, from a schema the generator emits. A reply is not re-checked, because the platform is the authority on its own values.
 
 ### Epic 4: Receiving demo and evaluation
 
