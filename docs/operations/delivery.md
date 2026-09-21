@@ -57,7 +57,8 @@ A release tag or explicit revision can replace `main`.
 Qualification reconstructs fresh application schemas, compares generated output, and uses SQLx CLI 0.9.0 through the shared platform verifier.
 It refuses committed SQLx metadata that is missing, changed, or holds query files that no query uses.
 It rebuilds through Cargo and the existing Docker targets, then refuses artifacts that differ from the candidate.
-Native comparison builds use the existing source commit and release profile labels.
+Native comparison builds use `tools/journey-image-cache`, as the owned delivery fixtures do.
+Qualification requires the exact image ID, including the source and release profile labels.
 The application cases consume the supplied artifacts without replacement builds.
 
 The first disposable targets use the existing Receiving and Acme baseline release or the existing WMS route release.

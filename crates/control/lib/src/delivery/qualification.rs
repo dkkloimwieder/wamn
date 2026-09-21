@@ -569,26 +569,21 @@ async fn compare_built_image(
         checks,
     )
     .await?;
-    let tag = format!("wamn-qualification-{target}:{}", nonce()?);
+    let lease = format!("qualification-{}", nonce()?);
+    let tag = format!("wamn-{target}:{lease}");
     let built = async {
         run(
             root,
             &strings(&[
-                "docker",
-                "build",
-                "--platform=linux/amd64",
-                "--provenance=false",
-                "--file",
-                "Dockerfile",
-                "--target",
+                "bash",
+                "tools/journey-image-cache",
+                "ensure",
+                &root.display().to_string(),
                 target,
-                "--tag",
-                &tag,
-                "--label",
-                &format!("wamn.dev/source-head={source_commit}"),
-                "--label",
-                "wamn.dev/build-profile=release",
-                ".",
+                target,
+                source_commit,
+                &lease,
+                &lease,
             ]),
             &[],
             checks,
@@ -608,20 +603,40 @@ async fn compare_built_image(
         Ok::<_, anyhow::Error>(())
     }
     .await;
-    // Remove only this invocation's tag. Never remove a candidate reference or prune caches.
-    let cleanup = Command::new("docker")
-        .args(["image", "rm", &tag])
-        .output()
-        .await;
-    built?;
-    ensure!(
-        cleanup
-            .context("remove the owned image comparison tag")?
-            .status
-            .success(),
-        "the owned image comparison tag could not be removed"
-    );
-    Ok(())
+    // Remove only this invocation's tag and lease, including after comparison failure.
+    let cleanup = async {
+        let removed = Command::new("docker")
+            .args(["image", "rm", &tag])
+            .output()
+            .await;
+        let released = Command::new(root.join("tools/journey-image-cache"))
+            .args(["release", &lease])
+            .output()
+            .await;
+        ensure!(
+            removed
+                .context("remove the owned image comparison tag")?
+                .status
+                .success(),
+            "the owned image comparison tag could not be removed"
+        );
+        ensure!(
+            released
+                .context("release the owned image comparison lease")?
+                .status
+                .success(),
+            "the owned image comparison lease could not be released"
+        );
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    match (built, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => {
+            Err(error.context(format!("image cleanup also failed: {cleanup:#}")))
+        }
+    }
 }
 
 async fn compile_tests(
