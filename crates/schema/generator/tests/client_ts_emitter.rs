@@ -300,7 +300,9 @@ fn an_event_handler_emits_nothing_and_an_unexposed_operation_gets_no_function() 
 fn two_names_that_take_one_typescript_name_refuse_by_name() {
     let mut ir = release();
     let template = ir.models[0].operations[0].clone();
-    for (index, name) in ["a_b", "aB"].into_iter().enumerate() {
+    // `delete` is a reserved word and gains one underscore, so a sibling that
+    // already spells the escape takes the same name.
+    for (index, name) in ["delete_", "delete"].into_iter().enumerate() {
         let mut operation = template.clone();
         operation.name = name.to_owned();
         operation.operation = format!("platform-fixture:widget/collide-{index}@1.0.0");
@@ -308,13 +310,45 @@ fn two_names_that_take_one_typescript_name_refuse_by_name() {
     }
     let refusal = emit_ts_client(&ir).expect_err("a duplicate TypeScript name refuses");
     assert_eq!(refusal.kind(), ClientTsErrorKind::NameCollision);
-    assert!(refusal.to_string().contains("\"aB\""), "{refusal}");
+    assert!(refusal.to_string().contains("\"delete_\""), "{refusal}");
 
     let mut unnameable = release();
     unnameable.models[0].operations[0].name = "9lives".to_owned();
     let refusal = emit_ts_client(&unnameable).expect_err("a name with no spelling refuses");
     assert_eq!(refusal.kind(), ClientTsErrorKind::UnnameableIdentifier);
     assert!(refusal.to_string().contains("9lives"), "{refusal}");
+}
+
+/// The first smaller point of the Epic 2 review. A contract name that does not
+/// reverse is refused where it is written, not discovered by a reader.
+#[test]
+fn a_contract_name_that_does_not_reverse_refuses_and_names_its_path() {
+    let mut operation_name = release();
+    operation_name.models[0].operations[0].name = "listWidgets".to_owned();
+    let refusal = emit_ts_client(&operation_name).expect_err("a capital does not reverse");
+    assert_eq!(refusal.kind(), ClientTsErrorKind::IrreversibleName);
+    let text = refusal.to_string();
+    assert!(text.starts_with("irreversible_name: "), "{text}");
+    assert!(text.contains("platform-fixture:widget/"), "{text}");
+    assert!(text.contains("\"list_widgets\""), "{text}");
+
+    let mut field_name = release();
+    let archive = field_name.models[0]
+        .operations
+        .iter_mut()
+        .find(|operation| operation.name == "archive")
+        .expect("the fixture declares widget.archive");
+    archive.input_fields[0].path = "editVersion".to_owned();
+    let refusal = emit_ts_client(&field_name).expect_err("a field that does not reverse refuses");
+    assert_eq!(refusal.kind(), ClientTsErrorKind::IrreversibleName);
+    let text = refusal.to_string();
+    assert!(
+        text.contains("platform-fixture:widget/archive@1.0.0"),
+        "{text}"
+    );
+    assert!(text.contains("field \"editVersion\""), "{text}");
+
+    emit_ts_client(&release()).expect("every fixture name reverses");
 }
 
 #[test]

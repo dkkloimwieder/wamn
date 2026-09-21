@@ -53,6 +53,8 @@ pub enum ClientTsErrorKind {
     UnknownType,
     /// A contract name cannot be a TypeScript identifier.
     UnnameableIdentifier,
+    /// A contract name does not reverse through the member rule.
+    IrreversibleName,
     /// Two contract names take the same TypeScript name.
     NameCollision,
 }
@@ -64,6 +66,7 @@ impl ClientTsErrorKind {
         match self {
             Self::UnknownType => "unknown_type",
             Self::UnnameableIdentifier => "unnameable_identifier",
+            Self::IrreversibleName => "irreversible_name",
             Self::NameCollision => "name_collision",
         }
     }
@@ -503,7 +506,22 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     let mut used = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut served = false;
+    check_reversible(
+        &model.name,
+        &format!("package {package} model {:?}", model.name),
+    )?;
     for operation in &operations {
+        check_reversible(&operation.name, &operation.operation)?;
+        check_field_names(&operation.input_fields, &operation.operation)?;
+        check_field_names(
+            operation
+                .route
+                .as_ref()
+                .map_or(operation.result_fields.as_slice(), |route| {
+                    route.response.fields.as_slice()
+                }),
+            &operation.operation,
+        )?;
         let function = ts_name(&operation.name)?;
         if !names.insert(function.clone()) {
             return Err(ClientTsError::new(
@@ -919,6 +937,42 @@ fn ts_name(name: &str) -> Result<String, ClientTsError> {
 /// A member may spell a reserved word, so it needs no escape.
 fn ts_member(leaf: &str, path: &str) -> Result<String, ClientTsError> {
     identifier(leaf, path)
+}
+
+/// Refuse a contract name that does not reverse through the member rule.
+///
+/// The field map holds both spellings, so conversion works either way. The
+/// refusal keeps the two spellings one to one, so a reader who maps a member
+/// name back reaches the contract name that emitted it. `line_1` reverses,
+/// because an underscore becomes a capital only before a lowercase letter. A
+/// capital inside a contract name does not reverse.
+fn check_reversible(name: &str, subject: &str) -> Result<(), ClientTsError> {
+    let member = to_camel(name);
+    let back = to_snake(&member);
+    if back == name {
+        return Ok(());
+    }
+    Err(ClientTsError::new(
+        ClientTsErrorKind::IrreversibleName,
+        format!("{subject} takes the member {member:?}, which maps back to {back:?}"),
+    ))
+}
+
+/// Refuse every declared name of one shape that does not reverse.
+fn check_field_names(fields: &[FieldIr], subject: &str) -> Result<(), ClientTsError> {
+    for field in fields {
+        let leaf = field
+            .path
+            .rsplit('.')
+            .next()
+            .unwrap_or(&field.path)
+            .trim_end_matches("[]");
+        if !leaf.is_empty() {
+            check_reversible(leaf, &format!("{subject} field {:?}", field.path))?;
+        }
+        check_field_names(&field.children, subject)?;
+    }
+    Ok(())
 }
 
 fn identifier(name: &str, subject: &str) -> Result<String, ClientTsError> {
