@@ -1,4 +1,7 @@
 //! Emits an operator crate from the declared client contract.
+//!
+//! The screen rules come from [`crate::client_plan`]. This module owns the
+//! Rust spelling of those rules and nothing else.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;

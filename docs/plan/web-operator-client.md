@@ -62,12 +62,14 @@ flowchart LR
 
 ## 4. Current state
 
-Facts from the code at `d561bbd`.
+Facts from the code at `2154fbcb`, after Epic 1.
 
-- `client_ir.rs` (IR v3), `client_rust.rs` (bindings), `client_route.rs`, `client_tui.rs`.
-- `client_tui.rs` `emit_model` writes one `ScreenSpec` constant per operation: a copy of IR values. No screen code.
+- `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (bindings), `client_route.rs`, `client_tui.rs`.
+- `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging, row links, supplied fields, record link, revision binding. It is built from the IR, borrows its contract values, and is not serialized.
+- `client_tui.rs` `emit_model` writes one `ScreenSpec` constant per operation from the plan. No screen code.
 - The TUI renders from that data at run time: one generic `Screen` in `crates/client/tui` (`screen.rs`, 804 lines), with `table.rs` and `form.rs`.
-- Screen rules sit in three places. Run time: read or write by `kind` (`screen.rs:637`), paging (`:640`), delete confirm (`:371`). Emitter: supplied fields by hard-coded path names (`client_tui.rs:529-534`). Terminal operator in `crates/client/terminal` (`operator.rs`): reserved inputs (`reserved`), row links (`link_targets`), detail or table by `result_class`.
+- The run time and the terminal operator still hold their own copy of the rules the plan states. `screen.rs`: read or write by `kind` (`:637`), paging (`:640`), delete confirm (`:371`), rows by `result_class` (`:710`). `operator.rs` in `crates/client/terminal`: reserved inputs (`reserved`), row links (`link_targets`), detail or table by `result_class`. The TUI reads the plan in the "TUI matches" epic.
+- `client_rust.rs` keeps its own copy of the effective-result-fields rule (`:202-207`).
 - No TypeScript in the repo. No CORS, no cookie session, no static hosting.
 - No labels or descriptions in `wamn.json` or the IR.
 - Admin functions are `ctl` verbs only. No HTTP admin API. No HTTP read API for runs (grep only).

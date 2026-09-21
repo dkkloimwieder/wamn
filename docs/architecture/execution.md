@@ -373,6 +373,13 @@ Operation kinds come from the manifest.
 Record links come from declared relations, keys, and compatible reads.
 The generator never guesses a record from a field name ending in `_id`.
 
+The [screen plan](../../crates/schema/generator/src/client_plan.rs) holds the screen rules that every UI target applies.
+It gives each callable operation one role: table, detail, form, delete, or none with a reason.
+It also states the columns, the operator inputs, the row source, the paging, and the screens that one row opens.
+It carries interaction meaning only, so no layout, styling, or framework concept enters it.
+The generated terminal emitter reads the plan.
+The terminal run time in `crates/client/tui` keeps its own copy of the same rules until a later epic moves it onto the plan.
+
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
 A user cannot type a revision or obtain a guessed read route.

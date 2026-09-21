@@ -18,6 +18,7 @@
 
 mod client_fields;
 pub mod client_ir;
+/// The UI-neutral screen plan. Every client emitter reads its rules.
 pub mod client_plan;
 mod client_route;
 pub mod client_rust;
