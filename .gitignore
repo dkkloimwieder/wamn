@@ -19,6 +19,9 @@
 /node_modules/
 node_modules/
 
+# Generated output that the component check writes and reads
+web/components/fixture/
+
 # bv (beads viewer) local config and caches
 .bv/
 
