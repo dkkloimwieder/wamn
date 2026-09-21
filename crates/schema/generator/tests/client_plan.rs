@@ -1,6 +1,6 @@
 use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
-use wamn_schema_generator::client_plan::{ClientPlan, ScreenPlan, SuppliedKind};
+use wamn_schema_generator::client_plan::{ClientPlan, NoRole, Role, ScreenPlan, SuppliedKind};
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
@@ -186,4 +186,99 @@ fn revision_bindings_name_the_read_operation_that_supplies_them() {
     for name in ["archive", "create", "get", "query", "update"] {
         assert!(screen(&plan, name).revision.is_none(), "{name}");
     }
+}
+
+#[test]
+fn each_platform_operation_takes_its_role_from_kind_and_result_class() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    for (name, kind, result, role) in [
+        ("query", "query", Some("page"), Role::Table),
+        ("get", "get", Some("one"), Role::Detail),
+        ("create", "create", Some("one"), Role::Form),
+        ("update", "update", Some("one"), Role::Form),
+        ("archive", "command", Some("one"), Role::Form),
+        ("delete", "delete", Some("one"), Role::Delete),
+    ] {
+        let screen = screen(&plan, name);
+        assert_eq!(screen.contract.kind, kind, "{name}");
+        assert_eq!(screen.result_class, result, "{name}");
+        assert_eq!(screen.role, role, "{name}");
+        assert!(screen.role.is_supported(), "{name}");
+    }
+    assert!(plan.unsupported().is_empty());
+}
+
+#[test]
+fn a_bounded_list_read_and_a_projection_both_take_the_table_role() {
+    let mut ir = release();
+    let query = operation(&mut ir, "query");
+    query.kind = "projection".to_owned();
+    query
+        .route
+        .as_mut()
+        .expect("the query serves a route")
+        .response
+        .result_class = Some("bounded_list".to_owned());
+    let plan = ClientPlan::from_ir(&ir);
+    assert_eq!(screen(&plan, "query").role, Role::Table);
+}
+
+#[test]
+fn the_served_result_class_selects_the_role_over_the_declared_one() {
+    let mut ir = release();
+    operation(&mut ir, "get")
+        .route
+        .as_mut()
+        .expect("the read serves a route")
+        .response
+        .result_class = Some("page".to_owned());
+    let plan = ClientPlan::from_ir(&ir);
+    assert_eq!(screen(&plan, "get").contract.result_class, "one");
+    assert_eq!(screen(&plan, "get").result_class, Some("page"));
+    assert_eq!(
+        screen(&plan, "get").role,
+        Role::Unsupported(NoRole::UnsupportedResult),
+        "the role reads what the release serves"
+    );
+}
+
+#[test]
+fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
+    let mut ir = release();
+    operation(&mut ir, "get")
+        .route
+        .as_mut()
+        .expect("the read serves a route")
+        .response
+        .result_class = None;
+    let widget_wrangler = operation(&mut ir, "archive");
+    widget_wrangler.kind = "wrangle".to_owned();
+    let plan = ClientPlan::from_ir(&ir);
+    assert_eq!(
+        plan.unsupported(),
+        [
+            ("platform-fixture:widget/archive@1.0.0", NoRole::UnknownKind),
+            (
+                "platform-fixture:widget/get@1.0.0",
+                NoRole::UnsupportedResult
+            ),
+        ],
+        "a report names the canonical operation and why no role fits"
+    );
+    assert_eq!(
+        NoRole::UnknownKind.reason(),
+        "the operation kind has no screen role"
+    );
+    assert_eq!(
+        NoRole::UnsupportedResult.to_string(),
+        "the result class does not fit the operation kind"
+    );
+    assert_eq!(
+        plan.screens()
+            .filter(|screen| screen.role.is_supported())
+            .count(),
+        4,
+        "the other screens keep their role"
+    );
 }

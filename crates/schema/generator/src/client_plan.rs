@@ -23,6 +23,59 @@ const SUPPLIED_PATHS: [(&str, SuppliedKind); 5] = [
 /// The operation kind that no operator calls.
 const PRIVATE_KIND: &str = "event_handler";
 
+/// What an operator does on one screen.
+///
+/// The map from contract shape to role is a starting point. An emitter writes
+/// one component per supported role. A shape with no role gets no component,
+/// and [`ClientPlan::unsupported`] names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// Many records, one row for each.
+    Table,
+    /// The fields of one record.
+    Detail,
+    /// Typed input that the operator sends.
+    Form,
+    /// A removal that the operator confirms first.
+    Delete,
+    /// No supported shape, with the reason.
+    Unsupported(NoRole),
+}
+
+impl Role {
+    /// Whether an emitter writes a component for this screen.
+    #[must_use]
+    pub const fn is_supported(self) -> bool {
+        !matches!(self, Self::Unsupported(_))
+    }
+}
+
+/// Why one operation's shape has no supported role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoRole {
+    /// The operation kind is outside the client vocabulary.
+    UnknownKind,
+    /// A read kind and its result class do not agree on what comes back.
+    UnsupportedResult,
+}
+
+impl NoRole {
+    /// One line that a generator report prints beside the operation name.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::UnknownKind => "the operation kind has no screen role",
+            Self::UnsupportedResult => "the result class does not fit the operation kind",
+        }
+    }
+}
+
+impl core::fmt::Display for NoRole {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(self.reason())
+    }
+}
+
 /// The platform value that a session driver writes into a reserved input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuppliedKind {
@@ -80,6 +133,14 @@ pub struct ScreenPlan<'a> {
     pub name: &'a str,
     /// Contract facts that an emitter copies without applying a rule.
     pub contract: &'a OperationIr,
+    /// What the operator does on the screen.
+    pub role: Role,
+    /// The result class that the release serves.
+    ///
+    /// A served route states its own class. An operation with no route keeps
+    /// the class it declared. A route whose terminal contract is absent states
+    /// no class at all.
+    pub result_class: Option<&'a str>,
     /// Reserved input paths, in contract order.
     pub supplied: Vec<SuppliedField<'a>>,
     /// Input paths that carry a declared or platform revision, sorted by path.
@@ -127,6 +188,19 @@ impl<'a> ClientPlan<'a> {
     pub fn screens(&self) -> impl Iterator<Item = &ScreenPlan<'a>> {
         self.models.iter().flat_map(|model| model.screens.iter())
     }
+
+    /// Every operation with no supported role, by canonical identity.
+    ///
+    /// A generator reports this list. The named operations get no component.
+    #[must_use]
+    pub fn unsupported(&self) -> Vec<(&'a str, NoRole)> {
+        self.screens()
+            .filter_map(|screen| match screen.role {
+                Role::Unsupported(reason) => Some((screen.contract.operation.as_str(), reason)),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl<'a> ModelPlan<'a> {
@@ -172,14 +246,32 @@ impl<'a> ScreenPlan<'a> {
                 command_key_input: &binding.command_key_input,
                 command_revision_input: &binding.command_revision_input,
             });
+        let result_class = operation.route.as_ref().map_or_else(
+            || Some(operation.result_class.as_str()),
+            |route| route.response.result_class.as_deref(),
+        );
         Self {
             model,
             name: &operation.name,
             contract: operation,
+            role: role(&operation.kind, result_class),
+            result_class,
             supplied,
             revision_inputs: revision_inputs(operation),
             record,
             revision,
         }
+    }
+}
+
+/// Select the screen role for one contract shape.
+fn role(kind: &str, result_class: Option<&str>) -> Role {
+    match (kind, result_class) {
+        ("query" | "projection", Some("bounded_list" | "page")) => Role::Table,
+        ("get", Some("one")) => Role::Detail,
+        ("create" | "update" | "command", _) => Role::Form,
+        ("delete", _) => Role::Delete,
+        ("get" | "query" | "projection", _) => Role::Unsupported(NoRole::UnsupportedResult),
+        _ => Role::Unsupported(NoRole::UnknownKind),
     }
 }

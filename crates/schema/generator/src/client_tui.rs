@@ -8,8 +8,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::client_ir::{ClientContractIr, OperationIr, ReplayIr};
-use crate::client_plan::{ClientPlan, ModelPlan, SuppliedKind};
+use crate::client_ir::{ClientContractIr, ReplayIr};
+use crate::client_plan::{ClientPlan, ModelPlan, ScreenPlan, SuppliedKind};
 use crate::client_rust::route_helper_names;
 use crate::generate::GeneratedFile;
 use crate::manifest::rust_identifier;
@@ -474,7 +474,7 @@ fn emit_model(
             .and_then(|route| route.input_schema.as_ref());
         writeln!(source, "    input_schema: {:?},", json_text(input_schema))
             .expect("write to String");
-        emit_response(&mut source, operation, &fields);
+        emit_response(&mut source, screen, &fields);
         let route = operation.route.as_ref().map_or_else(
             || "None".to_owned(),
             |_| format!("Some(crate::{module}::{})", route_names[screen.name]),
@@ -535,15 +535,14 @@ fn json_text(schema: Option<&Value>) -> Option<String> {
     schema.map(Value::to_string)
 }
 
-fn emit_response(source: &mut String, operation: &OperationIr, fields: &str) {
+fn emit_response(source: &mut String, screen: &ScreenPlan<'_>, fields: &str) {
+    let operation = screen.contract;
     let route = operation.route.as_ref();
     let response = route.map(|route| &route.response);
     let errors = response.map_or(operation.errors.as_slice(), |response| {
         response.errors.as_slice()
     });
-    let result_class = response.map_or(Some(operation.result_class.as_str()), |response| {
-        response.result_class.as_deref()
-    });
+    let result_class = screen.result_class;
     let schema = response.and_then(|response| response.schema.as_ref());
     let replay = match route.and_then(|route| route.replay) {
         Some(ReplayIr::Claim) => "Claim",
