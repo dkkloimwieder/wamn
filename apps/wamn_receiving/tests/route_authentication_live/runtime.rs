@@ -184,12 +184,13 @@ pub(super) fn assert_nested_record_receipt_trace(
     base_digest: &str,
     caller_principal_id: &str,
     credential_kind: &str,
+    participated: bool,
 ) {
     let components = trace_component_invocations(spans, trace_id);
     assert_eq!(
         components.len(),
-        2,
-        "trace {trace_id} must contain overlay and pinned-base invocations"
+        if participated { 3 } else { 2 },
+        "trace {trace_id} must contain the exact receipt invocations"
     );
     let overlay = components
         .iter()
@@ -219,7 +220,29 @@ pub(super) fn assert_nested_record_receipt_trace(
         base_digest,
         caller_principal_id,
     );
-    for invocation in [overlay, base] {
+    if participated {
+        let participant = components
+            .iter()
+            .find(|span| {
+                span_attribute(span, "wamn.operation").as_deref()
+                    == Some(OVERLAY_RECEIPT_PARTICIPANT)
+            })
+            .copied()
+            .expect("admitted receipt participant invocation is present");
+        assert_invocation_identity(
+            participant,
+            trace_id,
+            "receiving_record_receipt",
+            OVERLAY_RECEIPT_PARTICIPANT,
+            overlay_digest,
+            caller_principal_id,
+        );
+        assert!(
+            span_descends_from(spans, participant, base),
+            "trace {trace_id} did not parent the participant under the base invocation"
+        );
+    }
+    for invocation in components {
         assert_eq!(
             span_attribute(invocation, "wamn.caller_credential_kind").as_deref(),
             Some(credential_kind),
@@ -241,7 +264,7 @@ pub(super) fn assert_native_nested_acquisition(
     base_digest: &str,
 ) {
     // The native workload loads the full release once. Other admitted nodes can
-    // appear in that preload, while this invocation executes exactly two nodes.
+    // appear in that preload, while this invocation executes exactly three nodes.
     let loaded = spans
         .iter()
         .filter(|span| span.name == "wamn.component.pull")
@@ -256,8 +279,8 @@ pub(super) fn assert_native_nested_acquisition(
     let invoked = trace_component_invocations(spans, trace_id);
     assert_eq!(
         invoked.len(),
-        2,
-        "native nested call must execute two nodes"
+        3,
+        "native nested call must execute overlay, base, and participant nodes"
     );
     let digests = invoked
         .iter()

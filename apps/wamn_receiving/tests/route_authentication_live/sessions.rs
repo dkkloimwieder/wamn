@@ -649,6 +649,7 @@ pub(super) async fn assert_nested_session(
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
             "session",
+            false,
         );
         anyhow::ensure!(
             nested_receipt_state(project.as_ref()).await? == before,
@@ -682,6 +683,7 @@ pub(super) async fn assert_nested_session(
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
             "pat",
+            false,
         );
         anyhow::ensure!(
             nested_receipt_state(project.as_ref()).await? == before,
@@ -865,6 +867,7 @@ pub(super) async fn assert_nested_session(
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
             "session",
+            false,
         );
         assert_pat_and_session_stamp_one_actor(
             &engine,
