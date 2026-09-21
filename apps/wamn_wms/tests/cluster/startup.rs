@@ -6,7 +6,6 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_gate_harness::journey::JourneyDocument;
-use wamn_test_infrastructure::traces::{TraceDocument, request_trace_is_complete};
 use wamn_test_infrastructure::workload::HTTP_PROBE_IMAGE;
 
 use super::deployment::{checked, kubectl};
@@ -186,6 +185,11 @@ pub(super) async fn requests(
         evidence,
     )
     .await?;
+    let warm_cache = cache_files(cluster, work, &cold.pod, evidence, "warm").await?;
+    ensure!(
+        cache == warm_cache,
+        "the restarted host changed compiled cache bytes, inodes, times, sizes, or paths"
+    );
     trace(
         cluster,
         work,
@@ -204,11 +208,6 @@ pub(super) async fn requests(
         evidence,
     )
     .await?;
-    let warm_cache = cache_files(cluster, work, &cold.pod, evidence, "warm").await?;
-    ensure!(
-        cache == warm_cache,
-        "the restarted host changed compiled cache bytes, inodes, times, sizes, or paths"
-    );
     write_result(
         evidence,
         "runtime-startup.json",
@@ -565,18 +564,41 @@ async fn trace(
     ]))
     .await?;
     fs::write(evidence.join(format!("trace-{name}.json")), &bytes)?;
-    let document: TraceDocument = serde_json::from_slice(&bytes)?;
-    ensure!(
-        request_trace_is_complete(&document, false, 1),
-        "{name} trace must have one WMS statement and no executor acquisition or component loading"
-    );
     let value: Value = serde_json::from_slice(&bytes)?;
+    ensure!(
+        restart_trace_is_complete(&value),
+        "{name} trace must have one WMS invocation and statement without component loading or compilation"
+    );
     let breakdown = trace_breakdown(&value, name, total_ms)?;
     write_result(
         evidence,
         &format!("trace-breakdown-{name}.json"),
         &breakdown,
     )
+}
+
+fn restart_trace_is_complete(document: &Value) -> bool {
+    let spans = document["batches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|batch| batch["scopeSpans"].as_array().into_iter().flatten())
+        .flat_map(|scope| scope["spans"].as_array().into_iter().flatten())
+        .collect::<Vec<_>>();
+    let count = |name: &str| spans.iter().filter(|span| span["name"] == name).count();
+    count("wamn.component.invoke") == 1
+        && count("wamn.postgres.statement") == 1
+        && [
+            "wamn.component.pull",
+            "wamn.component.compile",
+            "wamn.component.linker_setup",
+            "wamn.component.link",
+            "load_component_bytes",
+            "resolve_workload",
+            "link_components",
+        ]
+        .iter()
+        .all(|name| count(name) == 0)
 }
 
 fn trace_breakdown(document: &Value, name: &str, total_ms: f64) -> anyhow::Result<Value> {
@@ -726,6 +748,34 @@ fn assert_host_restart(pod: &Value, uid: Option<&str>, restarts: u64) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_trace_accepts_repeated_acquisitions_but_not_repeated_work_or_loading() {
+        let mut spans = vec![
+            json!({"name":"wamn.component.invoke"}),
+            json!({"name":"wamn.postgres.statement"}),
+        ];
+        for class in ["callable-http", "guest-sql", "callable-http", "guest-sql"] {
+            spans.push(json!({"name":"wamn.postgres.acquire", "attributes":[{"key":"wamn.authority_class", "value":{"stringValue":class}}]}));
+        }
+        let trace = json!({"batches":[{"scopeSpans":[{"spans":spans}]}]});
+        assert!(restart_trace_is_complete(&trace));
+        for name in [
+            "wamn.component.invoke",
+            "wamn.postgres.statement",
+            "wamn.component.compile",
+            "load_component_bytes",
+            "link_components",
+        ] {
+            let mut invalid = trace.clone();
+            invalid["batches"][0]["scopeSpans"][0]["spans"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"name":name}));
+            assert!(!restart_trace_is_complete(&invalid), "{name}");
+        }
+        assert!(!restart_trace_is_complete(&json!({})));
+    }
 
     #[test]
     fn startup_job_reports_immediate_delayed_and_failed_responses() {
