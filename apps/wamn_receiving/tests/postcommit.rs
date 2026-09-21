@@ -288,7 +288,8 @@ async fn receipt(
     fixture: &(String, String),
     label: &str,
 ) -> anyhow::Result<String> {
-    let value = request(http, document, phase, overlay_route_path("receiving_record_receipt"), json!([{
+    // Pending inspections in this delivery test belong to the post-commit handler.
+    let value = request(http, document, phase, "/receiving/record_receipt", json!([{
         "request_id":label, "value":{"idempotency_key":format!("{label}-{}",fixture.0),
         "purchase_order_id":fixture.0, "receipt_reference":format!("{label}-{}",fixture.0),
         "occurred_at":"2026-09-10T12:00:00.000000Z", "line":[{"purchase_order_line_id":fixture.1,
