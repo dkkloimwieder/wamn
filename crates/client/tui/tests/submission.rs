@@ -795,7 +795,7 @@ fn movement_result() -> Value {
         "pallet_id":"33333333-0000-0000-0000-000000000002",
         "location_id":"33333333-0000-0000-0000-000000000003",
         "pallet_status":"available",
-        "row_version":8
+        "row_version":"8"
     })
 }
 
@@ -862,7 +862,7 @@ fn partial_bytes_require_the_declared_shape_and_one_matching_successful_commit()
         ),
         ("/committed_result/0/request_id", json!("another-intent")),
         ("/committed_result/0/value/movement_id", json!(7)),
-        ("/committed_result/0/value/row_version", json!("8")),
+        ("/committed_result/0/value/row_version", json!(8)),
         ("/failed_outcome/code", json!("")),
     ] {
         let mut body = good.clone();
@@ -952,7 +952,7 @@ fn wms_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_uncerta
             "{path}"
         );
     }
-    for revision in [json!("8"), json!(8.5), json!(u64::MAX)] {
+    for revision in [json!(8), json!(8.5), json!(u64::MAX)] {
         let mut malformed = body.clone();
         malformed[0]["value"]["row_version"] = revision;
         assert!(matches!(

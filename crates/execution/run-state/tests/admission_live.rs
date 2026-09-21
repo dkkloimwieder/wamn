@@ -226,9 +226,9 @@ fn surviving_authority_matrix_live() {
              VALUES ('t1','dev','standard'); \
              INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
-                wiring_id,wiring_version,status,trigger_source,input_json) \
+                wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
              VALUES ('t1','run-1','legacy-flow',1,'cat',1,'dev','legacy-wiring',1, \
-                     'dispatched','automation','{{}}'); \
+                     'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
              INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('t1','run-1');",
             manifest_hash = "a".repeat(64),
         ),
@@ -283,7 +283,7 @@ release_manifest_v3_snapshots:SELECT,wirings:SELECT', \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
            ASSERT actual = \
              'caller_http_status,caller_outcome_hash,caller_outcome_json,caller_outcome_kind,\
-caller_release_node_id,caller_released_at,fail_kind,manifest_digest,\
+caller_release_node_id,caller_released_at,deadline_adjustments_json,fail_kind,manifest_digest,\
 result_json,state_json,status,terminal_reason,updated_at', \
                   'runs UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \

@@ -508,27 +508,6 @@ fn charset_length_checks_backstop_the_stored_slug_names() {
     );
 }
 
-/// Invariant 2 (no tenant-database credentials, R8b): every system table remains
-/// free of password and connection credential material. PAT storage names its
-/// one-way digest `token_hash`, which is intentionally outside this forbidden
-/// vocabulary.
-#[test]
-fn schema_holds_no_credential_column() {
-    let sql = code_only(&system_schema_sql()).to_lowercase();
-    for bad in [
-        "password",
-        "secret_value",
-        "credential",
-        " dsn ",
-        "connection_string",
-    ] {
-        assert!(
-            !sql.contains(bad),
-            "system storage must hold no tenant DB credential material {bad:?} (R8b)"
-        );
-    }
-}
-
 // --- invariant 1: request-path-free ----------------------------------------
 
 /// Invariant 1 (system cluster absent from ALL request paths): a static grep of
@@ -999,6 +978,16 @@ INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('poolorg','
 DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='poolorg')=1,
   'a derived pool_cluster name may carry consecutive hyphens (wamn-R27 bans slugs, not names)'; END $$;
 DELETE FROM registry.orgs WHERE id='poolorg';
+
+-- Registry and provisioning store references, not tenant database credentials.
+-- Identity owns authentication hashes and tokens separately.
+DO $$ BEGIN
+  ASSERT NOT EXISTS (
+    SELECT FROM information_schema.columns
+    WHERE table_schema IN ('registry', 'provisioning')
+      AND column_name ~ '(password|secret_value|credential|(^|_)dsn($|_)|connection_string)'
+  ), 'registry and provisioning must hold no tenant DB credential columns';
+END $$;
 
 -- Invariant 2 (no credentials, R8b): project_envs carries the Secret REFERENCE
 -- and NO credential column.

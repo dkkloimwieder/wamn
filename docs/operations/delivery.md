@@ -54,7 +54,7 @@ wamn-ctl qualify-release --repository "$SOURCE" --revision main \
 
 The checkout must match the selected revision and stay clean through all checks.
 A release tag or explicit revision can replace `main`.
-Qualification reconstructs fresh application schemas, compares generated output, and uses SQLx CLI 0.9.0 with the actual verifier targets.
+Qualification reconstructs fresh application schemas, compares generated output, and uses SQLx CLI 0.9.0 through the shared platform verifier.
 It refuses committed SQLx metadata that is missing, changed, or holds query files that no query uses.
 It rebuilds through Cargo and the existing Docker targets, then refuses artifacts that differ from the candidate.
 Native comparison builds use the existing source commit and release profile labels.

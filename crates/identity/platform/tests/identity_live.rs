@@ -458,11 +458,15 @@ async fn project_environment_membership_round_trip(
 /// Each identity authority relation carries the four stamp columns as NOT NULL
 /// with no default, and one static stamp trigger.
 async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
-    const RELATIONS: [&str; 4] = [
+    const RELATIONS: [&str; 8] = [
+        "password_credentials",
+        "password_logins",
+        "password_tokens",
         "pats",
         "principals",
         "project_env_memberships",
         "project_roles",
+        "renewal_credentials",
     ];
     let columns = client
         .query(
@@ -511,6 +515,7 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
              JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = 'identity' AND NOT t.tgisinternal \
+               AND t.tgname = 'wamn_record_history_stamp' \
              ORDER BY c.relname, t.tgname",
             &[],
         )

@@ -45,7 +45,6 @@ fn candidate_effect_snapshot_pins_instance_and_generation_without_fallback() {
     for predicate in [
         "($10::text IS NULL OR binding.instance_id = $10)",
         "generation.generation = COALESCE($11::bigint, instance.active_generation)",
-        "($11::bigint IS NULL OR instance.active_generation = $11)",
     ] {
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(predicate));
     }

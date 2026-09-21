@@ -24,6 +24,8 @@ It includes committed, staged, unstaged, deleted, and untracked files.
   A Markdown file below another directory follows the rules above.
 
 Selected packages run their default tests with the required features of their targets.
+Use `tools/build-components` or `tools/repo-lint` to compile guest targets that disable Cargo tests.
+A passing workspace test result does not establish compilation of those guest targets.
 Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
 Run the reading package's tests for such a change.
 `tools/test-changes dry-run` prints the selected commands.
@@ -83,8 +85,10 @@ Deployment tests retain startup, restart, queue, CDC/materializer, and label del
 Build only the components that these tests use:
 
 ```bash
-cargo build --manifest-path apps/Cargo.toml --locked --offline \
-  --target wasm32-wasip2 -p receiving -p client-acme-receiving -p wms -p http-route -p prior-commit
+for package in receiving client-acme-receiving wms http-route prior-commit; do
+  cargo build --manifest-path apps/Cargo.toml --locked --offline \
+    --target wasm32-wasip2 -p "$package" || exit
+done
 cargo build --locked --offline -p wamn-component-virtualizer
 mkdir -p target/virtualized/std-empty-environment
 for component in receiving client_acme_receiving wms prior_commit; do
@@ -115,6 +119,16 @@ WAMN_PRIOR_COMMIT_COMPONENT="$PWD/target/virtualized/std-empty-environment/prior
 
 The fixture uses generated typed Receiving bindings and the current asynchronous PostgreSQL interface.
 The existing deployed prior-commit case retains its real commit and refusal assertions.
+
+Run the local SQLx transaction case with its component:
+
+```bash
+cargo build --manifest-path apps/Cargo.toml --locked --offline \
+  --target wasm32-wasip2 -p sqlx-command
+WAMN_SQLX_TRANSACTION_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/sqlx_command.wasm" \
+  cargo test --locked --offline -p wamn-runtime --test sqlx_transaction_live \
+    sqlx_command_commits_rolls_back_and_obeys_current_user_rls -- --ignored --exact
+```
 
 ## Test-database isolation
 

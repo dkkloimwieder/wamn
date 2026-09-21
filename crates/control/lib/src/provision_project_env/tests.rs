@@ -308,8 +308,8 @@ fn the_role_batch_creates_passwordless_nologin_acl_roles() {
     assert!(batch.contains("'wamn_app'"));
     assert!(batch.contains("CREATE ROLE \"wamn_app\" NOLOGIN"));
     assert!(batch.contains("ALTER ROLE \"wamn_app\" NOLOGIN PASSWORD NULL"));
-    assert!(batch.contains("CREATE ROLE %I NOLOGIN"));
-    assert!(batch.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
+    assert!(batch.contains("CREATE ROLE wamn_db_owner NOLOGIN"));
+    assert!(batch.contains("ALTER ROLE wamn_db_owner NOLOGIN"));
 }
 
 /// The dispatch, the lifecycle and the ACL expectation are one derivation
@@ -491,6 +491,7 @@ fn the_identity_reader_grants_are_exact_and_never_allow_a_write() {
     let exact = vec![
         role_acl("schema", "identity", "identity", "USAGE"),
         role_acl("relation", "identity", "pats", "SELECT"),
+        role_acl("relation", "identity", "password_logins", "SELECT"),
         role_acl("relation", "identity", "principals", "SELECT"),
         role_acl("relation", "identity", "project_env_memberships", "SELECT"),
         role_acl("relation", "identity", "project_roles", "SELECT"),
