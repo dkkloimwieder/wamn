@@ -7,6 +7,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::traces::{TraceDocument, request_trace_is_complete};
+use wamn_test_infrastructure::workload::HTTP_PROBE_IMAGE;
 
 use super::deployment::{checked, kubectl};
 use crate::wms_runtime_live::write_result;
@@ -90,7 +91,6 @@ pub(super) async fn cold_host(
 pub(super) async fn requests(
     cluster: &str,
     work: &Path,
-    image: &str,
     inputs: &JourneyDocument,
     cold: &ColdHost,
     evidence: &Path,
@@ -98,7 +98,6 @@ pub(super) async fn requests(
     request(
         cluster,
         work,
-        image,
         inputs,
         &RequestTrace {
             name: "cold",
@@ -166,7 +165,6 @@ pub(super) async fn requests(
     let restart = request(
         cluster,
         work,
-        image,
         inputs,
         &RequestTrace {
             name: "restart-first",
@@ -179,7 +177,6 @@ pub(super) async fn requests(
     let steady = request(
         cluster,
         work,
-        image,
         inputs,
         &RequestTrace {
             name: "steady",
@@ -229,7 +226,6 @@ struct RequestTrace<'a> {
 async fn request(
     cluster: &str,
     work: &Path,
-    image: &str,
     inputs: &JourneyDocument,
     trace: &RequestTrace<'_>,
     evidence: &Path,
@@ -250,7 +246,6 @@ async fn request(
     let job = format!("startup-request-{name}");
     let manifest = request_job(
         cluster,
-        image,
         &inputs.route_host,
         secret,
         &job,
@@ -330,7 +325,6 @@ async fn request(
 
 fn request_job(
     cluster: &str,
-    image: &str,
     route_host: &str,
     secret: &str,
     job: &str,
@@ -359,7 +353,7 @@ body=$(od -An -v -tx1 /tmp/body | tr -d ' \n')
 printf '{"status":"%s","first_seconds":"%s","total_seconds":"%s","recovery_seconds":%s,"attempts":%s,"body_hex":"%s"}\n' "$1" "$2" "$3" "$elapsed" "$attempt" "$body" >/dev/termination-log
 test "$1" = 200
 "#;
-    json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":image,"imagePullPolicy":"Never","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
+    json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":HTTP_PROBE_IMAGE,"imagePullPolicy":"IfNotPresent","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
         {"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
         {"name":"ROUTE_HOST","value":route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
         {"name":"REQUEST_BODY","value":body},{"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/pallet/get")}
@@ -739,7 +733,6 @@ mod tests {
         let body = r#"[{"request_id":"startup-cold","id":"selected-pallet","note":"it's quoted"}]"#;
         let job = request_job(
             "selected-environment",
-            "selected-host-image",
             "selected.example",
             "selected-pat",
             "selected-job",
@@ -758,8 +751,8 @@ mod tests {
             .unwrap();
         assert_eq!(containers.len(), 1);
         let container = &containers[0];
-        assert_eq!(container["image"], "selected-host-image");
-        assert_eq!(container["imagePullPolicy"], "Never");
+        assert_eq!(container["image"], HTTP_PROBE_IMAGE);
+        assert_eq!(container["imagePullPolicy"], "IfNotPresent");
         assert_eq!(container["command"], json!(["/bin/sh", "-ec"]));
         let env = container["env"].as_array().unwrap();
         assert_eq!(

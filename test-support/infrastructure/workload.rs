@@ -12,6 +12,10 @@ use tokio::process::Command;
 
 use crate::rendering::MaterializerInput;
 
+/// Pinned curl 8.12.1 client used by in-cluster HTTP probes (linux/amd64).
+pub const HTTP_PROBE_IMAGE: &str =
+    "curlimages/curl@sha256:88a9abad9d958340e48564f9bdcdaa29916a2984be59314da709f8bbc0eef6f7";
+
 /// Read the owned container's IPv4 address from restricted Docker output.
 pub fn kind_address(settings: &Value) -> anyhow::Result<Ipv4Addr> {
     let address: Ipv4Addr = settings["Networks"]["kind"]["IPAddress"]
@@ -597,9 +601,11 @@ pub async fn unknown_route(
     evidence: &Path,
 ) -> anyhow::Result<()> {
     // curlimages/curl 8.12.1, linux/amd64 manifest and its exact config identity.
-    let image_digest = "sha256:88a9abad9d958340e48564f9bdcdaa29916a2984be59314da709f8bbc0eef6f7";
+    let (_, image_digest) = HTTP_PROBE_IMAGE
+        .split_once('@')
+        .expect("pinned probe digest");
     let config_digest = "sha256:5dce198cca467ce79994ed65e01d03882238f9efdd16a8c6f4bc55151c8a4a54";
-    let image = format!("curlimages/curl@{image_digest}");
+    let image = HTTP_PROBE_IMAGE;
     let script = r#"transport=$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body --write-out '{"status":%{http_code},"content_type":"%{content_type}"}' --header "Host: $ROUTE_HOST" "http://flow-http.$NAMESPACE.svc.cluster.local/no-such-route")
 body_hex=$(od -An -v -tx1 /tmp/body | tr -d ' \n')
 printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termination-log

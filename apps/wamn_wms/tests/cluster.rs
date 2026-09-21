@@ -78,8 +78,9 @@ enum Case {
 async fn run_case(case: Case) -> anyhow::Result<()> {
     let candidate = crate::delivery::candidate()?;
     ensure!(
-        candidate.is_none() || matches!(case, Case::Routes),
-        "supplied-artifact execution supports the released_wms_routes case"
+        candidate.is_none()
+            || matches!(case, Case::Routes | Case::PartialCompletion | Case::Startup),
+        "supplied-artifact execution supports released routes, partial completion, and restart cases"
     );
     let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
     let generated_terminal = matches!(case, Case::GeneratedTerminal);
@@ -617,7 +618,7 @@ async fn run_created(
         checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&http_path)).await?;
         let http = workload::http_ready(cluster, work, cluster, &hosts, evidence).await?;
         if let Some(cold) = &cold {
-            return startup::requests(cluster, work, image, &document, cold, evidence).await;
+            return startup::requests(cluster, work, &document, cold, evidence).await;
         }
         workload::unknown_route(cluster, work, cluster, &document.route_host, evidence).await?;
         let endpoint =

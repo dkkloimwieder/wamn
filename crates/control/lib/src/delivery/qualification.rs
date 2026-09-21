@@ -16,7 +16,11 @@ const RECEIVING_CASES: &[&str] = &[
     "route_authentication_live::cluster::route_cases::command_histories",
     "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress",
 ];
-const WMS_CASES: &[&str] = &["cluster::released_wms_routes"];
+const WMS_CASES: &[&str] = &[
+    "cluster::released_wms_routes",
+    "cluster::released_wms_routes_retain_committed_work_after_label_failure",
+    "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
+];
 const WMS_SCHEMAS: &[(&str, &str)] = &[("wamn_wms", "wms")];
 const RECEIVING_SCHEMAS: &[(&str, &str)] = &[
     ("wamn_receiving", "receiving"),
