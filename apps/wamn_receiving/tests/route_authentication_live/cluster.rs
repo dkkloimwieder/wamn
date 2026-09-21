@@ -11,6 +11,7 @@ mod measurement_cases;
 mod operator_recovery;
 mod postcommit_case;
 mod postcommit_pair;
+mod queue_recovery;
 mod resources;
 mod route_cases;
 mod session_cases;

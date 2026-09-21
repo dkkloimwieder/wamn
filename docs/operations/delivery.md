@@ -68,6 +68,7 @@ The application cases consume the supplied artifacts without replacement builds.
 
 The first disposable targets use the existing Receiving and Acme baseline release or the existing WMS route release.
 Receiving runs command histories and baseline overlay compatibility against the same manifest.
+Receiving also runs durable queue recovery after interruption of its combined host.
 WMS runs its released routes, partial-label completion, and restart/cache cases against the same supplied manifest and host image.
 Both require exact canonical release bytes, executed success, unchanged artifacts, and successful cleanup.
 Qualification writes pass or fail with the source commit, command results, release inputs, and artifact hashes.
