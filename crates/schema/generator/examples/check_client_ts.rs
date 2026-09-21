@@ -36,7 +36,7 @@ const PACKAGE_JSON: &str = "{ \"type\": \"module\" }\n";
 const TSCONFIG: &str = r#"{
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,

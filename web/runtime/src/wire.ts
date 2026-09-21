@@ -37,10 +37,26 @@ export interface ResponseContract {
   readonly resultClass: string | null;
   /** The partial completion schema, as published JSON text. */
   readonly partialSchema: string | null;
-  /** Every refusal literal the operation declares. */
-  readonly errors: readonly string[];
+  /** Every refusal the operation declares. */
+  readonly errors: readonly ErrorCase[];
   /** The replay guarantee the release serves. */
   readonly replay: "claim" | "state" | null;
+  /** Whether the release serves this operation itself, without a handler. */
+  readonly direct: boolean;
+  /** The operation kind, for example `get`, `create` or `command`. */
+  readonly kind: string;
+  /** The declared transaction boundary, or null when the release states none. */
+  readonly transaction: string | null;
+}
+
+/** One refusal the operation declares. */
+export interface ErrorCase {
+  /** The wire literal a caller branches on. */
+  readonly literal: string;
+  /** Detail members that are always present. */
+  readonly required: readonly string[];
+  /** Declared origins of this refusal. */
+  readonly sources: readonly string[];
 }
 
 /** One request. It carries no host, no base URL and no credential. */
@@ -73,7 +89,11 @@ export type Outcome<T> =
       readonly committedResult: T;
       readonly failedOutcome: JsonValue;
     }
-  | { readonly status: "refused"; readonly code: string; readonly detail: JsonValue }
+  | {
+      readonly status: "refused";
+      readonly code: string | null;
+      readonly detail: JsonValue;
+    }
   | {
       readonly status: "uncertain";
       readonly reason: string;

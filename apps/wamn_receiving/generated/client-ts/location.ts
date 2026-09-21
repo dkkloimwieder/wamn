@@ -56,13 +56,16 @@ export const LOCATION_LIST_ROUTE: OperationRoute = {
     resultClass: "bounded_list",
     partialSchema: null,
     errors: [
-      "internal_error",
-      "invalid_input",
-      "permission_denied",
-      "retry",
-      "timeout",
+      { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"] },
+      { literal: "invalid_input", required: ["field"], sources: ["malformed_input"] },
+      { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"] },
+      { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"] },
+      { literal: "timeout", required: [], sources: ["statement_timeout"] },
     ],
     replay: null,
+    direct: true,
+    kind: "projection",
+    transaction: null,
   },
 };
 

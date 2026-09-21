@@ -1,0 +1,397 @@
+{
+  "comment": [
+    "One case table, read by two clients. The Rust test is",
+    "crates/client/tui/tests/classification_table.rs, and the TypeScript test is",
+    "web/runtime/test/classification.test.ts. Each case states one HTTP reply and",
+    "the outcome that both must reach.",
+    "A refusal states its code, and its detail is everything else the error",
+    "carries, or null when it carries nothing else.",
+    "The browser trusts the platform for the values inside a reply, so no case",
+    "turns on the spelling of a value. A malformed uuid reads as completed in the",
+    "browser and as uncertain in the terminal, which wamn-lajk.7 records.",
+    "A transport failure, such as a dropped connection, is language specific and",
+    "keeps its own test on each side."
+  ],
+  "contracts": {
+    "record": {
+      "result_class": "one",
+      "partial_schema": null,
+      "errors": [
+        { "literal": "not_found", "required": [], "sources": [] },
+        { "literal": "concurrency_conflict", "required": [], "sources": [] },
+        { "literal": "unique_violation", "required": [], "sources": ["unique_violation"] },
+        { "literal": "unsourced", "required": [], "sources": ["invented_source"] },
+        { "literal": "needs_detail", "required": ["field"], "sources": ["check_violation"] }
+      ],
+      "kind": "update",
+      "transaction": "implicit",
+      "direct": true
+    },
+    "page": {
+      "result_class": "page",
+      "partial_schema": null,
+      "errors": [],
+      "kind": "query",
+      "transaction": "implicit",
+      "direct": true
+    },
+    "bounded_list": {
+      "result_class": "bounded_list",
+      "partial_schema": null,
+      "errors": [],
+      "kind": "projection",
+      "transaction": "implicit",
+      "direct": true
+    },
+    "partial": {
+      "result_class": "one",
+      "partial_schema": "{}",
+      "errors": [],
+      "kind": "command",
+      "transaction": "explicit_per_input",
+      "direct": true
+    },
+    "handled": {
+      "result_class": "one",
+      "partial_schema": null,
+      "errors": [{ "literal": "not_found", "required": [], "sources": [] }],
+      "kind": "update",
+      "transaction": "implicit",
+      "direct": false
+    },
+    "untransacted": {
+      "result_class": "one",
+      "partial_schema": null,
+      "errors": [{ "literal": "not_found", "required": [], "sources": [] }],
+      "kind": "update",
+      "transaction": null,
+      "direct": true
+    }
+  },
+  "cases": [
+    {
+      "name": "a completed record",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}]",
+      "expect": { "outcome": "completed", "value": { "id": "a" } }
+    },
+    {
+      "name": "a completed page",
+      "contract": "page",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"item\":[{\"id\":\"a\"}],\"next_cursor\":null}}]",
+      "expect": {
+        "outcome": "completed",
+        "value": { "item": [{ "id": "a" }], "next_cursor": null }
+      }
+    },
+    {
+      "name": "a completed bounded list",
+      "contract": "bounded_list",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"rows\":[]}}]",
+      "expect": { "outcome": "completed", "value": { "rows": [] } }
+    },
+    {
+      "name": "a page with no row collection",
+      "contract": "page",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"next_cursor\":null}}]",
+      "expect": { "outcome": "uncertain", "reason": "the result has no declared row collection" }
+    },
+    {
+      "name": "a page whose cursor is a number",
+      "contract": "page",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"item\":[],\"next_cursor\":7}}]",
+      "expect": { "outcome": "uncertain", "reason": "the page has no valid next_cursor" }
+    },
+    {
+      "name": "a record result that is not an object",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":\"done\"}]",
+      "expect": { "outcome": "uncertain", "reason": "the result violates its field contract" }
+    },
+    {
+      "name": "a declared refusal with no declared source",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"not_found\"}}]",
+      "expect": { "outcome": "refused", "code": "not_found", "detail": null }
+    },
+    {
+      "name": "a declared refusal with a known source",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"unique_violation\",\"detail\":{\"constraint\":\"widget_code_key\"}}}]",
+      "expect": {
+        "outcome": "refused",
+        "code": "unique_violation",
+        "detail": { "detail": { "constraint": "widget_code_key" } }
+      }
+    },
+    {
+      "name": "a refusal whose source the client does not know",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"unsourced\"}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish the submission outcome; the server reported unsourced"
+      }
+    },
+    {
+      "name": "a refusal that is missing its required detail",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"needs_detail\",\"detail\":{}}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish the submission outcome; the server reported needs_detail"
+      }
+    },
+    {
+      "name": "a refusal the contract does not declare",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"undeclared\"}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish the submission outcome; the server reported undeclared"
+      }
+    },
+    {
+      "name": "a refusal from an operation the release does not serve itself",
+      "contract": "handled",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"not_found\"}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish the submission outcome; the server reported not_found"
+      }
+    },
+    {
+      "name": "a refusal from an operation with no transaction boundary",
+      "contract": "untransacted",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"not_found\"}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish the submission outcome; the server reported not_found"
+      }
+    },
+    {
+      "name": "a concurrency conflict names both revisions",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r2\",\"error\":{\"code\":\"concurrency_conflict\",\"detail\":{\"expected_row_version\":\"4\",\"observed_row_version\":\"5\"}}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not match the submitted request; the server reported concurrency_conflict (expected_row_version=4, observed_row_version=5)"
+      }
+    },
+    {
+      "name": "a value beside an error",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"},\"error\":{\"code\":\"not_found\"}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish the submission outcome; the server reported not_found"
+      }
+    },
+    {
+      "name": "two outcomes for one submitted item",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{}},{\"request_id\":\"r1\",\"value\":{}}]",
+      "expect": { "outcome": "uncertain", "reason": "the response must contain exactly one outcome" }
+    },
+    {
+      "name": "a reply that echoes another request",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r2\",\"value\":{\"id\":\"a\"}}]",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not match the submitted request"
+      }
+    },
+    {
+      "name": "a body that is not JSON",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 200,
+      "body": "not json",
+      "expect": { "outcome": "uncertain", "reason": "the response is not valid JSON" }
+    },
+    {
+      "name": "an unauthenticated reply",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 401,
+      "body": "",
+      "expect": { "outcome": "refused", "code": "unauthenticated", "detail": null }
+    },
+    {
+      "name": "a request body over the ingress limit",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 413,
+      "body": "request body exceeds 1048576-byte limit\n",
+      "expect": {
+        "outcome": "refused",
+        "code": null,
+        "detail": "request body exceeds 1048576-byte limit\n"
+      }
+    },
+    {
+      "name": "a schema refusal from ingress",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 400,
+      "body": "{\"error\":{\"code\":\"schema-invalid\"}}",
+      "expect": { "outcome": "refused", "code": "schema-invalid", "detail": null }
+    },
+    {
+      "name": "a schema refusal that names the offending value",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 400,
+      "body": "{\"error\":{\"code\":\"schema-invalid\",\"data\":{\"pointer\":\"/0/id\"}}}",
+      "expect": {
+        "outcome": "refused",
+        "code": "schema-invalid",
+        "detail": { "data": { "pointer": "/0/id" } }
+      }
+    },
+    {
+      "name": "a capacity refusal from ingress",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 429,
+      "body": "{\"error\":{\"code\":\"route-capacity-exhausted\"}}",
+      "expect": { "outcome": "refused", "code": "route-capacity-exhausted", "detail": null }
+    },
+    {
+      "name": "a permission refusal that names its operation",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 403,
+      "body": "{\"error\":{\"code\":\"permission-denied\",\"operation\":\"widget/update@1.0.0\"}}",
+      "expect": {
+        "outcome": "refused",
+        "code": "permission-denied",
+        "detail": { "operation": "widget/update@1.0.0" }
+      }
+    },
+    {
+      "name": "a permission refusal that names no operation",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 403,
+      "body": "{\"error\":{\"code\":\"permission-denied\"}}",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the authorization response is malformed; the server reported permission-denied"
+      }
+    },
+    {
+      "name": "a server failure",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 500,
+      "body": "{\"error\":{\"code\":\"internal_error\"}}",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish completion; the server reported internal_error"
+      }
+    },
+    {
+      "name": "a partial completion",
+      "contract": "partial",
+      "request_id": "r1",
+      "status": 500,
+      "body": "{\"committed_result\":[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}],\"failed_outcome\":{\"code\":\"timeout\"}}",
+      "expect": {
+        "outcome": "partially_completed",
+        "committed_result": { "id": "a" },
+        "failed_outcome": { "code": "timeout" }
+      }
+    },
+    {
+      "name": "a partial completion with a success status",
+      "contract": "partial",
+      "request_id": "r1",
+      "status": 200,
+      "body": "{\"committed_result\":[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}],\"failed_outcome\":{\"code\":\"timeout\"}}",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "partial completion requires an HTTP error response"
+      }
+    },
+    {
+      "name": "a partial completion the route does not declare",
+      "contract": "record",
+      "request_id": "r1",
+      "status": 500,
+      "body": "{\"committed_result\":[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}],\"failed_outcome\":{\"code\":\"timeout\"}}",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the route declares no partial completion contract"
+      }
+    },
+    {
+      "name": "a partial completion that echoes another request",
+      "contract": "partial",
+      "request_id": "r1",
+      "status": 500,
+      "body": "{\"committed_result\":[{\"request_id\":\"r2\",\"value\":{\"id\":\"a\"}}],\"failed_outcome\":{\"code\":\"timeout\"}}",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the committed result does not match the submitted request"
+      }
+    },
+    {
+      "name": "a partial completion with no failed outcome",
+      "contract": "partial",
+      "request_id": "r1",
+      "status": 500,
+      "body": "{\"committed_result\":[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}]}",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the response does not establish partial completion"
+      }
+    },
+    {
+      "name": "a partial completion with two committed outcomes",
+      "contract": "partial",
+      "request_id": "r1",
+      "status": 500,
+      "body": "{\"committed_result\":[{\"request_id\":\"r1\",\"value\":{}},{\"request_id\":\"r1\",\"value\":{}}],\"failed_outcome\":{}}",
+      "expect": {
+        "outcome": "uncertain",
+        "reason": "the committed result must contain exactly one outcome"
+      }
+    }
+  ]
+}

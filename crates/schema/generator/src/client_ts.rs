@@ -505,10 +505,28 @@ fn emit_operation(
     .expect("write");
     source.push_str("    errors: [\n");
     for error in &route.response.errors {
-        writeln!(source, "      {:?},", error.literal).expect("write");
+        writeln!(
+            source,
+            "      {{ literal: {:?}, required: [{}], sources: [{}] }},",
+            error.literal,
+            literals(&error.detail_required),
+            literals(&error.sources)
+        )
+        .expect("write");
     }
     source.push_str("    ],\n");
     writeln!(source, "    replay: {replay},").expect("write");
+    writeln!(source, "    direct: {},", route.direct).expect("write");
+    writeln!(source, "    kind: {:?},", operation.kind).expect("write");
+    writeln!(
+        source,
+        "    transaction: {},",
+        operation
+            .transaction
+            .as_deref()
+            .map_or_else(|| "null".to_owned(), |value| format!("{value:?}"))
+    )
+    .expect("write");
     source.push_str("  },\n};\n");
 
     writeln!(
@@ -620,6 +638,15 @@ fn write_map_members(
         }
     }
     Ok(())
+}
+
+/// One TypeScript list of string literals.
+fn literals(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("{value:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Emit the result type of one operation, and its row type when the release
