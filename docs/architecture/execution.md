@@ -380,6 +380,15 @@ It carries interaction meaning only, so no layout, styling, or framework concept
 The generated terminal emitter reads the plan.
 The terminal run time in `crates/client/tui` keeps its own copy of the same rules until a later epic moves it onto the plan.
 
+A package can also generate [TypeScript bindings](../../crates/schema/generator/src/client_ts.rs) for a browser.
+It opts in with an `npm_distribution` name in its manifest, and a package that declares none generates no TypeScript.
+The bindings carry a request type, a result type, the published route and one function for each public operation.
+A private event handler is absent, and an operation the release does not publish carries its types without a function.
+The application supplies a transport that owns the URL and the credential.
+That transport also classifies one response into a completion, a partial completion, a refusal or an uncertainty.
+The contract stays snake_case on the wire, the TypeScript members are camelCase, and one pair of functions maps between them.
+An `int64` and a `numeric` are strings in TypeScript, because that is what the wire carries and a number loses precision above 2^53.
+
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
 A user cannot type a revision or obtain a guessed read route.

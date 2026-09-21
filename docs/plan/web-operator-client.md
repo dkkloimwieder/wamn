@@ -62,9 +62,11 @@ flowchart LR
 
 ## 4. Current state
 
-Facts from the code at `2154fbcb`, after Epic 1.
+Facts from the code at `963857d5`, after Epics 1 and 2.
 
-- `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (bindings), `client_route.rs`, `client_tui.rs`.
+- `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (Rust bindings), `client_ts.rs` (TypeScript bindings), `client_route.rs`, `client_tui.rs`.
+- `client_ts.rs` writes `generated/client-ts/`. `wire.ts` holds the type aliases, the transport interface, the four-outcome union and the one name mapping pair. Beside it sit one module per model, an index and a `package.json`. A package opts in with `npm_distribution` in its manifest. Receiving declares `@wamn/receiving-client`. WMS and Acme declare none and generate no TypeScript.
+- The TypeScript check is the hand-run command `cargo run -p wamn-schema-generator --example check_client_ts`. No test and no build needs Node.
 - `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging, row links, supplied fields, record link, revision binding. It is built from the IR, borrows its contract values, and is not serialized.
 - `client_tui.rs` `emit_model` writes one `ScreenSpec` constant per operation from the plan. No screen code.
 - The TUI renders from that data at run time: one generic `Screen` in `crates/client/tui` (`screen.rs`, 804 lines), with `table.rs` and `form.rs`.
