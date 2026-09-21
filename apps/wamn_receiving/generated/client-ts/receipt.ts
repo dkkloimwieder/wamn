@@ -77,8 +77,8 @@ export interface ReceiptQueryRequest {
   readonly requestId: string;
 }
 
-/** Result of `wamn-receiving:receipt/query@1.0.0`. */
-export interface ReceiptQueryResult {
+/** One row of `wamn-receiving:receipt/query@1.0.0`. */
+export interface ReceiptQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
   /** `uuid` */
@@ -93,6 +93,14 @@ export interface ReceiptQueryResult {
   readonly purchaseOrderId: Uuid;
   /** `text` */
   readonly receiptReference: string;
+}
+
+/** Result of `wamn-receiving:receipt/query@1.0.0`. */
+export interface ReceiptQueryResult {
+  /** The rows this page carries. */
+  readonly item: readonly ReceiptQueryRow[];
+  /** The next page's cursor, or null at the last page. */
+  readonly nextCursor: string | null;
 }
 
 /**

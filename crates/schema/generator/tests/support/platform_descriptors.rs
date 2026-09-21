@@ -17,7 +17,9 @@ fn platform_fixture_generates_client_descriptors() {
             .iter()
             .map(|operation| operation.name.as_str())
             .collect::<Vec<_>>(),
-        ["archive", "create", "delete", "get", "query", "update"]
+        [
+            "archive", "create", "delete", "get", "list", "query", "update"
+        ]
     );
 
     let fields = leaf_fields(&widget.fields);

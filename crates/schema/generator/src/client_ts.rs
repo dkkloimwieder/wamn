@@ -535,8 +535,18 @@ fn emit_operation(
         &operation.input_fields,
         used,
     )?;
-    writeln!(source, "\n/** Result of `{}`. */", operation.operation).expect("write");
-    write_interface(source, &format!("{type_stem}Result"), result_fields, used)?;
+    let result_class = operation.route.as_ref().map_or_else(
+        || Some(operation.result_class.as_str()),
+        |route| route.response.result_class.as_deref(),
+    );
+    write_result(
+        source,
+        &type_stem,
+        &operation.operation,
+        result_class,
+        result_fields,
+        used,
+    )?;
 
     let Some(route) = &operation.route else {
         // Stated, not silently omitted, for the reason `client_rust.rs` gives.
@@ -609,6 +619,53 @@ fn emit_operation(
         "  return reviveOutcome<{type_stem}Result>(\n    await transport.invoke({{ ...{route_const}, items: items.map(toWire) }}),\n  );\n}}"
     )
     .expect("write");
+    Ok(())
+}
+
+/// Emit the result type of one operation, and its row type when the release
+/// serves a collection.
+///
+/// A bounded list and a page do not return one record: they return an envelope
+/// that carries the rows. `validate_value` in
+/// `crates/client/tui/src/submission.rs` states it. A bounded list carries its
+/// array under `rows`. A page carries its array under `item`, beside a
+/// `next_cursor` that is present and either null or a string. The envelope is
+/// what the transport returns, so the envelope is the result type, and the row
+/// keeps its own name.
+fn write_result(
+    source: &mut String,
+    type_stem: &str,
+    operation: &str,
+    result_class: Option<&str>,
+    fields: &[FieldIr],
+    used: &mut BTreeSet<&'static str>,
+) -> Result<(), ClientTsError> {
+    let paged = match result_class {
+        Some("bounded_list") => false,
+        Some("page") => true,
+        _ => {
+            writeln!(source, "\n/** Result of `{operation}`. */").expect("write");
+            return write_interface(source, &format!("{type_stem}Result"), fields, used);
+        }
+    };
+    writeln!(source, "\n/** One row of `{operation}`. */").expect("write");
+    write_interface(source, &format!("{type_stem}Row"), fields, used)?;
+    writeln!(source, "\n/** Result of `{operation}`. */").expect("write");
+    writeln!(source, "export interface {type_stem}Result {{").expect("write");
+    if paged {
+        writeln!(source, "  /** The rows this page carries. */").expect("write");
+        writeln!(source, "  readonly item: readonly {type_stem}Row[];").expect("write");
+        writeln!(
+            source,
+            "  /** The next page's cursor, or null at the last page. */"
+        )
+        .expect("write");
+        writeln!(source, "  readonly nextCursor: string | null;").expect("write");
+    } else {
+        writeln!(source, "  /** Every row the release served. */").expect("write");
+        writeln!(source, "  readonly rows: readonly {type_stem}Row[];").expect("write");
+    }
+    writeln!(source, "}}").expect("write");
     Ok(())
 }
 

@@ -99,8 +99,8 @@ export interface PurchaseOrderQueryRequestSort {
   readonly field: string;
 }
 
-/** Result of `wamn-receiving:purchase-order/query@1.0.0`. */
-export interface PurchaseOrderQueryResult {
+/** One row of `wamn-receiving:purchase-order/query@1.0.0`. */
+export interface PurchaseOrderQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
   /** `uuid` */
@@ -119,6 +119,14 @@ export interface PurchaseOrderQueryResult {
   readonly updatedAt: Timestamptz;
   /** `uuid` */
   readonly updatedBy: Uuid;
+}
+
+/** Result of `wamn-receiving:purchase-order/query@1.0.0`. */
+export interface PurchaseOrderQueryResult {
+  /** The rows this page carries. */
+  readonly item: readonly PurchaseOrderQueryRow[];
+  /** The next page's cursor, or null at the last page. */
+  readonly nextCursor: string | null;
 }
 
 /**

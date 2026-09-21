@@ -14,6 +14,9 @@ pub(crate) const QUERY_SQL: &[u8] =
     b"SELECT id, code, note, edit_version, created_at FROM widget ORDER BY created_at, id;\n";
 pub(crate) const QUERY_DESCENDING_SQL: &[u8] =
     b"SELECT id, code, note, edit_version, created_at FROM widget ORDER BY created_at DESC, id DESC;\n";
+/// The bounded-list read. It selects exactly what `widget.archive` reads, so
+/// the fixture's data-access grant does not move.
+pub(crate) const LIST_SQL: &[u8] = b"SELECT id, edit_version FROM widget ORDER BY id;\n";
 pub(crate) const ARCHIVE_SQL: &[u8] =
     b"SELECT id, edit_version FROM widget WHERE id = $1 FOR UPDATE;\n";
 pub(crate) const CLAIM_SQL: &[u8] = b"INSERT INTO widget_command (canonical_command, idempotency_key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING widget_id;\n";
@@ -41,6 +44,7 @@ pub(crate) fn try_generate_with(
             "query/widget_by_created_at_descending.sql",
             QUERY_DESCENDING_SQL,
         ),
+        AuthoredSql::new("query/widget_list.sql", LIST_SQL),
         AuthoredSql::new("command/widget/archive.sql", ARCHIVE_SQL),
         AuthoredSql::new("command/widget/claim.sql", CLAIM_SQL),
         AuthoredSql::new("command/widget/replay.sql", REPLAY_SQL),
@@ -80,37 +84,39 @@ pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>>
 pub(crate) fn client_release() -> ClientContractIr {
     let package = generate_fixture();
     let contracts = contracts(&package);
-    let routes = ["archive", "create", "delete", "get", "query", "update"]
-        .into_iter()
-        .map(|name| {
-            let identity = format!("platform-fixture:widget/{name}@1.0.0");
-            (
-                identity.clone(),
-                RouteIr {
-                    method: "POST".to_owned(),
-                    template: format!("/widget/{name}"),
-                    input_schema: (name == "update").then(|| {
-                        json!({
-                            "type": "array",
-                            "items": {"type": "object", "properties": {"change": {
-                            "type": "object", "properties": {"note": {
-                                "type": ["string", "null"],
-                                "x-wamn-explicit-null": "accepted"
-                            }, "code": {
-                                "type": ["string", "null"],
-                                "x-wamn-explicit-null": "invalid_input"
-                            }}
-                            }}}
-                        })
-                    }),
-                    terminal_operation: Some(identity),
-                    direct: true,
-                    response: ResponseIr::default(),
-                    replay: (name == "archive").then_some(ReplayIr::State),
-                },
-            )
-        })
-        .collect();
+    let routes = [
+        "archive", "create", "delete", "get", "list", "query", "update",
+    ]
+    .into_iter()
+    .map(|name| {
+        let identity = format!("platform-fixture:widget/{name}@1.0.0");
+        (
+            identity.clone(),
+            RouteIr {
+                method: "POST".to_owned(),
+                template: format!("/widget/{name}"),
+                input_schema: (name == "update").then(|| {
+                    json!({
+                        "type": "array",
+                        "items": {"type": "object", "properties": {"change": {
+                        "type": "object", "properties": {"note": {
+                            "type": ["string", "null"],
+                            "x-wamn-explicit-null": "accepted"
+                        }, "code": {
+                            "type": ["string", "null"],
+                            "x-wamn-explicit-null": "invalid_input"
+                        }}
+                        }}}
+                    })
+                }),
+                terminal_operation: Some(identity),
+                direct: true,
+                response: ResponseIr::default(),
+                replay: (name == "archive").then_some(ReplayIr::State),
+            },
+        )
+    })
+    .collect();
     ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
         .expect("platform fixture projects as a release")
 }
@@ -258,6 +264,43 @@ pub(crate) fn manifest() -> Value {
             }
         },
         "custom_operations": {
+            // The one bounded-list read. `widget.query` serves a page, and the
+            // two result envelopes differ, so the fixture declares both.
+            "widget.list": {
+                "kind": "projection",
+                "visibility": "public",
+                "permission": "widget.list",
+                "connection": "postgres",
+                "input": {"fields": [
+                    {"path": "request_id", "type": "text", "nullable": false}
+                ]},
+                "result": {"class": "bounded_list", "fields": [
+                    {"path": "id", "type": "uuid", "nullable": false},
+                    {"path": "edit_version", "type": "int64", "nullable": false}
+                ]},
+                "errors": [
+                    "invalid_input", "retry", "timeout", "permission_denied", "internal_error"
+                ],
+                "constraint_errors": {},
+                "relations": [{
+                    "schema": "inventory",
+                    "table": "widget",
+                    "select_fields": ["id", "edit_version"],
+                    "insert_fields": [],
+                    "update_fields": [],
+                    "lock": false,
+                    "constraints": []
+                }],
+                "statements": {"list": {
+                    "path": "query/widget_list.sql",
+                    "fetch": "bounded_list",
+                    "parameters": [],
+                    "row": [
+                        {"name": "id", "type": "uuid", "nullable": false},
+                        {"name": "edit_version", "type": "int64", "nullable": false}
+                    ]
+                }}
+            },
             "widget.archive": {
                 "kind": "command",
                 "visibility": "public",

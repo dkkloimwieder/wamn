@@ -11,12 +11,18 @@ export interface LocationListRequest {
   readonly requestId: string;
 }
 
-/** Result of `wamn-receiving:location/list@1.0.0`. */
-export interface LocationListResult {
+/** One row of `wamn-receiving:location/list@1.0.0`. */
+export interface LocationListRow {
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
   readonly locationCode: string;
+}
+
+/** Result of `wamn-receiving:location/list@1.0.0`. */
+export interface LocationListResult {
+  /** Every row the release served. */
+  readonly rows: readonly LocationListRow[];
 }
 
 /**

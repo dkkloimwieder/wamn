@@ -34,7 +34,7 @@ fn combined(files: &[GeneratedFile]) -> String {
 }
 
 #[test]
-fn every_public_operation_gets_two_interfaces_and_one_function() {
+fn every_public_operation_gets_its_interfaces_and_one_function() {
     let ir = release();
     let files = emit_ts_client(&ir).unwrap();
     assert_eq!(
@@ -53,6 +53,7 @@ fn every_public_operation_gets_two_interfaces_and_one_function() {
         // gains one underscore.
         ("delete", "delete_"),
         ("get", "get"),
+        ("list", "list"),
         ("query", "query"),
         ("update", "update"),
     ] {
@@ -80,7 +81,7 @@ fn every_public_operation_gets_two_interfaces_and_one_function() {
             "{operation} carries its exact canonical identity"
         );
     }
-    assert_eq!(widget.matches("export async function ").count(), 6);
+    assert_eq!(widget.matches("export async function ").count(), 7);
     assert_eq!(
         source(&files, "generated/client-ts/index.ts"),
         concat!(
@@ -89,6 +90,59 @@ fn every_public_operation_gets_two_interfaces_and_one_function() {
             "export * as widget from \"./widget.js\";\n",
         )
     );
+}
+
+/// Defect 1 of the Epic 2 review. A bounded list and a page return an
+/// envelope, and the row sits inside it. `validate_value` in
+/// `crates/client/tui/src/submission.rs` owns that rule.
+#[test]
+fn a_collection_result_is_typed_as_the_envelope_the_release_serves() {
+    let ir = release();
+    let files = emit_ts_client(&ir).unwrap();
+    let widget = widget(&files);
+    assert!(
+        widget.contains(concat!(
+            "/** Result of `platform-fixture:widget/list@1.0.0`. */\n",
+            "export interface WidgetListResult {\n",
+            "  /** Every row the release served. */\n",
+            "  readonly rows: readonly WidgetListRow[];\n",
+            "}\n",
+        )),
+        "a bounded list carries its array under `rows`"
+    );
+    assert!(
+        widget.contains(concat!(
+            "/** Result of `platform-fixture:widget/query@1.0.0`. */\n",
+            "export interface WidgetQueryResult {\n",
+            "  /** The rows this page carries. */\n",
+            "  readonly item: readonly WidgetQueryRow[];\n",
+            "  /** The next page's cursor, or null at the last page. */\n",
+            "  readonly nextCursor: string | null;\n",
+            "}\n",
+        )),
+        "a page carries its array under `item`, beside the cursor"
+    );
+    assert!(
+        widget.contains(concat!(
+            "/** One row of `platform-fixture:widget/list@1.0.0`. */\n",
+            "export interface WidgetListRow {\n",
+        )),
+        "the row keeps the result leaf fields"
+    );
+    assert!(
+        widget.contains("): Promise<Outcome<WidgetQueryResult>> {"),
+        "the function returns the envelope, not one row"
+    );
+    for record in ["WidgetGet", "WidgetArchive", "WidgetCreate", "WidgetUpdate"] {
+        assert!(
+            widget.contains(&format!("export interface {record}Result {{")),
+            "{record} returns one record"
+        );
+        assert!(
+            !widget.contains(&format!("{record}Row")),
+            "{record} needs no row type"
+        );
+    }
 }
 
 #[test]

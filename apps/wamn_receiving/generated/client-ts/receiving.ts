@@ -17,8 +17,8 @@ export interface ReceivingLoadPurchaseOrderHistoryRequest {
   readonly requestId: string;
 }
 
-/** Result of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
-export interface ReceivingLoadPurchaseOrderHistoryResult {
+/** One row of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
+export interface ReceivingLoadPurchaseOrderHistoryRow {
   /** `text` */
   readonly after: string;
   /** `text` */
@@ -39,6 +39,12 @@ export interface ReceivingLoadPurchaseOrderHistoryResult {
   readonly position: Int64;
   /** `int64` */
   readonly transactionId: Int64;
+}
+
+/** Result of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
+export interface ReceivingLoadPurchaseOrderHistoryResult {
+  /** Every row the release served. */
+  readonly rows: readonly ReceivingLoadPurchaseOrderHistoryRow[];
 }
 
 /**
@@ -84,8 +90,8 @@ export interface ReceivingLoadReceiptScreenRequest {
   readonly requestId: string;
 }
 
-/** Result of `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */
-export interface ReceivingLoadReceiptScreenResult {
+/** One row of `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */
+export interface ReceivingLoadReceiptScreenRow {
   /** `uuid` */
   readonly itemId: Uuid | null;
   /** `text` */
@@ -110,6 +116,12 @@ export interface ReceivingLoadReceiptScreenResult {
   readonly rowVersion: Int64;
   /** `uuid` */
   readonly supplierId: Uuid;
+}
+
+/** Result of `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */
+export interface ReceivingLoadReceiptScreenResult {
+  /** Every row the release served. */
+  readonly rows: readonly ReceivingLoadReceiptScreenRow[];
 }
 
 /**
