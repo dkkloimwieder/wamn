@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::Duration;
@@ -60,6 +60,7 @@ mod tests {
         "code:option<string>},invalid-input:record{message:string,",
         "code:option<string>},cancelled}>)"
     );
+    type OperationExports = BTreeMap<String, Vec<(String, bool, String)>>;
 
     fn required(key: &str) -> anyhow::Result<String> {
         std::env::var(key)
@@ -254,7 +255,7 @@ mod tests {
         engine: &wash_runtime::engine::Engine,
         component_bytes: &[u8],
         label: &str,
-    ) -> anyhow::Result<std::collections::BTreeMap<String, Vec<(String, bool, String)>>> {
+    ) -> anyhow::Result<OperationExports> {
         let component = Component::new(engine.inner(), component_bytes)
             .map_err(|error| anyhow::anyhow!("compile {label}: {error}"))?;
         component

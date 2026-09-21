@@ -826,8 +826,8 @@ mod tests {
 
     #[test]
     fn typed_async_operation_requires_owned_values() {
-        let engine = crate::build_engine(&[]).expect("engine builds");
         const TYPED_OPERATION: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let engine = crate::build_engine(&[]).expect("engine builds");
         for (input, output, expected, imported) in [
             ("list<item>", "list<item>", true, false),
             ("item", "item", true, false),
