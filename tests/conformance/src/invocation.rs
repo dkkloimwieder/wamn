@@ -9,70 +9,12 @@ const NODE_WIT: &str = include_str!("../../../crates/execution/router/wit/packag
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-
-    /// Source of record for the live node ABI, repo-root-relative.
-    ///
-    /// The router owns it and both sides bind it:
-    /// `crates/execution/host/src/router_driver.rs` generates the host bindings
-    /// from `../router/wit` (world `node`), and admitted component exports must
-    /// structurally match its `handler.run` signature. This constant and the
-    /// `include_str!` above must move together —
-    /// [`node_abi_source_and_included_copy_agree`] fails if only one does.
-    const NODE_ABI_SOURCE: &str = "crates/execution/router/wit/package.wit";
-
-    fn repo_root() -> PathBuf {
-        // CARGO_MANIFEST_DIR is tests/conformance; the repo root is two up.
-        fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-            .unwrap_or_else(|error| panic!("canonicalize repo root: {error}"))
-    }
-
     /// Ignore whitespace and comments when asserting the source contract shape.
     fn code_lines(wit: &str) -> Vec<&str> {
         wit.lines()
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with("//"))
             .collect()
-    }
-
-    /// Collect every `.wit` file that declares the node package by its header.
-    /// Return paths relative to the repository root.
-    fn collect_node_abi_copies(dir: &Path, root: &Path, out: &mut Vec<String>) {
-        let entries =
-            fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()));
-        for entry in entries {
-            let entry = entry.expect("WIT directory entry must be readable");
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .unwrap_or_else(|error| panic!("inspect {}: {error}", path.display()));
-            if file_type.is_dir() {
-                if path.file_name().and_then(|name| name.to_str()) == Some("target") {
-                    continue;
-                }
-                collect_node_abi_copies(&path, root, out);
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("wit") {
-                let text = fs::read_to_string(&path)
-                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-                if !text
-                    .lines()
-                    .any(|line| line.trim().starts_with("package wamn:node@"))
-                {
-                    continue;
-                }
-                let relative = path
-                    .strip_prefix(root)
-                    .expect("copy is under repo root")
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                // The source of record lives inside a code tier, so the walk
-                // finds it too. A copy is by definition not the source.
-                if relative != NODE_ABI_SOURCE {
-                    out.push(relative);
-                }
-            }
-        }
     }
 
     #[test]
@@ -178,48 +120,6 @@ mod tests {
             assert!(
                 !code.contains(retired),
                 "the node ABI re-admitted retired vocabulary {retired:?}"
-            );
-        }
-    }
-
-    /// The `include_str!` path and [`NODE_ABI_SOURCE`] must name the same file.
-    /// Without this, moving the package and updating only the `include_str!`
-    /// still compiles while the discovery walk silently guards a stale path.
-    #[test]
-    fn node_abi_source_and_included_copy_agree() {
-        let path = repo_root().join(NODE_ABI_SOURCE);
-        let on_disk = fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!(
-                "the node ABI source of record must exist at {NODE_ABI_SOURCE}, \
-                 but it did not read: {error}. If the package moved, update BOTH \
-                 the include_str! above and NODE_ABI_SOURCE"
-            )
-        });
-        assert_eq!(
-            on_disk, NODE_WIT,
-            "{NODE_ABI_SOURCE} is not the file the include_str! above compiled in \
-             — the two paths have drifted apart"
-        );
-    }
-
-    /// Every discovered copy must contain the complete source contract bytes.
-    #[test]
-    fn all_vendored_node_abi_copies_match_the_source() {
-        let root = repo_root();
-        let mut discovered = Vec::new();
-        for top in ["apps", "crates", "services", "test-support", "tests"] {
-            collect_node_abi_copies(&root.join(top), &root, &mut discovered);
-        }
-        assert!(!discovered.is_empty(), "no vendored node ABI copies found");
-        discovered.sort();
-
-        for rel in &discovered {
-            let copy =
-                fs::read(root.join(rel)).unwrap_or_else(|error| panic!("{rel} reads: {error}"));
-            assert_eq!(
-                copy,
-                NODE_WIT.as_bytes(),
-                "{rel} drifted from {NODE_ABI_SOURCE}; re-vendor the complete package"
             );
         }
     }

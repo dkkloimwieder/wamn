@@ -217,7 +217,7 @@ fn a_second_run_of_one_source_relabels_instead_of_building() {
     );
     let log = calls(&directory);
     assert!(
-        log.contains(&format!("--target\thost")) && log.contains(&format!("wamn-host:src-{first}")),
+        log.contains("--target\thost") && log.contains(&format!("wamn-host:src-{first}")),
         "the first run must build the identity image: {log}"
     );
     assert!(
