@@ -1,6 +1,12 @@
 # Testing stabilization and repository qualification
 
-**Status:** revision 0.5 for developer-path verification and final local qualification
+**Status:** Closed by owner acceptance at `13956ffe8` with recorded limitations.
+
+The execution and review records are `wamn-fgyo.4` and `wamn-fgyo.5`.
+Durable queue recovery (`wamn-5g6o`), broker-outage behavior (`wamn-h6lm`), and restart-cache equality (`wamn-7rkj`) remain unresolved or unexecuted.
+Duplicate connection acquisition (`wamn-uq4r`) remains a separate nonblocking backlog issue.
+Closure does not claim a fully green deployed baseline.
+The remaining text preserves revision 0.5 of the approved plan.
 
 **Basis:** current repository behavior and test ownership on `main`, especially `docs/testing/*`, `docs/operations/running-tests.md`, existing application test owners, generator/control-plane tests, and current delivery/test tooling.
 
