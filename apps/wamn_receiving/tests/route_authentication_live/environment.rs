@@ -140,6 +140,7 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
         .chain(OVERLAY_OPERATIONS.iter())
         .map(|(_, token)| (*token).to_owned())
         .filter(|token| token != "client-acme-receiving:quality/create-inspection@3.0.0")
+        .chain([OVERLAY_RECEIPT_PARTICIPANT.to_owned()])
         .collect::<BTreeSet<_>>();
     anyhow::ensure!(
         observed == expected,
@@ -322,11 +323,14 @@ pub(super) async fn verify_journey_components_are_effectful(
         let operation_facts = operations
             .as_object()
             .with_context(|| format!("{} operations fact is not an object", package.id))?;
-        let expected = package
+        let mut expected = package
             .operations
             .iter()
             .map(|(_, token)| *token)
             .collect::<BTreeSet<_>>();
+        if package.id == OVERLAY_PACKAGE_ID {
+            expected.insert(OVERLAY_RECEIPT_PARTICIPANT);
+        }
         let observed = operation_facts
             .keys()
             .map(String::as_str)
