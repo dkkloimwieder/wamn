@@ -27,7 +27,11 @@
 //! reversible: an underscore becomes a capital only when a lowercase letter
 //! follows it, so `line_1` keeps its underscore.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+
+use crate::client_ir::{ClientContractIr, FieldIr, ModelIr, OperationIr, ReplayIr};
+use crate::generate::GeneratedFile;
 
 /// Why a TypeScript client could not be emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,6 +257,9 @@ export type Outcome<T> =
       readonly retryRefusal: JsonValue | null;
     };
 
+/** Everything one operation sends except its items. */
+export type OperationRoute = Omit<WireRequest, "items">;
+
 /**
  * The transport an application supplies.
  *
@@ -263,7 +270,7 @@ export interface Transport {
   invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
 }
 
-function convertKeys(value: JsonValue, key: (name: string) => string): JsonValue {
+function convertKeys(value: unknown, key: (name: string) => string): JsonValue {
   if (Array.isArray(value)) {
     return value.map((item) => convertKeys(item, key));
   }
@@ -274,7 +281,7 @@ function convertKeys(value: JsonValue, key: (name: string) => string): JsonValue
     }
     return converted;
   }
-  return value;
+  return value as JsonValue;
 }
 
 function toCamel(name: string): string {
@@ -286,15 +293,421 @@ function toSnake(member: string): string {
 }
 
 /** Convert wire keys to TypeScript members. */
-export function fromWire(value: JsonValue): JsonValue {
+export function fromWire(value: unknown): JsonValue {
   return convertKeys(value, toCamel);
 }
 
 /** Convert TypeScript members to wire keys. */
-export function toWire(value: JsonValue): JsonValue {
+export function toWire(value: unknown): JsonValue {
   return convertKeys(value, toSnake);
 }
+
+/**
+ * Rename the keys inside one outcome and state its result type.
+ *
+ * The cast is unchecked, exactly as the Rust client returns a JSON value that
+ * the caller reads through its declared result type. The transport already
+ * held the response to the operation's contract.
+ */
+export function reviveOutcome<T>(outcome: Outcome<JsonValue>): Outcome<T> {
+  switch (outcome.status) {
+    case "completed":
+      return { status: "completed", value: fromWire(outcome.value) as T };
+    case "partiallyCompleted":
+      return {
+        status: "partiallyCompleted",
+        committedResult: fromWire(outcome.committedResult) as T,
+        failedOutcome: outcome.failedOutcome,
+      };
+    default:
+      return outcome;
+  }
+}
 "#;
+
+/// Words that cannot name a TypeScript function or constant.
+///
+/// A contract name that takes one keeps it and gains a trailing underscore, in
+/// the spirit of the Rust emitter's raw identifiers. `widget.delete` becomes
+/// `delete_`, because `export async function delete` is a syntax error.
+const RESERVED_WORDS: [&str; 39] = [
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "package",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+];
+
+/// The type alias names that the shared module exports.
+const ALIASES: [&str; 5] = ["Int64", "JsonValue", "Numeric", "Timestamptz", "Uuid"];
+
+/// The operation kind that no browser calls.
+const PRIVATE_KIND: &str = "event_handler";
+
+/// Emit one TypeScript module per model, plus the shared module and an index.
+///
+/// Public operations only. An event handler emits nothing at all.
+///
+/// # Errors
+///
+/// [`ClientTsError`] names a contract identifier with no TypeScript spelling,
+/// or two names that take the same TypeScript name.
+pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, ClientTsError> {
+    let mut files = BTreeMap::new();
+    files.insert(WIRE_MODULE_PATH.to_owned(), wire_module());
+    let mut models: Vec<_> = ir.models.iter().collect();
+    models.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut index = String::from("// @generated from the client-contract IR; do not edit.\n\n");
+    index.push_str("export * from \"./wire.js\";\n");
+    let mut namespaces = BTreeSet::new();
+    for model in &models {
+        let namespace = ts_name(&model.name)?;
+        if !namespaces.insert(namespace.clone()) {
+            return Err(ClientTsError::new(
+                ClientTsErrorKind::NameCollision,
+                format!(
+                    "model {:?} takes a TypeScript name another model took",
+                    model.name
+                ),
+            ));
+        }
+        writeln!(
+            index,
+            "export * as {namespace} from \"./{}.js\";",
+            model.name
+        )
+        .expect("writing to a String cannot fail");
+        files.insert(
+            format!("generated/client-ts/{}.ts", model.name),
+            emit_model(&ir.package, model)?,
+        );
+    }
+    files.insert("generated/client-ts/index.ts".to_owned(), index);
+    Ok(files
+        .into_iter()
+        .map(|(path, source)| {
+            GeneratedFile::new(
+                path.into_boxed_str(),
+                source.into_bytes().into_boxed_slice(),
+            )
+        })
+        .collect())
+}
+
+fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
+    let mut operations: Vec<_> = model
+        .operations
+        .iter()
+        .filter(|operation| operation.kind != PRIVATE_KIND)
+        .collect();
+    operations.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let mut body = String::new();
+    let mut used = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    let mut served = false;
+    for operation in &operations {
+        let function = ts_name(&operation.name)?;
+        if !names.insert(function.clone()) {
+            return Err(ClientTsError::new(
+                ClientTsErrorKind::NameCollision,
+                format!(
+                    "operation {:?} takes the TypeScript name {function:?}, which another operation took",
+                    operation.name
+                ),
+            ));
+        }
+        served |= operation.route.is_some();
+        emit_operation(&mut body, model, operation, &function, &mut used)?;
+    }
+
+    let mut source = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
+    writeln!(
+        source,
+        "// `{}` operations of package `{package}`.",
+        model.name
+    )
+    .expect("writing to a String cannot fail");
+    if !operations.is_empty() {
+        let mut types: BTreeSet<&str> = used.iter().copied().collect();
+        if served {
+            types.extend(["OperationRoute", "Outcome", "Transport"]);
+        }
+        if !types.is_empty() {
+            writeln!(
+                source,
+                "\nimport type {{ {} }} from \"./wire.js\";",
+                types.into_iter().collect::<Vec<_>>().join(", ")
+            )
+            .expect("writing to a String cannot fail");
+        }
+        if served {
+            source.push_str("import { reviveOutcome, toWire } from \"./wire.js\";\n");
+        }
+    }
+    source.push_str(&body);
+    Ok(source)
+}
+
+fn emit_operation(
+    source: &mut String,
+    model: &ModelIr,
+    operation: &OperationIr,
+    function: &str,
+    used: &mut BTreeSet<&'static str>,
+) -> Result<(), ClientTsError> {
+    let type_stem = format!(
+        "{}{}",
+        pascal_case(&model.name),
+        pascal_case(&operation.name)
+    );
+    let route_const = format!(
+        "{}_{}_ROUTE",
+        model.name.to_uppercase(),
+        operation.name.to_uppercase()
+    );
+    let result_fields = operation
+        .route
+        .as_ref()
+        .map_or(operation.result_fields.as_slice(), |route| {
+            route.response.fields.as_slice()
+        });
+
+    writeln!(source, "\n/** Input for `{}`. */", operation.operation).expect("write");
+    write_interface(
+        source,
+        &format!("{type_stem}Request"),
+        &operation.input_fields,
+        used,
+    )?;
+    writeln!(source, "\n/** Result of `{}`. */", operation.operation).expect("write");
+    write_interface(source, &format!("{type_stem}Result"), result_fields, used)?;
+
+    let Some(route) = &operation.route else {
+        // Stated, not silently omitted, for the reason `client_rust.rs` gives.
+        writeln!(
+            source,
+            "\n// `{}` is not published over HTTP by this release, so it has no route\n// and no invoke function. It remains listed for its types.",
+            operation.operation
+        )
+        .expect("write");
+        return Ok(());
+    };
+
+    let replay = match route.replay {
+        Some(ReplayIr::Claim) => "\"claim\"",
+        Some(ReplayIr::State) => "\"state\"",
+        None => "null",
+    };
+    writeln!(
+        source,
+        "\n/**\n * Where the release publishes `{}`.\n *\n * Method and template only. The host and base URL are the application's\n * deployment configuration, not this release's facts.\n */",
+        operation.operation
+    )
+    .expect("write");
+    writeln!(source, "export const {route_const}: OperationRoute = {{").expect("write");
+    writeln!(source, "  operation: {:?},", operation.operation).expect("write");
+    writeln!(source, "  method: {:?},", route.method).expect("write");
+    writeln!(source, "  template: {:?},", route.template).expect("write");
+    writeln!(source, "  freshOnly: {},", operation.fresh_only).expect("write");
+    source.push_str("  contract: {\n");
+    writeln!(
+        source,
+        "    resultClass: {},",
+        route
+            .response
+            .result_class
+            .as_deref()
+            .map_or_else(|| "null".to_owned(), |class| format!("{class:?}"))
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "    partialSchema: {},",
+        route.response.partial_schema.as_ref().map_or_else(
+            || "null".to_owned(),
+            |schema| format!("{:?}", schema.to_string())
+        )
+    )
+    .expect("write");
+    source.push_str("    errors: [\n");
+    for error in &route.response.errors {
+        writeln!(source, "      {:?},", error.literal).expect("write");
+    }
+    source.push_str("    ],\n");
+    writeln!(source, "    replay: {replay},").expect("write");
+    source.push_str("  },\n};\n");
+
+    writeln!(
+        source,
+        "\n/** Invoke `{}` through a transport the application supplies. */",
+        operation.operation
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export async function {function}(\n  transport: Transport,\n  items: readonly {type_stem}Request[],\n): Promise<Outcome<{type_stem}Result>> {{"
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "  return reviveOutcome<{type_stem}Result>(\n    await transport.invoke({{ ...{route_const}, items: items.map(toWire) }}),\n  );\n}}"
+    )
+    .expect("write");
+    Ok(())
+}
+
+fn write_interface(
+    source: &mut String,
+    name: &str,
+    fields: &[FieldIr],
+    used: &mut BTreeSet<&'static str>,
+) -> Result<(), ClientTsError> {
+    writeln!(source, "export interface {name} {{").expect("write");
+    let mut nested = Vec::new();
+    for field in fields {
+        let leaf = field
+            .path
+            .rsplit('.')
+            .next()
+            .unwrap_or(&field.path)
+            .trim_end_matches("[]");
+        if leaf.is_empty() {
+            continue;
+        }
+        let member = ts_member(leaf, &field.path)?;
+        let child_name = format!("{name}{}", pascal_case(leaf));
+        let mut spelling = match field.type_name.as_str() {
+            "object" if !field.children.is_empty() => {
+                nested.push((child_name.clone(), field.children.as_slice()));
+                child_name
+            }
+            "array" if !field.children.is_empty() => {
+                let item = if field.children.len() == 1 && field.children[0].path == field.path {
+                    record(
+                        ts_type(&field.children[0].type_name).unwrap_or("JsonValue"),
+                        used,
+                    )
+                    .to_owned()
+                } else {
+                    nested.push((child_name.clone(), field.children.as_slice()));
+                    child_name
+                };
+                format!("readonly {item}[]")
+            }
+            other => record(ts_type(other).unwrap_or("JsonValue"), used).to_owned(),
+        };
+        if field.nullable {
+            spelling = format!("{spelling} | null");
+        }
+        writeln!(
+            source,
+            "  /** `{}`{} */",
+            field.type_name,
+            if field.required { "" } else { ", omittable" }
+        )
+        .expect("write");
+        writeln!(
+            source,
+            "  readonly {member}{}: {spelling};",
+            if field.required { "" } else { "?" }
+        )
+        .expect("write");
+    }
+    writeln!(source, "}}").expect("write");
+    for (child_name, children) in nested {
+        source.push('\n');
+        write_interface(source, &child_name, children, used)?;
+    }
+    Ok(())
+}
+
+/// Record a referenced alias so the module imports exactly what it uses.
+fn record<'a>(spelling: &'a str, used: &mut BTreeSet<&'static str>) -> &'a str {
+    if let Some(alias) = ALIASES.iter().find(|alias| **alias == spelling) {
+        used.insert(alias);
+    }
+    spelling
+}
+
+/// The PascalCase type stem for one contract name.
+fn pascal_case(name: &str) -> String {
+    let member = to_camel(name);
+    let mut characters = member.chars();
+    characters.next().map_or_else(String::new, |first| {
+        first.to_ascii_uppercase().to_string() + characters.as_str()
+    })
+}
+
+/// The exported TypeScript name for one contract name.
+fn ts_name(name: &str) -> Result<String, ClientTsError> {
+    let member = identifier(name, name)?;
+    Ok(if RESERVED_WORDS.contains(&member.as_str()) {
+        format!("{member}_")
+    } else {
+        member
+    })
+}
+
+/// The interface member name for one contract leaf.
+///
+/// A member may spell a reserved word, so it needs no escape.
+fn ts_member(leaf: &str, path: &str) -> Result<String, ClientTsError> {
+    identifier(leaf, path)
+}
+
+fn identifier(name: &str, subject: &str) -> Result<String, ClientTsError> {
+    let member = to_camel(name);
+    let valid = member
+        .bytes()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && member
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    if valid {
+        Ok(member)
+    } else {
+        Err(ClientTsError::new(
+            ClientTsErrorKind::UnnameableIdentifier,
+            format!("{subject:?} is not a TypeScript identifier"),
+        ))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -414,19 +827,28 @@ mod tests {
             "export interface ResponseContract {",
             "export interface WireRequest {",
             "export type Outcome<T> =",
+            "export type OperationRoute = Omit<WireRequest, \"items\">;",
             "export interface Transport {",
-            "export function fromWire(value: JsonValue): JsonValue {",
-            "export function toWire(value: JsonValue): JsonValue {",
+            "export function fromWire(value: unknown): JsonValue {",
+            "export function toWire(value: unknown): JsonValue {",
+            "export function reviveOutcome<T>(outcome: Outcome<JsonValue>): Outcome<T> {",
         ] {
             assert!(first.contains(declaration), "{declaration}");
         }
+        let union = first
+            .split("export type Outcome<T> =")
+            .nth(1)
+            .expect("the module declares the outcome union")
+            .split("\n\n")
+            .next()
+            .expect("the union ends at a blank line");
         for status in [
-            "\"completed\"",
-            "\"partiallyCompleted\"",
-            "\"refused\"",
-            "\"uncertain\"",
+            "readonly status: \"completed\";",
+            "readonly status: \"partiallyCompleted\";",
+            "readonly status: \"refused\";",
+            "readonly status: \"uncertain\";",
         ] {
-            assert_eq!(first.matches(status).count(), 1, "{status}");
+            assert_eq!(union.matches(status).count(), 1, "{status}");
         }
         for absent in [
             "http",
