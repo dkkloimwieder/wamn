@@ -211,7 +211,9 @@ pub(super) async fn trigger(
             && update[0]["value"]["acme_inspection_required"] == true
             && update[0]["value"]["acme_quality_status"] == "pending",
             "the materializer order update must retain its expected state");
-        let receipt = http.post(format!("{endpoint}/acme/receiving/record_receipt"))
+        // This case observes post-commit creation of a pending inspection by the
+        // materializer. The permitted base route does not require pre-commit QC.
+        let receipt = http.post(format!("{endpoint}/receiving/record_receipt"))
             .header("Host", &cluster.inputs.route_host).bearer_auth(&token)
             .header("traceparent", format!("00-{receipt_trace}-2222222222222222-01"))
             .json(&json!([{"request_id":"materializer-receipt","value":{
