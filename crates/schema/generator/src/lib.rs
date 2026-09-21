@@ -18,6 +18,7 @@
 
 mod client_fields;
 pub mod client_ir;
+pub mod client_plan;
 mod client_route;
 pub mod client_rust;
 pub mod client_tui;

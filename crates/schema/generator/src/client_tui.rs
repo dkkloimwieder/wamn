@@ -8,9 +8,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::client_ir::{
-    ClientContractIr, ModelIr, OperationIr, ReplayIr, leaf_fields, revision_inputs,
-};
+use crate::client_ir::{ClientContractIr, OperationIr, ReplayIr};
+use crate::client_plan::{ClientPlan, ModelPlan, SuppliedKind};
 use crate::client_rust::route_helper_names;
 use crate::generate::GeneratedFile;
 use crate::manifest::rust_identifier;
@@ -347,6 +346,7 @@ pub fn emit_tui(
     {
         return Err(error(ClientTuiErrorKind::InvalidName, component));
     }
+    let plan = ClientPlan::from_ir(ir);
     let slug = component.replace('_', "-");
     let crate_name = format!("wamn_generated_{}_tui", slug.replace('-', "_"));
     let prefix = format!("generated/{component}-tui");
@@ -360,7 +360,7 @@ pub fn emit_tui(
             format!("{prefix}/src/main.rs"),
             format!(
                 "// @generated; do not edit.\n\n#[tokio::main]\nasync fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>> {{\n    wamn_client_terminal::operator::run({:?}, {crate_name}::screens).await\n}}\n",
-                ir.package
+                plan.package
             ),
         );
     }
@@ -370,18 +370,17 @@ pub fn emit_tui(
     );
     let mut modules = String::from("// @generated; do not edit.\n");
     let mut calls = Vec::new();
-    let mut models: Vec<_> = ir.models.iter().collect();
-    models.sort_by(|left, right| left.name.cmp(&right.name));
     let mut names = BTreeSet::from(["screens"]);
-    for model in models {
-        let module = identifier(&model.name)?;
-        if !names.insert(&model.name) {
-            return Err(error(ClientTuiErrorKind::NameCollision, &model.name));
+    for model in &plan.models {
+        let name = model.model.name.as_str();
+        let module = identifier(name)?;
+        if !names.insert(name) {
+            return Err(error(ClientTuiErrorKind::NameCollision, name));
         }
         writeln!(
             library,
             "\n#[path = {:?}]\npub mod {module};",
-            format!("../../client/{}.rs", model.name)
+            format!("../../client/{name}.rs")
         )
         .expect("write to String");
         writeln!(modules, "pub mod {module};").expect("write to String");
@@ -389,7 +388,7 @@ pub fn emit_tui(
         for function in functions {
             calls.push(format!("screens::{module}::{function}"));
         }
-        files.insert(format!("{prefix}/src/screens/{}.rs", model.name), source);
+        files.insert(format!("{prefix}/src/screens/{name}.rs"), source);
     }
     writeln!(
         library,
@@ -432,30 +431,28 @@ fn cargo_manifest(slug: &str, operator: Option<&OperatorCrate>, workspace: &str)
     )
 }
 
-fn emit_model(model: &ModelIr, module: &str) -> Result<(String, Vec<String>), ClientTuiError> {
+fn emit_model(
+    model: &ModelPlan<'_>,
+    module: &str,
+) -> Result<(String, Vec<String>), ClientTuiError> {
     let mut source = String::from("// @generated; do not edit.\n");
-    let mut operations: Vec<_> = model
-        .operations
-        .iter()
-        .filter(|operation| operation.kind != "event_handler")
-        .collect();
-    operations.sort_by(|left, right| left.name.cmp(&right.name));
-    if !operations.is_empty() {
+    if !model.screens.is_empty() {
         source.push_str("\nuse wamn_client_tui::{screen, submission};\n");
     }
     let mut functions = Vec::new();
-    let route_names = route_helper_names(model);
+    let route_names = route_helper_names(model.model);
     let mut names = BTreeSet::new();
-    for operation in operations {
-        let function = identifier(&operation.name)?;
-        if !names.insert(&operation.name) {
-            return Err(error(ClientTuiErrorKind::NameCollision, &operation.name));
+    for screen in &model.screens {
+        let operation = screen.contract;
+        let function = identifier(screen.name)?;
+        if !names.insert(screen.name) {
+            return Err(error(ClientTuiErrorKind::NameCollision, screen.name));
         }
-        let spec = format!("{}_SPEC", operation.name.to_uppercase());
+        let spec = format!("{}_SPEC", screen.name.to_uppercase());
         let fields = format!(
             "crate::{module}::{}_{}",
-            model.name.to_uppercase(),
-            operation.name.to_uppercase()
+            screen.model.to_uppercase(),
+            screen.name.to_uppercase()
         );
         writeln!(
             source,
@@ -463,10 +460,10 @@ fn emit_model(model: &ModelIr, module: &str) -> Result<(String, Vec<String>), Cl
         )
         .expect("write to String");
         for (key, value) in [
-            ("model", &model.name),
-            ("name", &operation.name),
-            ("operation", &operation.operation),
-            ("kind", &operation.kind),
+            ("model", screen.model),
+            ("name", screen.name),
+            ("operation", operation.operation.as_str()),
+            ("kind", operation.kind.as_str()),
         ] {
             writeln!(source, "    {key}: {value:?},").expect("write to String");
         }
@@ -480,30 +477,25 @@ fn emit_model(model: &ModelIr, module: &str) -> Result<(String, Vec<String>), Cl
         emit_response(&mut source, operation, &fields);
         let route = operation.route.as_ref().map_or_else(
             || "None".to_owned(),
-            |_| {
-                format!(
-                    "Some(crate::{module}::{})",
-                    route_names[operation.name.as_str()]
-                )
-            },
+            |_| format!("Some(crate::{module}::{})", route_names[screen.name]),
         );
         writeln!(source, "    route: {route},").expect("write to String");
         writeln!(source, "    fresh_only: {},", operation.fresh_only).expect("write to String");
-        if let Some(record) = &operation.record {
+        if let Some(record) = &screen.record {
             writeln!(source, "    record: Some(screen::RecordLink {{ relation: {:?}, key_field: {:?}, key_input: {:?} }}),", record.relation, record.key_field, record.key_input).expect("write to String");
         } else {
             source.push_str("    record: None,\n");
         }
-        if let Some(binding) = &operation.revision_binding {
+        if let Some(binding) = &screen.revision {
             writeln!(source, "    revision: Some(screen::RevisionBinding {{")
                 .expect("write to String");
             for (key, value) in [
-                ("read_operation", &binding.read_operation),
-                ("read_key_input", &binding.read_key_input),
-                ("key_field", &binding.key_field),
-                ("revision_field", &binding.revision_field),
-                ("command_key_input", &binding.command_key_input),
-                ("command_revision_input", &binding.command_revision_input),
+                ("read_operation", binding.read_operation),
+                ("read_key_input", binding.read_key_input),
+                ("key_field", binding.key_field),
+                ("revision_field", binding.revision_field),
+                ("command_key_input", binding.command_key_input),
+                ("command_revision_input", binding.command_revision_input),
             ] {
                 writeln!(source, "        {key}: {value:?},").expect("write to String");
             }
@@ -514,7 +506,7 @@ fn emit_model(model: &ModelIr, module: &str) -> Result<(String, Vec<String>), Cl
         writeln!(
             source,
             "    revision_inputs: &{:?},",
-            revision_inputs(operation)
+            screen.revision_inputs
         )
         .expect("write to String");
         writeln!(
@@ -524,12 +516,11 @@ fn emit_model(model: &ModelIr, module: &str) -> Result<(String, Vec<String>), Cl
         )
         .expect("write to String");
         source.push_str("    supplied: &[\n");
-        for field in leaf_fields(&operation.input_fields) {
-            let kind = match field.path.as_str() {
-                "request_id" => "RequestId",
-                "idempotency_key" | "value.idempotency_key" => "IdempotencyKey",
-                "occurred_at" | "value.occurred_at" => "OccurredAt",
-                _ => continue,
+        for field in &screen.supplied {
+            let kind = match field.kind {
+                SuppliedKind::RequestId => "RequestId",
+                SuppliedKind::IdempotencyKey => "IdempotencyKey",
+                SuppliedKind::OccurredAt => "OccurredAt",
             };
             writeln!(source, "        screen::SuppliedField {{ path: {:?}, kind: screen::SuppliedKind::{kind} }},", field.path).expect("write to String");
         }
