@@ -126,6 +126,7 @@ The crate requires the PostgreSQL 18 binaries under `/usr/lib/postgresql/18/bin`
 The first call starts one private server for the test process.
 That server stops, and its directory is removed, when the test process exits, also after a panic.
 Dropping the returned value drops the database.
+A cleanup error fails the test. During an existing panic, cleanup reports the error without starting a second panic.
 `url()` returns its superuser URL, and `execute` runs SQL batches in it.
 
 Roles and server settings belong to the whole server.

@@ -159,7 +159,7 @@ impl Database {
 
 impl Drop for Database {
     fn drop(&mut self) {
-        let _ = psql(
+        if let Err(error) = psql(
             self.port,
             &self.password,
             "postgres",
@@ -167,7 +167,9 @@ impl Drop for Database {
                 "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)",
                 self.name
             )],
-        );
+        ) {
+            report_cleanup_failure("drop the owned test database", &error);
+        }
     }
 }
 
@@ -440,7 +442,17 @@ fn psql(port: u16, password: &str, database: &str, batches: &[&str]) -> anyhow::
 
 impl Drop for OwnedPostgres {
     fn drop(&mut self) {
-        let _ = self.stop();
+        if let Err(error) = self.stop() {
+            report_cleanup_failure("stop the owned PostgreSQL server", &error);
+        }
+    }
+}
+
+fn report_cleanup_failure(action: &str, error: &anyhow::Error) {
+    if std::thread::panicking() {
+        eprintln!("PostgreSQL test cleanup failed while unwinding: {action}: {error:#}");
+    } else {
+        panic!("PostgreSQL test cleanup failed: {action}: {error:#}");
     }
 }
 
@@ -522,6 +534,26 @@ mod tests {
                 .unwrap()
                 .trim(),
             "0"
+        );
+    }
+
+    #[test]
+    fn database_drop_failure_fails_normal_test_execution() {
+        let database = Database {
+            url: "postgresql://unused.invalid/invalid".to_owned(),
+            name: "invalid_cleanup_target".to_owned(),
+            port: 0,
+            password: "invalid".to_owned(),
+        };
+        let panic = std::panic::catch_unwind(|| drop(database)).unwrap_err();
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("cleanup failure panic has a message");
+        assert!(
+            message.contains("PostgreSQL test cleanup failed: drop the owned test database"),
+            "{message}"
         );
     }
 
