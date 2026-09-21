@@ -417,11 +417,31 @@ pub(super) async fn capture_failure(
         ),
         ("failure-pods.json", vec!["get", "pods", "-o", "json"]),
         (
-            "failure-nodeport.json",
+            "failure-flow-http-service.json",
+            vec!["get", "service", "flow-http", "-o", "json"],
+        ),
+        (
+            "failure-flow-http-endpointslices.json",
             vec![
                 "get",
-                "service,endpointslice",
-                "flow-http-nodeport",
+                "endpointslices",
+                "-l",
+                "kubernetes.io/service-name=flow-http",
+                "-o",
+                "json",
+            ],
+        ),
+        (
+            "failure-nodeport.json",
+            vec!["get", "service", "flow-http-nodeport", "-o", "json"],
+        ),
+        (
+            "failure-nodeport-endpointslices.json",
+            vec![
+                "get",
+                "endpointslices",
+                "-l",
+                "kubernetes.io/service-name=flow-http-nodeport",
                 "-o",
                 "json",
             ],

@@ -287,3 +287,26 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
     drop(observer);
     server.stop().unwrap();
 }
+
+#[test]
+fn http_readiness_requires_a_ready_backend_on_the_actual_service_port() {
+    let service =
+        json!({"metadata":{"name":"flow-http"},"spec":{"ports":[{"name":"http","targetPort":80}]}});
+    let mut slices = json!({"items":[{
+        "metadata":{"labels":{"kubernetes.io/service-name":"flow-http"}},
+        "ports":[{"name":"http","port":80,"protocol":"TCP"}],
+        "endpoints":[{"addresses":["10.0.0.2"],"conditions":{"ready":false}}]
+    }]});
+    assert!(super::ready_http_backends(&service, &slices).is_empty());
+    slices["items"][0]["endpoints"][0]["conditions"]["ready"] = json!(true);
+    assert_eq!(super::ready_http_backends(&service, &slices).len(), 1);
+    slices["items"][0]["endpoints"][0]["conditions"]["terminating"] = json!(true);
+    assert!(super::ready_http_backends(&service, &slices).is_empty());
+    slices["items"][0]["endpoints"][0]["conditions"]["terminating"] = json!(false);
+    slices["items"][0]["metadata"]["labels"]["kubernetes.io/service-name"] = json!("other");
+    assert!(super::ready_http_backends(&service, &slices).is_empty());
+    slices["items"][0]["metadata"]["labels"]["kubernetes.io/service-name"] = json!("flow-http");
+    slices["items"][0]["ports"][0]["port"] = json!(null);
+    assert!(super::ready_http_backends(&service, &slices).is_empty());
+    assert!(super::ready_http_backends(&service, &json!({"items":[]})).is_empty());
+}

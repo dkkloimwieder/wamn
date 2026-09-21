@@ -172,7 +172,10 @@ wamn-ctl deploy-release \
 The interaction URL must reach a POST operation in this deployment through its configured ingress.
 The selected manifest must permit a platform access token for that route.
 Keep the token in the private bearer file, outside qualified artifacts.
-If `--http-workload` is supplied, the command waits for that WorkloadDeployment to become ready before the request.
+If `--http-workload` is supplied, the command waits for that WorkloadDeployment and its same-named Service to become ready before the request.
+It requires a ready EndpointSlice backend and a reachable TCP endpoint.
+Readiness polls for up to 60 seconds. The authenticated POST runs once.
+Readiness failure reports the Service, EndpointSlices, selected backends, target port, and pod readiness.
 The command requires an HTTP success response and an exact JSON result.
 It refuses redirects and does not repeat the application request automatically.
 

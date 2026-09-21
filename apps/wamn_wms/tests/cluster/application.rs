@@ -71,7 +71,29 @@ pub(super) async fn prepare_application(
     )
     .await?;
     let (project, task) = wamn_control::dev::environment::connect(&route.database_url).await?;
-    let seeded = seed_fixture(project.as_ref(), 1).await;
+    let seeded = async {
+        let row = project
+            .query_one(
+                "SELECT current_database(), to_regclass('wamn_run.run_queue') IS NOT NULL",
+                &[],
+            )
+            .await?;
+        let queue_present: bool = row.get(1);
+        std::fs::write(
+            evidence.join("run-plane-state.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "database": row.get::<_, String>(0),
+                "wamn_run.run_queue": queue_present,
+                "owner": "reconcile_run_plane(schema=wamn_run)",
+            }))?,
+        )?;
+        anyhow::ensure!(
+            queue_present,
+            "the host project database lacks wamn_run.run_queue after reconciliation"
+        );
+        seed_fixture(project.as_ref(), 1).await
+    }
+    .await;
     drop(project);
     task.abort();
     seeded?;

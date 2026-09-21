@@ -285,6 +285,7 @@ async fn deploy(
             None,
         )
         .await?;
+        wait_http_backend(args, workload).await?;
     }
     authenticated_interaction(
         &args.interaction_url,
@@ -303,6 +304,120 @@ async fn deploy(
         release: snapshot.manifest.release.clone(),
         manifest_digest: snapshot.carrier.manifest_digest.as_str().to_owned(),
     })
+}
+
+// Readiness is safe to poll. The authenticated business request remains one-shot.
+async fn wait_http_backend(args: &DeployRequest, service_name: &str) -> anyhow::Result<()> {
+    let url = url::Url::parse(&args.interaction_url)?;
+    let host = url.host_str().context("interaction URL has no host")?;
+    let port = url
+        .port_or_known_default()
+        .context("interaction URL has no port")?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let observed = async {
+            let service: Value = serde_json::from_slice(
+                &kubectl(
+                    args,
+                    &[
+                        "get",
+                        "service",
+                        service_name,
+                        "-o",
+                        "json",
+                        "--request-timeout=5s",
+                    ],
+                    None,
+                )
+                .await?,
+            )?;
+            let selector = format!("kubernetes.io/service-name={service_name}");
+            let slices: Value = serde_json::from_slice(
+                &kubectl(
+                    args,
+                    &[
+                        "get",
+                        "endpointslices",
+                        "-l",
+                        &selector,
+                        "-o",
+                        "json",
+                        "--request-timeout=5s",
+                    ],
+                    None,
+                )
+                .await?,
+            )?;
+            let selected = ready_http_backends(&service, &slices);
+            anyhow::Ok((service, slices, selected))
+        }
+        .await;
+        let mut transport = None;
+        if let Ok((_, _, selected)) = &observed
+            && !selected.is_empty()
+        {
+            match tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect((host, port)),
+            )
+            .await
+            {
+                Ok(Ok(_)) => return Ok(()),
+                result => transport = Some(format!("{result:?}")),
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let pods = kubectl(
+                args,
+                &["get", "pods", "-o", "json", "--request-timeout=5s"],
+                None,
+            )
+            .await;
+            anyhow::bail!(
+                "HTTP backend readiness failed for Service {service_name}, target {host}:{port}; service, EndpointSlices, selected backends: {observed:?}; transport: {transport:?}; pod readiness: {}",
+                match pods {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    Err(error) => format!("capture failed: {error:#}"),
+                }
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+fn ready_http_backends(service: &Value, slices: &Value) -> Vec<Value> {
+    let mut selected = Vec::new();
+    for slice in slices["items"].as_array().into_iter().flatten() {
+        if slice["metadata"]["labels"]["kubernetes.io/service-name"] != service["metadata"]["name"]
+        {
+            continue;
+        }
+        for port in slice["ports"].as_array().into_iter().flatten() {
+            if !port["port"]
+                .as_u64()
+                .is_some_and(|p| (1..=65535).contains(&p))
+                || port["protocol"].as_str().is_some_and(|p| p != "TCP")
+                || !service["spec"]["ports"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|p| p["name"] == port["name"])
+            {
+                continue;
+            }
+            for endpoint in slice["endpoints"].as_array().into_iter().flatten() {
+                if endpoint["conditions"]["ready"] == true
+                    && endpoint["conditions"]["terminating"] != true
+                    && endpoint["addresses"]
+                        .as_array()
+                        .is_some_and(|a| !a.is_empty())
+                {
+                    selected.push(serde_json::json!({"endpoint": endpoint, "port": port}));
+                }
+            }
+        }
+    }
+    selected
 }
 
 async fn claim(transaction: &Transaction<'_>, release: &ServingRelease) -> anyhow::Result<()> {
