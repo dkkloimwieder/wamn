@@ -518,6 +518,22 @@ cargo test --locked --offline -p wamn-control --lib \
 
 The test requires SQLx CLI 0.9.0 and the PostgreSQL 18 binaries.
 
+### Generated TypeScript bindings
+
+The generated TypeScript is type-checked by hand, not by a test and not by a build.
+Nothing in `cargo build` or `cargo test` needs Node.
+To type-check the bindings for the platform fixture, run:
+
+```bash
+cargo run --locked --offline -p wamn-schema-generator --example check_client_ts
+```
+
+The command emits the fixture bindings into a temporary directory, writes a strict `tsconfig.json` beside them, and runs `tsc --project` on that directory.
+Strict here means `strict`, `noImplicitAny`, `strictNullChecks`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, and `noUnusedLocals`.
+Pass a directory as the one argument to keep the emitted source for reading.
+The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and names it.
+It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
+
 ## Cleanup
 
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.
