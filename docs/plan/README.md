@@ -7,3 +7,4 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Human identity and login](identity-plan.md): Incremental password login, later account lifecycle, and PAT-free sensitive operations with planning at each epic start.
 - [Operator UI](operator-ui.md): Deferred client and screen capabilities.
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
+- [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.

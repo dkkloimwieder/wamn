@@ -7,6 +7,8 @@ This page retains only deferred extensions from the approved client designs.
 
 ## Web client
 
+The [web operator client](web-operator-client.md) plan now owns this work, and its TypeScript epic reads the requirements below at its start.
+
 TypeScript generation remains deferred under `wamn-10yt.5.1` until a concrete web consumer requires it.
 It must consume the same effective-release client-contract representation as the Rust emitter.
 It must not infer deployment hosts or operation routes from package names.
