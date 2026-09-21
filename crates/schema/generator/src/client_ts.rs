@@ -36,7 +36,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::client_ir::{ClientContractIr, FieldIr, ModelIr, OperationIr, ReplayIr, SortIr};
+use crate::client_ir::{
+    ClientContractIr, FieldIr, ModelIr, OperationIr, ReplayIr, SORT_DIRECTION_INPUT,
+    SORT_FIELD_INPUT, SortIr,
+};
 use crate::generate::GeneratedFile;
 
 /// Why a TypeScript client could not be emitted.
@@ -844,13 +847,6 @@ fn write_result(
     writeln!(source, "}}").expect("write");
     Ok(())
 }
-
-/// The input path that carries the sort field, fixed by the query input
-/// contract that `generate/contracts.rs` writes.
-const SORT_FIELD_INPUT: &str = "sort.field";
-
-/// The input path that carries the sort direction, fixed the same way.
-const SORT_DIRECTION_INPUT: &str = "sort.direction";
 
 /// The closed value domain of one field, when the release declares one.
 ///

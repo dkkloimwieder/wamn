@@ -10,7 +10,8 @@
 //! Rust value: generation does not serialize it, and it carries no version.
 
 use crate::client_ir::{
-    ClientContractIr, FieldIr, FilterIr, LimitIr, ModelIr, OperationIr, SortIr, leaf_fields,
+    CURSOR_INPUT, ClientContractIr, FILTER_PREFIX, FieldIr, FilterIr, LIMIT_INPUT, LimitIr,
+    ModelIr, OperationIr, SORT_DIRECTION_INPUT, SORT_FIELD_INPUT, SortIr, leaf_fields,
     revision_inputs,
 };
 
@@ -28,9 +29,6 @@ const PRIVATE_KIND: &str = "event_handler";
 
 /// Operation kinds that read without changing a record.
 const READ_KINDS: [&str; 3] = ["get", "query", "projection"];
-
-/// The input path that carries a page cursor.
-const CURSOR_INPUT: &str = "cursor";
 
 /// What an operator does on one screen.
 ///
@@ -129,16 +127,45 @@ pub enum Rows {
 }
 
 /// How a screen asks the release for the next page of rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The page controls are input, and they are not the operator's own fields, so
+/// each one states the exact input path that carries it and
+/// [`ScreenPlan::inputs`] leaves that path out. An emitter that renders a page
+/// control reads it here. An emitter that renders the operator's fields reads
+/// `inputs` and gets no page control by accident.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paging<'a> {
     /// Declared filters, ordered by field.
     pub filters: &'a [FilterIr],
+    /// Input paths that carry the declared filters, in contract order.
+    pub filter_inputs: Vec<&'a str>,
     /// Sortable fields and the permitted directions.
     pub sort: Option<&'a SortIr>,
+    /// Input path that carries the sort field.
+    pub sort_field_input: Option<&'a str>,
+    /// Input path that carries the sort direction.
+    pub sort_direction_input: Option<&'a str>,
     /// Row limit bounds and default.
     pub limit: Option<&'a LimitIr>,
+    /// Input path that carries the page size.
+    pub limit_input: Option<&'a str>,
     /// Input path that carries the cursor, when the release serves pages.
     pub cursor_input: Option<&'a str>,
+}
+
+impl<'a> Paging<'a> {
+    /// Every input path that carries a page control, in one list.
+    #[must_use]
+    pub fn inputs(&self) -> Vec<&'a str> {
+        self.filter_inputs
+            .iter()
+            .copied()
+            .chain(self.sort_field_input)
+            .chain(self.sort_direction_input)
+            .chain(self.limit_input)
+            .chain(self.cursor_input)
+            .collect()
+    }
 }
 
 /// Why a result row can open another screen.
@@ -343,39 +370,49 @@ impl<'a> ScreenPlan<'a> {
             });
         let revision_inputs = revision_inputs(operation);
         let input_leaves = leaf_fields(&operation.input_fields);
-        let cursor_input = (result_class == Some("page")
-            && input_leaves.iter().any(|field| field.path == CURSOR_INPUT))
-        .then_some(CURSOR_INPUT);
+        let declared = |path: &str| input_leaves.iter().any(|field| field.path == path);
+        let cursor_input =
+            (result_class == Some("page") && declared(CURSOR_INPUT)).then_some(CURSOR_INPUT);
+        let rows = match result_class {
+            Some("bounded_list") => Rows::List { key: "rows" },
+            Some("page") => Rows::List { key: "item" },
+            _ => Rows::Single,
+        };
+        let declared_paging = operation.paging.as_ref();
+        let sort = declared_paging.and_then(|paging| paging.sort.as_ref());
+        let limit = declared_paging.and_then(|paging| paging.limit.as_ref());
+        let filters = declared_paging.map_or(&[][..], |paging| paging.filters.as_slice());
+        let paging = (declared_paging.is_some() || cursor_input.is_some()).then(|| Paging {
+            filters,
+            filter_inputs: input_leaves
+                .iter()
+                .filter(|field| {
+                    filters
+                        .iter()
+                        .any(|filter| filter_input(&field.path, &filter.field))
+                })
+                .map(|field| field.path.as_str())
+                .collect(),
+            sort,
+            sort_field_input: (sort.is_some() && declared(SORT_FIELD_INPUT))
+                .then_some(SORT_FIELD_INPUT),
+            sort_direction_input: (sort.is_some() && declared(SORT_DIRECTION_INPUT))
+                .then_some(SORT_DIRECTION_INPUT),
+            limit,
+            limit_input: (limit.is_some() && declared(LIMIT_INPUT)).then_some(LIMIT_INPUT),
+            cursor_input,
+        });
+        let page_controls = paging.as_ref().map(Paging::inputs).unwrap_or_default();
         let inputs = input_leaves
             .iter()
             .filter(|field| {
                 let path = field.path.as_str();
                 !supplied.iter().any(|field| field.path == path)
                     && !revision_inputs.contains(&path)
-                    && cursor_input != Some(path)
+                    && !page_controls.contains(&path)
             })
             .copied()
             .collect();
-        let rows = match result_class {
-            Some("bounded_list") => Rows::List { key: "rows" },
-            Some("page") => Rows::List { key: "item" },
-            _ => Rows::Single,
-        };
-        let paging = (operation.paging.is_some() || cursor_input.is_some()).then(|| Paging {
-            filters: operation
-                .paging
-                .as_ref()
-                .map_or(&[][..], |paging| paging.filters.as_slice()),
-            sort: operation
-                .paging
-                .as_ref()
-                .and_then(|paging| paging.sort.as_ref()),
-            limit: operation
-                .paging
-                .as_ref()
-                .and_then(|paging| paging.limit.as_ref()),
-            cursor_input,
-        });
         Self {
             model,
             name: &operation.name,
@@ -455,6 +492,15 @@ fn row_links<'a>(from: &Target<'a>, targets: &[Target<'a>]) -> Vec<RowLink<'a>> 
             })
         })
         .collect()
+}
+
+/// Whether one input path carries the named filter.
+///
+/// The query input contract writes a filter under `filter.<field>`, and an
+/// array filter's leaf keeps the `[]` the IR adds.
+fn filter_input(path: &str, field: &str) -> bool {
+    path.strip_prefix(FILTER_PREFIX)
+        .is_some_and(|rest| rest == field || rest.trim_end_matches("[]") == field)
 }
 
 /// Select the screen role for one contract shape.

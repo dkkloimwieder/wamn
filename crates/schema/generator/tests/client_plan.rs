@@ -332,10 +332,9 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
         "request_id is supplied and expected_edit_version is a revision"
     );
     assert_eq!(paths(&screen(&plan, "create").inputs), ["code", "note"]);
-    assert_eq!(
-        paths(&screen(&plan, "query").inputs),
-        ["filter.code[]", "limit", "sort.direction", "sort.field"],
-        "the cursor is dropped, and wamn-lajk.5 names the other page controls"
+    assert!(
+        screen(&plan, "query").inputs.is_empty(),
+        "every input of the fixture query is a page control or a supplied value"
     );
     assert_eq!(
         paths(&screen(&plan, "update").inputs),
@@ -345,6 +344,7 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
     assert_eq!(
         screen(&plan, "query")
             .paging
+            .as_ref()
             .expect("a paged query declares paging")
             .cursor_input,
         Some("cursor"),
@@ -391,6 +391,7 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
     let plan = ClientPlan::from_ir(&ir);
     let paging = screen(&plan, "query")
         .paging
+        .as_ref()
         .expect("the query declares filters, sort and a limit");
     assert_eq!(
         paging
@@ -410,9 +411,69 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
         Some("cursor"),
         "the served query publishes a cursor input"
     );
+    assert_eq!(paging.filter_inputs, ["filter.code[]"]);
+    assert_eq!(paging.sort_field_input, Some("sort.field"));
+    assert_eq!(paging.sort_direction_input, Some("sort.direction"));
+    assert_eq!(paging.limit_input, Some("limit"));
+    assert_eq!(
+        paging.inputs(),
+        [
+            "filter.code[]",
+            "sort.field",
+            "sort.direction",
+            "limit",
+            "cursor"
+        ],
+        "every page control names the input path that carries it"
+    );
     for name in ["archive", "create", "delete", "get", "update"] {
         assert!(screen(&plan, name).paging.is_none(), "{name}");
     }
+}
+
+/// A page control is input, and it is not one of the operator's own fields.
+/// An emitter that renders `inputs` must get no page control by accident.
+#[test]
+fn a_screen_names_its_page_controls_apart_from_the_operator_fields() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    let query = screen(&plan, "query");
+    assert!(query.inputs.is_empty(), "the fixture query is all controls");
+
+    let mut mixed = release();
+    let query = operation(&mut mixed, "query");
+    let template = query.input_fields[0].clone();
+    query.input_fields.push(FieldIr {
+        path: "note".to_owned(),
+        children: Vec::new(),
+        revision: false,
+        ..template
+    });
+    let plan = ClientPlan::from_ir(&mixed);
+    assert_eq!(
+        paths(&screen(&plan, "query").inputs),
+        ["note"],
+        "an operator field stays, and every page control leaves"
+    );
+
+    let mut unsorted = release();
+    operation(&mut unsorted, "query")
+        .paging
+        .as_mut()
+        .expect("the query pages")
+        .sort = None;
+    let plan = ClientPlan::from_ir(&unsorted);
+    let paging = screen(&plan, "query")
+        .paging
+        .as_ref()
+        .expect("the query still filters and limits");
+    assert_eq!(paging.sort_field_input, None);
+    assert_eq!(paging.sort_direction_input, None);
+    assert_eq!(
+        paths(&screen(&plan, "query").inputs),
+        ["sort.direction", "sort.field"],
+        "a control the contract does not declare is ordinary input"
+    );
 }
 
 #[test]

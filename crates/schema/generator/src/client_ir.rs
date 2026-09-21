@@ -39,6 +39,24 @@ use crate::client_fields::{fields_of, input_fields_of, schema_fields};
 /// than guess at a field's meaning.
 pub const CLIENT_IR_FORMAT_VERSION: u32 = 3;
 
+/// The input path that carries a page cursor.
+///
+/// This path and the four below it are fixed by the query input contract that
+/// `generate/contracts.rs` writes, so every consumer reads the same spelling.
+pub const CURSOR_INPUT: &str = "cursor";
+
+/// The input path that carries the page size.
+pub const LIMIT_INPUT: &str = "limit";
+
+/// The input path that carries the sort field.
+pub const SORT_FIELD_INPUT: &str = "sort.field";
+
+/// The input path that carries the sort direction.
+pub const SORT_DIRECTION_INPUT: &str = "sort.direction";
+
+/// The prefix of every filter input path.
+pub const FILTER_PREFIX: &str = "filter.";
+
 /// Why a contract projection could not be read as an IR.
 #[derive(Debug)]
 pub struct ClientIrError {
