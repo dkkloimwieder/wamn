@@ -95,8 +95,8 @@ pub(crate) fn client_release() -> ClientContractIr {
             RouteIr {
                 method: "POST".to_owned(),
                 template: format!("/widget/{name}"),
-                input_schema: (name == "update").then(|| {
-                    json!({
+                input_schema: match name {
+                    "update" => Some(json!({
                         "type": "array",
                         "items": {"type": "object", "properties": {"change": {
                         "type": "object", "properties": {"note": {
@@ -107,8 +107,35 @@ pub(crate) fn client_release() -> ClientContractIr {
                             "x-wamn-explicit-null": "invalid_input"
                         }}
                         }}}
-                    })
-                }),
+                    })),
+                    // The page controls a served query publishes. The release
+                    // states no domain for the sort, which the paging contract
+                    // holds instead.
+                    "query" => Some(json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["request_id"],
+                            "properties": {
+                                "request_id": {"type": "string"},
+                                "cursor": {"type": "string"},
+                                "limit": {"type": "integer"},
+                                "filter": {"type": "object", "properties": {
+                                    "code": {"type": "array", "items": {"type": "string"}}
+                                }},
+                                "sort": {
+                                    "type": "object",
+                                    "required": ["field", "direction"],
+                                    "properties": {
+                                        "field": {"type": "string"},
+                                        "direction": {"type": "string"}
+                                    }
+                                }
+                            }
+                        }
+                    })),
+                    _ => None,
+                },
                 terminal_operation: Some(identity),
                 direct: true,
                 response: ResponseIr::default(),

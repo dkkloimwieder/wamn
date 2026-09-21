@@ -165,13 +165,22 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
     assert!(
         widget.contains(concat!(
             "export const WIDGET_QUERY_REQUEST_FIELDS: FieldMap = {\n",
+            "  \"cursor\": \"cursor\",\n",
             "  \"filter\": {\n",
             "    member: \"filter\",\n",
             "    fields: {\n",
             "      \"code\": \"code\",\n",
             "    },\n",
             "  },\n",
+            "  \"limit\": \"limit\",\n",
             "  \"request_id\": \"requestId\",\n",
+            "  \"sort\": {\n",
+            "    member: \"sort\",\n",
+            "    fields: {\n",
+            "      \"direction\": \"direction\",\n",
+            "      \"field\": \"field\",\n",
+            "    },\n",
+            "  },\n",
             "};\n",
         )),
         "a declared object carries the members inside it"
@@ -224,6 +233,55 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
         source(&files, "generated/client-ts/wire.ts")
             .contains("export function fromWire(value: unknown, fields: FieldMap): JsonValue {"),
         "one generic pair reads a map"
+    );
+}
+
+/// The second smaller point of the Epic 2 review. The IR holds the declared
+/// values, and a member that accepts three spellings is not a `string`.
+#[test]
+fn a_declared_value_domain_types_as_a_union_of_its_literals() {
+    let ir = release();
+    let files = emit_ts_client(&ir).unwrap();
+    let widget = widget(&files);
+
+    assert!(
+        widget.contains("  readonly code: \"priority\" | \"standard\";\n"),
+        "a model enum field types as its domain"
+    );
+    assert!(
+        widget.contains("  readonly outcome: \"deleted\" | null;\n"),
+        "a delete states the one outcome it exposes"
+    );
+    assert!(
+        widget.contains(concat!(
+            "export interface WidgetQueryRequestSort {\n",
+            "  /** `text` */\n",
+            "  readonly direction: \"ascending\" | \"descending\";\n",
+            "  /** `text` */\n",
+            "  readonly field: \"created_at\";\n",
+            "}\n",
+        )),
+        "the sort takes its domain from the paging contract, not from the release schema"
+    );
+    assert!(
+        widget.contains("  readonly cursor?: string;\n"),
+        "an opaque cursor keeps its type"
+    );
+
+    let mut widened = release();
+    let sort = widened.models[0]
+        .operations
+        .iter_mut()
+        .find(|operation| operation.name == "query")
+        .and_then(|operation| operation.paging.as_mut())
+        .and_then(|paging| paging.sort.as_mut())
+        .expect("the fixture query sorts");
+    sort.fields.push("code".to_owned());
+    let widened = emit_ts_client(&widened).unwrap();
+    assert!(
+        source(&widened, "generated/client-ts/widget.ts")
+            .contains("  readonly field: \"created_at\" | \"code\";\n"),
+        "the union states exactly what the contract permits"
     );
 }
 

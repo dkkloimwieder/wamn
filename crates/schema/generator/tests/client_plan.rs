@@ -332,23 +332,16 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
         "request_id is supplied and expected_edit_version is a revision"
     );
     assert_eq!(paths(&screen(&plan, "create").inputs), ["code", "note"]);
-    assert_eq!(paths(&screen(&plan, "query").inputs), ["filter.code[]"]);
+    assert_eq!(
+        paths(&screen(&plan, "query").inputs),
+        ["filter.code[]", "limit", "sort.direction", "sort.field"],
+        "the cursor is dropped, and wamn-lajk.5 names the other page controls"
+    );
     assert_eq!(
         paths(&screen(&plan, "update").inputs),
         ["change.code", "change.note"]
     );
 
-    let mut paged = release();
-    let query = operation(&mut paged, "query");
-    let template = query.input_fields[0].clone();
-    query.input_fields.push(FieldIr {
-        path: "cursor".to_owned(),
-        children: Vec::new(),
-        revision: false,
-        ..template
-    });
-    let plan = ClientPlan::from_ir(&paged);
-    assert_eq!(paths(&screen(&plan, "query").inputs), ["filter.code[]"]);
     assert_eq!(
         screen(&plan, "query")
             .paging
@@ -356,6 +349,19 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
             .cursor_input,
         Some("cursor"),
         "a page result with a cursor input pages"
+    );
+
+    let mut bounded = release();
+    operation(&mut bounded, "query")
+        .route
+        .as_mut()
+        .expect("the query serves a route")
+        .response
+        .result_class = Some("bounded_list".to_owned());
+    let plan = ClientPlan::from_ir(&bounded);
+    assert!(
+        paths(&screen(&plan, "query").inputs).contains(&"cursor"),
+        "a bounded list has no page to ask for, so its cursor input is ordinary"
     );
 }
 
@@ -400,8 +406,9 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
     let limit = paging.limit.expect("the query limits its rows");
     assert_eq!((limit.default, limit.minimum, limit.maximum), (100, 1, 100));
     assert_eq!(
-        paging.cursor_input, None,
-        "the fixture query declares no cursor input"
+        paging.cursor_input,
+        Some("cursor"),
+        "the served query publishes a cursor input"
     );
     for name in ["archive", "create", "delete", "get", "update"] {
         assert!(screen(&plan, name).paging.is_none(), "{name}");

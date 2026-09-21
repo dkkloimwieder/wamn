@@ -32,7 +32,7 @@ export interface PurchaseOrderGetResult {
   /** `int64` */
   readonly rowVersion: Int64;
   /** `text` */
-  readonly status: string;
+  readonly status: "cancelled" | "complete" | "open";
   /** `uuid` */
   readonly supplierId: Uuid;
   /** `timestamptz` */
@@ -110,16 +110,16 @@ export interface PurchaseOrderQueryRequest {
 
 export interface PurchaseOrderQueryRequestFilter {
   /** `array`, omittable */
-  readonly status?: readonly string[];
+  readonly status?: readonly ("cancelled" | "complete" | "open")[];
   /** `array`, omittable */
   readonly supplierId?: readonly Uuid[];
 }
 
 export interface PurchaseOrderQueryRequestSort {
   /** `text` */
-  readonly direction: string;
+  readonly direction: "ascending" | "descending";
   /** `text` */
-  readonly field: string;
+  readonly field: "created_at" | "purchase_order_number" | "status";
 }
 
 /** What `wamn-receiving:purchase-order/query@1.0.0` calls its input members. */
@@ -156,7 +156,7 @@ export interface PurchaseOrderQueryRow {
   /** `int64` */
   readonly rowVersion: Int64;
   /** `text` */
-  readonly status: string;
+  readonly status: "cancelled" | "complete" | "open";
   /** `uuid` */
   readonly supplierId: Uuid;
   /** `timestamptz` */
@@ -274,7 +274,7 @@ export interface PurchaseOrderUpdateResult {
   /** `int64` */
   readonly rowVersion: Int64;
   /** `text` */
-  readonly status: string;
+  readonly status: "cancelled" | "complete" | "open";
   /** `uuid` */
   readonly supplierId: Uuid;
   /** `timestamptz` */

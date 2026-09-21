@@ -36,7 +36,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::client_ir::{ClientContractIr, FieldIr, ModelIr, OperationIr, ReplayIr};
+use crate::client_ir::{ClientContractIr, FieldIr, ModelIr, OperationIr, ReplayIr, SortIr};
 use crate::generate::GeneratedFile;
 
 /// Why a TypeScript client could not be emitted.
@@ -593,12 +593,17 @@ fn emit_operation(
     let request_fields = format!("{}_REQUEST_FIELDS", route_const.trim_end_matches("_ROUTE"));
     let result_fields_const = format!("{}_RESULT_FIELDS", route_const.trim_end_matches("_ROUTE"));
 
+    let sort = operation
+        .paging
+        .as_ref()
+        .and_then(|paging| paging.sort.as_ref());
     writeln!(source, "\n/** Input for `{}`. */", operation.operation).expect("write");
     write_interface(
         source,
         &format!("{type_stem}Request"),
         &operation.input_fields,
         used,
+        sort,
     )?;
     writeln!(
         source,
@@ -816,11 +821,11 @@ fn write_result(
         Some("page") => true,
         _ => {
             writeln!(source, "\n/** Result of `{operation}`. */").expect("write");
-            return write_interface(source, &format!("{type_stem}Result"), fields, used);
+            return write_interface(source, &format!("{type_stem}Result"), fields, used, None);
         }
     };
     writeln!(source, "\n/** One row of `{operation}`. */").expect("write");
-    write_interface(source, &format!("{type_stem}Row"), fields, used)?;
+    write_interface(source, &format!("{type_stem}Row"), fields, used, None)?;
     writeln!(source, "\n/** Result of `{operation}`. */").expect("write");
     writeln!(source, "export interface {type_stem}Result {{").expect("write");
     if paged {
@@ -840,11 +845,51 @@ fn write_result(
     Ok(())
 }
 
+/// The input path that carries the sort field, fixed by the query input
+/// contract that `generate/contracts.rs` writes.
+const SORT_FIELD_INPUT: &str = "sort.field";
+
+/// The input path that carries the sort direction, fixed the same way.
+const SORT_DIRECTION_INPUT: &str = "sort.direction";
+
+/// The closed value domain of one field, when the release declares one.
+///
+/// A field states its own domain. The sortable fields and the permitted
+/// directions sit beside the input, in the paging contract, so the sort is
+/// passed in and matched by its exact path.
+fn domain<'a>(field: &'a FieldIr, sort: Option<&'a SortIr>) -> Option<&'a [String]> {
+    if !field.values.is_empty() {
+        return Some(field.values.as_slice());
+    }
+    match (sort, field.path.as_str()) {
+        (Some(sort), SORT_FIELD_INPUT) => Some(sort.fields.as_slice()),
+        (Some(sort), SORT_DIRECTION_INPUT) => Some(sort.directions.as_slice()),
+        _ => None,
+    }
+}
+
+/// One scalar's spelling: its declared domain, or the type map.
+fn scalar_spelling(
+    type_name: &str,
+    values: Option<&[String]>,
+    used: &mut BTreeSet<&'static str>,
+) -> String {
+    match values {
+        Some(values) if !values.is_empty() => values
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect::<Vec<_>>()
+            .join(" | "),
+        _ => record(ts_type(type_name).unwrap_or("JsonValue"), used).to_owned(),
+    }
+}
+
 fn write_interface(
     source: &mut String,
     name: &str,
     fields: &[FieldIr],
     used: &mut BTreeSet<&'static str>,
+    sort: Option<&SortIr>,
 ) -> Result<(), ClientTsError> {
     writeln!(source, "export interface {name} {{").expect("write");
     let mut nested = Vec::new();
@@ -867,18 +912,21 @@ fn write_interface(
             }
             "array" if !field.children.is_empty() => {
                 let item = if field.children.len() == 1 && field.children[0].path == field.path {
-                    record(
-                        ts_type(&field.children[0].type_name).unwrap_or("JsonValue"),
-                        used,
-                    )
-                    .to_owned()
+                    let child = &field.children[0];
+                    let item = scalar_spelling(&child.type_name, domain(child, sort), used);
+                    // A union needs its own parentheses inside an array.
+                    if item.contains(" | ") {
+                        format!("({item})")
+                    } else {
+                        item
+                    }
                 } else {
                     nested.push((child_name.clone(), field.children.as_slice()));
                     child_name
                 };
                 format!("readonly {item}[]")
             }
-            other => record(ts_type(other).unwrap_or("JsonValue"), used).to_owned(),
+            other => scalar_spelling(other, domain(field, sort), used),
         };
         if field.nullable {
             spelling = format!("{spelling} | null");
@@ -900,7 +948,7 @@ fn write_interface(
     writeln!(source, "}}").expect("write");
     for (child_name, children) in nested {
         source.push('\n');
-        write_interface(source, &child_name, children, used)?;
+        write_interface(source, &child_name, children, used, sort)?;
     }
     Ok(())
 }

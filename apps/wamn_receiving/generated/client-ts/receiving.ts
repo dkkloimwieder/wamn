@@ -40,7 +40,7 @@ export interface ReceivingLoadPurchaseOrderHistoryRow {
   /** `int64` */
   readonly headPosition: Int64;
   /** `text` */
-  readonly kind: string;
+  readonly kind: "delete" | "insert" | "update";
   /** `text` */
   readonly operation: string;
   /** `int64` */
@@ -144,7 +144,7 @@ export interface ReceivingLoadReceiptScreenRow {
   /** `text` */
   readonly purchaseOrderNumber: string;
   /** `text` */
-  readonly purchaseOrderStatus: string;
+  readonly purchaseOrderStatus: "cancelled" | "complete" | "open";
   /** `numeric` */
   readonly receivedQuantity: Numeric | null;
   /** `numeric` */
@@ -279,7 +279,7 @@ export interface ReceivingRecordReceiptResult {
   /** `uuid` */
   readonly purchaseOrderId: Uuid;
   /** `text` */
-  readonly purchaseOrderStatus: string;
+  readonly purchaseOrderStatus: "complete" | "open";
   /** `uuid` */
   readonly receiptId: Uuid;
   /** `int64` */
