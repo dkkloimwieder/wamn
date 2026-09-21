@@ -65,19 +65,8 @@ pub(super) async fn components_and_tools(
             )
             .await?;
         }
-        let mut tools = Command::new("cargo");
-        tools.args([
-            "build",
-            "--locked",
-            "-p",
-            "wamn-ctl",
-            "-p",
-            "wamn-identity",
-            "-p",
-            "wamn-cdc-reader",
-            "-p",
-            "wamn-scenario-worker",
-        ]);
+        let mut tools = Command::new(repository.join("tools/delivery-owned"));
+        tools.arg("build-native").arg(&target);
         run_build(
             &mut tools,
             repository,

@@ -23,6 +23,11 @@ A change result records its source state and cannot substitute for release quali
 ## Candidate qualification
 
 Build the selected application artifacts through the existing [build owners](building.md).
+Build native delivery binaries with `tools/delivery-owned build-native "$DELIVERY_TARGET"` before preparing the candidate.
+The application build owners and qualification use this same command.
+It selects the host and four helper packages together, with locked dependencies, default features, and the development profile.
+It fixes compiler flags and the build environment, disables incremental compilation, and normalizes output-directory paths.
+Reproduction requires the same clean checkout path, pinned Rust version, native tools, and Cargo configuration.
 Mint its release through the existing release command.
 Upload native images as inactive artifacts when the disposable cluster needs registry access.
 Record their immutable `repository@sha256:digest` references.

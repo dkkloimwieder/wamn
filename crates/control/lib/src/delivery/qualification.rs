@@ -256,20 +256,12 @@ async fn qualify_candidate(
     .await?;
     run(
         root,
-        &strings(&[
-            "cargo",
-            "build",
-            "--locked",
-            "--offline",
-            "-p",
-            "wamn-ctl",
-            "-p",
-            "wamn-identity",
-            "-p",
-            "wamn-cdc-reader",
-            "-p",
-            "wamn-scenario-worker",
-        ]),
+        &[
+            "bash".to_owned(),
+            "tools/delivery-owned".to_owned(),
+            "build-native".to_owned(),
+            target.display().to_string(),
+        ],
         &target_env,
         &mut result.checks,
     )

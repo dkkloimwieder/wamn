@@ -58,19 +58,8 @@ pub(super) async fn build(
     prepare(&mut guests, repository, target);
     run(&mut guests, evidence, "guests").await?;
 
-    let mut native = Command::new("cargo");
-    native.args(["build", "--locked", "--offline"]);
-    native.args(["-p", "wamn-host"]);
-    native.args([
-        "-p",
-        "wamn-ctl",
-        "-p",
-        "wamn-identity",
-        "-p",
-        "wamn-cdc-reader",
-        "-p",
-        "wamn-scenario-worker",
-    ]);
+    let mut native = Command::new(repository.join("tools/delivery-owned"));
+    native.arg("build-native").arg(target);
     prepare(&mut native, repository, target);
     run(&mut native, evidence, "native").await?;
     if generated_terminal {

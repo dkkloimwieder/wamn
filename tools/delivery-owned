@@ -4,6 +4,25 @@ set -euo pipefail
 umask 077
 action=${1:?receiving, wms, native-registry, load-native, remove-native, or render-host}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ $action == build-native ]]; then
+  target=${2:?absolute native target directory}
+  [[ $target == /* ]] || { printf 'The native target directory must be absolute.\n' >&2; exit 64; }
+  mkdir -p -- "$target"
+  target=$(cd -- "$target" && pwd -P)
+  cd "$repository"
+  # One feature graph for candidate creation and qualification. Keep debug lines,
+  # but remove the output directory from Rust and C compilation paths.
+  flags=$'-C\x1flink-arg=-fuse-ld=mold\x1f--remap-path-prefix='"$target=/wamn-build"
+  exec env -i PATH="$PATH" HOME="$HOME" \
+    CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
+    LANG=C LC_ALL=C TZ=UTC SOURCE_DATE_EPOCH=0 \
+    CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 SQLX_OFFLINE=true \
+    CARGO_ENCODED_RUSTFLAGS="$flags" CC=clang CXX=clang++ \
+    CFLAGS="-ffile-prefix-map=$target=/wamn-build" \
+    CXXFLAGS="-ffile-prefix-map=$target=/wamn-build" \
+    cargo build --locked --offline --profile dev --bins --target-dir "$target" \
+      -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
+fi
 if [[ $action == receiving ]]; then
   # An optional existing parent directory for the test result directory.
   if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export WAMN_RECEIVING_EVIDENCE_DIR=$parent; fi
