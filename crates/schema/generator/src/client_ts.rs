@@ -428,6 +428,27 @@ pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, Clien
         .collect())
 }
 
+/// The path of the distribution manifest inside a generated package.
+pub const PACKAGE_JSON_PATH: &str = "generated/client-ts/package.json";
+
+/// Emit the distribution manifest for the generated bindings.
+///
+/// The name is authored in the package manifest and never inferred. The
+/// version is the release's own. The distribution declares no dependency,
+/// because the bindings import nothing.
+#[must_use]
+pub fn emit_ts_package_json(distribution_name: &str, version: &str) -> GeneratedFile {
+    let source = format!(
+        "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }}\n}}\n",
+        name = serde_json::Value::String(distribution_name.to_owned()),
+        version = serde_json::Value::String(version.to_owned()),
+    );
+    GeneratedFile::new(
+        PACKAGE_JSON_PATH.into(),
+        source.into_bytes().into_boxed_slice(),
+    )
+}
+
 fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     let mut operations: Vec<_> = model
         .operations

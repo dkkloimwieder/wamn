@@ -59,7 +59,7 @@ pub use manifest::{
     CustomClaimDeclaration, CustomOperationDeclaration, CustomOperationInputDeclaration,
     CustomOperationKind, CustomOperationResultDeclaration, EventRegistrationDeclaration,
     FilterDeclaration, InheritedClaimDeclaration, InternalRelationDeclaration, LimitDeclaration,
-    ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
+    ModelDeclaration, NpmDistribution, OperationDeclaration, OperationErrorDetailDeclaration,
     OperationErrorDetailKey, OperationVisibility, PackageIdentity, PackageManifest,
     PaginationDeclaration, PolicyContractRequirement, PolicyContractState, RecordHistoryColumn,
     ResultClass, SortDeclaration, SortKey, StateGuardDeclaration, StaticSqlFetch,

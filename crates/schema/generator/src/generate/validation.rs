@@ -12,6 +12,47 @@ use super::{
 };
 use wamn_record_history::HISTORY_COLUMNS;
 
+/// Refuse a distribution name that npm cannot carry.
+///
+/// The rule is npm's own: at most 214 characters, lowercase, one optional
+/// `@scope/` prefix, and each segment starting with a letter or a digit.
+fn validate_distribution_name(package: &str, name: &str) -> Result<(), GenerateError> {
+    let refuse = |reason: &str| {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidDistribution,
+            format!("{package} declares npm distribution name {name:?}: {reason}"),
+        ))
+    };
+    if name.is_empty() {
+        return refuse("the name must not be empty");
+    }
+    if name.len() > 214 {
+        return refuse("the name must be 214 characters or fewer");
+    }
+    let segments = match name.strip_prefix('@') {
+        Some(scoped) => match scoped.split_once('/') {
+            Some((scope, package)) => vec![scope, package],
+            None => return refuse("a scoped name needs a scope and a package, as @scope/name"),
+        },
+        None => vec![name],
+    };
+    for segment in segments {
+        if !segment
+            .bytes()
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        {
+            return refuse("each part must start with a lowercase letter or a digit");
+        }
+        if !segment.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.' | b'_')
+        }) {
+            return refuse("each part admits only lowercase letters, digits, and - . _");
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate(
     input: &GenerationInput<'_>,
     manifest: &PackageManifest,
@@ -34,6 +75,9 @@ pub(super) fn validate(
             GenerateErrorKind::InvalidManifest,
             "manifest must declare at least one model",
         ));
+    }
+    if let Some(distribution) = &manifest.npm_distribution {
+        validate_distribution_name(&manifest.package.id, &distribution.name)?;
     }
 
     for (model_name, model) in &manifest.models {

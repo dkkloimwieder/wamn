@@ -3,6 +3,9 @@
     "id": "wamn_receiving",
     "version": "1.0.0"
   },
+  "npm_distribution": {
+    "name": "@wamn/receiving-client"
+  },
   "required_platform_policy_contract": {
     "id": "receiving_data_access",
     "state": "satisfied"

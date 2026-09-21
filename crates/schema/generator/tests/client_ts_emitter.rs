@@ -233,3 +233,75 @@ fn every_contract_name_in_the_fixture_reverses_through_the_member_rule() {
     }
     assert!(checked > 20, "the fixture declares enough names: {checked}");
 }
+
+#[test]
+fn a_distribution_manifest_carries_the_authored_name_and_the_release_version() {
+    let file = wamn_schema_generator::client_ts::emit_ts_package_json(
+        "@wamn/platform-fixture-client",
+        "1.0.0",
+    );
+    assert_eq!(file.path(), "generated/client-ts/package.json");
+    let source = std::str::from_utf8(file.bytes()).unwrap();
+    assert_eq!(
+        source,
+        concat!(
+            "{\n",
+            "  \"name\": \"@wamn/platform-fixture-client\",\n",
+            "  \"version\": \"1.0.0\",\n",
+            "  \"type\": \"module\",\n",
+            "  \"private\": true,\n",
+            "  \"exports\": {\n",
+            "    \".\": \"./index.ts\"\n",
+            "  }\n",
+            "}\n",
+        )
+    );
+    let parsed: serde_json::Value = serde_json::from_str(source).unwrap();
+    assert!(
+        parsed.get("dependencies").is_none(),
+        "the bindings import nothing"
+    );
+}
+
+#[test]
+fn a_package_that_declares_no_distribution_generates_no_typescript() {
+    let package = fixture::generate_fixture();
+    assert!(
+        package
+            .files()
+            .iter()
+            .all(|file| !file.path().contains("client-ts")),
+        "TypeScript is opt-in"
+    );
+}
+
+#[test]
+fn an_invalid_distribution_name_refuses_and_names_the_package() {
+    use wamn_schema_generator::GenerateErrorKind;
+
+    let catalog = fixture::catalog();
+    for (name, reason) in [
+        ("", "must not be empty"),
+        ("Widgets", "lowercase"),
+        ("@scope", "scope and a package"),
+        ("-leading", "start with"),
+        ("has space", "admits only"),
+    ] {
+        let mut value = fixture::manifest();
+        value["npm_distribution"] = serde_json::json!({ "name": name });
+        let refusal = fixture::try_generate_with(&catalog, &value)
+            .expect_err("an invalid distribution name refuses");
+        assert_eq!(
+            refusal.kind(),
+            GenerateErrorKind::InvalidDistribution,
+            "{name:?}"
+        );
+        let text = refusal.to_string();
+        assert!(text.contains("platform_fixture"), "{name:?}: {text}");
+        assert!(text.contains(reason), "{name:?}: {text}");
+    }
+
+    let mut value = fixture::manifest();
+    value["npm_distribution"] = serde_json::json!({ "name": "@wamn/platform-fixture-client" });
+    fixture::generate_with(&catalog, &value);
+}

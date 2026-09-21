@@ -13,6 +13,7 @@ use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 use crate::StatementTransactionality;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_rust::emit_rust_client;
+use crate::client_ts::{emit_ts_client, emit_ts_package_json};
 use crate::client_tui::{component_contract, emit_tui, read_operator, read_tui_workspace};
 use crate::generate::GeneratedFile;
 use crate::{
@@ -347,6 +348,15 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
     let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
         .context("project the client-contract IR")?;
     let mut files = emit_rust_client(&ir).context("emit the Rust client bindings")?;
+    // A package opts in to TypeScript by declaring the distribution name that
+    // a browser application imports. Generation never infers one.
+    if let Some(distribution) = &manifest.npm_distribution {
+        files.extend(emit_ts_client(&ir).context("emit the TypeScript client bindings")?);
+        files.push(emit_ts_package_json(
+            &distribution.name,
+            &manifest.package.version,
+        ));
+    }
     for component in manifest.components.keys() {
         let selected = component_contract(&ir, &manifest, component)
             .context("select the component's operator contracts")?;

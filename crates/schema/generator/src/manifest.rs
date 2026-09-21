@@ -16,6 +16,11 @@ pub(crate) const CONTROL_OWNED_RELATION_TABLES: [&str; 2] =
 #[serde(deny_unknown_fields)]
 pub struct PackageManifest {
     pub package: PackageIdentity,
+    /// Explicit npm distribution identity for the generated TypeScript.
+    ///
+    /// A package that omits it generates no TypeScript at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npm_distribution: Option<NpmDistribution>,
     #[serde(default)]
     pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
     pub required_platform_policy_contract: PolicyContractRequirement,
@@ -2054,6 +2059,17 @@ pub struct PackageIdentity {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predecessor_version: Option<String>,
+}
+
+/// Explicit npm distribution identity for generated TypeScript source.
+///
+/// The name is authored, never inferred from an application path or a package
+/// id, because the distribution is what a browser application imports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NpmDistribution {
+    /// The npm package name, optionally scoped.
+    pub name: String,
 }
 
 /// Exact package artifact and local operation set bound to one source alias.
