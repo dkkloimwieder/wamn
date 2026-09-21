@@ -78,6 +78,10 @@ pub async fn install_control(admin_url: &str, system_url: &str) -> anyhow::Resul
         system.batch_execute("SET ROLE wamn_system").await?;
         system.batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL).await?;
         system.batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL).await?;
+        system.execute(
+            "UPDATE registry.meta SET platform_domain = $1",
+            &[&PLATFORM_DOMAIN],
+        ).await?;
         system.batch_execute("RESET ROLE").await?;
         system.batch_execute(sql::revoke_public_connect_floor_sql()).await?;
         system.batch_execute("DO $$ BEGIN EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;").await
