@@ -129,6 +129,19 @@ async fn recover(
     client
         .query_one("SELECT set_config('app.tenant',$1,false)", &[&tenant])
         .await?;
+    // HTTP binds the fixed route-caller role. Automation requires an explicit
+    // service-role assignment, as in the existing local queue fixture.
+    client.execute(
+        "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)",
+        &[&tenant, &principal, &super::super::ROUTE_CALLER_ROLE],
+    ).await?;
+    let caller =
+        wamn_runtime::plugins::flow_http_routing::queued_service_caller(client, tenant, principal)
+            .await?;
+    ensure!(
+        caller.permits(super::super::BASE_RECORD_RECEIPT),
+        "queue fixture must authorize its receipt operation before admission"
+    );
     lock.batch_execute("BEGIN").await?;
     lock.query_one("SELECT set_config('app.tenant',$1,true)", &[&tenant])
         .await?;
