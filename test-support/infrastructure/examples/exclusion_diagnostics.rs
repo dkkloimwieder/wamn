@@ -94,7 +94,13 @@ async fn main() -> anyhow::Result<()> {
     // Copy tracked source bytes, including current edits, without build output.
     let listed = Command::new("git")
         .current_dir(&root)
-        .args(["ls-files", "-z", "apps", "rust-toolchain.toml"])
+        .args([
+            "ls-files",
+            "-z",
+            "apps",
+            "crates/platform/runtime/wit/deps/wamn-postgres",
+            "rust-toolchain.toml",
+        ])
         .output()?;
     ensure!(listed.status.success(), "list application fixture files");
     for name in listed
