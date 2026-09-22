@@ -669,9 +669,9 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     assert!(
         widget.contains(concat!(
             "import {\n",
-            "  list as widgetMakerList,\n",
-            "  type WidgetMakerListRequest,\n",
-            "  type WidgetMakerListRow,\n",
+            "  query as widgetMakerQuery,\n",
+            "  type WidgetMakerQueryRequest,\n",
+            "  type WidgetMakerQueryRow,\n",
             "} from \"../widget_maker.js\";\n",
         )),
         "{widget}"

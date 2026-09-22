@@ -15,7 +15,7 @@ import {
   WidgetCreateForm,
   type WidgetCreateFormInitial,
 } from "../fixture/components/widget.js";
-import { WidgetMakerListTable } from "../fixture/components/widget_maker.js";
+import { WidgetMakerQueryTable } from "../fixture/components/widget_maker.js";
 
 afterEach(cleanup);
 
@@ -25,7 +25,10 @@ function stub(): Transport {
   return {
     invoke: (request: WireRequest) => {
       const reply: Outcome<JsonValue> = request.operation.includes("widget-maker")
-        ? { status: "completed", value: { rows: [{ id: MAKER, name: "Northwind" }] } }
+        ? {
+            status: "completed",
+            value: { item: [{ id: MAKER, name: "Northwind" }], nextCursor: null },
+          }
         : { status: "completed", value: { rows: [] } };
       return Promise.resolve(reply);
     },
@@ -37,7 +40,7 @@ describe("a row that opens a form", () => {
     const transport = stub();
     let carried: WidgetCreateFormInitial | undefined;
     render(() => (
-      <WidgetMakerListTable transport={transport} onFillWidgetCreate={(initial) => {
+      <WidgetMakerQueryTable transport={transport} onFillWidgetCreate={(initial) => {
         carried = initial;
       }} />
     ));

@@ -32,7 +32,7 @@ function stub(): { transport: Transport; sent: WireRequest[] } {
         const reply: Outcome<JsonValue> = request.operation.includes("widget-maker")
           ? {
               status: "completed",
-              value: { rows: [{ id: MAKER, name: "Northwind" }] },
+              value: { item: [{ id: MAKER, name: "Northwind" }], nextCursor: null },
             }
           : { status: "completed", value: { id: "written", edit_version: 1 } };
         return Promise.resolve(reply);

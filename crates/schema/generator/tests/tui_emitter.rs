@@ -222,20 +222,24 @@ fn two_declared_components_render_only_their_owned_operations() {
     let receiving = component_contract(&ir, &manifest, "fixture").unwrap();
     let reports_files = emit_tui(&reports, "reports", None, "../../../..").unwrap();
     let receiving_files = emit_tui(&receiving, "receiving", None, "../../../..").unwrap();
-    let report_operations = reports
+    let mut report_operations = reports
         .models
         .iter()
         .flat_map(|model| &model.operations)
+        .map(|operation| operation.operation.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(report_operations.len(), 1);
+    report_operations.sort_unstable();
     assert_eq!(
-        report_operations[0].operation,
-        "platform-fixture:widget/query@1.0.0"
+        report_operations,
+        [
+            "platform-fixture:widget-maker/query@1.0.0",
+            "platform-fixture:widget/query@1.0.0",
+        ],
+        "the component holds the query of each model and nothing else"
     );
-    assert!(
-        source(&reports_files, "generated/reports-tui/src/lib.rs")
-            .contains("screens::widget::query(binding)")
-    );
+    let reports_lib = source(&reports_files, "generated/reports-tui/src/lib.rs");
+    assert!(reports_lib.contains("screens::widget::query(binding.clone())"));
+    assert!(reports_lib.contains("screens::widget_maker::query(binding)"));
     assert!(
         !source(&receiving_files, "generated/receiving-tui/src/lib.rs")
             .contains("screens::widget::query")
@@ -246,7 +250,7 @@ fn two_declared_components_render_only_their_owned_operations() {
             .iter()
             .map(|model| model.operations.len())
             .sum::<usize>()
-            + 1,
+            + 2,
         ir.models
             .iter()
             .map(|model| model.operations.len())

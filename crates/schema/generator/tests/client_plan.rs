@@ -2,6 +2,7 @@ use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
 use wamn_schema_generator::client_plan::{
     ClientPlan, LinkReason, NoRole, Role, RowLink, Rows, ScreenPlan, SuppliedKind,
+    UnsearchableSelector,
 };
 
 #[path = "support/platform_fixture.rs"]
@@ -301,7 +302,7 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         plan.screens()
             .filter(|screen| screen.role.is_supported())
             .count(),
-        7,
+        8,
         "the other screens keep their role, and the second model lists"
     );
 }
@@ -628,16 +629,26 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
             .unwrap_or_else(|| panic!("{name} populates {path}"))
     };
 
-    // An authored reference, served by the second model's list. Its display
+    // An authored reference, served by the second model's query. Its display
     // field is absent, so the plan takes the first text column.
     let maker = populated("record_batch", "value.maker_id");
     assert_eq!(
         maker.list_operation,
-        "platform-fixture:widget-maker/list@1.0.0"
+        "platform-fixture:widget-maker/query@1.0.0"
     );
     assert_eq!(maker.key_field, "id");
     assert_eq!(maker.display_field, "name", "the default is the first text");
     assert_eq!(maker.narrowed_by, None);
+    assert_eq!(
+        maker.search_input,
+        Some("filter.name[]"),
+        "a selector searches by the declared filter on its display field"
+    );
+    assert_eq!(
+        maker.cursor_input,
+        Some("cursor"),
+        "the list serves pages, so the selector reads the next one"
+    );
 
     // A nested reference inside a repeated group, narrowed by a sibling.
     let line = populated("record_batch", "value.line[].purchase_order_line_id");
@@ -645,6 +656,11 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
     assert_eq!(
         line.display_field, "code",
         "an authored display field wins over the default"
+    );
+    assert_eq!(
+        (line.search_input, line.cursor_input),
+        (None, None),
+        "the list declares no filter and serves one page, so neither control exists"
     );
     let narrowing = line.narrowed_by.expect("the line list is narrowed");
     assert_eq!(narrowing.input, "value.maker_id");
@@ -657,7 +673,7 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
     let update = populated("update", "change.maker_id");
     assert_eq!(
         update.list_operation,
-        "platform-fixture:widget-maker/list@1.0.0"
+        "platform-fixture:widget-maker/query@1.0.0"
     );
 
     // An input that names no record states nothing.
@@ -671,6 +687,27 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
     assert!(
         screen(&plan, "get").population.is_empty(),
         "a record read fills nothing from a list"
+    );
+}
+
+/// EXIT GATE for `wamn-sxb5.1`: the plan names every selector that cannot
+/// search, so a generator reports the gap and an author closes it.
+///
+/// The report states the screen, the input it fills and the list it reads.
+/// A selector whose list declares the filter on its display field is absent.
+#[test]
+fn selectors_whose_list_declares_no_display_filter_are_reported() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+
+    assert_eq!(
+        plan.unsearchable(),
+        [UnsearchableSelector {
+            operation: "platform-fixture:widget/record-batch@1.0.0",
+            input: "value.line[].purchase_order_line_id",
+            list_operation: "platform-fixture:widget/list@1.0.0",
+        }],
+        "the report names the screen, the input and the list"
     );
 }
 
@@ -697,7 +734,7 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
 
     let makers = plan
         .screens()
-        .find(|screen| screen.model == "widget_maker" && screen.name == "list")
+        .find(|screen| screen.model == "widget_maker" && screen.name == "query")
         .expect("the second model lists");
     let batch = makers
         .row_forms

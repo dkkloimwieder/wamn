@@ -227,8 +227,27 @@ pub struct PopulatedInput<'a> {
     pub key_field: &'a str,
     /// Result field of that list which carries the text a person reads.
     pub display_field: &'a str,
+    /// Input path of the list's declared filter on that display field, when
+    /// the list declares one. A selector searches by it and by nothing else.
+    pub search_input: Option<&'a str>,
+    /// Input path of the list's page cursor, when the release serves pages.
+    pub cursor_input: Option<&'a str>,
     /// How one selector narrows another, when the reference states it.
     pub narrowed_by: Option<Narrowing<'a>>,
+}
+
+/// One selector whose list declares no filter on its display field.
+///
+/// The operator reads the first page and cannot search it. The gap is in the
+/// contract, so a generator names the selector and an author closes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsearchableSelector<'a> {
+    /// Canonical identity of the screen that renders the selector.
+    pub operation: &'a str,
+    /// Input path the selector fills.
+    pub input: &'a str,
+    /// Canonical identity of the list it reads.
+    pub list_operation: &'a str,
 }
 
 /// One selector narrowing another: this screen's value fills that list input.
@@ -429,6 +448,27 @@ impl<'a> ClientPlan<'a> {
             .filter_map(|screen| match screen.role {
                 Role::Unsupported(reason) => Some((screen.contract.operation.as_str(), reason)),
                 _ => None,
+            })
+            .collect()
+    }
+
+    /// Every selector whose list declares no filter on its display field.
+    ///
+    /// A generator reports this list beside [`Self::unsupported`]. The named
+    /// selectors read the first page and render no search control.
+    #[must_use]
+    pub fn unsearchable(&self) -> Vec<UnsearchableSelector<'a>> {
+        self.screens()
+            .flat_map(|screen| {
+                screen
+                    .population
+                    .iter()
+                    .filter(|populated| populated.search_input.is_none())
+                    .map(|populated| UnsearchableSelector {
+                        operation: screen.contract.operation.as_str(),
+                        input: populated.input,
+                        list_operation: populated.list_operation,
+                    })
             })
             .collect()
     }
@@ -659,6 +699,10 @@ struct Lister<'a> {
     references: Vec<(&'a str, &'a str)>,
     /// Result leaves, which the default display field reads.
     columns: Vec<&'a FieldIr>,
+    /// Input paths that carry the list's declared filters, in contract order.
+    filter_inputs: Vec<&'a str>,
+    /// Input path of the list's page cursor, when it serves pages.
+    cursor_input: Option<&'a str>,
 }
 
 impl<'a> Lister<'a> {
@@ -693,6 +737,15 @@ impl<'a> Lister<'a> {
                 })
                 .collect(),
             columns: screen.columns.clone(),
+            filter_inputs: screen
+                .paging
+                .as_ref()
+                .map(|paging| paging.filter_inputs.clone())
+                .unwrap_or_default(),
+            cursor_input: screen
+                .paging
+                .as_ref()
+                .and_then(|paging| paging.cursor_input),
         })
     }
 
@@ -708,6 +761,17 @@ impl<'a> Lister<'a> {
                 .find(|field| field.type_name == DISPLAY_TYPE)
                 .map_or(self.key_field, |field| field.path.as_str())
         })
+    }
+
+    /// The input a selector searches by, which is the declared filter on the
+    /// display field. A list that declares no such filter offers no search,
+    /// and the plan reports it.
+    fn search(&self) -> Option<&'a str> {
+        let display = self.display();
+        self.filter_inputs
+            .iter()
+            .copied()
+            .find(|path| filter_input(path, display))
     }
 }
 
@@ -752,6 +816,8 @@ fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<Po
                 list_rows: list.rows,
                 key_field: list.key_field,
                 display_field: list.display(),
+                search_input: list.search(),
+                cursor_input: list.cursor_input,
                 narrowed_by,
             })
         })

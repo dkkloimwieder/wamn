@@ -99,9 +99,10 @@ pub(crate) fn client_release() -> ClientContractIr {
         ("widget", "query"),
         ("widget", "record_batch"),
         ("widget", "update"),
-        // A selector reads a served list, so the second model's list is
+        // A selector reads a served list, so the second model's reads are
         // published like every other operation.
         ("widget-maker", "list"),
+        ("widget-maker", "query"),
     ]
     .into_iter()
     .map(|(model, name)| {
@@ -138,7 +139,8 @@ pub(crate) fn client_release() -> ClientContractIr {
                     })),
                     // The page controls a served query publishes. The release
                     // states no domain for the sort, which the paging contract
-                    // holds instead.
+                    // holds instead. Each model publishes the filter it
+                    // declares, so the two queries differ by one property.
                     "query" => Some(json!({
                         "type": "array",
                         "items": {
@@ -149,7 +151,10 @@ pub(crate) fn client_release() -> ClientContractIr {
                                 "cursor": {"type": "string"},
                                 "limit": {"type": "integer"},
                                 "filter": {"type": "object", "properties": {
-                                    "code": {"type": "array", "items": {"type": "string"}}
+                                    declared_filter(model): {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    }
                                 }},
                                 "sort": {
                                     "type": "object",
@@ -223,6 +228,14 @@ pub(crate) fn client_release() -> ClientContractIr {
         .expect("platform fixture projects as a release")
 }
 
+/// The filter each model's query declares, as its route publishes it.
+///
+/// A selector searches by the filter on its display field, so the two models
+/// differ here: the widget filters by its code, and the maker by its name.
+fn declared_filter(model: &str) -> &'static str {
+    if model == "widget" { "code" } else { "name" }
+}
+
 /// The index of the widget model, which every emitter test reads.
 ///
 /// The fixture holds two models now, and their order is the contract order,
@@ -288,9 +301,9 @@ pub(crate) fn catalog() -> CatalogIr {
         Vec::new(),
     );
     // The second model. It is as small as the first: an identity, one text
-    // column, and one list operation that a selector reads. Its name keeps it
-    // after `widget` in contract order, so every model index a test states
-    // stays where it was.
+    // column, and the timestamp its query sorts by. Its name keeps it after
+    // `widget` in contract order, so every model index a test states stays
+    // where it was.
     let widget_maker = Table::new(
         "inventory",
         "widget_maker",
@@ -303,6 +316,13 @@ pub(crate) fn catalog() -> CatalogIr {
                 None,
             ),
             Column::new("name", ColumnType::Text, false, None, None),
+            Column::new(
+                "created_at",
+                ColumnType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
         ],
         vec![Constraint::primary_key("widget_maker_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
@@ -344,10 +364,28 @@ pub(crate) fn manifest() -> Value {
                 "schema": "inventory",
                 "table": "widget_maker",
                 "owner": "platform_fixture",
-                "server_owned_fields": ["id"],
+                "server_owned_fields": ["id", "created_at"],
                 "enum_fields": {},
-                "audit_log": {"columns": [], "retention": "none"},
-                "operations": {}
+                "audit_log": {"columns": ["created_at"], "retention": "none"},
+                "operations": {
+                    // The list a selector searches. Only a model query
+                    // declares a filter, so only a model query can offer a
+                    // selector one, and this filter names the display field.
+                    "query": {
+                        "permission": "widget_maker.query",
+                        "filters": [{"field": "name"}],
+                        "sort": {
+                            "fields": ["created_at"],
+                            "directions": ["ascending", "descending"]
+                        },
+                        "pagination": {
+                            "default_sort": {"field": "created_at", "direction": "ascending"},
+                            "tie_breaker": {"field": "id"}
+                        },
+                        "limit": {"default": 100, "minimum": 1, "maximum": 100},
+                        "result": "page"
+                    }
+                }
             },
             "widget": {
                 "schema": "inventory",
@@ -489,15 +527,15 @@ pub(crate) fn manifest() -> Value {
                     ]
                 }}
             },
-            // The second model's list, which a selector reads. It declares
-            // what it lists and states no display field, so the plan applies
-            // the default: the model's first text field.
+            // The second model's authored read. It serves rows and offers
+            // none, because the model's own query offers them: a selector
+            // over a maker searches, and only a model query declares the
+            // filter that a search needs.
             "widget_maker.list": {
                 "kind": "projection",
                 "visibility": "public",
                 "permission": "widget_maker.list",
                 "connection": "postgres",
-                "lists": {"model": "widget_maker", "key_field": "id"},
                 "input": {"fields": [
                     {"path": "request_id", "type": "text", "nullable": false}
                 ]},

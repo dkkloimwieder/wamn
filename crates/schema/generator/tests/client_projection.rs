@@ -779,23 +779,32 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
     assert_eq!(widget_list.model, "widget");
     assert_eq!(widget_list.key_field, "id");
     assert_eq!(widget_list.display_field.as_deref(), Some("code"));
-    let maker_list = ir
-        .models
-        .iter()
-        .find(|model| model.name == "widget_maker")
-        .expect("the second model")
-        .operations
-        .iter()
-        .find(|operation| operation.name == "list")
-        .expect("its list");
+    let maker = |name: &str| {
+        ir.models
+            .iter()
+            .find(|model| model.name == "widget_maker")
+            .expect("the second model")
+            .operations
+            .iter()
+            .find(|operation| operation.name == name)
+            .expect("the second model declares the operation")
+            .clone()
+    };
+    let maker_query = maker("query");
     assert_eq!(
-        maker_list.lists.as_ref().expect("a list").model,
-        "widget_maker"
+        maker_query.lists.as_ref().expect("a list").model,
+        "widget_maker",
+        "a generated query states what it lists with no authoring"
     );
     assert_eq!(
-        maker_list.lists.as_ref().expect("a list").display_field,
+        maker_query.lists.as_ref().expect("a list").display_field,
         None,
         "an absent display field takes the plan's default"
+    );
+    assert_eq!(
+        maker("list").lists,
+        None,
+        "a read that offers no rows to a selector declares no list"
     );
     assert_eq!(operation("get").lists, None, "a record read lists nothing");
 }

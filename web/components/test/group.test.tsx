@@ -24,10 +24,12 @@ function stub(): { transport: Transport; sent: WireRequest[] } {
     transport: {
       invoke: (request: WireRequest) => {
         sent.push(request);
-        const reply: Outcome<JsonValue> = {
-          status: "completed",
-          value: { rows: [{ id: WIDGET, code: "priority", name: "Northwind" }] },
-        };
+        // The maker selector reads a paged query and the line selector reads
+        // a bounded list, so each envelope answers the operation that asked.
+        const row = { id: WIDGET, code: "priority", name: "Northwind" };
+        const reply: Outcome<JsonValue> = request.operation.includes("widget-maker")
+          ? { status: "completed", value: { item: [row], nextCursor: null } }
+          : { status: "completed", value: { rows: [row] } };
         return Promise.resolve(reply);
       },
     },
