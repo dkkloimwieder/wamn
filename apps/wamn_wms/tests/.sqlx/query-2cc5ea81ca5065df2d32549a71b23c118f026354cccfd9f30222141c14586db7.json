@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "-- LIVE STOCK ONLY. A consumed pallet keeps its quantity rows as history of\n-- what it held when a merge absorbed it — the platform admits no DELETE — and\n-- that same quantity now also sits on the target. Counting both would double\n-- every merge this warehouse has ever done, so the join excludes them here,\n-- at the one place that reports totals.\nSELECT\n    pallet_quantity.product_id,\n    pallet.location_id,\n    pallet_quantity.status,\n    sum(pallet_quantity.quantity) AS quantity,\n    count(*) AS pallet_count\nFROM pallet_quantity AS pallet_quantity\nJOIN pallet AS pallet\n    ON pallet.id = pallet_quantity.pallet_id\nWHERE pallet.status <> 'consumed'\nGROUP BY\n    pallet_quantity.product_id,\n    pallet.location_id,\n    pallet_quantity.status\nORDER BY\n    pallet_quantity.product_id ASC,\n    pallet.location_id ASC,\n    pallet_quantity.status ASC;\n",
+  "query": "-- LIVE STOCK ONLY. A consumed pallet keeps its quantity rows as history of\n-- what it held when a merge absorbed it — the platform admits no DELETE — and\n-- that same quantity now also sits on the target. Counting both would double\n-- every merge this warehouse has ever done, so the join excludes them here,\n-- at the one place that reports totals.\nSELECT\n    pallet_quantity.product_id,\n    pallet.location_id,\n    pallet_quantity.status,\n    sum(pallet_quantity.quantity) AS quantity,\n    count(*)::integer AS pallet_count\nFROM pallet_quantity AS pallet_quantity\nJOIN pallet AS pallet\n    ON pallet.id = pallet_quantity.pallet_id\nWHERE pallet.status <> 'consumed'\nGROUP BY\n    pallet_quantity.product_id,\n    pallet.location_id,\n    pallet_quantity.status\nORDER BY\n    pallet_quantity.product_id ASC,\n    pallet.location_id ASC,\n    pallet_quantity.status ASC;\n",
   "describe": {
     "columns": [
       {
@@ -45,7 +45,7 @@
       {
         "ordinal": 4,
         "name": "pallet_count",
-        "type_info": "Int8",
+        "type_info": "Int4",
         "origin": "Expression"
       }
     ],
@@ -60,5 +60,5 @@
       null
     ]
   },
-  "hash": "51442e209ad8e0f13c6221274cf9e2a1cc9f615cc78976ecbe61174c8e3b068d"
+  "hash": "2cc5ea81ca5065df2d32549a71b23c118f026354cccfd9f30222141c14586db7"
 }

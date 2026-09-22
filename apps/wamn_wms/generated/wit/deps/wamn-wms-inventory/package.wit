@@ -109,7 +109,7 @@ interface aggregate {
     location-id: string,
     status: string,
     quantity: string,
-    pallet-count: s64,
+    pallet-count: s32,
   }
 
   record aggregate-result {

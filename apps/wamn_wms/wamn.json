@@ -2371,7 +2371,7 @@
           },
           {
             "path": "pallet_count",
-            "type": "int64",
+            "type": "int32",
             "nullable": false
           }
         ]
@@ -2441,7 +2441,7 @@
             },
             {
               "name": "pallet_count",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]

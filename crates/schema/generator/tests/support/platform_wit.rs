@@ -152,3 +152,23 @@ fn typed_custom_shapes_do_not_depend_on_application_names() {
     assert!(codec.contains("request.payload.key"));
     assert!(!codec.contains("value.event"));
 }
+
+#[test]
+fn every_int64_leaves_the_codec_as_a_json_string() {
+    // The conversion used to apply to a revision alone, so a plain int64
+    // reached the wire as a JSON number while the binding called it a string.
+    // wamn-wpvg.
+    let package = fixture::generate_fixture();
+    // widget.list serves edit_version with no revision flag, and widget.update
+    // serves the same column as its revision.
+    for path in [
+        "generated/wit/widget_list_codec.rs",
+        "generated/wit/widget_update_codec.rs",
+    ] {
+        let codec = source(&package, path);
+        assert!(
+            codec.contains("edit_version.to_string()"),
+            "{path} writes its int64 as a JSON string"
+        );
+    }
+}

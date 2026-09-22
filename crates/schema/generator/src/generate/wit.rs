@@ -388,7 +388,6 @@ fn emit_update_codec(
             column.name(),
             column.column_type(),
             column.nullable(),
-            operation.revision_field.as_deref() == Some(column.name()),
         );
     }
     source.push_str(UPDATE_CODEC_ERROR_PREFIX);
@@ -869,14 +868,7 @@ fn emit_json_row(
 
 fn emit_json_row_fields(source: &mut String, fields: &[ContractFieldDeclaration], carrier: &str) {
     for column in fields {
-        emit_codec_result_field_for(
-            source,
-            &column.path,
-            column.ty,
-            column.nullable,
-            column.revision,
-            carrier,
-        );
+        emit_codec_result_field_for(source, &column.path, column.ty, column.nullable, carrier);
     }
 }
 
@@ -1610,27 +1602,13 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     if result.class == ResultClass::BoundedList {
         source.push_str("{ \"rows\": value.rows.iter().map(|row| json!({\n");
         for field in &result.fields {
-            emit_codec_result_field_for(
-                &mut source,
-                &field.path,
-                field.ty,
-                field.nullable,
-                field.revision,
-                "row",
-            );
+            emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
         }
         source.push_str("                })).collect::<Vec<_>>() }\n");
     } else if result.class == ResultClass::OptionalOne {
         source.push_str("value.value.as_ref().map(|row| json!({\n");
         for field in &result.fields {
-            emit_codec_result_field_for(
-                &mut source,
-                &field.path,
-                field.ty,
-                field.nullable,
-                field.revision,
-                "row",
-            );
+            emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
         }
         source.push_str("                }))\n");
     } else {
@@ -1639,13 +1617,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             if field.path.contains("[]") || field.path.contains('.') {
                 continue;
             }
-            emit_codec_result_field(
-                &mut source,
-                &field.path,
-                field.ty,
-                field.nullable,
-                field.revision,
-            );
+            emit_codec_result_field(&mut source, &field.path, field.ty, field.nullable);
         }
         source.push_str("                }\n");
     }
@@ -1826,7 +1798,7 @@ fn emit_json_tree_fields(source: &mut String, fields: &[FieldIr], root: &str) {
         )
         .unwrap();
         let mut ty = if field.children.is_empty() {
-            codec_ir_rust_type(&field.type_name, field.revision)
+            codec_ir_rust_type(&field.type_name)
         } else {
             format!(
                 "Json{}",
@@ -1843,18 +1815,28 @@ fn emit_json_tree_fields(source: &mut String, fields: &[FieldIr], root: &str) {
     }
 }
 
-fn codec_ir_rust_type(type_name: &str, revision: bool) -> String {
-    match (type_name, revision) {
-        ("int64", true) => "JsonInt64",
-        ("int64", false) => "i64",
-        ("boolean", _) => "bool",
-        ("int32", _) => "i32",
-        ("float64", _) => "f64",
-        ("bytes", _) => "Vec<u8>",
-        ("json", _) => "serde_json::Value",
-        _ => "String",
-    }
-    .to_owned()
+/// Whether the codec carries a value of this type as a JSON string.
+///
+/// An `int64` does, in both directions and whatever the field means. A JSON
+/// number cannot carry every `int64` value, so a revision, a counter and an
+/// application integer take one spelling. Every codec path reads this rule
+/// here, and no path reads the revision flag for it.
+const fn int64_is_json_string(ty: ColumnType) -> bool {
+    matches!(ty, ColumnType::Int64)
+}
+
+/// The contract type one IR type name states, when it states one.
+///
+/// A generated CRUD field carries a [`ColumnType`]. An IR field carries the
+/// wire literal of the same vocabulary, plus `string`, `object` and `array`,
+/// which name no column type.
+fn column_type_of(type_name: &str) -> Option<ColumnType> {
+    serde_json::from_value(serde_json::Value::String(type_name.to_owned())).ok()
+}
+
+/// The codec Rust type of one IR field.
+fn codec_ir_rust_type(type_name: &str) -> String {
+    column_type_of(type_name).map_or_else(|| "String".to_owned(), |ty| codec_rust_type(ty, false))
 }
 
 fn emit_contract_tree_assignments(
@@ -1877,12 +1859,20 @@ fn emit_contract_tree_assignments(
         )
         .unwrap();
         if field.children.is_empty() {
-            let conversion = match (field.type_name.as_str(), field.nullable, field.revision) {
-                ("int64", true, true) => ".map(|value| value.0)",
-                ("int64", false, true) => ".0",
-                ("json", true, _) => ".map(|value| value.to_string())",
-                ("json", false, _) => ".to_string()",
-                _ => "",
+            let conversion = if column_type_of(&field.type_name).is_some_and(int64_is_json_string) {
+                if field.nullable {
+                    ".map(|value| value.0)"
+                } else {
+                    ".0"
+                }
+            } else if field.type_name == "json" {
+                if field.nullable {
+                    ".map(|value| value.to_string())"
+                } else {
+                    ".to_string()"
+                }
+            } else {
+                ""
             };
             writeln!(source, "{indent}{member}: {access}.{member}{conversion},")
                 .expect("writing to a String cannot fail");
@@ -2120,14 +2110,8 @@ fn emit_codec_error_arm(
         .expect("writing to a String cannot fail");
 }
 
-fn emit_codec_result_field(
-    source: &mut String,
-    field: &str,
-    ty: ColumnType,
-    nullable: bool,
-    revision: bool,
-) {
-    emit_codec_result_field_for(source, field, ty, nullable, revision, "value");
+fn emit_codec_result_field(source: &mut String, field: &str, ty: ColumnType, nullable: bool) {
+    emit_codec_result_field_for(source, field, ty, nullable, "value");
 }
 
 fn emit_codec_result_field_for(
@@ -2135,7 +2119,6 @@ fn emit_codec_result_field_for(
     field: &str,
     ty: ColumnType,
     nullable: bool,
-    revision: bool,
     carrier: &str,
 ) {
     let name = rust_identifier(field).expect("validated result field has a Rust name");
@@ -2153,10 +2136,14 @@ fn emit_codec_result_field_for(
             .expect("writing to a String cannot fail");
         return;
     }
-    let conversion = match (ty, nullable) {
-        (ColumnType::Int64, true) if revision => ".map(|value| value.to_string())",
-        (ColumnType::Int64, false) if revision => ".to_string()",
-        _ => "",
+    let conversion = if int64_is_json_string(ty) {
+        if nullable {
+            ".map(|value| value.to_string())"
+        } else {
+            ".to_string()"
+        }
+    } else {
+        ""
     };
     writeln!(
         source,
@@ -2178,9 +2165,9 @@ const CUSTOM_CODEC_ERROR_HEAD: &str = r#"            Err(error) => json!({
 fn error_value(error: &contract::"#;
 
 /// The same arm, from the error type to the first match case.
-const CUSTOM_CODEC_ERROR_TAIL: &str = r#"Error) -> Value {
+const CUSTOM_CODEC_ERROR_TAIL: &str = r"Error) -> Value {
     let (code, detail) = match error {
-"#;
+";
 
 const CUSTOM_CODEC_FOOTER: &str = r#"    };
     json!({"code": code, "detail": detail})

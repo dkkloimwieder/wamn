@@ -8,7 +8,7 @@ SELECT
     pallet.location_id,
     pallet_quantity.status,
     sum(pallet_quantity.quantity) AS quantity,
-    count(*) AS pallet_count
+    count(*)::integer AS pallet_count
 FROM pallet_quantity AS pallet_quantity
 JOIN pallet AS pallet
     ON pallet.id = pallet_quantity.pallet_id

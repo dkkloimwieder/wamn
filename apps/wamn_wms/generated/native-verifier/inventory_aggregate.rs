@@ -6,7 +6,7 @@ pub struct InventoryAggregateRow {
     pub location_id: uuid::Uuid,
     pub status: String,
     pub quantity: Option<rust_decimal::Decimal>,
-    pub pallet_count: Option<i64>,
+    pub pallet_count: Option<i32>,
 }
 
 pub(crate) const INVENTORY_AGGREGATE_SQL: &str =

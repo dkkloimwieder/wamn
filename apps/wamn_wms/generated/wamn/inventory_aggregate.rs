@@ -8,11 +8,11 @@ pub struct InventoryAggregateRow {
     pub location_id: wamn_postgres_statements::Uuid,
     pub status: String,
     pub quantity: Option<wamn_postgres_statements::Numeric>,
-    pub pallet_count: Option<i64>,
+    pub pallet_count: Option<i32>,
 }
 
 pub(crate) const INVENTORY_AGGREGATE_DIGEST: &str =
-    "sha256:51442e209ad8e0f13c6221274cf9e2a1cc9f615cc78976ecbe61174c8e3b068d";
+    "sha256:2cc5ea81ca5065df2d32549a71b23c118f026354cccfd9f30222141c14586db7";
 
 pub(crate) async fn inventory_aggregate(
     transaction: &mut Transaction,

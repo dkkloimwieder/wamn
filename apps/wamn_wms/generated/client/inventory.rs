@@ -32,7 +32,7 @@ pub const INVENTORY_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "pallet_count",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -481,8 +481,8 @@ pub struct InventoryAggregateRequest {
 pub struct InventoryAggregateResult {
     /// `uuid`
     pub location_id: uuid::Uuid,
-    /// `int64`
-    pub pallet_count: i64,
+    /// `int32`
+    pub pallet_count: i32,
     /// `uuid`
     pub product_id: uuid::Uuid,
     /// `numeric`
@@ -509,7 +509,7 @@ pub const INVENTORY_AGGREGATE_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "pallet_count",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -563,7 +563,7 @@ pub const INVENTORY_AGGREGATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSch
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "pallet_count",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
