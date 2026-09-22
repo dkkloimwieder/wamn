@@ -11,7 +11,9 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import { createTransport, type Outcome, type Transport } from "@wamn/web-runtime";
 import {
   LocationListTable,
+  PurchaseOrderGetDetail,
   PurchaseOrderQueryTable,
+  ReceiptGetDetail,
   ReceiptQueryTable,
   ReceivingLoadPurchaseOrderHistoryTable,
   ReceivingLoadReceiptScreenTable,
@@ -26,9 +28,10 @@ export function App() {
   const [token, setToken] = createSignal<string | null>(null);
   const [trouble, setTrouble] = createSignal<string | null>(null);
   const [outcome, setOutcome] = createSignal<string | null>(null);
-  // One purchase order feeds every screen that needs a record. A row link
-  // writes it, and the operator can also paste one.
+  // One purchase order and one receipt feed every screen that needs a record.
+  // A row link writes them, and the operator can also paste one.
   const [order, setOrder] = createSignal("");
+  const [receipt, setReceipt] = createSignal("");
 
   // The page is one origin, so the transport needs no base URL. The proxy
   // carries each generated path to the release.
@@ -120,7 +123,7 @@ export function App() {
                 onInput={(event) => setOrder(event.currentTarget.value)}
               />
             </label>
-            {screens(ready(), order, setOrder, read)}
+            {screens(ready(), { order, setOrder, receipt, setReceipt }, read)}
           </div>
         )}
       </Show>
@@ -128,13 +131,21 @@ export function App() {
   );
 }
 
+/** What the page holds for the screens that name one record. */
+interface Picked {
+  readonly order: () => string;
+  readonly setOrder: (id: string) => void;
+  readonly receipt: () => string;
+  readonly setReceipt: (id: string) => void;
+}
+
 /** The generated screens, in the order an operator meets them. */
 function screens(
   transport: Transport,
-  order: () => string,
-  setOrder: (id: string) => void,
+  picked: Picked,
   read: (outcome: Outcome<unknown>) => void,
 ) {
+  const { order, setOrder, receipt, setReceipt } = picked;
   return (
     <>
       <section>
@@ -142,8 +153,20 @@ function screens(
         <PurchaseOrderQueryTable
           transport={transport}
           onRowSelect={(row) => setOrder(row.id)}
+          onOpenPurchaseOrderGet={(row) => setOrder(row.id)}
           onOutcome={read}
         />
+      </section>
+
+      <section>
+        <h2>purchase_order.get</h2>
+        <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
+          <PurchaseOrderGetDetail
+            transport={transport}
+            input={{ id: order(), requestId: "" }}
+            onOutcome={read}
+          />
+        </Show>
       </section>
 
       <section>
@@ -153,7 +176,23 @@ function screens(
 
       <section>
         <h2>receipt.query</h2>
-        <ReceiptQueryTable transport={transport} onOutcome={read} />
+        <ReceiptQueryTable
+          transport={transport}
+          onRowSelect={(row) => setReceipt(row.id)}
+          onOpenReceiptGet={(row) => setReceipt(row.id)}
+          onOutcome={read}
+        />
+      </section>
+
+      <section>
+        <h2>receipt.get</h2>
+        <Show when={receipt() !== ""} fallback={<p>pick a receipt first</p>}>
+          <ReceiptGetDetail
+            transport={transport}
+            input={{ id: receipt(), requestId: "" }}
+            onOutcome={read}
+          />
+        </Show>
       </section>
 
       <section>
