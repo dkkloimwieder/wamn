@@ -424,16 +424,24 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
       );
     },
   }));
-  const [supplierQueryOptions, setSupplierQueryOptions] = createSignal<SupplierQueryRow[]>([]);
-  const readSupplierQueryOptions = async () => {
-    const outcome = await supplierQuery(props.transport, [
-      { requestId: newRequestId() } as SupplierQueryRequest,
-    ]);
-    if (outcome.status === "completed") {
-      setSupplierQueryOptions(outcome.value.item as SupplierQueryRow[]);
+  const [supplierQueryOptions, setSupplierQueryOptions] = createSignal<PageState<SupplierQueryRow>>(emptyPage<SupplierQueryRow>());
+  const readSupplierQueryOptions = async (cursor: string | null) => {
+    let request = { requestId: newRequestId() } as SupplierQueryRequest;
+    if (cursor !== null) {
+      request = writeMember(request, ["cursor"], cursor) as SupplierQueryRequest;
     }
+    const outcome = await supplierQuery(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return;
+    }
+    const rows = outcome.value.item as SupplierQueryRow[];
+    setSupplierQueryOptions(
+      cursor === null
+        ? firstPage(rows, outcome.value.nextCursor)
+        : appendPage(supplierQueryOptions(), rows, outcome.value.nextCursor),
+    );
   };
-  void readSupplierQueryOptions();
+  void readSupplierQueryOptions(null);
 
   return (
     <form
@@ -454,7 +462,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
               onChange={(event) => field().handleChange(event.currentTarget.value)}
             >
               <option value=""></option>
-              <For each={supplierQueryOptions()}>
+              <For each={supplierQueryOptions().rows}>
                 {(row) => (
                   <option
                     value={String(row.id)}
@@ -465,6 +473,15 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
                 )}
               </For>
             </select>
+            <Show when={hasNextPage(supplierQueryOptions())}>
+              <button
+                type="button"
+                aria-label="Supplier next page"
+                onClick={() => void readSupplierQueryOptions(supplierQueryOptions().cursor)}
+              >
+                next page
+              </button>
+            </Show>
             <Show when={refusalMarks(refusal()?.member ?? null, "change.supplier_id")}>
               <em>{refusal()?.code}</em>
             </Show>

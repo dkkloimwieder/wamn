@@ -475,44 +475,68 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     },
   }));
   const formValues = useStore(form.store, (state) => state.values);
-  const [locationListOptions, setLocationListOptions] = createSignal<LocationListRow[]>([]);
-  const readLocationListOptions = async () => {
-    const outcome = await locationList(props.transport, [
-      { requestId: newRequestId() } as LocationListRequest,
-    ]);
-    if (outcome.status === "completed") {
-      setLocationListOptions(outcome.value.rows as LocationListRow[]);
-    }
-  };
-  void readLocationListOptions();
-  const [receivingLoadReceiptScreenOptions, setReceivingLoadReceiptScreenOptions] = createSignal<ReceivingLoadReceiptScreenRow[]>([]);
-  const readReceivingLoadReceiptScreenOptions = async (narrowed: string | null) => {
-    if (narrowed === null || narrowed === "") {
-      setReceivingLoadReceiptScreenOptions([]);
+  const [locationListOptions, setLocationListOptions] = createSignal<PageState<LocationListRow>>(emptyPage<LocationListRow>());
+  const readLocationListOptions = async (cursor: string | null) => {
+    const request = { requestId: newRequestId() } as LocationListRequest;
+    const outcome = await locationList(props.transport, [request]);
+    if (outcome.status !== "completed") {
       return;
     }
-    const outcome = await receivingLoadReceiptScreen(props.transport, [
-      { requestId: newRequestId(), purchaseOrderId: narrowed } as ReceivingLoadReceiptScreenRequest,
-    ]);
-    if (outcome.status === "completed") {
-      setReceivingLoadReceiptScreenOptions(outcome.value.rows as ReceivingLoadReceiptScreenRow[]);
+    const rows = outcome.value.rows as LocationListRow[];
+    setLocationListOptions(
+      cursor === null
+        ? firstPage(rows, null)
+        : appendPage(locationListOptions(), rows, null),
+    );
+  };
+  void readLocationListOptions(null);
+  const [receivingLoadReceiptScreenOptions, setReceivingLoadReceiptScreenOptions] = createSignal<PageState<ReceivingLoadReceiptScreenRow>>(emptyPage<ReceivingLoadReceiptScreenRow>());
+  const [receivingLoadReceiptScreenNarrowed, setReceivingLoadReceiptScreenNarrowed] = createSignal<string | null>(null);
+  const readReceivingLoadReceiptScreenOptions = async (cursor: string | null) => {
+    const narrowed = receivingLoadReceiptScreenNarrowed();
+    if (narrowed === null || narrowed === "") {
+      setReceivingLoadReceiptScreenOptions(emptyPage<ReceivingLoadReceiptScreenRow>());
+      return;
     }
+    const request = { requestId: newRequestId(), purchaseOrderId: narrowed } as ReceivingLoadReceiptScreenRequest;
+    const outcome = await receivingLoadReceiptScreen(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return;
+    }
+    const rows = outcome.value.rows as ReceivingLoadReceiptScreenRow[];
+    setReceivingLoadReceiptScreenOptions(
+      cursor === null
+        ? firstPage(rows, null)
+        : appendPage(receivingLoadReceiptScreenOptions(), rows, null),
+    );
   };
   createEffect(() => {
     formValues();
-    const narrowed = form.getFieldValue(`value.purchaseOrderId`) as string | null;
-    void readReceivingLoadReceiptScreenOptions(narrowed ?? null);
+    setReceivingLoadReceiptScreenNarrowed((form.getFieldValue(`value.purchaseOrderId`) as string | null) ?? null);
+    void readReceivingLoadReceiptScreenOptions(null);
   });
-  const [purchaseOrderQueryOptions, setPurchaseOrderQueryOptions] = createSignal<PurchaseOrderQueryRow[]>([]);
-  const readPurchaseOrderQueryOptions = async () => {
-    const outcome = await purchaseOrderQuery(props.transport, [
-      { requestId: newRequestId() } as PurchaseOrderQueryRequest,
-    ]);
-    if (outcome.status === "completed") {
-      setPurchaseOrderQueryOptions(outcome.value.item as PurchaseOrderQueryRow[]);
+  const [purchaseOrderQueryOptions, setPurchaseOrderQueryOptions] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
+  const [purchaseOrderQuerySearch, setPurchaseOrderQuerySearch] = createSignal("");
+  const readPurchaseOrderQueryOptions = async (cursor: string | null) => {
+    let request = { requestId: newRequestId() } as PurchaseOrderQueryRequest;
+    if (purchaseOrderQuerySearch() !== "") {
+      request = writeMember(request, ["filter", "purchaseOrderNumber"], [purchaseOrderQuerySearch()]) as PurchaseOrderQueryRequest;
     }
+    if (cursor !== null) {
+      request = writeMember(request, ["cursor"], cursor) as PurchaseOrderQueryRequest;
+    }
+    const outcome = await purchaseOrderQuery(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return;
+    }
+    const rows = outcome.value.item as PurchaseOrderQueryRow[];
+    setPurchaseOrderQueryOptions(
+      cursor === null
+        ? firstPage(rows, outcome.value.nextCursor)
+        : appendPage(purchaseOrderQueryOptions(), rows, outcome.value.nextCursor),
+    );
   };
-  void readPurchaseOrderQueryOptions();
+  void readPurchaseOrderQueryOptions(null);
 
   return (
     <form
@@ -540,7 +564,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           onChange={(event) => field().handleChange(event.currentTarget.value)}
                         >
                           <option value=""></option>
-                          <For each={locationListOptions()}>
+                          <For each={locationListOptions().rows}>
                             {(row) => (
                               <option
                                 value={String(row.id)}
@@ -566,7 +590,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           onChange={(event) => field().handleChange(event.currentTarget.value)}
                         >
                           <option value=""></option>
-                          <For each={receivingLoadReceiptScreenOptions()}>
+                          <For each={receivingLoadReceiptScreenOptions().rows}>
                             {(row) => (
                               <option
                                 value={String(row.lineId)}
@@ -627,7 +651,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
               onChange={(event) => field().handleChange(event.currentTarget.value)}
             >
               <option value=""></option>
-              <For each={purchaseOrderQueryOptions()}>
+              <For each={purchaseOrderQueryOptions().rows}>
                 {(row) => (
                   <option
                     value={String(row.id)}
@@ -638,6 +662,24 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                 )}
               </For>
             </select>
+            <input
+              type="search"
+              aria-label="Purchase order search"
+              value={purchaseOrderQuerySearch()}
+              onChange={(event) => {
+                setPurchaseOrderQuerySearch(event.currentTarget.value);
+                void readPurchaseOrderQueryOptions(null);
+              }}
+            />
+            <Show when={hasNextPage(purchaseOrderQueryOptions())}>
+              <button
+                type="button"
+                aria-label="Purchase order next page"
+                onClick={() => void readPurchaseOrderQueryOptions(purchaseOrderQueryOptions().cursor)}
+              >
+                next page
+              </button>
+            </Show>
             <Show when={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id")}>
               <em>{refusal()?.code}</em>
             </Show>
