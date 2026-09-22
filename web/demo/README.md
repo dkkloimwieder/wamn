@@ -1,7 +1,7 @@
 # Receiving demo
 
-This package is disposable. It exists to judge the generated components, and the close of Epic 5 ends it.
-Epic 4 used it for the evaluation, and Epic 5 uses it to read the two fixes that only a browser shows.
+This package is disposable. It exists to judge the generated components, and the close of Epic 6 ends it.
+Epic 4 used it for the evaluation, Epic 5 read the two fixes that only a browser shows, and Epic 6 reads the authored labels.
 It has no routes, no navigation, and no layout system. Nothing here is the start of an operator product.
 
 Delete it with two steps: remove `web/demo`, and remove its line in [the web README](../README.md).
@@ -76,3 +76,9 @@ The filled table belongs in the notes of Beads `wamn-78or`, because this package
 Two results need the running page, and Beads `wamn-iq82.7` records both.
 Read the purchase order history of a selected order, and submit a receipt line with the quantity `0`.
 The history draws its rows, and the refused line marks its own quantity control.
+
+## The Epic 6 check
+
+One result needs the running page, and Beads `wamn-c2y5.6` records it.
+Read a purchase order table and open the record receipt form.
+Each control and each column header states the text that `apps/wamn_receiving/wamn.json` authors, and a field with no authored text keeps its own name.
