@@ -50,8 +50,8 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     }
     assert_eq!(
         widget.matches("export function ").count(),
-        2,
-        "only the two table screens get a component in this epic"
+        3,
+        "the two tables and the one detail have components in this epic"
     );
     // The columns are the plan's columns, in contract order, with the cell type
     // that the release declared.
@@ -138,6 +138,52 @@ fn a_bounded_list_has_no_control_and_asks_for_no_next_page() {
     assert!(
         list.contains("firstPage(rows, null)"),
         "a bounded list has no cursor"
+    );
+}
+
+/// A detail screen shows one record, so it reads on its own and needs no form
+/// machinery.
+#[test]
+fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    assert!(widget.contains(concat!(
+        "export interface WidgetGetDetailProps {\n",
+        "  /** The transport the application supplies. */\n",
+        "  readonly transport: Transport;\n",
+        "  /** The input that names the record. */\n",
+        "  readonly input: WidgetGetRequest;\n",
+    )));
+    let detail = widget
+        .split("export function WidgetGetDetail")
+        .nth(1)
+        .expect("the detail exists")
+        .split("\n/**")
+        .next()
+        .expect("the detail ends where the next screen begins");
+    assert!(
+        detail.contains("createResource(\n    () => props.input,"),
+        "it reads on mount and again when the input changes"
+    );
+    assert!(
+        detail.contains("{ ...input, requestId: newRequestId() },"),
+        "the request identity comes from the runtime"
+    );
+    for (label, member, cell) in [
+        ("id", "[\"id\"]", "uuid"),
+        ("edit version", "[\"editVersion\"]", "int64"),
+        ("created at", "[\"createdAt\"]", "timestamptz"),
+    ] {
+        assert!(
+            detail.contains(&format!(
+                "<dt>{label}</dt>\n        <dd>{{cellText(readMember(record(), {member}), {cell:?})}}</dd>"
+            )),
+            "{label} is one plan column"
+        );
+    }
+    assert!(
+        !detail.contains("createSolidTable"),
+        "one record needs no table"
     );
 }
 

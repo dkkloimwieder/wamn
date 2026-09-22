@@ -125,7 +125,7 @@ pub fn emit_ts_components(
 
 /// The screens this emitter writes today.
 fn written(screen: &ScreenPlan<'_>) -> bool {
-    matches!(screen.role, Role::Table)
+    matches!(screen.role, Role::Table | Role::Detail)
 }
 
 fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
@@ -141,8 +141,29 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     let mut body = String::new();
     let mut runtime = BTreeSet::new();
     let mut bindings = BTreeSet::new();
+    let mut solid = BTreeSet::new();
+    let mut table = false;
     for screen in &screens {
-        emit_table(&mut body, screen, &mut runtime, &mut bindings)?;
+        match screen.role {
+            Role::Table => {
+                table = true;
+                solid.extend(["createSignal", "For", "Show"]);
+                emit_table(&mut body, screen, &mut runtime, &mut bindings)?;
+            }
+            Role::Detail => {
+                solid.extend(["createResource", "Show"]);
+                emit_detail(&mut body, screen, &mut runtime, &mut bindings)?;
+            }
+            role => {
+                return Err(ClientComponentError::new(
+                    ClientComponentErrorKind::UnwrittenRole,
+                    format!(
+                        "{} states the role {role:?}, which has no component yet",
+                        screen.contract.operation
+                    ),
+                ));
+            }
+        }
     }
 
     let mut source = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
@@ -152,10 +173,17 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         model.model.name
     )
     .expect("writing to a String cannot fail");
-    source.push_str("\nimport { createSignal, For, Show } from \"solid-js\";\n");
-    source.push_str(
-        "import {\n  createSolidTable,\n  flexRender,\n  getCoreRowModel,\n  type ColumnDef,\n} from \"@tanstack/solid-table\";\n",
-    );
+    writeln!(
+        source,
+        "\nimport {{ {} }} from \"solid-js\";",
+        solid.iter().copied().collect::<Vec<_>>().join(", ")
+    )
+    .expect("writing to a String cannot fail");
+    if table {
+        source.push_str(
+            "import {\n  createSolidTable,\n  flexRender,\n  getCoreRowModel,\n  type ColumnDef,\n} from \"@tanstack/solid-table\";\n",
+        );
+    }
     writeln!(
         source,
         "import {{\n{}\n}} from \"{RUNTIME_PACKAGE}\";",
@@ -465,6 +493,84 @@ fn emit_table(
         "              </tr>\n            )}\n          </For>\n        </tbody>\n      </table>\n",
     );
     source.push_str("      <Show when={hasNextPage(page())}>\n        <button type=\"button\" onClick={() => void read(page().cursor)}>\n          next page\n        </button>\n      </Show>\n    </section>\n  );\n}\n");
+    Ok(())
+}
+
+/// One detail screen: the fields of one record that the release reads.
+fn emit_detail(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    runtime: &mut BTreeSet<&'static str>,
+    bindings: &mut BTreeSet<String>,
+) -> Result<(), ClientComponentError> {
+    let stem = crate::client_ts::type_stem(screen.model, screen.name);
+    let function = crate::client_ts::function_name(screen.name).map_err(|error| {
+        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+    })?;
+    runtime.extend([
+        "cellText",
+        "newRequestId",
+        "readMember",
+        "type Outcome",
+        "type Transport",
+    ]);
+    bindings.insert(function.clone());
+    bindings.insert(format!("type {stem}Request"));
+    bindings.insert(format!("type {stem}Result"));
+
+    writeln!(
+        source,
+        "\n/** What the detail screen for `{}` takes. */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(source, "export interface {stem}DetailProps {{").expect("write");
+    source.push_str("  /** The transport the application supplies. */\n");
+    source.push_str("  readonly transport: Transport;\n");
+    source.push_str("  /** The input that names the record. */\n");
+    writeln!(source, "  readonly input: {stem}Request;").expect("write");
+    source.push_str("  /** Called with every outcome this screen reads. */\n");
+    writeln!(
+        source,
+        "  readonly onOutcome?: (outcome: Outcome<{stem}Result>) => void;"
+    )
+    .expect("write");
+    source.push_str("}\n");
+
+    writeln!(
+        source,
+        "\n/**\n * The detail screen for `{}`.\n *\n * It reads when it mounts and again whenever its input changes, because the\n * input names the record it shows.\n */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export function {stem}Detail(props: {stem}DetailProps) {{"
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}Request) => {{\n      const read = await {function}(props.transport, [\n        {{ ...input, requestId: newRequestId() }},\n      ]);\n      props.onOutcome?.(read);\n      return read;\n    }},\n  );"
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "  const record = (): {stem}Result | undefined => {{\n    const read = outcome();\n    return read?.status === \"completed\" ? read.value : undefined;\n  }};"
+    )
+    .expect("write");
+    source.push_str("  const state = () => outcome()?.status;\n");
+    source.push_str("\n  return (\n    <section>\n      <Show when={state() !== undefined && state() !== \"completed\"}>\n        <p>{state()}</p>\n      </Show>\n      <dl>\n");
+    for column in &screen.columns {
+        writeln!(source, "        <dt>{}</dt>", label(&column.path)).expect("write");
+        writeln!(
+            source,
+            "        <dd>{{cellText(readMember(record(), {}), {:?})}}</dd>",
+            member_literal(&column.path),
+            cell_type(column)
+        )
+        .expect("write");
+    }
+    source.push_str("      </dl>\n    </section>\n  );\n}\n");
     Ok(())
 }
 
