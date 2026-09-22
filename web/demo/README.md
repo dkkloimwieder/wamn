@@ -1,6 +1,7 @@
 # Receiving demo
 
-This package is disposable. It exists to judge the generated components once, and it is deleted after the Epic 4 review.
+This package is disposable. It exists to judge the generated components, and the close of Epic 5 ends it.
+Epic 4 used it for the evaluation, and Epic 5 uses it to read the two fixes that only a browser shows.
 It has no routes, no navigation, and no layout system. Nothing here is the start of an operator product.
 
 Delete it with two steps: remove `web/demo`, and remove its line in [the web README](../README.md).
@@ -69,3 +70,9 @@ The filled table belongs in the notes of Beads `wamn-78or`, because this package
 | `ReceivingLoadReceiptScreenTable` | | | | | | | |
 | `ReceivingLoadPurchaseOrderHistoryTable` | | | | | | | |
 | `ReceivingRecordReceiptForm` | | | | | | | |
+
+## The Epic 5 checks
+
+Two results need the running page, and Beads `wamn-iq82.7` records both.
+Read the purchase order history of a selected order, and submit a receipt line with the quantity `0`.
+The history draws its rows, and the refused line marks its own quantity control.

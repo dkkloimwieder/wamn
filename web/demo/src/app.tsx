@@ -165,7 +165,7 @@ function screens(
         <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
           <PurchaseOrderGetDetail
             transport={transport}
-            input={{ id: order(), requestId: "" }}
+            input={{ id: order() }}
             onOutcome={read}
           />
         </Show>
@@ -191,7 +191,7 @@ function screens(
         <Show when={receipt() !== ""} fallback={<p>pick a receipt first</p>}>
           <ReceiptGetDetail
             transport={transport}
-            input={{ id: receipt(), requestId: "" }}
+            input={{ id: receipt() }}
             onOutcome={read}
           />
         </Show>
@@ -213,7 +213,7 @@ function screens(
         <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
           <PurchaseOrderUpdateForm
             transport={transport}
-            key={{ id: order(), requestId: "" }}
+            key={{ id: order() }}
             onSubmitted={read}
           />
         </Show>
@@ -221,9 +221,13 @@ function screens(
 
       <section>
         <h2>receiving.record_receipt</h2>
-        {/* No initial values: `initial` is a shallow Partial, so it cannot
-            carry one member of `value` without the supplied ones. wamn-m9qt. */}
-        <ReceivingRecordReceiptForm transport={transport} onSubmitted={read} />
+        <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
+          <ReceivingRecordReceiptForm
+            transport={transport}
+            initial={{ value: { purchaseOrderId: order() } }}
+            onSubmitted={read}
+          />
+        </Show>
       </section>
 
       <section>
@@ -231,7 +235,7 @@ function screens(
         <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
           <ReceivingLoadPurchaseOrderHistoryTable
             transport={transport}
-            fixed={{ id: order(), afterPosition: "0", limit: "20" }}
+            fixed={{ id: order(), limit: 20 }}
             onOutcome={read}
           />
         </Show>
