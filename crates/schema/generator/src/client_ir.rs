@@ -1309,16 +1309,16 @@ mod tests {
     fn fresh_only_contract_policy_is_preserved_in_the_client_ir() {
         for policy in [None, Some(false), Some(true)] {
             let mut contract = serde_json::json!({
-                "operation": "orders:purchase-order/get@1.0.0",
+                "operation": "orders:widget/get@1.0.0",
                 "kind": "get",
-                "grant": "orders:purchase-order/get@1.0.0",
-                "permission_token": "purchase_order.get"
+                "grant": "orders:widget/get@1.0.0",
+                "permission_token": "widget.get"
             });
             if let Some(value) = policy {
                 contract["fresh_only"] = serde_json::json!(value);
             }
             let operation = build_operation(
-                "purchase_order",
+                "widget",
                 "get",
                 OperationParts {
                     operation: Some(contract),
@@ -1346,7 +1346,7 @@ mod tests {
             serde_json::json!({"fresh_only": 1}),
         ] {
             let error = build_operation(
-                "purchase_order",
+                "widget",
                 "get",
                 OperationParts {
                     operation: Some(contract),

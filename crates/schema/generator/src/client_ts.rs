@@ -1024,19 +1024,16 @@ mod tests {
         );
     }
 
-    /// An identity spells `purchase_order` as `purchase-order`, and the types
-    /// keep the contract's own spelling.
+    /// An identity spells `widget_maker` as `widget-maker`, and the types keep
+    /// the contract's own spelling.
     #[test]
     fn an_operation_stem_reads_the_contract_name_out_of_an_identity() {
         for (identity, stem) in [
             ("platform-fixture:widget/get@1.0.0", "WidgetGet"),
+            ("platform-fixture:widget-maker/get@1.0.0", "WidgetMakerGet"),
             (
-                "wamn-receiving:purchase-order/get@1.0.0",
-                "PurchaseOrderGet",
-            ),
-            (
-                "wamn-receiving:receipt/record-receipt@1.0.0",
-                "ReceiptRecordReceipt",
+                "platform-fixture:widget/record-batch@1.0.0",
+                "WidgetRecordBatch",
             ),
         ] {
             assert_eq!(operation_stem(identity), stem, "{identity}");

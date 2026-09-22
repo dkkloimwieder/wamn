@@ -548,10 +548,10 @@ mod tests {
         use crate::client_ir::{ResponseIr, RouteIr};
 
         let routes = BTreeMap::from([(
-            "orders:purchase-order/get@1.0.0".to_owned(),
+            "orders:widget/get@1.0.0".to_owned(),
             RouteIr {
                 method: "POST".to_owned(),
-                template: "/purchase_order/get".to_owned(),
+                template: "/widget/get".to_owned(),
                 input_schema: None,
                 terminal_operation: None,
                 direct: true,
@@ -561,16 +561,16 @@ mod tests {
         )]);
         let [omitted, ordinary, fresh] = [None, Some(false), Some(true)].map(|policy| {
             let mut operation = serde_json::json!({
-                "operation": "orders:purchase-order/get@1.0.0",
+                "operation": "orders:widget/get@1.0.0",
                 "kind": "get",
-                "grant": "orders:purchase-order/get@1.0.0",
-                "permission_token": "purchase_order.get"
+                "grant": "orders:widget/get@1.0.0",
+                "permission_token": "widget.get"
             });
             if let Some(value) = policy {
                 operation["fresh_only"] = serde_json::json!(value);
             }
             let contracts = BTreeMap::from([(
-                "purchase_order/get.operation.json".to_owned(),
+                "widget/get.operation.json".to_owned(),
                 serde_json::to_vec(&operation).expect("operation serializes"),
             )]);
             let ir = ClientContractIr::from_release_contracts("orders", &contracts, &routes)

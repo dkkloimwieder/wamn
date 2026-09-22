@@ -288,8 +288,8 @@ pub struct FieldReference {
     pub model: String,
     /// Input path of the same operation that narrows the list, when one does.
     ///
-    /// A receipt line names a line of the purchase order the operator already
-    /// chose, so the line list reads that order and nothing else.
+    /// One line of a batch names a record of the maker the operator already
+    /// chose, so the line list reads that maker and nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narrowed_by: Option<String>,
 }
@@ -2182,7 +2182,7 @@ mod tests {
         for raw_ineligible in ["crate", "self", "super"] {
             assert_eq!(rust_identifier(raw_ineligible), None);
         }
-        assert_eq!(rust_identifier("receipt_id"), Some("receipt_id".to_owned()));
+        assert_eq!(rust_identifier("widget_id"), Some("widget_id".to_owned()));
     }
 }
 
