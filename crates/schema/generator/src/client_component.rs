@@ -22,7 +22,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use crate::client_ir::FieldIr;
-use crate::client_plan::{ClientPlan, ModelPlan, Role, ScreenPlan};
+use crate::client_plan::{ClientPlan, ModelPlan, Role, ScreenPlan, SuppliedKind};
 use crate::client_ts::{RUNTIME_PACKAGE, ts_type};
 use crate::generate::GeneratedFile;
 
@@ -125,7 +125,7 @@ pub fn emit_ts_components(
 
 /// The screens this emitter writes today.
 fn written(screen: &ScreenPlan<'_>) -> bool {
-    matches!(screen.role, Role::Table | Role::Detail)
+    matches!(screen.role, Role::Table | Role::Detail | Role::Form)
 }
 
 fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
@@ -143,6 +143,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     let mut bindings = BTreeSet::new();
     let mut solid = BTreeSet::new();
     let mut table = false;
+    let mut form = false;
     for screen in &screens {
         match screen.role {
             Role::Table => {
@@ -153,6 +154,11 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             Role::Detail => {
                 solid.extend(["createResource", "Show"]);
                 emit_detail(&mut body, screen, &mut runtime, &mut bindings)?;
+            }
+            Role::Form => {
+                form = true;
+                solid.extend(["createSignal", "Show"]);
+                emit_form(&mut body, screen, &mut runtime, &mut bindings)?;
             }
             role => {
                 return Err(ClientComponentError::new(
@@ -183,6 +189,10 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         source.push_str(
             "import {\n  createSolidTable,\n  flexRender,\n  getCoreRowModel,\n  type ColumnDef,\n} from \"@tanstack/solid-table\";\n",
         );
+    }
+    if form {
+        source.push_str("import { createForm } from \"@tanstack/solid-form\";\n");
+        source.push_str("import { z } from \"zod\";\n");
     }
     writeln!(
         source,
@@ -572,6 +582,335 @@ fn emit_detail(
     }
     source.push_str("      </dl>\n    </section>\n  );\n}\n");
     Ok(())
+}
+
+/// The zod expression for one input field.
+///
+/// It states what the release declared: the type, the closed value domain, the
+/// admitted null, and whether the property must be present. Nothing here
+/// checks a reply, because the platform is the authority on its own values.
+fn zod_type(field: &FieldIr) -> String {
+    let base = match field.type_name.as_str() {
+        "boolean" => "z.boolean()".to_owned(),
+        "int32" | "float64" => "z.number()".to_owned(),
+        "json" | "object" | "array" => "z.unknown()".to_owned(),
+        _ if !field.values.is_empty() => format!(
+            "z.enum([{}])",
+            field
+                .values
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => "z.string()".to_owned(),
+    };
+    let mut spelling = base;
+    if field.nullable {
+        spelling.push_str(".nullable()");
+    }
+    if !field.required {
+        spelling.push_str(".optional()");
+    }
+    spelling
+}
+
+/// The zod object of one level of the operator's input.
+///
+/// The members mirror the request type exactly, so the check runs over the
+/// value the form holds. A member that carries members of its own is optional,
+/// because a form fills it one field at a time.
+fn write_input_schema(source: &mut String, inputs: &[&FieldIr], prefix: &[String], depth: usize) {
+    let indent = "  ".repeat(depth);
+    let mut written: Vec<String> = Vec::new();
+    for input in inputs {
+        let path = member_path(&input.path);
+        if path.len() <= prefix.len() || !path.starts_with(prefix) {
+            continue;
+        }
+        let name = path[prefix.len()].clone();
+        if written.contains(&name) {
+            continue;
+        }
+        written.push(name.clone());
+        if path.len() == prefix.len() + 1 {
+            writeln!(source, "{indent}{name}: {},", zod_type(input)).expect("write");
+            continue;
+        }
+        let mut deeper = prefix.to_vec();
+        deeper.push(name.clone());
+        writeln!(source, "{indent}{name}: z").expect("write");
+        writeln!(source, "{indent}  .object({{").expect("write");
+        write_input_schema(source, inputs, &deeper, depth + 2);
+        writeln!(source, "{indent}  }})").expect("write");
+        writeln!(source, "{indent}  .optional(),").expect("write");
+    }
+}
+
+/// One form screen: what the operator types, and what the platform supplies.
+fn emit_form(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    runtime: &mut BTreeSet<&'static str>,
+    bindings: &mut BTreeSet<String>,
+) -> Result<(), ClientComponentError> {
+    let stem = crate::client_ts::type_stem(screen.model, screen.name);
+    let function = crate::client_ts::function_name(screen.name).map_err(|error| {
+        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+    })?;
+    runtime.extend([
+        "newRequestId",
+        "refusedMember",
+        "writeMember",
+        "type Outcome",
+        "type Transport",
+    ]);
+    if !screen.supplied.is_empty() {
+        for supplied in &screen.supplied {
+            match supplied.kind {
+                SuppliedKind::RequestId => runtime.insert("newRequestId"),
+                SuppliedKind::IdempotencyKey => runtime.insert("newIdempotencyKey"),
+                SuppliedKind::OccurredAt => runtime.insert("occurredAt"),
+            };
+        }
+    }
+    bindings.insert(function.clone());
+    bindings.insert(format!("type {stem}Request"));
+    bindings.insert(format!("type {stem}Result"));
+
+    // What the operator types, checked before the request goes out.
+    writeln!(
+        source,
+        "\n/** What an operator types for `{}`. */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "const {}_INPUT = z.object({{",
+        screen.name.to_uppercase()
+    )
+    .expect("write");
+    write_input_schema(source, &screen.inputs, &[], 1);
+    source.push_str("});\n");
+
+    // The props.
+    writeln!(
+        source,
+        "\n/** What the form for `{}` takes. */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(source, "export interface {stem}FormProps {{").expect("write");
+    source.push_str("  /** The transport the application supplies. */\n");
+    source.push_str("  readonly transport: Transport;\n");
+    source.push_str("  /** Values the form starts with. */\n");
+    writeln!(source, "  readonly initial?: Partial<{stem}Request>;").expect("write");
+    if let Some(binding) = screen.revision {
+        let read = crate::client_ts::operation_stem(binding.read_operation);
+        writeln!(
+            source,
+            "  /** The record this command changes. The form reads it, and sends the\n   * revision it read, because `{}` states that binding. */",
+            binding.read_operation
+        )
+        .expect("write");
+        writeln!(source, "  readonly key: {read}Request;").expect("write");
+    } else {
+        for revision in &screen.revision_inputs {
+            source.push_str(
+                "  /** The revision this command sends. The release binds no read that supplies it. */\n",
+            );
+            writeln!(
+                source,
+                "  readonly {}: {stem}Request[{:?}];",
+                crate::client_ts::to_camel(revision),
+                crate::client_ts::to_camel(revision)
+            )
+            .expect("write");
+        }
+    }
+    source.push_str("  /** Called with the outcome of every submission. */\n");
+    writeln!(
+        source,
+        "  readonly onSubmitted?: (outcome: Outcome<{stem}Result>) => void;"
+    )
+    .expect("write");
+    source.push_str("}\n");
+
+    // The component.
+    writeln!(
+        source,
+        "\n/**\n * The form for `{}`.\n *\n * It renders what the operator fills and nothing else. The reserved inputs\n * come from the runtime at submit time, and the operator never sees them.\n */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export function {stem}Form(props: {stem}FormProps) {{"
+    )
+    .expect("write");
+    source.push_str(
+        "  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(\n    null,\n  );\n",
+    );
+    source.push_str("\n  const form = createForm(() => ({\n");
+    writeln!(
+        source,
+        "    defaultValues: {{ ...props.initial }} as Partial<{stem}Request>,"
+    )
+    .expect("write");
+    source.push_str("    onSubmit: async ({ value }: { value: Partial<");
+    writeln!(source, "{stem}Request> }}) => {{").expect("write");
+    writeln!(
+        source,
+        "      const checked = {}_INPUT.safeParse(value);",
+        screen.name.to_uppercase()
+    )
+    .expect("write");
+    source.push_str(
+        "      if (!checked.success) {\n        const issue = checked.error.issues[0];\n        setRefusal({\n          code: issue?.message ?? \"the input is not valid\",\n          member: typeof issue?.path.at(-1) === \"string\" ? String(issue.path.at(-1)) : null,\n        });\n        return;\n      }\n",
+    );
+    writeln!(source, "      let item = {{ ...value }} as {stem}Request;").expect("write");
+    for supplied in &screen.supplied {
+        let value = match supplied.kind {
+            SuppliedKind::RequestId => "newRequestId()",
+            SuppliedKind::IdempotencyKey => "newIdempotencyKey()",
+            SuppliedKind::OccurredAt => "occurredAt()",
+        };
+        writeln!(
+            source,
+            "      item = writeMember(item, {}, {value});",
+            member_literal(supplied.path)
+        )
+        .expect("write");
+    }
+    if let Some(binding) = screen.revision {
+        let read = crate::client_ts::function_name(
+            binding
+                .read_operation
+                .rsplit('/')
+                .next()
+                .unwrap_or(binding.read_operation)
+                .split('@')
+                .next()
+                .unwrap_or(binding.read_operation),
+        )
+        .map_err(|error| {
+            ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+        })?;
+        bindings.insert(read.clone());
+        bindings.insert(format!(
+            "type {}Request",
+            crate::client_ts::operation_stem(binding.read_operation)
+        ));
+        runtime.insert("readMember");
+        source.push_str("      // The revision comes from the record this command changes, read\n      // now, because a stale revision is what the conflict outcome names.\n");
+        writeln!(
+            source,
+            "      const record = await {read}(props.transport, [\n        {{ ...props.key, requestId: newRequestId() }},\n      ]);"
+        )
+        .expect("write");
+        source.push_str(
+            "      if (record.status !== \"completed\") {\n        setRefusal({ code: record.status, member: null });\n        return;\n      }\n",
+        );
+        writeln!(
+            source,
+            "      item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            member_literal(binding.command_key_input),
+            member_literal(binding.key_field)
+        )
+        .expect("write");
+        writeln!(
+            source,
+            "      item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            member_literal(binding.command_revision_input),
+            member_literal(binding.revision_field)
+        )
+        .expect("write");
+    } else {
+        for revision in &screen.revision_inputs {
+            writeln!(
+                source,
+                "      item = writeMember(item, {}, props.{});",
+                member_literal(revision),
+                crate::client_ts::to_camel(revision)
+            )
+            .expect("write");
+        }
+    }
+    writeln!(
+        source,
+        "      const outcome = await {function}(props.transport, [item]);"
+    )
+    .expect("write");
+    source.push_str("      props.onSubmitted?.(outcome);\n");
+    source.push_str(
+        "      setRefusal(\n        outcome.status === \"refused\"\n          ? { code: outcome.code, member: refusedMember(outcome.detail) }\n          : null,\n      );\n",
+    );
+    source.push_str("    },\n  }));\n");
+
+    // The markup.
+    source.push_str(
+        "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <p>{refusal()?.code}</p>\n      </Show>\n",
+    );
+    for input in &screen.inputs {
+        let member = member_path(&input.path).join(".");
+        let leaf = input
+            .path
+            .rsplit('.')
+            .next()
+            .unwrap_or(&input.path)
+            .trim_end_matches("[]");
+        writeln!(source, "      <form.Field name={{\"{member}\"}}>").expect("write");
+        source.push_str("        {(field) => (\n          <label>\n");
+        writeln!(source, "            {}", label(&input.path)).expect("write");
+        emit_input_control(source, input);
+        writeln!(
+            source,
+            "            <Show when={{refusal()?.member === {leaf:?}}}>\n              <em>{{refusal()?.code}}</em>\n            </Show>"
+        )
+        .expect("write");
+        source.push_str("          </label>\n        )}\n      </form.Field>\n");
+    }
+    source.push_str("      <button type=\"submit\">submit</button>\n    </form>\n  );\n}\n");
+    Ok(())
+}
+
+/// One control for one operator field, chosen by what the contract declares.
+fn emit_input_control(source: &mut String, input: &FieldIr) {
+    if input.type_name == "boolean" {
+        source.push_str(
+            "            <input\n              type=\"checkbox\"\n              checked={field().state.value === true}\n              onChange={(event) => field().handleChange(event.currentTarget.checked)}\n            />\n",
+        );
+        return;
+    }
+    if !input.values.is_empty() {
+        source.push_str(
+            "            <select\n              value={String(field().state.value ?? \"\")}\n              onChange={(event) => field().handleChange(event.currentTarget.value)}\n            >\n",
+        );
+        if !input.required || input.nullable {
+            source.push_str("              <option value=\"\"></option>\n");
+        }
+        for value in &input.values {
+            writeln!(
+                source,
+                "              <option value={value:?}>{}</option>",
+                value.replace('_', " ")
+            )
+            .expect("write");
+        }
+        source.push_str("            </select>\n");
+        return;
+    }
+    let kind = if matches!(input.type_name.as_str(), "int32" | "float64") {
+        "number"
+    } else {
+        "text"
+    };
+    writeln!(
+        source,
+        "            <input\n              type=\"{kind}\"\n              value={{String(field().state.value ?? \"\")}}\n              onInput={{(event) => field().handleChange(event.currentTarget.value)}}\n            />"
+    )
+    .expect("write");
 }
 
 /// One control for each page control the plan names.

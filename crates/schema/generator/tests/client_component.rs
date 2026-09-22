@@ -50,8 +50,8 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     }
     assert_eq!(
         widget.matches("export function ").count(),
-        3,
-        "the two tables and the one detail have components in this epic"
+        6,
+        "the two tables, the one detail and the three forms have components"
     );
     // The columns are the plan's columns, in contract order, with the cell type
     // that the release declared.
@@ -202,6 +202,110 @@ fn a_row_link_becomes_one_callback_named_from_its_target() {
     for absent in ["href=", "navigate", "router", "<a "] {
         assert!(!widget.contains(absent), "a link is a callback: {absent}");
     }
+}
+
+/// A form renders what the operator fills, and the platform supplies the rest.
+#[test]
+fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let create = widget
+        .split("export function WidgetCreateForm")
+        .nth(1)
+        .expect("the create form exists")
+        .split("\n/**")
+        .next()
+        .expect("the form ends");
+
+    assert!(widget.contains(concat!(
+        "const CREATE_INPUT = z.object({\n",
+        "  code: z.string().optional(),\n",
+        "  note: z.string().nullable().optional(),\n",
+        "});\n",
+    )));
+    assert!(
+        create.contains("const checked = CREATE_INPUT.safeParse(value);"),
+        "the operator's input is checked before the request goes out"
+    );
+    assert!(
+        create.contains("item = writeMember(item, [\"requestId\"], newRequestId());")
+            && create
+                .contains("item = writeMember(item, [\"idempotencyKey\"], newIdempotencyKey());"),
+        "the reserved inputs come from the runtime at submit time"
+    );
+    for reserved in ["requestId\"", "idempotencyKey\""] {
+        assert!(
+            !create.contains(&format!("<form.Field name={{\"{reserved}}}>")),
+            "the operator never sees {reserved}"
+        );
+    }
+    assert_eq!(
+        create.matches("<form.Field").count(),
+        2,
+        "one control for each plan input, and no other"
+    );
+    assert!(
+        create.contains("member: refusedMember(outcome.detail)"),
+        "a refusal that names a member reaches that member"
+    );
+    assert!(
+        create.contains("<Show when={refusal()?.member === \"code\"}>"),
+        "the marked member shows the refusal beside its control"
+    );
+
+    // A nested input keeps its shape in the schema and in the field name.
+    assert!(widget.contains(concat!(
+        "const UPDATE_INPUT = z.object({\n",
+        "  change: z\n",
+        "    .object({\n",
+        "      code: z.string().optional(),\n",
+    )));
+    assert!(widget.contains("<form.Field name={\"change.code\"}>"));
+}
+
+/// A command that sends a revision reads the record first, because a stale
+/// revision is what the conflict outcome names.
+#[test]
+fn a_revision_bound_form_reads_the_record_before_it_sends() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let form = widget
+        .split("export function WidgetUpdateForm")
+        .nth(1)
+        .expect("the update form exists");
+    assert!(
+        widget.contains("  readonly key: WidgetGetRequest;"),
+        "the form takes the record it changes"
+    );
+    assert!(
+        form.contains("const record = await get(props.transport, [\n        { ...props.key, requestId: newRequestId() },\n      ]);"),
+        "it reads that record first"
+    );
+    assert!(
+        form.contains("item = writeMember(item, [\"expectedEditVersion\"], readMember(record.value, [\"editVersion\"]) ?? null);"),
+        "it sends the revision it read"
+    );
+    assert!(
+        form.contains("if (record.status !== \"completed\") {"),
+        "a read that establishes nothing stops the submission"
+    );
+    let props = widget
+        .split("export interface WidgetUpdateFormProps {")
+        .nth(1)
+        .expect("the update props exist")
+        .split('}')
+        .next()
+        .expect("the props end");
+    assert!(
+        !props.contains("readonly expectedEditVersion:"),
+        "a bound revision is not a prop: {props}"
+    );
+    assert!(
+        widget.contains(
+            "readonly expectedEditVersion: WidgetArchiveRequest[\"expectedEditVersion\"];"
+        ),
+        "a revision with no binding stays a prop, because only the caller knows it"
+    );
 }
 
 #[test]

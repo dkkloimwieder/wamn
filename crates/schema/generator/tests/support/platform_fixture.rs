@@ -96,17 +96,23 @@ pub(crate) fn client_release() -> ClientContractIr {
                 method: "POST".to_owned(),
                 template: format!("/widget/{name}"),
                 input_schema: match name {
+                    // The shape a real release publishes: the record key, the
+                    // revision it expects, the request identity, and the change.
                     "update" => Some(json!({
                         "type": "array",
-                        "items": {"type": "object", "properties": {"change": {
-                        "type": "object", "properties": {"note": {
-                            "type": ["string", "null"],
-                            "x-wamn-explicit-null": "accepted"
-                        }, "code": {
-                            "type": ["string", "null"],
-                            "x-wamn-explicit-null": "invalid_input"
-                        }}
-                        }}}
+                        "items": {"type": "object", "required": ["id", "expected_edit_version", "request_id"], "properties": {
+                            "id": {"type": "string", "format": "uuid"},
+                            "expected_edit_version": {"type": "string"},
+                            "request_id": {"type": "string"},
+                            "change": {
+                            "type": "object", "properties": {"note": {
+                                "type": ["string", "null"],
+                                "x-wamn-explicit-null": "accepted"
+                            }, "code": {
+                                "type": ["string", "null"],
+                                "x-wamn-explicit-null": "invalid_input"
+                            }}
+                            }}}
                     })),
                     // The page controls a served query publishes. The release
                     // states no domain for the sort, which the paging contract

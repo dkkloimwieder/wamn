@@ -187,7 +187,14 @@ fn revision_bindings_name_the_read_operation_that_supplies_them() {
     assert_eq!(binding.revision_field, "edit_version");
     assert_eq!(binding.command_key_input, "id");
     assert_eq!(binding.command_revision_input, "expected_edit_version");
-    for name in ["archive", "create", "get", "query", "update"] {
+    // The update binds the same read, because its published input declares the
+    // record key and the revision it expects.
+    let update = screen(&plan, "update")
+        .revision
+        .expect("a revision update reads its current revision first");
+    assert_eq!(update.read_operation, "platform-fixture:widget/get@1.0.0");
+    assert_eq!(update.command_revision_input, "expected_edit_version");
+    for name in ["archive", "create", "get", "query"] {
         assert!(screen(&plan, name).revision.is_none(), "{name}");
     }
 }
@@ -338,7 +345,8 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
     );
     assert_eq!(
         paths(&screen(&plan, "update").inputs),
-        ["change.code", "change.note"]
+        ["change.code", "change.note", "id"],
+        "the record key is operator input, and the revision is not"
     );
 
     assert_eq!(
@@ -492,11 +500,17 @@ fn row_links_open_the_record_read_and_the_revision_command() {
     }
     assert_eq!(
         screen(&plan, "get").row_links,
-        [RowLink {
-            operation: "platform-fixture:widget/delete@1.0.0",
-            reason: LinkReason::Revision,
-        }],
-        "a read row opens the command that sends the revision it read"
+        [
+            RowLink {
+                operation: "platform-fixture:widget/delete@1.0.0",
+                reason: LinkReason::Revision,
+            },
+            RowLink {
+                operation: "platform-fixture:widget/update@1.0.0",
+                reason: LinkReason::Revision,
+            }
+        ],
+        "a read row opens every command that sends the revision it read"
     );
     assert!(
         screen(&plan, "archive").row_links.is_empty(),

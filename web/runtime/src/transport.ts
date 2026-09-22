@@ -410,3 +410,34 @@ function submittedRequestId(request: WireRequest): string {
   const value = (first as { [key: string]: JsonValue })["request_id"];
   return typeof value === "string" ? value : "";
 }
+
+/**
+ * The declared member that one refusal names, or null.
+ *
+ * A refusal states its code, and its detail carries what else the operation
+ * declared. A case that requires a `field` member names the member directly. A
+ * schema refusal names it through a pointer, whose last segment is the member.
+ * A form marks that member, and shows the refusal above the fields otherwise.
+ */
+export function refusedMember(detail: JsonValue): string | null {
+  if (detail === null || typeof detail !== "object" || Array.isArray(detail)) {
+    return null;
+  }
+  const members = detail as { [key: string]: JsonValue };
+  const field = members["field"];
+  if (typeof field === "string" && field !== "") {
+    return field;
+  }
+  const data = members["data"];
+  const pointer =
+    typeof members["pointer"] === "string"
+      ? members["pointer"]
+      : data !== null && typeof data === "object" && !Array.isArray(data)
+        ? (data as { [key: string]: JsonValue })["pointer"]
+        : null;
+  if (typeof pointer !== "string" || pointer === "") {
+    return null;
+  }
+  const segment = pointer.split("/").pop();
+  return segment === undefined || segment === "" ? null : segment;
+}

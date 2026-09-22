@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { ABSENT_CELL, cellText } from "../src/cell.js";
 import { clearMember, readMember, writeMember } from "../src/draft.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
+import { refusedMember } from "../src/transport.js";
 
 describe("the page state", () => {
   it("appends the next page and keeps the rows already shown", () => {
@@ -83,5 +84,22 @@ describe("the cell text", () => {
     expect(cellText(false, "boolean")).toBe("false");
     expect(cellText([1, 2, 3], "bytes")).toBe("3 bytes");
     expect(cellText({ fooBar: 1 }, "json")).toBe('{"fooBar":1}');
+  });
+});
+
+describe("the member a refusal names", () => {
+  it("reads a declared field member", () => {
+    expect(refusedMember({ field: "code" })).toBe("code");
+  });
+
+  it("reads the last segment of a schema pointer", () => {
+    expect(refusedMember({ data: { pointer: "/0/change/code" } })).toBe("code");
+    expect(refusedMember({ pointer: "/0/id" })).toBe("id");
+  });
+
+  it("names nothing when the refusal names nothing", () => {
+    expect(refusedMember(null)).toBeNull();
+    expect(refusedMember({ constraint: "widget_code_key" })).toBeNull();
+    expect(refusedMember(["code"])).toBeNull();
   });
 });
