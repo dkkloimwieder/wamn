@@ -373,11 +373,20 @@ pub struct CommandCanonicalization {
     pub line_order: Option<CommandLineOrder>,
 }
 
-/// Closed canonicalized line profile implemented by command generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandLineOrder {
-    PurchaseOrderLineIdAscending,
+/// The line members a command names for its canonical identity.
+///
+/// The command states them, because the platform knows no application's line
+/// shape. The published contract spells the profile `<member>_ascending`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandLineOrder {
+    /// Line member whose ascending order states the canonical line order.
+    pub ascending_by: String,
+    /// Line member that every line must keep above zero, when one exists.
+    ///
+    /// A command that declares none gets no `nonpositive_quantity` refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub positive_member: Option<String>,
 }
 
 /// Closed operation-error detail keys serialized on per-item refusals.
@@ -1469,24 +1478,36 @@ fn validate_command_canonicalization(
             ),
         ));
     }
-    if declares_lines {
-        let has_ordering_key = operation.input.fields.iter().any(|field| {
-            field.path.ends_with("line[].purchase_order_line_id")
-                && field.ty == wamn_schema_introspection::ir::ColumnType::Uuid
+    if let Some(order) = canonicalization.line_order.as_ref() {
+        let line_member = |member: &str| format!("line[].{member}");
+        let orders = operation.input.fields.iter().any(|field| {
+            field.path.ends_with(&line_member(&order.ascending_by))
                 && !field.nullable
+                && orderable(field.ty)
         });
-        let has_positive_quantity = operation.input.fields.iter().any(|field| {
-            field.path.ends_with("line[].quantity")
-                && field.ty == wamn_schema_introspection::ir::ColumnType::Numeric
-                && !field.nullable
-        });
-        if !has_ordering_key || !has_positive_quantity {
+        if !orders {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
                 format!(
-                    "{operation_name} canonical line profile requires non-null UUID purchase_order_line_id and numeric quantity inputs"
+                    "{operation_name} canonical line profile orders by {}, which is not a non-null line input that can order",
+                    order.ascending_by
                 ),
             ));
+        }
+        if let Some(positive) = order.positive_member.as_deref() {
+            let numeric = operation.input.fields.iter().any(|field| {
+                field.path.ends_with(&line_member(positive))
+                    && field.ty == wamn_schema_introspection::ir::ColumnType::Numeric
+                    && !field.nullable
+            });
+            if !numeric {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "{operation_name} canonical line profile keeps {positive} positive, which is not a non-null numeric line input"
+                    ),
+                ));
+            }
         }
     }
     let input_paths = operation
@@ -1510,6 +1531,12 @@ fn validate_command_canonicalization(
         ));
     }
     Ok(())
+}
+
+/// Whether one value of this type has an order a command can hash by.
+const fn orderable(ty: wamn_schema_introspection::ir::ColumnType) -> bool {
+    use wamn_schema_introspection::ir::ColumnType;
+    !matches!(ty, ColumnType::Json | ColumnType::Bytes)
 }
 
 fn validate_custom_operation_errors(

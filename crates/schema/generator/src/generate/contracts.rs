@@ -356,8 +356,8 @@ fn emit_custom_operation_contracts(
             "timestamptz": "utc_rfc3339_six_fractional_digits",
             "numeric": "postgresql_lexical_scale_preserved",
         });
-        if let Some(order) = canonicalization.line_order {
-            contract["line_order"] = json!(order);
+        if let Some(order) = canonicalization.line_order.as_ref() {
+            contract["line_order"] = json!(format!("{}_ascending", order.ascending_by));
             contract["duplicate_line"] = json!("invalid_input");
         }
         input_contract.insert("canonicalization".to_owned(), contract);
@@ -524,7 +524,14 @@ fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal
             {
                 sources.push("duplicate_line");
             }
-            if operation.input.line.is_some() && operation.canonicalization.is_some() {
+            // Only a command that names a positive line member can refuse a
+            // line that is not positive.
+            if operation
+                .canonicalization
+                .as_ref()
+                .and_then(|canonical| canonical.line_order.as_ref())
+                .is_some_and(|order| order.positive_member.is_some())
+            {
                 sources.push("nonpositive_quantity");
             }
             json!({"literal": literal, "from": sources})

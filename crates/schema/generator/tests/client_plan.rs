@@ -601,7 +601,7 @@ fn the_plan_hands_the_authored_text_to_an_emitter() {
     };
     assert_eq!(input("update", "change.code"), Some("Widget code"));
     assert_eq!(
-        input("record_batch", "value.line[].quantity"),
+        input("record_batch", "value.line[].amount"),
         Some("Quantity received")
     );
 
@@ -651,7 +651,7 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
     );
 
     // A nested reference inside a repeated group, narrowed by a sibling.
-    let line = populated("record_batch", "value.line[].purchase_order_line_id");
+    let line = populated("record_batch", "value.line[].widget_id");
     assert_eq!(line.list_operation, "platform-fixture:widget/list@1.0.0");
     assert_eq!(
         line.display_field, "code",
@@ -704,7 +704,7 @@ fn selectors_whose_list_declares_no_display_filter_are_reported() {
         plan.unsearchable(),
         [UnsearchableSelector {
             operation: "platform-fixture:widget/record-batch@1.0.0",
-            input: "value.line[].purchase_order_line_id",
+            input: "value.line[].widget_id",
             list_operation: "platform-fixture:widget/list@1.0.0",
         }],
         "the report names the screen, the input and the list"
@@ -753,7 +753,7 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
         .iter()
         .find(|form| form.operation == "platform-fixture:widget/record-batch@1.0.0")
         .expect("a widget row opens the batch form");
-    assert_eq!(line.pairs, [("id", "value.line[].purchase_order_line_id")]);
+    assert_eq!(line.pairs, [("id", "value.line[].widget_id")]);
 
     assert!(
         screen(&plan, "get").row_forms.is_empty(),
@@ -798,7 +798,7 @@ fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
     let batch = screen(&plan, "record_batch")
         .population
         .iter()
-        .find(|input| input.input == "value.line[].purchase_order_line_id")
+        .find(|input| input.input == "value.line[].widget_id")
         .expect("the authored reference is populated");
     assert_eq!(batch.display_field, "code");
 }

@@ -626,7 +626,7 @@ fn authored_text_reaches_every_field_the_client_reads() {
     // repeated group. The group itself keeps the derived text: `wamn-j3yr`.
     let batch = operation("record_batch");
     assert_eq!(
-        leaf(&batch.input_fields, "value.line[].quantity")
+        leaf(&batch.input_fields, "value.line[].amount")
             .label
             .as_deref(),
         Some("Quantity received")
@@ -747,7 +747,7 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
         .expect("the batch names a maker");
     assert_eq!(maker.model, "widget_maker");
     assert_eq!(maker.narrowed_by, None);
-    let line = leaf(&batch.input_fields, "value.line[].purchase_order_line_id")
+    let line = leaf(&batch.input_fields, "value.line[].widget_id")
         .references
         .as_ref()
         .expect("a line names a widget");

@@ -294,7 +294,7 @@ fn a_repeated_control_states_its_declared_path_and_its_index() {
     assert!(
         batch.contains(concat!(
             "<Show when={refusalMarks(refusal()?.member ?? null, ",
-            "\"value.line[].quantity\", index())}>"
+            "\"value.line[].amount\", index())}>"
         )),
         "a control inside the group states its declared path and its index"
     );
@@ -925,7 +925,7 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
         source(&files, "generated/client-ts/components/index.ts").contains(concat!(
             "// These selectors read the first page and render no search, because the\n",
             "// list they read declares no filter on its display field:\n",
-            "// platform-fixture:widget/record-batch@1.0.0 value.line[].purchase_order_line_id: platform-fixture:widget/list@1.0.0\n",
+            "// platform-fixture:widget/record-batch@1.0.0 value.line[].widget_id: platform-fixture:widget/list@1.0.0\n",
         )),
         "the generator names the selector, its input and the list it reads"
     );

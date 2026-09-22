@@ -195,17 +195,14 @@ pub(crate) fn client_release() -> ClientContractIr {
                                             "maxItems": 10,
                                             "items": {
                                                 "type": "object",
-                                                "required": [
-                                                    "purchase_order_line_id",
-                                                    "quantity"
-                                                ],
+                                                "required": ["widget_id", "amount"],
                                                 "additionalProperties": false,
                                                 "properties": {
-                                                    "purchase_order_line_id": {
+                                                    "widget_id": {
                                                         "type": "string",
                                                         "format": "uuid"
                                                     },
-                                                    "quantity": {"type": "string"}
+                                                    "amount": {"type": "string"}
                                                 }
                                             }
                                         }
@@ -615,7 +612,7 @@ pub(crate) fn manifest() -> Value {
                             "references": {"model": "widget_maker"}
                         },
                         {
-                            "path": "value.line[].purchase_order_line_id",
+                            "path": "value.line[].widget_id",
                             "type": "uuid",
                             "nullable": false,
                             "label": "Line",
@@ -625,20 +622,22 @@ pub(crate) fn manifest() -> Value {
                             }
                         },
                         {
-                            "path": "value.line[].quantity",
+                            "path": "value.line[].amount",
                             "type": "numeric",
                             "nullable": false,
                             "label": "Quantity received"
                         }
                     ]
                 },
-                // A line input must declare a canonical line profile. The
-                // closed vocabulary admits one literal, and that profile
-                // requires these two member names, so the fixture carries a
-                // Receiving column name. wamn-cguw owns widening it.
+                // A line input must declare a canonical line profile, and the
+                // profile names this command's own members. No platform
+                // vocabulary states them.
                 "canonicalization": {
                     "excluded_fields": ["request_id", "value.idempotency_key"],
-                    "line_order": "purchase_order_line_id_ascending"
+                    "line_order": {
+                        "ascending_by": "widget_id",
+                        "positive_member": "amount"
+                    }
                 },
                 "result": {"class": "one", "fields": [
                     {"path": "widget_id", "type": "uuid", "nullable": false}

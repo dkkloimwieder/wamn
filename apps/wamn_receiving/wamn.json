@@ -532,7 +532,10 @@
           "request_id",
           "value.idempotency_key"
         ],
-        "line_order": "purchase_order_line_id_ascending"
+        "line_order": {
+          "ascending_by": "purchase_order_line_id",
+          "positive_member": "quantity"
+        }
       },
       "errors": [
         "invalid_input",

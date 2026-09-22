@@ -421,11 +421,11 @@ fn event_registration_and_line_profiles_are_closed() {
         .as_array_mut()
         .unwrap()
         .extend([
-            json!({"path": "line[].purchase_order_line_id", "type": "uuid", "nullable": false}),
-            json!({"path": "line[].quantity", "type": "numeric", "nullable": false}),
+            json!({"path": "line[].entry_id", "type": "uuid", "nullable": false}),
+            json!({"path": "line[].amount", "type": "numeric", "nullable": false}),
         ]);
     lined["custom_operations"]["widget.archive"]["canonicalization"]["line_order"] =
-        json!("purchase_order_line_id_ascending");
+        json!({"ascending_by": "entry_id", "positive_member": "amount"});
     validate_operation_vocabulary(&parsed(&lined)).expect("valid line profile");
     for field in ["line", "line_order"] {
         let mut invalid = lined.clone();
@@ -447,17 +447,36 @@ fn event_registration_and_line_profiles_are_closed() {
         );
     }
 
-    let mut missing_quantity = lined;
-    missing_quantity["custom_operations"]["widget.archive"]["input"]["fields"]
+    let mut missing_positive = lined.clone();
+    missing_positive["custom_operations"]["widget.archive"]["input"]["fields"]
         .as_array_mut()
         .unwrap()
-        .retain(|field| field["path"] != "line[].quantity");
+        .retain(|field| field["path"] != "line[].amount");
     assert_eq!(
-        validate_operation_vocabulary(&parsed(&missing_quantity))
-            .expect_err("canonical line profile omitted quantity")
+        validate_operation_vocabulary(&parsed(&missing_positive))
+            .expect_err("canonical line profile omitted its positive member")
             .kind(),
         GenerateErrorKind::InvalidOperation
     );
+
+    // The declared member decides. A profile that orders by a member the
+    // command does not declare is refused, whatever the member is called.
+    let mut unknown_member = lined.clone();
+    unknown_member["custom_operations"]["widget.archive"]["canonicalization"]["line_order"] =
+        json!({"ascending_by": "purchase_order_line_id", "positive_member": "amount"});
+    assert_eq!(
+        validate_operation_vocabulary(&parsed(&unknown_member))
+            .expect_err("canonical line profile ordered by an undeclared member")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    // A command with lines and no positive member is valid, and it refuses no
+    // line for being zero.
+    let mut no_positive = lined;
+    no_positive["custom_operations"]["widget.archive"]["canonicalization"]["line_order"] =
+        json!({"ascending_by": "entry_id"});
+    validate_operation_vocabulary(&parsed(&no_positive)).expect("line profile with no quantity");
 }
 
 #[test]
@@ -855,8 +874,8 @@ fn authored_text_is_optional_and_its_key_is_closed() {
         .input
         .fields
         .iter()
-        .find(|field| field.path == "value.line[].quantity")
-        .expect("the repeated line quantity");
+        .find(|field| field.path == "value.line[].amount")
+        .expect("the repeated line amount");
     assert_eq!(line.label.as_deref(), Some("Quantity received"));
 
     // Every text member removed: the same manifest still parses, and the
@@ -1016,8 +1035,8 @@ fn a_contract_carries_the_authored_text_and_nothing_else() {
         .as_array()
         .expect("input fields")
         .iter()
-        .find(|field| field["path"] == "value.line[].quantity")
-        .expect("the line quantity");
+        .find(|field| field["path"] == "value.line[].amount")
+        .expect("the line amount");
     assert_eq!(quantity["label"], "Quantity received");
 
     // Nobody authored any: no contract file carries either member anywhere.
