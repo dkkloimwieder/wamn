@@ -233,6 +233,20 @@ pub struct Narrowing<'a> {
     pub list_input: &'a str,
 }
 
+/// A form that one result row opens with values it already knows.
+///
+/// The pairs come from two declared facts: this screen's rows are records of
+/// one model, and that form states an input which names the same model. No
+/// name is compared, so a form and a table that merely share a spelling stay
+/// unrelated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowForm<'a> {
+    /// Canonical identity of the form the row opens.
+    pub operation: &'a str,
+    /// Result field of this screen, and the input path of that form.
+    pub pairs: Vec<(&'a str, &'a str)>,
+}
+
 /// One callable operation's screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenPlan<'a> {
@@ -276,6 +290,8 @@ pub struct ScreenPlan<'a> {
     pub revision: Option<RevisionBinding<'a>>,
     /// Inputs the operator chooses from a list, in contract order.
     pub population: Vec<PopulatedInput<'a>>,
+    /// Forms that one result row opens prefilled, in plan order.
+    pub row_forms: Vec<RowForm<'a>>,
 }
 
 /// One model's screens.
@@ -311,6 +327,7 @@ impl<'a> ClientPlan<'a> {
         };
         plan.link_rows();
         plan.populate_inputs();
+        plan.link_forms();
         plan
     }
 
@@ -346,6 +363,42 @@ impl<'a> ClientPlan<'a> {
                 screen.population = populated
                     .next()
                     .expect("one population list for each screen");
+            }
+        }
+    }
+
+    /// Bind each table to the forms its rows can open prefilled.
+    ///
+    /// It runs after `populate_inputs`, because a form states which of its
+    /// inputs names a record there, and this pass reads that answer instead
+    /// of asking the contract again.
+    fn link_forms(&mut self) {
+        let forms: Vec<(&'a str, Vec<(&'a str, &'a str)>)> =
+            self.screens()
+                .filter(|screen| matches!(screen.role, Role::Form))
+                .map(|screen| {
+                    (
+                        screen.contract.operation.as_str(),
+                        screen
+                            .inputs
+                            .iter()
+                            .filter_map(|input| {
+                                input.references.as_ref().map(|reference| {
+                                    (reference.model.as_str(), input.path.as_str())
+                                })
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+        let linked: Vec<_> = self
+            .screens()
+            .map(|screen| row_forms(screen, &forms))
+            .collect();
+        let mut linked = linked.into_iter();
+        for model in &mut self.models {
+            for screen in &mut model.screens {
+                screen.row_forms = linked.next().expect("one form list for each screen");
             }
         }
     }
@@ -483,6 +536,7 @@ impl<'a> ScreenPlan<'a> {
             record,
             revision,
             population: Vec::new(),
+            row_forms: Vec::new(),
         }
     }
 
@@ -545,6 +599,28 @@ fn row_links<'a>(from: &Target<'a>, targets: &[Target<'a>]) -> Vec<RowLink<'a>> 
                 operation: to.operation,
                 reason,
             })
+        })
+        .collect()
+}
+
+/// Select the forms that one screen's result row opens prefilled.
+fn row_forms<'a>(
+    screen: &ScreenPlan<'a>,
+    forms: &[(&'a str, Vec<(&'a str, &'a str)>)],
+) -> Vec<RowForm<'a>> {
+    let Some(list) = Lister::of(screen) else {
+        return Vec::new();
+    };
+    forms
+        .iter()
+        .filter(|(operation, _)| *operation != screen.contract.operation)
+        .filter_map(|(operation, references)| {
+            let pairs: Vec<_> = references
+                .iter()
+                .filter(|(model, _)| *model == list.model)
+                .map(|(_, input)| (list.key_field, *input))
+                .collect();
+            (!pairs.is_empty()).then_some(RowForm { operation, pairs })
         })
         .collect()
 }

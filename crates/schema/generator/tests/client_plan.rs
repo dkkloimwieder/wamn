@@ -673,3 +673,60 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
         "a record read fills nothing from a list"
     );
 }
+
+/// EXIT GATE for `wamn-rm14.3`: a table states the form its row opens and the
+/// values it hands over, by declared facts alone.
+///
+/// The pair is the key field of the rows and the input that names that model.
+/// A form that names no such record is absent, and the two existing row-link
+/// reasons do not move.
+#[test]
+fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+
+    let maker_rows = screen(&plan, "list");
+    assert!(
+        maker_rows.row_forms.is_empty()
+            || maker_rows
+                .row_forms
+                .iter()
+                .all(|form| form.operation != maker_rows.contract.operation),
+        "a screen never opens itself"
+    );
+
+    let makers = plan
+        .screens()
+        .find(|screen| screen.model == "widget_maker" && screen.name == "list")
+        .expect("the second model lists");
+    let batch = makers
+        .row_forms
+        .iter()
+        .find(|form| form.operation == "platform-fixture:widget/record-batch@1.0.0")
+        .expect("a maker row opens the batch form");
+    assert_eq!(
+        batch.pairs,
+        [("id", "value.maker_id")],
+        "the row's key fills the input that names that model"
+    );
+
+    let widgets = screen(&plan, "list");
+    let line = widgets
+        .row_forms
+        .iter()
+        .find(|form| form.operation == "platform-fixture:widget/record-batch@1.0.0")
+        .expect("a widget row opens the batch form");
+    assert_eq!(line.pairs, [("id", "value.line[].purchase_order_line_id")]);
+
+    assert!(
+        screen(&plan, "get").row_forms.is_empty(),
+        "a record read has no rows to hand over"
+    );
+    assert!(
+        screen(&plan, "query")
+            .row_links
+            .iter()
+            .any(|link| link.reason == LinkReason::Record),
+        "the two existing row-link reasons are unchanged"
+    );
+}
