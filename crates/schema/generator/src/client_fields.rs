@@ -15,7 +15,15 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         children: Vec::new(),
         minimum: None,
         maximum: None,
+        label: None,
+        description: None,
     }
+}
+
+/// Read the two authored text members of one declared field.
+fn text(declared: &Value) -> (Option<String>, Option<String>) {
+    let member = |key: &str| declared.get(key).and_then(Value::as_str).map(str::to_owned);
+    (member("label"), member("description"))
 }
 
 fn values(value: Option<&Value>) -> Vec<String> {
@@ -99,6 +107,7 @@ pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
             .get("revision")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        (leaf.label, leaf.description) = text(declared);
         insert(&mut tree, leaf, &path.split('.').collect::<Vec<_>>(), "");
     }
     tree
@@ -142,6 +151,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 .get("revision")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            (declared.label, declared.description) = text(member);
             tree.push(declared);
         }
     }
@@ -172,6 +182,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
             writable.get("explicit_null").and_then(Value::as_str) == Some("accepted"),
         );
         declared.values = values(writable.get("values"));
+        (declared.label, declared.description) = text(writable);
         insert(
             &mut tree,
             declared,
@@ -196,9 +207,9 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
         }
         let path = format!("filter.{name}[]");
         let mut repeated = field(path.clone(), "array".into(), false, false);
-        repeated
-            .children
-            .push(field(path.clone(), type_name.into(), true, false));
+        let mut item = field(path.clone(), type_name.into(), true, false);
+        (item.label, item.description) = text(filter);
+        repeated.children.push(item);
         insert(
             &mut tree,
             repeated,
@@ -321,6 +332,8 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
             if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
                 result.nullable &= hint.nullable;
                 result.revision = hint.revision;
+                result.label.clone_from(&hint.label);
+                result.description.clone_from(&hint.description);
                 if !hint.values.is_empty() {
                     if result.values.is_empty() {
                         result.values.clone_from(&hint.values);

@@ -551,3 +551,47 @@ fn reads_and_confirmed_deletes_follow_from_kind_and_role() {
         assert!(!screen(&plan, name).confirms(), "{name}");
     }
 }
+
+/// EXIT GATE for `wamn-c2y5.3`: the plan hands an emitter the authored text
+/// with no rule of its own, so no emitter reads `wamn.json`.
+///
+/// Columns and inputs are field references, so the text is already there. The
+/// test exists because "already there" is a property an emitter depends on,
+/// and a later change that copies fields instead would break it silently.
+#[test]
+fn the_plan_hands_the_authored_text_to_an_emitter() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    let column = |name: &str, path: &str| {
+        screen(&plan, name)
+            .columns
+            .iter()
+            .find(|field| field.path == path)
+            .unwrap_or_else(|| panic!("{name} states the column {path}"))
+            .label
+            .as_deref()
+    };
+    assert_eq!(column("get", "code"), Some("Widget code"));
+    assert_eq!(column("get", "id"), None);
+
+    let input = |name: &str, path: &str| {
+        screen(&plan, name)
+            .inputs
+            .iter()
+            .find(|field| field.path == path)
+            .unwrap_or_else(|| panic!("{name} states the input {path}"))
+            .label
+            .as_deref()
+    };
+    assert_eq!(input("update", "change.code"), Some("Widget code"));
+    assert_eq!(
+        input("record_batch", "value.line[].quantity"),
+        Some("Quantity received")
+    );
+
+    assert_eq!(
+        screen(&plan, "query").contract.label.as_deref(),
+        Some("Find widgets")
+    );
+    assert_eq!(screen(&plan, "get").contract.label, None);
+}

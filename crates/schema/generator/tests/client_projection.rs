@@ -571,3 +571,150 @@ fn revision_roles_use_declared_paths_and_platform_fields_only() {
         vec!["version_seen"]
     );
 }
+
+/// One leaf of `fields` by its exact path.
+fn leaf<'a>(
+    fields: &'a [wamn_schema_generator::client_ir::FieldIr],
+    path: &str,
+) -> &'a wamn_schema_generator::client_ir::FieldIr {
+    leaf_fields(fields)
+        .into_iter()
+        .find(|field| field.path == path)
+        .unwrap_or_else(|| panic!("the contract declares {path}"))
+}
+
+/// EXIT GATE for `wamn-c2y5.3`: the authored text reaches every field a client
+/// reads, on each of the three paths a field can travel.
+///
+/// The three differ, and a label that arrives on one path alone is a screen
+/// that reads a database in the other two.
+#[test]
+fn authored_text_reaches_every_field_the_client_reads() {
+    let ir = fixture::client_release();
+    let operation = |name: &str| {
+        ir.models[0]
+            .operations
+            .iter()
+            .find(|operation| operation.name == name)
+            .unwrap_or_else(|| panic!("the fixture declares {name}"))
+    };
+
+    // A served input: the published schema states the shape, and the declared
+    // contract carries the text through the hint.
+    let update = operation("update");
+    assert!(
+        update
+            .route
+            .as_ref()
+            .is_some_and(|route| route.input_schema.is_some())
+    );
+    assert_eq!(
+        leaf(&update.input_fields, "change.code").label.as_deref(),
+        Some("Widget code")
+    );
+    assert_eq!(
+        leaf(&update.input_fields, "change.note").label.as_deref(),
+        Some("Operator note")
+    );
+    assert_eq!(
+        leaf(&update.input_fields, "id").label,
+        None,
+        "a column with no authored text carries none"
+    );
+
+    // A declared input with no published schema, including a leaf inside a
+    // repeated group. The group itself keeps the derived text: `wamn-j3yr`.
+    let batch = operation("record_batch");
+    assert_eq!(
+        leaf(&batch.input_fields, "value.line[].quantity")
+            .label
+            .as_deref(),
+        Some("Quantity received")
+    );
+    assert_eq!(
+        leaf(&batch.input_fields, "value.note")
+            .description
+            .as_deref(),
+        Some("What the operator recorded about this batch.")
+    );
+
+    // A declared result of an authored operation, carried whole because the
+    // published response states no class.
+    let list = operation("list");
+    assert_eq!(
+        leaf(&list.result_fields, "attributes").label.as_deref(),
+        Some("Attributes")
+    );
+    assert_eq!(
+        leaf(
+            &list.route.as_ref().expect("the list route").response.fields,
+            "attributes"
+        )
+        .label
+        .as_deref(),
+        Some("Attributes"),
+        "the served response is the one a table reads"
+    );
+
+    // The operation itself, at both carriers.
+    assert_eq!(operation("query").label.as_deref(), Some("Find widgets"));
+    assert_eq!(batch.label.as_deref(), Some("Record a batch"));
+    assert!(batch.description.is_some());
+    assert_eq!(operation("get").label, None);
+}
+
+/// EXIT GATE for `wamn-c2y5.3`: a response whose published schema states its
+/// own class still carries the text of the terminal that answers it.
+///
+/// This is the detail screen's path. A published schema carries no authored
+/// text by decision, so without the join a detail reads field paths while the
+/// table beside it reads labels.
+#[test]
+fn a_published_response_takes_its_text_from_the_terminal() {
+    let package = fixture::generate_fixture();
+    let contracts = fixture::contracts(&package);
+    let identity = "platform-fixture:widget/get@1.0.0";
+    let served = |path: &str| wamn_schema_generator::client_ir::FieldIr {
+        path: path.to_owned(),
+        type_name: "text".to_owned(),
+        nullable: false,
+        required: true,
+        revision: false,
+        children: Vec::new(),
+        minimum: None,
+        maximum: None,
+        values: Vec::new(),
+        label: None,
+        description: None,
+    };
+    let routes = BTreeMap::from([(
+        identity.to_owned(),
+        RouteIr {
+            method: "POST".to_owned(),
+            template: "/widget/get".to_owned(),
+            input_schema: None,
+            terminal_operation: Some(identity.to_owned()),
+            direct: true,
+            response: ResponseIr {
+                result_class: Some("one".to_owned()),
+                fields: vec![served("id"), served("code")],
+                ..ResponseIr::default()
+            },
+            replay: None,
+        },
+    )]);
+    let ir = ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
+        .expect("the fixture projects with a published response");
+    let get = ir.models[0]
+        .operations
+        .iter()
+        .find(|operation| operation.name == "get")
+        .expect("the fixture declares get");
+    let response = &get.route.as_ref().expect("the get route").response;
+    assert_eq!(
+        leaf(&response.fields, "code").label.as_deref(),
+        Some("Widget code"),
+        "the terminal's declared text joins the published shape"
+    );
+    assert_eq!(leaf(&response.fields, "id").label, None);
+}

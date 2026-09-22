@@ -225,6 +225,46 @@ pub struct FieldIr {
     /// Closed value domain, when the contract declares one. Empty means open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
+    /// Authored text a screen shows in place of the derived field name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Authored text for an author, which reaches a comment and no screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl FieldIr {
+    /// Carry the authored text of `source` onto every leaf of `fields` that
+    /// states the same path.
+    ///
+    /// A served response reads its fields from the published route schema,
+    /// which carries no text by decision. The declared contract of the
+    /// responding terminal does, so the text joins here rather than in the
+    /// publication, and no attachment digest moves.
+    pub fn carry_text(fields: &mut [Self], source: &[Self]) {
+        fn apply(
+            fields: &mut [FieldIr],
+            text: &BTreeMap<&str, (&Option<String>, &Option<String>)>,
+        ) {
+            for field in fields {
+                if let Some((label, description)) = text.get(field.path.as_str()) {
+                    if field.label.is_none() {
+                        field.label.clone_from(label);
+                    }
+                    if field.description.is_none() {
+                        field.description.clone_from(description);
+                    }
+                }
+                apply(&mut field.children, text);
+            }
+        }
+
+        let text: BTreeMap<&str, (&Option<String>, &Option<String>)> = leaf_fields(source)
+            .into_iter()
+            .map(|field| (field.path.as_str(), (&field.label, &field.description)))
+            .collect();
+        apply(fields, &text);
+    }
 }
 
 /// One operation, as a client must call it.
@@ -244,6 +284,13 @@ pub struct OperationIr {
     /// Whether the registered operation requires a fresh originating credential.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
+    /// Authored name of the screen. A component exports it, and the page that
+    /// places the component decides where the text goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Authored text for an author, which reaches a comment and no screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Where this operation is published, when the release exposes it over
     /// HTTP.
     ///
@@ -923,6 +970,15 @@ fn build_operation(
             })
     };
 
+    // Authored text is optional at every carrier, so an absent member is the
+    // ordinary case and never a malformed contract.
+    let text = |key: &str| {
+        operation
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+
     let input = parts
         .input
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
@@ -975,6 +1031,8 @@ fn build_operation(
         grant: member("grant")?,
         permission_token: member("permission_token")?,
         fresh_only,
+        label: text("label"),
+        description: text("description"),
         result_class: operation
             .get("result")
             .and_then(Value::as_str)
@@ -1009,6 +1067,11 @@ fn bind_served_contracts(models: &mut [ModelIr]) {
                 if route.response.result_class.is_none() {
                     route.response.result_class = Some(terminal.result_class.clone());
                     route.response.fields = terminal.result_fields.clone();
+                } else {
+                    // The published schema states the shape and carries no
+                    // authored text. The terminal's declared contract carries
+                    // it, so the two join here.
+                    FieldIr::carry_text(&mut route.response.fields, &terminal.result_fields);
                 }
                 route.response.errors = terminal.errors.clone();
             }
