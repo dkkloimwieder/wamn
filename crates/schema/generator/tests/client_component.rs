@@ -677,12 +677,21 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
         "{widget}"
     );
     assert!(
-        widget.contains("      <option value={String(row.id)}>{String(row.name)}</option>"),
-        "the option carries the key and the text the plan named"
+        widget.contains("value={String(row.id)}"),
+        "the option carries the key the plan named"
     );
     assert!(
-        widget.contains("      <option value={String(row.id)}>{String(row.code)}</option>"),
+        widget.contains("{String(row.name)}"),
+        "the default display field reaches the option text"
+    );
+    assert!(
+        widget.contains("{String(row.code)}"),
         "an authored display field reaches the option text"
+    );
+    assert!(
+        widget.contains("selected={String(field().state.value ?? \"\") === String(row.id)}"),
+        "the option states its own selected state, because the rows arrive \
+         after the first render"
     );
 
     // A narrowed selector reads the value the operator already chose, and it
@@ -713,5 +722,55 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
             "              type=\"text\"\n",
         )),
         "an input that names no record stays a text control"
+    );
+}
+
+/// EXIT GATE for `wamn-rm14.5`: a row hands its values to the form the plan
+/// named, and the form takes them through the initial-values prop.
+///
+/// The callback carries the declared pairs and nothing else, so the page
+/// decides what opening a row means, which the Epic 4 verdict states.
+#[test]
+fn a_row_hands_its_values_to_the_form_the_plan_named() {
+    let files = emit(&release());
+    let maker = source(&files, "generated/client-ts/components/widget_maker.tsx");
+
+    assert!(
+        maker.contains(
+            "  readonly onFillWidgetCreate?: (initial: WidgetCreateFormInitial) => void;"
+        ),
+        "the table states one callback for each form its rows open"
+    );
+    assert!(
+        maker.contains(concat!(
+            "import {\n",
+            "  type WidgetCreateFormInitial,\n",
+            "  type WidgetRecordBatchFormInitial,\n",
+            "  type WidgetUpdateFormInitial,\n",
+            "} from \"./widget.js\";\n",
+        )),
+        "a form of another model states its type in that model's module"
+    );
+    assert!(
+        maker.contains(
+            "onClick={() => props.onFillWidgetCreate?.(writeMember({} as WidgetCreateFormInitial, [\"makerId\"], row.original.id))}"
+        ),
+        "the row writes its key at the declared input path"
+    );
+    assert!(
+        maker.contains(
+            "props.onFillWidgetRecordBatch?.(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"makerId\"], row.original.id))"
+        ),
+        "a nested input path is written one member at a time"
+    );
+
+    let widget = widget(&files);
+    assert!(
+        widget.contains("  readonly initial?: WidgetRecordBatchFormInitial;"),
+        "the form takes those values through the prop Epic 5 shaped"
+    );
+    assert!(
+        !widget.contains("onFillWidgetGet"),
+        "a record read is not a form, so no row fills it"
     );
 }

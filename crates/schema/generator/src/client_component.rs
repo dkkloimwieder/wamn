@@ -161,6 +161,8 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     // Bindings of another model, which a selector calls. Each one is imported
     // under an alias, because two models can both declare a `list`.
     let mut foreign: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Types of another model's components, which a prefill hands over.
+    let mut sibling: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut solid = BTreeSet::new();
     let mut table = false;
     let mut form = false;
@@ -169,7 +171,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             Role::Table => {
                 table = true;
                 solid.extend(["createSignal", "For", "Show"]);
-                emit_table(&mut body, screen, &mut runtime, &mut bindings)?;
+                emit_table(&mut body, screen, &mut runtime, &mut bindings, &mut sibling)?;
             }
             Role::Detail => {
                 solid.extend(["createResource", "Show"]);
@@ -261,6 +263,18 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         model.model.name
     )
     .expect("writing to a String cannot fail");
+    for (module, names) in &sibling {
+        writeln!(
+            source,
+            "import {{\n{}\n}} from \"./{module}.js\";",
+            names
+                .iter()
+                .map(|name| format!("  {name},"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+        .expect("writing to a String cannot fail");
+    }
     for (module, names) in &foreign {
         writeln!(
             source,
@@ -375,6 +389,7 @@ fn emit_table(
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
+    sibling: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
@@ -476,6 +491,28 @@ fn emit_table(
         writeln!(
             source,
             "  readonly onOpen{target}?: (row: {stem}Row) => void;"
+        )
+        .expect("write");
+    }
+    for form in &screen.row_forms {
+        let target = crate::client_ts::operation_stem(form.operation);
+        if form.model != screen.model {
+            // The type is written by that model's component module, beside
+            // the form it belongs to, so a sibling import reads it.
+            sibling
+                .entry(form.model.to_owned())
+                .or_default()
+                .insert(format!("type {target}FormInitial"));
+        }
+        writeln!(
+            source,
+            "  /** Called with the values one row hands to `{}`. */",
+            form.operation
+        )
+        .expect("write");
+        writeln!(
+            source,
+            "  readonly onFill{target}?: (initial: {target}FormInitial) => void;"
         )
         .expect("write");
     }
@@ -595,6 +632,24 @@ fn emit_table(
             source,
             "                <td>\n                  <Show when={{props.onOpen{target}}}>\n                    <button type=\"button\" onClick={{() => props.onOpen{target}?.(row.original)}}>\n                      {}\n                    </button>\n                  </Show>\n                </td>",
             link_label(link.operation)
+        )
+        .expect("write");
+    }
+    for form in &screen.row_forms {
+        let target = crate::client_ts::operation_stem(form.operation);
+        let mut initial = format!("{{}} as {target}FormInitial");
+        for (field, input) in &form.pairs {
+            initial = format!(
+                "writeMember({initial}, {}, row.original.{})",
+                member_literal(input),
+                crate::client_ts::to_camel(field),
+            );
+        }
+        runtime.insert("writeMember");
+        writeln!(
+            source,
+            "                <td>\n                  <Show when={{props.onFill{target}}}>\n                    <button\n                      type=\"button\"\n                      onClick={{() => props.onFill{target}?.({initial})}}\n                    >\n                      {}\n                    </button>\n                  </Show>\n                </td>",
+            link_label(form.operation)
         )
         .expect("write");
     }
@@ -1262,9 +1317,12 @@ fn emit_selector_control(source: &mut String, populated: &PopulatedInput<'_>, in
     )
     .expect("write");
     writeln!(source, "{pad}  <option value=\"\"></option>").expect("write");
+    // `selected` is stated on the option, not only as the select's value: the
+    // options arrive after the first render, and a value the browser cannot
+    // find yet is dropped.
     writeln!(
         source,
-        "{pad}  <For each={{{alias}Options()}}>\n{pad}    {{(row) => (\n{pad}      <option value={{String(row.{key})}}>{{String(row.{display})}}</option>\n{pad}    )}}\n{pad}  </For>"
+        "{pad}  <For each={{{alias}Options()}}>\n{pad}    {{(row) => (\n{pad}      <option\n{pad}        value={{String(row.{key})}}\n{pad}        selected={{String(field().state.value ?? \"\") === String(row.{key})}}\n{pad}      >\n{pad}        {{String(row.{display})}}\n{pad}      </option>\n{pad}    )}}\n{pad}  </For>"
     )
     .expect("write");
     writeln!(source, "{pad}</select>").expect("write");

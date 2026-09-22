@@ -250,6 +250,11 @@ pub struct Narrowing<'a> {
 pub struct RowForm<'a> {
     /// Canonical identity of the form the row opens.
     pub operation: &'a str,
+    /// Model that owns the form, which is the module an emitter reads it
+    /// from.
+    pub model: &'a str,
+    /// Operation name of the form inside its own model.
+    pub name: &'a str,
     /// Result field of this screen, and the input path of that form.
     pub pairs: Vec<(&'a str, &'a str)>,
 }
@@ -380,12 +385,12 @@ impl<'a> ClientPlan<'a> {
     /// inputs names a record there, and this pass reads that answer instead
     /// of asking the contract again.
     fn link_forms(&mut self) {
-        let forms: Vec<(&'a str, Vec<(&'a str, &'a str)>)> =
+        let forms: Vec<(Target<'a>, Vec<(&'a str, &'a str)>)> =
             self.screens()
                 .filter(|screen| matches!(screen.role, Role::Form))
                 .map(|screen| {
                     (
-                        screen.contract.operation.as_str(),
+                        Target::of(screen),
                         screen
                             .inputs
                             .iter()
@@ -565,6 +570,8 @@ impl<'a> ScreenPlan<'a> {
 /// The facts that one screen shows to another when rows link.
 struct Target<'a> {
     operation: &'a str,
+    model: &'a str,
+    name: &'a str,
     kind: &'a str,
     served: bool,
     record: Option<RecordLink<'a>>,
@@ -575,6 +582,8 @@ impl<'a> Target<'a> {
     fn of(screen: &ScreenPlan<'a>) -> Self {
         Self {
             operation: screen.contract.operation.as_str(),
+            model: screen.model,
+            name: screen.name,
             kind: screen.contract.kind.as_str(),
             served: screen.contract.route.is_some(),
             record: screen.record,
@@ -613,21 +622,26 @@ fn row_links<'a>(from: &Target<'a>, targets: &[Target<'a>]) -> Vec<RowLink<'a>> 
 /// Select the forms that one screen's result row opens prefilled.
 fn row_forms<'a>(
     screen: &ScreenPlan<'a>,
-    forms: &[(&'a str, Vec<(&'a str, &'a str)>)],
+    forms: &[(Target<'a>, Vec<(&'a str, &'a str)>)],
 ) -> Vec<RowForm<'a>> {
     let Some(list) = Lister::of(screen) else {
         return Vec::new();
     };
     forms
         .iter()
-        .filter(|(operation, _)| *operation != screen.contract.operation)
-        .filter_map(|(operation, references)| {
+        .filter(|(form, _)| form.operation != screen.contract.operation)
+        .filter_map(|(form, references)| {
             let pairs: Vec<_> = references
                 .iter()
                 .filter(|(model, _)| *model == list.model)
                 .map(|(_, input)| (list.key_field, *input))
                 .collect();
-            (!pairs.is_empty()).then_some(RowForm { operation, pairs })
+            (!pairs.is_empty()).then_some(RowForm {
+                operation: form.operation,
+                model: form.model,
+                name: form.name,
+                pairs,
+            })
         })
         .collect()
 }
