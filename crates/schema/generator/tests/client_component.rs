@@ -930,3 +930,39 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
         "the generator names the selector, its input and the list it reads"
     );
 }
+
+#[test]
+fn an_operation_the_release_does_not_serve_gets_no_component() {
+    // The emitter wrote a component for every role, and the bindings write no
+    // invoke function for an operation with no route, so the emitted package
+    // imported a name that no module exports. wamn-mf0i.
+    let mut ir = release();
+    ir.models
+        .iter_mut()
+        .flat_map(|model| model.operations.iter_mut())
+        .find(|operation| operation.name == "archive")
+        .expect("the platform fixture declares archive")
+        .route = None;
+
+    let files = emit(&ir);
+    let widget = widget(&files);
+    assert!(
+        !widget.contains("WidgetArchiveForm"),
+        "an unserved operation gets no component"
+    );
+    assert!(
+        !widget.contains("archive as widgetArchive"),
+        "and the module imports no invoke function for it"
+    );
+    assert!(
+        widget.contains("WidgetCreateForm"),
+        "a served operation of the same model keeps its component"
+    );
+    let index = source(&files, "generated/client-ts/components/index.ts");
+    assert!(
+        index.contains(
+            "// These operations get no component, because this release does not serve\n// them over HTTP and the bindings write no invoke function for them:\n// platform-fixture:widget/archive@1.0.0\n"
+        ),
+        "the index names it: {index}"
+    );
+}

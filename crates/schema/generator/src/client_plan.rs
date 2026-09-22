@@ -452,6 +452,19 @@ impl<'a> ClientPlan<'a> {
             .collect()
     }
 
+    /// Every operation with a role that the release does not serve.
+    ///
+    /// A generator reports this list beside [`Self::unsupported`]. The named
+    /// operations get no component, because the bindings write no invoke
+    /// function for an operation with no route.
+    #[must_use]
+    pub fn unserved(&self) -> Vec<&'a str> {
+        self.screens()
+            .filter(|screen| screen.role.is_supported() && screen.contract.route.is_none())
+            .map(|screen| screen.contract.operation.as_str())
+            .collect()
+    }
+
     /// Every selector whose list declares no filter on its display field.
     ///
     /// A generator reports this list beside [`Self::unsupported`]. The named

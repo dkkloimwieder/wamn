@@ -90,7 +90,7 @@ pub fn emit_ts_components(
     let mut index = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
     writeln!(
         index,
-        "// Components of package `{}`, one for each operation the plan gives a role.",
+        "// Components of package `{}`, one for each operation that has a role\n// and a route.",
         plan.package
     )
     .expect("writing to a String cannot fail");
@@ -118,6 +118,15 @@ pub fn emit_ts_components(
             writeln!(index, "// {operation}: {reason}").expect("writing to a String cannot fail");
         }
     }
+    let unserved = plan.unserved();
+    if !unserved.is_empty() {
+        index.push_str(
+            "\n// These operations get no component, because this release does not serve\n// them over HTTP and the bindings write no invoke function for them:\n",
+        );
+        for operation in unserved {
+            writeln!(index, "// {operation}").expect("writing to a String cannot fail");
+        }
+    }
     // The contract gap an author closes: a list that declares no filter on its
     // display field gives a selector nothing to search by.
     let unsearchable = plan.unsearchable();
@@ -142,15 +151,19 @@ pub fn emit_ts_components(
 }
 
 /// The screens this emitter writes today.
+///
+/// An operation with no route gets no component. `client_ts.rs` writes no
+/// invoke function for one, so the component would import a name that the
+/// module does not export, and the package would not type-check.
 fn written(screen: &ScreenPlan<'_>) -> bool {
-    screen.role.is_supported()
+    screen.role.is_supported() && screen.contract.route.is_some()
 }
 
 fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     let screens: Vec<&ScreenPlan<'_>> = model
         .screens
         .iter()
-        .filter(|screen| screen.role.is_supported() && written(screen))
+        .filter(|screen| written(screen))
         .collect();
     if screens.is_empty() {
         return Ok(String::new());
