@@ -14,9 +14,11 @@ import {
   PurchaseOrderGetDetail,
   PurchaseOrderQueryTable,
   ReceiptGetDetail,
+  PurchaseOrderUpdateForm,
   ReceiptQueryTable,
   ReceivingLoadPurchaseOrderHistoryTable,
   ReceivingLoadReceiptScreenTable,
+  ReceivingRecordReceiptForm,
 } from "@wamn/receiving-client/components/index.js";
 
 import { environments, session, type Environment } from "./session.js";
@@ -204,6 +206,24 @@ function screens(
             onOutcome={read}
           />
         </Show>
+      </section>
+
+      <section>
+        <h2>purchase_order.update</h2>
+        <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
+          <PurchaseOrderUpdateForm
+            transport={transport}
+            key={{ id: order(), requestId: "" }}
+            onSubmitted={read}
+          />
+        </Show>
+      </section>
+
+      <section>
+        <h2>receiving.record_receipt</h2>
+        {/* No initial values: `initial` is a shallow Partial, so it cannot
+            carry one member of `value` without the supplied ones. wamn-m9qt. */}
+        <ReceivingRecordReceiptForm transport={transport} onSubmitted={read} />
       </section>
 
       <section>
