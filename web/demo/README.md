@@ -43,7 +43,15 @@ The identity process serves HTTPS with a certificate it signed itself, which a b
 ## Seed data
 
 Receiving declares no operation that creates an item, a location, or a purchase order.
-Apply the seed file before you expect a table to show rows. The file is named in Beads `wamn-78or.2`.
+Apply a dataset before you expect a table to show rows.
+
+```bash
+psql "$TARGET_DATABASE_URL" -f ../../apps/wamn_receiving/tests/fixtures/receiving-seed-small.sql
+```
+
+That file is the saved small dataset: 10 items, 10 locations, 10 purchase orders, and 55 lines.
+For a larger one, build it with `receiving-seed.sql` and the size you want.
+Paging needs more than 100 orders, so the large size shows it.
 
 ## The evaluation
 

@@ -8,8 +8,14 @@
 
 import { For, Show, createMemo, createSignal } from "solid-js";
 
-import { createTransport, type Outcome } from "@wamn/web-runtime";
-import { LocationListTable } from "@wamn/receiving-client/components/index.js";
+import { createTransport, type Outcome, type Transport } from "@wamn/web-runtime";
+import {
+  LocationListTable,
+  PurchaseOrderQueryTable,
+  ReceiptQueryTable,
+  ReceivingLoadPurchaseOrderHistoryTable,
+  ReceivingLoadReceiptScreenTable,
+} from "@wamn/receiving-client/components/index.js";
 
 import { environments, session, type Environment } from "./session.js";
 
@@ -20,6 +26,9 @@ export function App() {
   const [token, setToken] = createSignal<string | null>(null);
   const [trouble, setTrouble] = createSignal<string | null>(null);
   const [outcome, setOutcome] = createSignal<string | null>(null);
+  // One purchase order feeds every screen that needs a record. A row link
+  // writes it, and the operator can also paste one.
+  const [order, setOrder] = createSignal("");
 
   // The page is one origin, so the transport needs no base URL. The proxy
   // carries each generated path to the release.
@@ -36,6 +45,8 @@ export function App() {
       setTrouble(String(error));
     }
   }
+
+  const read = (result: Outcome<unknown>) => setOutcome(describe(result));
 
   return (
     <main>
@@ -95,20 +106,78 @@ export function App() {
 
       <Show when={transport()}>
         {(ready) => (
-          <section>
+          <div>
             <p>signed in, and the token is held in memory</p>
             <Show when={outcome()}>
               <p>last outcome: {outcome()}</p>
             </Show>
-            <h2>location.list</h2>
-            <LocationListTable
-              transport={ready()}
-              onOutcome={(result: Outcome<unknown>) => setOutcome(describe(result))}
-            />
-          </section>
+            <label>
+              selected purchase order
+              <input
+                type="text"
+                size="40"
+                value={order()}
+                onInput={(event) => setOrder(event.currentTarget.value)}
+              />
+            </label>
+            {screens(ready(), order, setOrder, read)}
+          </div>
         )}
       </Show>
     </main>
+  );
+}
+
+/** The generated screens, in the order an operator meets them. */
+function screens(
+  transport: Transport,
+  order: () => string,
+  setOrder: (id: string) => void,
+  read: (outcome: Outcome<unknown>) => void,
+) {
+  return (
+    <>
+      <section>
+        <h2>purchase_order.query</h2>
+        <PurchaseOrderQueryTable
+          transport={transport}
+          onRowSelect={(row) => setOrder(row.id)}
+          onOutcome={read}
+        />
+      </section>
+
+      <section>
+        <h2>location.list</h2>
+        <LocationListTable transport={transport} onOutcome={read} />
+      </section>
+
+      <section>
+        <h2>receipt.query</h2>
+        <ReceiptQueryTable transport={transport} onOutcome={read} />
+      </section>
+
+      <section>
+        <h2>receiving.load_receipt_screen</h2>
+        <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
+          <ReceivingLoadReceiptScreenTable
+            transport={transport}
+            fixed={{ purchaseOrderId: order() }}
+            onOutcome={read}
+          />
+        </Show>
+      </section>
+
+      <section>
+        <h2>receiving.load_purchase_order_history</h2>
+        <Show when={order() !== ""} fallback={<p>pick a purchase order first</p>}>
+          <ReceivingLoadPurchaseOrderHistoryTable
+            transport={transport}
+            fixed={{ id: order(), afterPosition: "0", limit: "20" }}
+            onOutcome={read}
+          />
+        </Show>
+      </section>
+    </>
   );
 }
 
