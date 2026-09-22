@@ -381,7 +381,7 @@ The generated terminal emitter reads the plan.
 The terminal run time in `crates/client/tui` keeps its own copy of the same rules until a later epic moves it onto the plan.
 
 A package can also generate [TypeScript bindings](../../crates/schema/generator/src/client_ts.rs) for a browser.
-It opts in with an `npm_distribution` name in its manifest, and a package that declares none generates no TypeScript.
+It opts in with a `client_package` name in its manifest, and a package that declares none generates no TypeScript. Nothing is published to a registry, and the name is what a workspace imports.
 The bindings carry a request type, a result type, the published route and one function for each public operation.
 A private event handler is absent, and an operation the release does not publish carries its types without a function.
 The application supplies a transport that owns the URL and the credential.

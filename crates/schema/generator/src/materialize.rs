@@ -350,15 +350,15 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
     let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
         .context("project the client-contract IR")?;
     let mut files = emit_rust_client(&ir).context("emit the Rust client bindings")?;
-    // A package opts in to TypeScript by declaring the distribution name that
-    // a browser application imports. Generation never infers one.
-    if let Some(distribution) = &manifest.npm_distribution {
+    // A package opts in to TypeScript by declaring the package name that a
+    // browser application imports. Generation never infers one.
+    if let Some(client) = &manifest.client_package {
         files.extend(emit_ts_client(&ir).context("emit the TypeScript client bindings")?);
         files.extend(
             emit_ts_components(&ClientPlan::from_ir(&ir)).context("emit the browser components")?,
         );
         files.push(emit_ts_package_json(
-            &distribution.name,
+            &client.name,
             &manifest.package.version,
         ));
     }

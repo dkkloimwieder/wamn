@@ -3,7 +3,7 @@
     "id": "wamn_receiving",
     "version": "1.0.0"
   },
-  "npm_distribution": {
+  "client_package": {
     "name": "@wamn/receiving-client"
   },
   "required_platform_policy_contract": {

@@ -101,6 +101,9 @@ export interface ReceivingLoadPurchaseOrderHistoryTableProps {
   readonly onOutcome?: (outcome: Outcome<ReceivingLoadPurchaseOrderHistoryResult>) => void;
 }
 
+/** What an operator calls this screen. The page decides where it goes. */
+export const ReceivingLoadPurchaseOrderHistoryTableLabel = "load purchase order history";
+
 /**
  * The table for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
  *
@@ -266,6 +269,9 @@ export interface ReceivingLoadReceiptScreenTableProps {
   readonly onOutcome?: (outcome: Outcome<ReceivingLoadReceiptScreenResult>) => void;
 }
 
+/** What an operator calls this screen. The page decides where it goes. */
+export const ReceivingLoadReceiptScreenTableLabel = "load receipt screen";
+
 /**
  * The table for `wamn-receiving:receiving/load-receipt-screen@1.0.0`.
  *
@@ -390,6 +396,9 @@ export interface ReceivingRecordReceiptFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<ReceivingRecordReceiptResult>) => void;
 }
+
+/** What an operator calls this screen. The page decides where it goes. */
+export const ReceivingRecordReceiptFormLabel = "record receipt";
 
 /**
  * The form for `wamn-receiving:receiving/record-receipt@1.0.0`.

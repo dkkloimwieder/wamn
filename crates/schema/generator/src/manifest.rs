@@ -16,11 +16,12 @@ pub(crate) const CONTROL_OWNED_RELATION_TABLES: [&str; 2] =
 #[serde(deny_unknown_fields)]
 pub struct PackageManifest {
     pub package: PackageIdentity,
-    /// Explicit npm distribution identity for the generated TypeScript.
+    /// The package name the generated TypeScript client carries.
     ///
-    /// A package that omits it generates no TypeScript at all.
+    /// A package that omits it generates no TypeScript at all. Nothing is
+    /// published to a registry: the name is what a workspace imports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub npm_distribution: Option<NpmDistribution>,
+    pub client_package: Option<ClientPackage>,
     #[serde(default)]
     pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
     pub required_platform_policy_contract: PolicyContractRequirement,
@@ -2116,14 +2117,15 @@ pub struct PackageIdentity {
     pub predecessor_version: Option<String>,
 }
 
-/// Explicit npm distribution identity for generated TypeScript source.
+/// The package name of the generated TypeScript client.
 ///
 /// The name is authored, never inferred from an application path or a package
-/// id, because the distribution is what a browser application imports.
+/// id, because it is what a browser application imports. Its presence is also
+/// the opt-in: a package that states none emits no browser client at all.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NpmDistribution {
-    /// The npm package name, optionally scoped.
+pub struct ClientPackage {
+    /// The package name, optionally scoped.
     pub name: String,
 }
 

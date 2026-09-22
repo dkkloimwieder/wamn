@@ -56,6 +56,9 @@ export interface LocationListTableProps {
   readonly onOutcome?: (outcome: Outcome<LocationListResult>) => void;
 }
 
+/** What an operator calls this screen. The page decides where it goes. */
+export const LocationListTableLabel = "list";
+
 /**
  * The table for `wamn-receiving:location/list@1.0.0`.
  *

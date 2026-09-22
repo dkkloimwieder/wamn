@@ -458,19 +458,14 @@ fn emit_table(
     // The component.
     writeln!(
         source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}TableLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
         "\n/**\n * The table for `{}`.\n *\n * It owns its page controls and its rows. A change to a control clears the\n * rows, because a cursor names a position in the list the old input produced.\n *\n * It reads when the operator asks, and not when it mounts, because a read is\n * a request that the operator did not send yet.\n */",
         screen.contract.operation
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */"
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "export const {stem}TableLabel = {:?};",
-        screen_label(screen)
     )
     .expect("write");
     writeln!(
@@ -631,19 +626,14 @@ fn emit_detail(
 
     writeln!(
         source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}DetailLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
         "\n/**\n * The detail screen for `{}`.\n *\n * It reads when it mounts and again whenever its input changes, because the\n * input names the record it shows.\n */",
         screen.contract.operation
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */"
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "export const {stem}DetailLabel = {:?};",
-        screen_label(screen)
     )
     .expect("write");
     writeln!(
@@ -984,19 +974,14 @@ fn emit_form(
     // The component.
     writeln!(
         source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}FormLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
         "\n/**\n * The form for `{}`.\n *\n * It renders what the operator fills and nothing else. The reserved inputs\n * come from the runtime at submit time, and the operator never sees them.\n */",
         screen.contract.operation
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */"
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "export const {stem}FormLabel = {:?};",
-        screen_label(screen)
     )
     .expect("write");
     writeln!(
@@ -1340,19 +1325,14 @@ fn emit_delete(
 
     writeln!(
         source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}DeleteLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
         "\n/**\n * The delete for `{}`.\n *\n * It asks for a confirmation first, because a removal is not an edit that an\n * operator undoes.\n */",
         screen.contract.operation
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */"
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "export const {stem}DeleteLabel = {:?};",
-        screen_label(screen)
     )
     .expect("write");
     writeln!(

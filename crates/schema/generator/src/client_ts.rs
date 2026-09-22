@@ -290,20 +290,20 @@ pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, Clien
         .collect())
 }
 
-/// The path of the distribution manifest inside a generated package.
+/// The path of the package manifest inside a generated package.
 pub const PACKAGE_JSON_PATH: &str = "generated/client-ts/package.json";
 
-/// Emit the distribution manifest for the generated bindings.
+/// Emit the package manifest for the generated bindings.
 ///
 /// The name is authored in the package manifest and never inferred. The
 /// version is the release's own. The one dependency is the hand-written
 /// runtime that the modules import, and the application's own configuration
 /// resolves it.
 #[must_use]
-pub fn emit_ts_package_json(distribution_name: &str, version: &str) -> GeneratedFile {
+pub fn emit_ts_package_json(client_package: &str, version: &str) -> GeneratedFile {
     let source = format!(
         "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }},\n  \"dependencies\": {{\n    {runtime}: {range}\n  }}\n}}\n",
-        name = serde_json::Value::String(distribution_name.to_owned()),
+        name = serde_json::Value::String(client_package.to_owned()),
         version = serde_json::Value::String(version.to_owned()),
         runtime = serde_json::Value::String(RUNTIME_PACKAGE.to_owned()),
         range = serde_json::Value::String(RUNTIME_VERSION_RANGE.to_owned()),

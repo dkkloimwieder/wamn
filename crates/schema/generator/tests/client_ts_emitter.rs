@@ -462,7 +462,7 @@ fn every_contract_name_in_the_fixture_reverses_through_the_member_rule() {
 }
 
 #[test]
-fn a_distribution_manifest_carries_the_authored_name_and_the_release_version() {
+fn a_package_manifest_carries_the_authored_name_and_the_release_version() {
     let file = wamn_schema_generator::client_ts::emit_ts_package_json(
         "@wamn/platform-fixture-client",
         "1.0.0",
@@ -494,7 +494,7 @@ fn a_distribution_manifest_carries_the_authored_name_and_the_release_version() {
 }
 
 #[test]
-fn a_package_that_declares_no_distribution_generates_no_typescript() {
+fn a_package_that_names_no_client_package_generates_no_typescript() {
     let package = fixture::generate_fixture();
     assert!(
         package
@@ -506,7 +506,7 @@ fn a_package_that_declares_no_distribution_generates_no_typescript() {
 }
 
 #[test]
-fn an_invalid_distribution_name_refuses_and_names_the_package() {
+fn an_invalid_client_package_name_refuses_and_names_the_package() {
     use wamn_schema_generator::GenerateErrorKind;
 
     let catalog = fixture::catalog();
@@ -518,12 +518,12 @@ fn an_invalid_distribution_name_refuses_and_names_the_package() {
         ("has space", "admits only"),
     ] {
         let mut value = fixture::manifest();
-        value["npm_distribution"] = serde_json::json!({ "name": name });
+        value["client_package"] = serde_json::json!({ "name": name });
         let refusal = fixture::try_generate_with(&catalog, &value)
-            .expect_err("an invalid distribution name refuses");
+            .expect_err("an invalid client package name refuses");
         assert_eq!(
             refusal.kind(),
-            GenerateErrorKind::InvalidDistribution,
+            GenerateErrorKind::InvalidClientPackage,
             "{name:?}"
         );
         let text = refusal.to_string();
@@ -532,7 +532,7 @@ fn an_invalid_distribution_name_refuses_and_names_the_package() {
     }
 
     let mut value = fixture::manifest();
-    value["npm_distribution"] = serde_json::json!({ "name": "@wamn/platform-fixture-client" });
+    value["client_package"] = serde_json::json!({ "name": "@wamn/platform-fixture-client" });
     fixture::generate_with(&catalog, &value);
 }
 

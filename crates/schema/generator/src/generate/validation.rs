@@ -12,15 +12,15 @@ use super::{
 };
 use wamn_record_history::HISTORY_COLUMNS;
 
-/// Refuse a distribution name that npm cannot carry.
+/// Refuse a client package name that a package manifest cannot carry.
 ///
 /// The rule is npm's own: at most 214 characters, lowercase, one optional
 /// `@scope/` prefix, and each segment starting with a letter or a digit.
-fn validate_distribution_name(package: &str, name: &str) -> Result<(), GenerateError> {
+fn validate_client_package_name(package: &str, name: &str) -> Result<(), GenerateError> {
     let refuse = |reason: &str| {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidDistribution,
-            format!("{package} declares npm distribution name {name:?}: {reason}"),
+            GenerateErrorKind::InvalidClientPackage,
+            format!("{package} declares client package name {name:?}: {reason}"),
         ))
     };
     if name.is_empty() {
@@ -76,8 +76,8 @@ pub(super) fn validate(
             "manifest must declare at least one model",
         ));
     }
-    if let Some(distribution) = &manifest.npm_distribution {
-        validate_distribution_name(&manifest.package.id, &distribution.name)?;
+    if let Some(client) = &manifest.client_package {
+        validate_client_package_name(&manifest.package.id, &client.name)?;
     }
 
     for (model_name, model) in &manifest.models {

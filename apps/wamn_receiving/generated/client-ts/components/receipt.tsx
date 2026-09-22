@@ -51,6 +51,9 @@ export interface ReceiptGetDetailProps {
   readonly onOutcome?: (outcome: Outcome<ReceiptGetResult>) => void;
 }
 
+/** What an operator calls this screen. The page decides where it goes. */
+export const ReceiptGetDetailLabel = "get";
+
 /**
  * The detail screen for `wamn-receiving:receipt/get@1.0.0`.
  *
@@ -151,6 +154,9 @@ export interface ReceiptQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceiptQueryResult>) => void;
 }
+
+/** What an operator calls this screen. The page decides where it goes. */
+export const ReceiptQueryTableLabel = "query";
 
 /**
  * The table for `wamn-receiving:receipt/query@1.0.0`.

@@ -58,6 +58,9 @@ export interface PurchaseOrderGetDetailProps {
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderGetResult>) => void;
 }
 
+/** What an operator calls this screen. The page decides where it goes. */
+export const PurchaseOrderGetDetailLabel = "get";
+
 /**
  * The detail screen for `wamn-receiving:purchase-order/get@1.0.0`.
  *
@@ -172,6 +175,9 @@ export interface PurchaseOrderQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderQueryResult>) => void;
 }
+
+/** What an operator calls this screen. The page decides where it goes. */
+export const PurchaseOrderQueryTableLabel = "query";
 
 /**
  * The table for `wamn-receiving:purchase-order/query@1.0.0`.
@@ -337,6 +343,9 @@ export interface PurchaseOrderUpdateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<PurchaseOrderUpdateResult>) => void;
 }
+
+/** What an operator calls this screen. The page decides where it goes. */
+export const PurchaseOrderUpdateFormLabel = "update";
 
 /**
  * The form for `wamn-receiving:purchase-order/update@1.0.0`.
