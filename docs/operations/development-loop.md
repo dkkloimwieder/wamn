@@ -9,6 +9,8 @@ Local saves do not publish components or release manifests to a registry.
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
 Build `wamn`, `wamn-host`, `wamn-identity`, and the flow-http component before starting a session.
+If you change the manifest vocabulary of `wamn.json`, build `wamn` again first.
+The loop runs the binary you built, so an older one refuses the manifest with `unknown field`.
 Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
 The system administrator URL must name `wamn_system` without a query or fragment.
 `wamn dev up` resets its control store, so shared or durable targets are unsuitable.
