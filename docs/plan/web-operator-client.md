@@ -82,6 +82,9 @@ Facts from the code at `cdb6dd1e`, after Epics 1, 2, 3A, and 3B.
 - No application shell, no demo page, no CORS, no cookie session, and no static hosting.
 - No labels or descriptions in `wamn.json` or the IR. A component derives a label from the field path.
 - Admin functions are `ctl` verbs only. No HTTP admin API. No HTTP read API for runs (grep only).
+- `web/demo` is the disposable page that runs the Receiving components against a local stack. It resolves the runtime, the generated client and the four framework packages by alias, because a generated module sits outside the package that installs them. Its Vite proxy gives the browser one origin: the release routes by a `Host` header, and the issuer signs its own certificate.
+- `apps/wamn_receiving/tests/fixtures/receiving-seed.sql` builds 10, 100 or 1000 items, locations and purchase orders, deterministically. The small dataset is saved beside it. Receiving declares no operation that creates any of those records.
+- Two `int64` spellings exist on the wire. A model column is a JSON string both ways. An integer the operation contract declares, such as a page limit or a history position, is a JSON number. `wamn-uuo6` owns the difference.
 
 ## 5. Process
 
@@ -135,13 +138,33 @@ The epic split in two at its scope. The runtime came first, and the component em
 
 ## 7. Later epics
 
-Named only. Order and content are decided after the Epic 4 review.
+The Epic 4 evaluation proposes the order below. The owner review confirms it.
 
-- Cookie session and CSRF in the identity service.
-- CDN bucket, edge proxy, first real deployment. On GCP this is a load balancer URL map with a storage bucket and Cloud CDN (assumed, not tested).
-- Platform admin contract and HTTP API, then the standard admin UI: users, roles, applications, tenants. Performance and metrics need chart components.
-- Application UIs: Receiving, WMS.
-- Authored labels and descriptions in the manifest, contract, and IR.
-- Authoring support: generated docs, skills for agent and human authors, the app spec format.
-- Screen population: selectors fed by a list, table row to form. Multiple outer items per submit.
-- TUI matches: generated screens from the plan; `crates/client/tui` shrinks to helpers.
+1. **The defects the demo found.** `wamn-uuo6`: an `int64` is a string and the wire wants a number. `wamn-v8ku`: a refusal marks no field. `wamn-m9qt`: initial values cannot reach a nested member. `wamn-wrlp`: a detail demands a request identity it discards. The first one blocks a whole operation.
+2. **Authored labels and descriptions** in the manifest, contract, and IR. Every screen today reads `purchase order line id`, derived from a field path.
+3. **Screen population:** selectors fed by a list, table row to form. Multiple outer items per submit. The demo made the operator paste identifiers by hand, which is the largest ergonomic cost measured.
+4. **Cookie session and CSRF** in the identity service.
+5. **Platform admin contract and HTTP API,** then the standard admin UI: users, roles, applications, tenants. Performance and metrics need chart components.
+6. **Application UIs:** Receiving, WMS. These wait for 2 and 3.
+7. **CDN bucket, edge proxy, first real deployment.** On GCP this is a load balancer URL map with a storage bucket and Cloud CDN (assumed, not tested).
+8. **TUI matches:** generated screens from the plan, and `crates/client/tui` shrinks to helpers.
+9. **Authoring support:** generated docs, skills for agent and human authors, the app spec format.
+
+## 8. The Epic 4 verdict
+
+Written on 2026-09-22 from one run of `web/demo` against a local stack. The filled checklist is in the notes of Beads `wamn-78or`.
+
+**The components work.** Nine of nine mount against a real release. Eight of nine run. One, the purchase order history, cannot run at all, because both of its page inputs are typed as strings and the route wants numbers.
+
+**The shape is right.** A table reads on request. A row link is a callback. The demo chose what opening a row means, and the page address never changed. A form renders no control for a supplied field. The runtime writes the request identity, the idempotency key and the time. A revision-bound form reads the record inside its own submit, so no revision control exists. A repeated group adds and removes lines. No generated file was edited.
+
+**The revision window is real and reachable.** A separate writer commits between the form's read and its write. The page then reads `concurrency_conflict` with both revisions. The two round trips per submission are a cost, not a fix. The later screen-population epic can carry the revision from the row that filled the form.
+
+**What hurts, in order.**
+1. Types that do not match the wire. An `int64` is a string in the bindings, and a contract integer is a number on the wire.
+2. A refusal names its field and the form marks nothing, so an operator reads a code above the screen.
+3. Every label is a field path with spaces.
+4. Every record identity is typed or pasted by hand, because nothing feeds a control from a list.
+5. Props force a caller to state values it must not choose: a request identity the component discards, and initial values that cannot reach a nested member.
+
+**What the demo does not answer.** Visual format, because the page has no styling. Volume, because a bounded list drew 1000 rows into the document with no window. Multiple items per submission, which stays out of scope.
