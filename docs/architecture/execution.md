@@ -400,6 +400,19 @@ The rule it follows is `classify()` in `crates/client/tui/src/submission.rs`, wh
 Both clients read one case table at `crates/client/tui/tests/data/classification-cases.json`.
 The browser trusts the platform for the values inside a reply, so it holds no schema validator and no copy of the wire spelling rules.
 A reply whose value violates its own field contract therefore reads as completed in the browser and as uncertain in the terminal.
+The runtime also holds what a generated component calls: the state of one read, the members of a draft, and the display text of a declared value.
+
+A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
+A table renders the plan's columns over TanStack Table, with one control for each page control the plan names.
+It appends the next page while the last reply carried a cursor.
+A detail reads one record and shows its fields.
+A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.
+It writes the reserved inputs from the runtime at submit time.
+A delete asks for a confirmation first.
+A command whose plan binds a revision reads the record first and sends the revision it read.
+An operation whose shape has no role gets no component, and the emitted index names it with the reason.
+A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
+Components state no route and no navigation: a row link is a callback, and the application decides what to open.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.

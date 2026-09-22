@@ -62,24 +62,25 @@ flowchart LR
 
 ## 4. Current state
 
-Facts from the code at `d1b2310c`, after Epics 1, 2, and 3A.
+Facts from the code at `cdb6dd1e`, after Epics 1, 2, 3A, and 3B.
 
-- `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (Rust bindings), `client_ts.rs` (TypeScript bindings), `client_route.rs`, `client_tui.rs`.
-- `client_ts.rs` writes `generated/client-ts/`: one module per model, an index, and a `package.json`. A package opts in with `npm_distribution` in its manifest. Receiving declares `@wamn/receiving-client`. WMS and Acme declare none and generate no TypeScript.
-- The wire contract is hand-written and lives in `web/runtime`, as the package `@wamn/web-runtime`. Every generated module imports it by name, and the emitted `package.json` declares it as the one dependency. An application resolves the name through its own configuration.
-- The runtime implements the transport: the URL, the credential the application supplies, the request envelope, and the classification of one reply into the four outcomes. It also supplies the request identity, the idempotency key, and the time the intent started.
+- `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (Rust bindings), `client_ts.rs` (TypeScript bindings), `client_component.rs` (SolidJS components), `client_route.rs`, `client_tui.rs`.
+- A package opts in with `npm_distribution` in its manifest. Receiving declares `@wamn/receiving-client`. WMS and Acme declare none and generate no TypeScript.
+- `generated/client-ts/` holds one module per model, an index, and a `package.json`. Its `components/` directory holds one component module per model and its own index.
+- The wire contract and the transport are hand-written in `web/runtime`, as the package `@wamn/web-runtime`. Every generated module imports it by name. The emitted `package.json` declares it and the framework packages.
+- The runtime classifies one reply into the four outcomes. It supplies the request identity, the idempotency key and the start time. It also holds the page state, the draft members and the cell text.
 - One case table at `crates/client/tui/tests/data/classification-cases.json` holds both clients to one rule. A Rust test and the runtime's own tests read it.
-- The browser trusts the platform for the values inside a reply. It holds no schema validator and no copy of the wire spelling rules. A reply whose value violates its own field contract reads as completed there and as uncertain in the terminal.
-- Names: the generator decides every member name and emits a field map beside each operation, so no name rule exists at run time. A key that no map declares keeps its spelling, which leaves a `json` value alone. A contract name that does not reverse is refused at emit.
-- A bounded list returns `{ rows }`, and a page returns `{ item, nextCursor }`. A declared value domain types as a union of its literals.
-- `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging with the input path of every page control, row links, supplied fields, record link, revision binding. It is built from the IR, borrows its contract values, and is not serialized.
-- `client_tui.rs` `emit_model` writes one `ScreenSpec` constant per operation from the plan. No screen code.
-- The TUI renders from that data at run time: one generic `Screen` in `crates/client/tui` (`screen.rs`), with `table.rs` and `form.rs`.
-- The run time and the terminal operator still hold their own copy of the rules the plan states. The TUI reads the plan in the "TUI matches" epic.
-- `client_rust.rs` keeps its own copy of the effective-result-fields rule.
-- The checks are local commands: `check_client_ts` for the generated bindings, and `npm run check` with `npm test` in `web/runtime`. No test and no build needs Node.
-- No components, no CORS, no cookie session, and no static hosting.
-- No labels or descriptions in `wamn.json` or the IR.
+- The browser trusts the platform for the values inside a reply. A reply whose value violates its own field contract reads as completed there and as uncertain in the terminal.
+- Components take the plan role: table, detail, form, delete. A shape with no role gets no component, and the index names it with the reason.
+- A form checks what the operator types with an emitted `zod` schema. It writes the reserved inputs from the runtime, and it marks the member that a refusal names. A repeated input group renders as a list.
+- A command whose plan binds a revision reads the record first and sends the revision it read. A revision with no binding is a prop.
+- Names: the generator decides every member name and emits a field map beside each operation, so no name rule exists at run time. A contract name that does not reverse is refused at emit.
+- A bounded list returns `{ rows }`, and a page returns `{ item, nextCursor }`. A declared value domain types as a union. A request declares writable members, and a result keeps read only members.
+- `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging, row links, supplied fields, record link, revision binding. Paging names the input path of every page control.
+- `client_tui.rs` `emit_model` writes one `ScreenSpec` constant per operation from the plan. The TUI renders from that data at run time. It still holds its own copy of the rules the plan states.
+- The checks are local commands: `check_client_ts` for the bindings, and `check_client_components` for the components. `web/runtime` runs `npm run check` and `npm test`. No test and no build needs Node.
+- No application shell, no demo page, no CORS, no cookie session, and no static hosting.
+- No labels or descriptions in `wamn.json` or the IR. A component derives a label from the field path.
 - Admin functions are `ctl` verbs only. No HTTP admin API. No HTTP read API for runs (grep only).
 
 ## 5. Process
@@ -118,7 +119,7 @@ The epic split in two at its scope. The runtime came first, and the component em
 - **Done when.** The fixes have generator tests, the runtime classifies the four outcomes the same as `classify()`, and one case table holds both clients.
 - **Out.** The component emitter. Cookie login. Customizing.
 
-**Epic 3B: generated SolidJS components.**
+**Epic 3B: generated SolidJS components.** Done.
 
 - **Goal.** One component per operation by plan role. Unsupported shapes are reported, not forced into a table or form. The runtime gains the page state, the input helpers, and the cell helpers that the components call.
 - **Done when.** Components for the fixture compile. A testing method for a generated component is written down and used once. Receiving components generate.

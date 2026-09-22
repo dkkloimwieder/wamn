@@ -560,6 +560,27 @@ The tests read the shared case table at `crates/client/tui/tests/data/classifica
 `crates/client/tui/tests/classification_table.rs` reads the same file, so one table holds both clients to one rule.
 If you change the table, run both.
 
+### Generated components
+
+A generated component imports SolidJS, TanStack Table, TanStack Form, and zod.
+`web/components` installs those libraries once and holds the harness that checks the components.
+Install its dependencies:
+
+```bash
+cd web/components && npm install
+```
+
+To write the fixture components, type-check them, and run their tests, run:
+
+```bash
+cargo run --locked --offline -p wamn-schema-generator --example check_client_components
+```
+
+The command writes the fixture bindings and components into `web/components/fixture`, which Git ignores.
+It then runs the package's own check and tests.
+If the dependencies are absent, the command refuses and names the directory.
+The one example component test renders the fixture page table with a stub transport and reads the document.
+
 ## Cleanup
 
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.
