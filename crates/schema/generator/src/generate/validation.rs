@@ -277,10 +277,14 @@ fn validate_operation(
 
     if let Some(revision_field) = &operation.revision_field {
         let column = validate_field(table, model_name, revision_field)?;
-        if column.column_type() != ColumnType::Int64 || column.nullable() {
+        // An application integer is int32 by default, and int64 is opt-in, so a
+        // revision column carries either width.
+        if !matches!(column.column_type(), ColumnType::Int32 | ColumnType::Int64)
+            || column.nullable()
+        {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
-                format!("{context} revision field must be non-null int64"),
+                format!("{context} revision field must be a non-null int32 or int64"),
             ));
         }
         if writable.contains(revision_field) {

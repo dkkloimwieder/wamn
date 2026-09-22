@@ -1313,11 +1313,19 @@ fn validate_contract_fields(
                 ),
             ));
         }
-        if field.revision && field.ty != wamn_schema_introspection::ir::ColumnType::Int64 {
+        // An application integer is int32 by default, and int64 is opt-in, so a
+        // revision carries either width.
+        if field.revision
+            && !matches!(
+                field.ty,
+                wamn_schema_introspection::ir::ColumnType::Int32
+                    | wamn_schema_introspection::ir::ColumnType::Int64
+            )
+        {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
                 format!(
-                    "{operation_name} {contract} field {} marks a non-int64 revision",
+                    "{operation_name} {contract} field {} marks a revision that is neither int32 nor int64",
                     field.path
                 ),
             ));

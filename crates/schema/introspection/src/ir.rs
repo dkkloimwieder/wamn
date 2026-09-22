@@ -233,6 +233,9 @@ pub enum ColumnDefault {
     Boolean {
         value: bool,
     },
+    Int32 {
+        value: i32,
+    },
     Int64 {
         value: i64,
     },
@@ -254,6 +257,11 @@ impl ColumnDefault {
     /// A boolean literal default.
     pub const fn boolean(value: bool) -> Self {
         Self::Boolean { value }
+    }
+
+    /// An integer literal default.
+    pub const fn int32(value: i32) -> Self {
+        Self::Int32 { value }
     }
 
     /// A bigint literal default.
@@ -738,6 +746,10 @@ pub fn postgres_default(
             "false" => Ok(ColumnDefault::boolean(false)),
             _ => Err(refuse()),
         },
+        ColumnType::Int32 => unquoted(literal)
+            .parse::<i32>()
+            .map(ColumnDefault::int32)
+            .map_err(|_| refuse()),
         ColumnType::Int64 => unquoted(literal)
             .parse::<i64>()
             .map(ColumnDefault::int64)
@@ -750,8 +762,8 @@ pub fn postgres_default(
                 Err(refuse())
             }
         }
-        // Int32, Float64, Bytes, Json and Uuid admit no literal default form
-        // yet. Adding one is the same shape as this function's other arms.
+        // Float64, Bytes, Json and Uuid admit no literal default form yet.
+        // Adding one is the same shape as this function's other arms.
         _ => Err(refuse()),
     }
 }

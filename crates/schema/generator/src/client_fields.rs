@@ -301,7 +301,10 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
             result.type_name = hints.iter().find(|hint| hint.path == path).map_or_else(
                 || {
                     match ty {
-                        Some("integer") => "int64",
+                        // An integer the operation contract declares is int32.
+                        // A model column keeps its own type through its hint,
+                        // so a bigint column still reads as int64 here.
+                        Some("integer") => "int32",
                         Some("number") => "float64",
                         Some("boolean") => "boolean",
                         _ => match schema.get("format").and_then(Value::as_str) {

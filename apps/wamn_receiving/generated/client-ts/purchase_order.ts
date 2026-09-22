@@ -103,8 +103,8 @@ export interface PurchaseOrderQueryRequest {
   cursor?: string;
   /** `object`, omittable */
   filter?: PurchaseOrderQueryRequestFilter;
-  /** `int64`, omittable */
-  limit?: Int64;
+  /** `int32`, omittable */
+  limit?: number;
   /** `string` */
   requestId: string;
   /** `object`, omittable */

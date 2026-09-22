@@ -338,6 +338,100 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     assert!(codec.contains("value.parse::<i64>().ok()"));
 }
 
+/// An application integer is int32 by default, and int64 is opt-in, so a
+/// revision carries the width of its own column. The request member, the JSON
+/// codec and the refusal detail all follow that column.
+#[test]
+fn a_revision_carries_the_width_its_column_declares() {
+    let base = catalog(false);
+    let purchase_order = table(&base, "purchase_order");
+    let columns = purchase_order
+        .columns()
+        .iter()
+        .map(|column| {
+            if column.name() == "row_version" {
+                Column::new(
+                    "row_version",
+                    ColumnType::Int32,
+                    false,
+                    Some(ColumnDefault::int32(1)),
+                    None,
+                )
+            } else {
+                column.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let narrow = replacing_table(
+        &base,
+        rebuilt_table(
+            purchase_order,
+            columns,
+            purchase_order.constraints().to_vec(),
+        ),
+    );
+    let package = run(&narrow, &manifest(), &QUERY_SOURCES).expect("an int32 revision generates");
+
+    let input = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/update.input.json",
+    );
+    assert_eq!(input["expected_row_version"]["type"], "int32");
+
+    let wit = std::str::from_utf8(
+        package
+            .file("generated/wit/deps/wamn-receiving-purchase-order/package.wit")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(wit.contains("expected-row-version: s32"));
+    assert!(wit.contains("observed-row-version: s32"));
+
+    let codec = std::str::from_utf8(
+        package
+            .file("generated/wit/purchase_order_update_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    // The narrow revision is a JSON number in both directions.
+    assert!(codec.contains("i32::try_from(request.expected_row_version)"));
+    assert!(codec.contains("json!(value.expected_row_version)"));
+    assert!(!codec.contains("JsonInt64(value.expected_row_version)"));
+
+    // A revision of any other type is still refused, and the message names the
+    // two widths an application can declare.
+    let columns = purchase_order
+        .columns()
+        .iter()
+        .map(|column| {
+            if column.name() == "row_version" {
+                Column::new("row_version", ColumnType::Text, false, None, None)
+            } else {
+                column.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let wrong = replacing_table(
+        &base,
+        rebuilt_table(
+            purchase_order,
+            columns,
+            purchase_order.constraints().to_vec(),
+        ),
+    );
+    let refusal = run(&wrong, &manifest(), &QUERY_SOURCES).expect_err("a text revision generated");
+    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidOperation);
+    assert!(
+        refusal
+            .context()
+            .contains("revision field must be a non-null int32 or int64"),
+        "{}",
+        refusal.context()
+    );
+}
+
 #[test]
 fn operation_identity_errors_and_constraint_names_are_closed() {
     let package_manifest = parsed_manifest(&manifest());

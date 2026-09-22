@@ -2,7 +2,7 @@
 //
 // `receipt` operations of package `wamn_receiving`.
 
-import type { FieldMap, Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:receipt/get@1.0.0`. */
@@ -95,8 +95,8 @@ export async function get(
 export interface ReceiptQueryRequest {
   /** `text`, omittable */
   cursor?: string;
-  /** `int64`, omittable */
-  limit?: Int64;
+  /** `int32`, omittable */
+  limit?: number;
   /** `string` */
   requestId: string;
 }

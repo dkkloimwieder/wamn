@@ -253,6 +253,17 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         postgres_default(ColumnType::Int64, "1").unwrap(),
         ColumnDefault::int64(1)
     );
+    // An application integer is int32 by default, so an int4 column carries a
+    // literal default like every other admitted type.
+    assert_eq!(
+        postgres_default(ColumnType::Int32, "1").unwrap(),
+        ColumnDefault::int32(1)
+    );
+    assert_eq!(
+        postgres_default(ColumnType::Int32, "'-12'::integer").unwrap(),
+        ColumnDefault::int32(-12)
+    );
+    assert!(postgres_default(ColumnType::Int32, "2147483648").is_err());
     assert_eq!(
         postgres_default(ColumnType::Numeric, "0::numeric").unwrap(),
         ColumnDefault::numeric("0")

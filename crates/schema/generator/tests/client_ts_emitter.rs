@@ -535,3 +535,22 @@ fn an_invalid_distribution_name_refuses_and_names_the_package() {
     value["npm_distribution"] = serde_json::json!({ "name": "@wamn/platform-fixture-client" });
     fixture::generate_with(&catalog, &value);
 }
+
+/// An application integer is int32 by default, so an integer the operation
+/// contract declares is a plain number in the browser and on the wire. A
+/// declared int64 is opt-in, stays a string, and stays opaque.
+#[test]
+fn a_contract_integer_is_a_number_and_a_declared_int64_stays_opaque() {
+    let ir = release();
+    let files = emit_ts_client(&ir).unwrap();
+    let widget = widget(&files);
+
+    assert!(
+        widget.contains("  limit?: number;\n"),
+        "the page limit is the number the route wants"
+    );
+    assert!(
+        widget.contains("  expectedEditVersion: Int64;\n"),
+        "a declared int64 keeps its opaque alias"
+    );
+}

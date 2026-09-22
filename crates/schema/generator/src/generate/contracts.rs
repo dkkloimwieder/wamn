@@ -955,7 +955,11 @@ fn input_contract(
                     format!("expected_{revision}"),
                     json!({
                         "field": revision,
-                        "type": "int64",
+                        // The revision carries the width of its own column.
+                        "type": column(table, revision)
+                            .expect("validated revision column")
+                            .column_type()
+                            .as_str(),
                         "required": true,
                         "revision": true,
                     }),

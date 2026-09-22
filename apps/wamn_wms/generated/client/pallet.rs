@@ -358,8 +358,8 @@ pub struct PalletQueryRequest {
     pub cursor: Option<String>,
     /// `object`, omittable
     pub filter: Option<PalletQueryRequestFilter>,
-    /// `int64`, omittable
-    pub limit: Option<i64>,
+    /// `int32`, omittable
+    pub limit: Option<i32>,
     /// `string`
     pub request_id: String,
     /// `object`, omittable
@@ -435,7 +435,7 @@ pub const PALLET_QUERY_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "limit",
-        type_name: "int64",
+        type_name: "int32",
         nullable: true,
         values: &[],
     },
@@ -615,7 +615,7 @@ pub const PALLET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "limit",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

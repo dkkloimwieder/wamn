@@ -358,8 +358,8 @@ pub struct PurchaseOrderQueryRequest {
     pub cursor: Option<String>,
     /// `object`, omittable
     pub filter: Option<PurchaseOrderQueryRequestFilter>,
-    /// `int64`, omittable
-    pub limit: Option<i64>,
+    /// `int32`, omittable
+    pub limit: Option<i32>,
     /// `string`
     pub request_id: String,
     /// `object`, omittable
@@ -427,7 +427,7 @@ pub const PURCHASE_ORDER_QUERY_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "limit",
-        type_name: "int64",
+        type_name: "int32",
         nullable: true,
         values: &[],
     },
@@ -584,7 +584,7 @@ pub const PURCHASE_ORDER_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSch
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "limit",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

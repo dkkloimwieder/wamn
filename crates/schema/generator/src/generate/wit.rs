@@ -148,11 +148,16 @@ fn emit_crud_interface(
             .revision_field
             .as_deref()
             .expect("validated delete revision exists");
-        writeln!(source, "    expected-{}: s64,", wit_name(revision))
-            .expect("writing to a String cannot fail");
+        writeln!(
+            source,
+            "    expected-{}: {},",
+            wit_name(revision),
+            wit_type(model_column(table, revision).column_type())
+        )
+        .expect("writing to a String cannot fail");
     }
     source.push_str("  }\n\n");
-    emit_operation_errors(source, name, details);
+    emit_operation_errors(source, name, details, revision_width(table, operation));
     writeln!(source, "  record {name}-item {{\n    request-id: string,\n    input: result<{name}-request, invalid-input-detail>,\n  }}\n")
         .expect("writing to a String cannot fail");
     emit_crud_result(source, name, action, fields, operation.result);
@@ -179,10 +184,11 @@ fn emit_operation_errors(
     source: &mut String,
     name: &str,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    revision: Option<ColumnType>,
 ) {
     for (literal, detail) in details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
-            emit_error_detail(source, access_error_literal(*literal), detail);
+            emit_error_detail(source, access_error_literal(*literal), detail, revision);
         }
     }
     writeln!(source, "  variant {name}-error {{").expect("writing to a String cannot fail");
@@ -247,12 +253,22 @@ fn emit_update_interface(
         .as_deref()
         .expect("validated update revision exists");
     source.push_str("  }\n\n  record update-request {\n    id: string,\n");
-    writeln!(source, "    expected-{}: s64,", wit_name(revision))
-        .expect("writing to a String cannot fail");
+    writeln!(
+        source,
+        "    expected-{}: {},",
+        wit_name(revision),
+        wit_type(model_column(table, revision).column_type())
+    )
+    .expect("writing to a String cannot fail");
     source.push_str("    change: update-change,\n  }\n\n");
     for (literal, detail) in details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
-            emit_error_detail(source, access_error_literal(*literal), detail);
+            emit_error_detail(
+                source,
+                access_error_literal(*literal),
+                detail,
+                revision_width(table, operation),
+            );
         }
     }
     source.push_str("  variant update-error {\n");
@@ -323,7 +339,19 @@ fn emit_update_codec(
         "expected_{}",
         rust_identifier(revision).expect("validated revision has a Rust name")
     );
-    source.push_str(&UPDATE_CODEC_HEADER.replace("expected_revision", &expected_revision));
+    // The revision carries its declared width. An int32 arrives as a JSON
+    // number and narrows, and an int64 arrives as a string and parses.
+    let (revision_json_type, revision_conversion) =
+        if model_column(table, revision).column_type() == ColumnType::Int32 {
+            ("i64", "i32::try_from(request.expected_revision)")
+        } else {
+            ("String", "request.expected_revision.parse::<i64>()")
+        };
+    source.push_str(
+        &UPDATE_CODEC_HEADER
+            .replace("REVISION_JSON_TYPE", revision_json_type)
+            .replace("expected_revision", &expected_revision),
+    );
     for field in &operation.writable_fields {
         let column = model_column(table, field);
         writeln!(
@@ -334,7 +362,11 @@ fn emit_update_codec(
         )
         .expect("writing to a String cannot fail");
     }
-    source.push_str(&UPDATE_CODEC_DECODE_PREFIX.replace("expected_revision", &expected_revision));
+    source.push_str(
+        &UPDATE_CODEC_DECODE_PREFIX
+            .replace("REVISION_CONVERSION", revision_conversion)
+            .replace("expected_revision", &expected_revision),
+    );
     for field in &operation.writable_fields {
         let name = rust_identifier(field).expect("validated update field has a Rust name");
         writeln!(
@@ -366,6 +398,7 @@ fn emit_update_codec(
             "UpdateError",
             access_error_literal(*literal),
             detail,
+            revision_width(table, operation),
         );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
@@ -439,8 +472,20 @@ fn emit_crud_json_codec(
                         .expect("validated delete revision exists"),
                 )
                 .expect("validated revision has a Rust name");
-                write!(source, ", expected_{revision}: JsonInt64")
-                    .expect("writing to a String cannot fail");
+                let width = model_column(
+                    table,
+                    operation
+                        .revision_field
+                        .as_deref()
+                        .expect("validated delete revision exists"),
+                )
+                .column_type();
+                write!(
+                    source,
+                    ", expected_{revision}: {}",
+                    codec_rust_type(width, false)
+                )
+                .expect("writing to a String cannot fail");
             }
             source.push_str(" }\n\n");
         }
@@ -463,7 +508,14 @@ fn emit_crud_json_codec(
     writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
         .expect("writing to a String cannot fail");
     emit_crud_invalid_detail(&mut source, details);
-    emit_crud_encoder(&mut source, action, fields, operation, details);
+    emit_crud_encoder(
+        &mut source,
+        action,
+        fields,
+        operation,
+        details,
+        revision_width(table, operation),
+    );
     source
 }
 
@@ -675,9 +727,23 @@ fn emit_crud_request_assignments(
                     .expect("delete revision exists"),
             )
             .expect("validated revision has a Rust name");
+            let unwrap = if model_column(
+                table,
+                operation
+                    .revision_field
+                    .as_deref()
+                    .expect("delete revision exists"),
+            )
+            .column_type()
+                == ColumnType::Int64
+            {
+                ".0"
+            } else {
+                ""
+            };
             writeln!(
                 source,
-                "            expected_{revision}: request.expected_{revision}.0,"
+                "            expected_{revision}: request.expected_{revision}{unwrap},"
             )
             .expect("writing to a String cannot fail");
         }
@@ -748,6 +814,7 @@ fn emit_crud_encoder(
     fields: &[ContractFieldDeclaration],
     operation: &OperationDeclaration,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    revision: Option<ColumnType>,
 ) {
     let type_name = rust_type_identifier(action.as_str());
     writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ \"request_id\": item.request_id, \"value\":")
@@ -781,6 +848,7 @@ fn emit_crud_encoder(
             &format!("{type_name}Error"),
             access_error_literal(*literal),
             detail,
+            revision,
         );
     }
     source.push_str("    };\n    json!({\"code\": code, \"detail\": detail})\n}\n");
@@ -971,7 +1039,7 @@ const UPDATE_CODEC_HEADER: &str = r"#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
     id: String,
-    expected_revision: String,
+    expected_revision: REVISION_JSON_TYPE,
     change: JsonUpdateChange,
 }
 
@@ -985,7 +1053,7 @@ const UPDATE_CODEC_DECODE_PREFIX: &str = r"}
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
     decode_envelope(input)?.into_iter().map(|(request_id, body)| {
         let input = match serde_json::from_value::<JsonRequest>(body) {
-            Ok(request) => match request.expected_revision.parse::<i64>() {
+            Ok(request) => match REVISION_CONVERSION {
                 Ok(expected_revision) => {
                     let request = contract::UpdateRequest {
                         id: request.id,
@@ -1246,9 +1314,13 @@ fn emit_owned_interface(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    // A custom operation reports the revision that its own result declares.
+    let revision = result
+        .and_then(|result| result.fields.iter().find(|field| field.revision))
+        .map(|field| field.ty);
     for (literal, detail) in &details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
-            emit_error_detail(&mut source, literal, detail);
+            emit_error_detail(&mut source, literal, detail, revision);
         }
     }
     writeln!(source, "  variant {interface}-error {{").expect("writing to a String cannot fail");
@@ -1385,19 +1457,29 @@ fn wit_field_type(type_name: &str) -> String {
     .to_owned()
 }
 
-fn emit_error_detail(source: &mut String, literal: &str, detail: &OperationErrorDetailDeclaration) {
+fn emit_error_detail(
+    source: &mut String,
+    literal: &str,
+    detail: &OperationErrorDetailDeclaration,
+    revision: Option<ColumnType>,
+) {
     writeln!(source, "  record {}-detail {{", wit_name(literal))
         .expect("writing to a String cannot fail");
     for key in &detail.required {
-        writeln!(source, "    {}: {},", detail_name(*key), detail_type(*key))
-            .expect("writing to a String cannot fail");
+        writeln!(
+            source,
+            "    {}: {},",
+            detail_name(*key),
+            detail_type(*key, revision)
+        )
+        .expect("writing to a String cannot fail");
     }
     for key in &detail.optional {
         writeln!(
             source,
             "    {}: option<{}>,",
             detail_name(*key),
-            detail_type(*key)
+            detail_type(*key, revision)
         )
         .expect("writing to a String cannot fail");
     }
@@ -1418,8 +1500,16 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
     }
 }
 
-fn detail_type(key: OperationErrorDetailKey) -> &'static str {
+/// A revision detail member carries the width of the revision it reports, and
+/// an operation that reports none keeps the wider member.
+fn detail_type(key: OperationErrorDetailKey, revision: Option<ColumnType>) -> &'static str {
     match key {
+        OperationErrorDetailKey::ExpectedRowVersion
+        | OperationErrorDetailKey::ObservedRowVersion
+            if revision == Some(ColumnType::Int32) =>
+        {
+            "s32"
+        }
         OperationErrorDetailKey::Minimum
         | OperationErrorDetailKey::Maximum
         | OperationErrorDetailKey::Observed
@@ -1430,6 +1520,14 @@ fn detail_type(key: OperationErrorDetailKey) -> &'static str {
         | OperationErrorDetailKey::Constraint
         | OperationErrorDetailKey::Operation => "string",
     }
+}
+
+/// The revision width of a CRUD operation, or none when it declares no revision.
+fn revision_width(table: &Table, operation: &OperationDeclaration) -> Option<ColumnType> {
+    operation
+        .revision_field
+        .as_deref()
+        .map(|revision| model_column(table, revision).column_type())
 }
 
 fn wit_type(ty: ColumnType) -> String {
@@ -1553,6 +1651,11 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             "RecordReceiptError",
             literal,
             &crate::manifest::custom_operation_error_detail(operation, literal),
+            operation
+                .result
+                .as_ref()
+                .and_then(|result| result.fields.iter().find(|field| field.revision))
+                .map(|field| field.ty),
         );
     }
     source.push_str(RECEIPT_CODEC_FOOTER);
@@ -1944,6 +2047,7 @@ fn emit_codec_error_arm(
     error_type: &str,
     literal: &str,
     detail: &OperationErrorDetailDeclaration,
+    revision: Option<ColumnType>,
 ) {
     let variant = rust_type_identifier(literal);
     if detail.required.is_empty() && detail.optional.is_empty() {
@@ -1960,13 +2064,16 @@ fn emit_codec_error_arm(
     )
     .expect("writing to a String cannot fail");
     source.push_str("            let mut detail = Map::new();\n");
+    let wide_revision = revision != Some(ColumnType::Int32);
     for key in &detail.required {
         let name = detail_name(*key).replace('-', "_");
-        if matches!(
-            key,
-            OperationErrorDetailKey::ExpectedRowVersion
-                | OperationErrorDetailKey::ObservedRowVersion
-        ) {
+        if wide_revision
+            && matches!(
+                key,
+                OperationErrorDetailKey::ExpectedRowVersion
+                    | OperationErrorDetailKey::ObservedRowVersion
+            )
+        {
             writeln!(
                 source,
                 "            detail.insert({name:?}.to_owned(), json!(JsonInt64(value.{name})));"
@@ -1982,11 +2089,13 @@ fn emit_codec_error_arm(
     }
     for key in &detail.optional {
         let name = detail_name(*key).replace('-', "_");
-        if matches!(
-            key,
-            OperationErrorDetailKey::ExpectedRowVersion
-                | OperationErrorDetailKey::ObservedRowVersion
-        ) {
+        if wide_revision
+            && matches!(
+                key,
+                OperationErrorDetailKey::ExpectedRowVersion
+                    | OperationErrorDetailKey::ObservedRowVersion
+            )
+        {
             writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(JsonInt64(*detail_value))); }}")
                 .expect("writing to a String cannot fail");
         } else {

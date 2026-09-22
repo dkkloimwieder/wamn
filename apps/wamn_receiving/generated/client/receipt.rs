@@ -304,8 +304,8 @@ pub async fn get(
 pub struct ReceiptQueryRequest {
     /// `text`, omittable
     pub cursor: Option<String>,
-    /// `int64`, omittable
-    pub limit: Option<i64>,
+    /// `int32`, omittable
+    pub limit: Option<i32>,
     /// `string`
     pub request_id: String,
 }
@@ -339,7 +339,7 @@ pub const RECEIPT_QUERY_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "limit",
-        type_name: "int64",
+        type_name: "int32",
         nullable: true,
         values: &[],
     },
@@ -413,7 +413,7 @@ pub const RECEIPT_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "limit",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
