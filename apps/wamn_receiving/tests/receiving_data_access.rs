@@ -1863,6 +1863,21 @@ mod tests {
         Ok(())
     }
 
+    /// `purchase_order.supplier_id` references `supplier`, so every order and
+    /// every update names a supplier that exists. A repeated name keeps the
+    /// row the first call wrote.
+    async fn insert_supplier(client: &Client, id: Uuid) -> Result<()> {
+        client
+            .execute(
+                "INSERT INTO supplier (id, name) VALUES ($1, $2) \
+                 ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING",
+                &[&id, &format!("supplier {id}")],
+            )
+            .await
+            .context("insert supplier fixture")?;
+        Ok(())
+    }
+
     async fn insert_purchase_order(
         client: &Client,
         id: Uuid,
@@ -1870,6 +1885,7 @@ mod tests {
         supplier_id: Uuid,
         status: &str,
     ) -> Result<()> {
+        insert_supplier(client, supplier_id).await?;
         client
             .execute(
                 "INSERT INTO purchase_order \
@@ -1888,6 +1904,7 @@ mod tests {
         expected_row_version: i32,
         supplier_id: Uuid,
     ) -> Result<UpdateResult> {
+        insert_supplier(client, supplier_id).await?;
         let supplier_id = Some(supplier_id);
         let row = client
             .query_one(

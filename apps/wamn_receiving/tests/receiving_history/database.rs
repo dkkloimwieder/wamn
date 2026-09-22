@@ -93,6 +93,16 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
         key_prefix: format!("history-{}", Uuid::new_v4()),
     };
     let item_id = Uuid::new_v4();
+    // The order references a supplier. A sibling data-modifying CTE cannot
+    // satisfy that reference, because every CTE reads one snapshot, so the
+    // supplier row is written by its own statement first.
+    client
+        .execute(
+            "INSERT INTO receiving.supplier (id, name) VALUES ($1, $2 || '-supplier')",
+            &[&fixture.supplier_id, &fixture.key_prefix],
+        )
+        .await
+        .context("insert the history fixture supplier")?;
     client
         .execute(
             r"WITH item AS (

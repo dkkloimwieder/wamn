@@ -311,6 +311,7 @@ PERFORM set_config('app.user_id',
 END $$;
 SET LOCAL app.operation = 'admin:remove-generated-operator-fixture';
 DELETE FROM receiving.purchase_order WHERE id = '{ORDER_ID}';
+DELETE FROM receiving.supplier WHERE id = '{ORDER_ID}';
 DELETE FROM receiving.location WHERE id = '{LOCATION_ID}';
 COMMIT;
 SELECT (SELECT count(*) FROM receiving.purchase_order WHERE id = '{ORDER_ID}')
@@ -322,6 +323,9 @@ PERFORM set_config('app.user_id',
     (SELECT id::text FROM app_system.users WHERE display_name = 'wamn:provisioning'), true);
 END $$;
 SET LOCAL app.operation = 'admin:seed-generated-operator-fixture';
+INSERT INTO receiving.supplier (id, name)
+VALUES ('{ORDER_ID}', '{ORDER_NUMBER}-SUPPLIER')
+ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING;
 INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id)
 VALUES ('{ORDER_ID}', '{ORDER_NUMBER}', '{ORDER_ID}')
 ON CONFLICT ON CONSTRAINT purchase_order_id_pkey DO NOTHING;

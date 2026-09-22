@@ -8,11 +8,29 @@ CREATE TABLE receiving.location (
     location_code text NOT NULL CONSTRAINT location_location_code_key UNIQUE
 );
 
+CREATE TABLE receiving.supplier (
+    id uuid CONSTRAINT supplier_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE receiving.supplier_command (
+    idempotency_key text
+        CONSTRAINT supplier_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL,
+    supplier_id uuid NOT NULL DEFAULT gen_random_uuid()
+        CONSTRAINT supplier_command_supplier_id_key UNIQUE,
+    CONSTRAINT supplier_command_canonical_command_check
+        CHECK (octet_length(canonical_command) > 0)
+);
+
 CREATE TABLE receiving.purchase_order (
     id uuid CONSTRAINT purchase_order_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     purchase_order_number text NOT NULL
         CONSTRAINT purchase_order_purchase_order_number_key UNIQUE,
-    supplier_id uuid NOT NULL,
+    supplier_id uuid NOT NULL
+        CONSTRAINT purchase_order_supplier_id_fkey
+        REFERENCES receiving.supplier (id),
     status text NOT NULL DEFAULT 'open',
     row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,

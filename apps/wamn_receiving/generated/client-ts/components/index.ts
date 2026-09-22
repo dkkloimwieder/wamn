@@ -6,5 +6,6 @@ export * from "./location.js";
 export * from "./purchase_order.js";
 export * from "./receipt.js";
 export * from "./receiving.js";
+export * from "./supplier.js";
 
 // Every operation of this release has a screen role.

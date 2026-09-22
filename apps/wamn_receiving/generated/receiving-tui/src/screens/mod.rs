@@ -3,3 +3,4 @@ pub mod location;
 pub mod purchase_order;
 pub mod receipt;
 pub mod receiving;
+pub mod supplier;

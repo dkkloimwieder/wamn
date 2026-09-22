@@ -927,6 +927,15 @@ async fn assert_pat_and_session_stamp_one_actor(
     bind_fixture_principal(project, TENANT).await?;
     project
         .execute(
+            "INSERT INTO receiving.supplier (id, name) VALUES \
+               ('00000000-0000-0000-0000-000000000401', 'SUPPLIER-401') \
+             ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING",
+            &[],
+        )
+        .await
+        .context("seed the supplier the order names")?;
+    project
+        .execute(
             "INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) \
              VALUES ($1::text::uuid, $2, '00000000-0000-0000-0000-000000000401')",
             &[&order, &format!("SESSION-STAMP-{order}")],

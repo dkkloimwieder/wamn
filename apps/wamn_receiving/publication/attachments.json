@@ -49,7 +49,7 @@
     "package-id": "wamn_receiving",
     "wiring-id": "purchase_order_query",
     "wiring-version": 1,
-    "definition-hash": "sha256:f778f59783fd49fc1afc00d733fb068b4f43f161dffac4aa0eb21ae7f448cc0a",
+    "definition-hash": "sha256:e55a70b5615b4d78d8f872b4cff64174a3832c6ff9413ce027eeaf8b4bcf1779",
     "definition": {
       "id": "purchase-order-query-http",
       "kind": "http",
@@ -93,6 +93,12 @@
                       "complete",
                       "cancelled"
                     ]
+                  }
+                },
+                "purchase_order_number": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
                   }
                 }
               }
@@ -525,5 +531,104 @@
       "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:location/list@1.0.0"
+  },
+  "supplier-query-http": {
+    "kind": "http",
+    "package-id": "wamn_receiving",
+    "wiring-id": "supplier_query",
+    "wiring-version": 1,
+    "definition-hash": "sha256:83f671382b41291da302af172c490e7f7b45ac8067409cb55888f37aebadb747",
+    "definition": {
+      "id": "supplier-query-http",
+      "kind": "http",
+      "route": {
+        "path": "/supplier/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat", "session"]
+    },
+    "registered-operation": "wamn-receiving:supplier/query@1.0.0"
+  },
+  "supplier-create-http": {
+    "kind": "http",
+    "package-id": "wamn_receiving",
+    "wiring-id": "supplier_create",
+    "wiring-version": 1,
+    "definition-hash": "sha256:3dd2b1706fda6a9603c3ac223727d1aff4ae9aeab2e0e5c269ac20c694af7289",
+    "definition": {
+      "id": "supplier-create-http",
+      "kind": "http",
+      "route": {
+        "path": "/supplier/create",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "idempotency_key",
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idempotency_key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat", "session"]
+    },
+    "registered-operation": "wamn-receiving:supplier/create@1.0.0"
   }
 }

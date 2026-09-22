@@ -166,6 +166,13 @@ pub(super) mod purchase_order_query {
                     .into_boxed_slice()
             }),
             statuses,
+            purchase_order_numbers: request.purchase_order_number.map(|values| {
+                values
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice()
+            }),
             sort,
             cursor: request.cursor.map(Into::into),
             limit: request.limit,
@@ -184,6 +191,39 @@ pub(super) mod purchase_order_query {
             .map_err(|error| {
                 map_error(error.kind().literal(), |key| {
                     error_detail(&error, key, "purchase_order.query", None, None)
+                })
+            })
+    }
+}
+
+pub(super) mod supplier_query {
+    use super::{Connection, error_detail};
+    use crate::exports::wamn_receiving::supplier::query as contract;
+    use wamn_receiving_data_access::supplier;
+    include!("../../generated/wit/supplier_query_codec.rs");
+
+    pub(super) async fn execute(
+        connection: &mut Connection,
+        request: contract::QueryRequest,
+    ) -> Result<contract::QueryResult, contract::QueryError> {
+        let input = supplier::QueryInput {
+            cursor: request.cursor.map(Into::into),
+            limit: request.limit,
+        };
+        supplier::query(connection, &input)
+            .await
+            .map(|page| contract::QueryResult {
+                value: page
+                    .item
+                    .into_vec()
+                    .into_iter()
+                    .map(|value| row!(value, contract::QueryRow))
+                    .collect(),
+                next_cursor: page.next_cursor.map(Into::into),
+            })
+            .map_err(|error| {
+                map_error(error.kind().literal(), |key| {
+                    error_detail(&error, key, "supplier.query", None, None)
                 })
             })
     }
@@ -316,6 +356,15 @@ receipt_query::export_operation!(
     Connection::new(),
     receipt_query::execute,
     receipt_query
+);
+
+supplier_query::export_operation!(
+    crate::Component,
+    crate::exports::wamn_receiving::supplier::query,
+    crate::wamn::node::types,
+    Connection::new(),
+    supplier_query::execute,
+    supplier_query
 );
 
 location_list::export_operation!(

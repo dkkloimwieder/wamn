@@ -188,6 +188,7 @@ impl Login {
         let actor = PlatformComponent::Provisioning.principal_id().to_string();
         project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.tenant_id', $2, false), set_config('app.operation','admin:seed-identity-fixture',false)", &[&actor, &TENANT]).await?;
         project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'route-caller') ON CONFLICT DO NOTHING", &[&TENANT,&self.human]).await?;
+        project.execute("INSERT INTO receiving.supplier (id,name) VALUES ('00000000-0000-0000-0000-000000000401','SUPPLIER-401') ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING", &[]).await?;
         project.execute("INSERT INTO receiving.purchase_order (id,purchase_order_number,supplier_id) VALUES (gen_random_uuid(),'PASSWORD-JOURNEY','00000000-0000-0000-0000-000000000401')", &[]).await?;
         let repository = super::super::repository_root()?;
         let binary = std::env::var_os("CARGO_TARGET_DIR")

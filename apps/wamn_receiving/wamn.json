@@ -153,6 +153,9 @@
             },
             {
               "field": "status"
+            },
+            {
+              "field": "purchase_order_number"
             }
           ],
           "sort": {
@@ -311,12 +314,76 @@
         "retention": "none"
       },
       "operations": {}
+    },
+    "supplier": {
+      "schema": "receiving",
+      "table": "supplier",
+      "owner": "wamn_receiving",
+      "server_owned_fields": [
+        "id",
+        "created_at"
+      ],
+      "enum_fields": {},
+      "field_text": {
+        "name": {
+          "label": "Supplier name"
+        },
+        "created_at": {
+          "label": "Added"
+        }
+      },
+      "audit_log": {
+        "columns": [
+          "created_at"
+        ],
+        "retention": "none"
+      },
+      "operations": {
+        "create": {
+          "permission": "supplier.create",
+          "writable_fields": [
+            "name"
+          ],
+          "claim": {
+            "table": "supplier_command",
+            "identities": {
+              "id": "supplier_id"
+            }
+          },
+          "label": "Add a supplier",
+          "result": "one"
+        },
+        "query": {
+          "permission": "supplier.query",
+          "pagination": {
+            "default_sort": {
+              "field": "created_at",
+              "direction": "ascending"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "limit": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "label": "Suppliers",
+          "result": "page"
+        }
+      }
     }
   },
   "internal_relations": {
     "record_receipt_command": {
       "schema": "receiving",
       "table": "record_receipt_command",
+      "cdc": "excluded"
+    },
+    "supplier_command": {
+      "schema": "receiving",
+      "table": "supplier_command",
       "cdc": "excluded"
     }
   },

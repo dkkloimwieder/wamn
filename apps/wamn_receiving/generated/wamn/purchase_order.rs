@@ -33,22 +33,22 @@ pub struct PurchaseOrderUpdateRow {
 pub(crate) const GET_DIGEST: &str =
     "sha256:49a2aa0628387bc2717872be320426a14bb964ba8a657f71095160d81ed9ff77";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:9bd3e9f80676150bbc60545e5409ba75c886184129dbf35fb2bf49676f5edae3";
+    "sha256:6f0030854fb021ce6dd57f0f490ff0ba884bad120a75f038a768799d5ff035b0";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:7b2a4336071091e8271cee0a59abd007465dd1f302c7565de4649f2cdd12ba38";
+    "sha256:1b2a8ce5f2dfdd995464c24eae8c41000578c25225646f652e68e2d2743a7dcf";
 pub(crate) const QUERY_2_DIGEST: &str =
-    "sha256:ba31a18e45b651d8897812a8ba261392745ed4fbbf1725f574d7dffd7444f6fd";
+    "sha256:f8775f2ab5e5126b7dcab0aec92060e32491578d462e056023d064fb41173b1a";
 pub(crate) const QUERY_3_DIGEST: &str =
-    "sha256:c39f74894247cfa16c18acb8c43c463b7bd37f39a53b76f325c05b1b04b2a177";
+    "sha256:8a0ae416f17ddcd313b2799cacc717b9e2eecb8b4f1822ef6f7d5aabb0f53da9";
 pub(crate) const QUERY_4_DIGEST: &str =
-    "sha256:69e14cbd3cc603aeb3bb33fbf82c6499b952454cbddac8103d547b9c38555127";
+    "sha256:294a3d2360161289a689c93700f64f71a77e1f77ae6234abac575f7c863d16d3";
 pub(crate) const QUERY_5_DIGEST: &str =
-    "sha256:b00b6afd3a821a4e0ae4cb67371453bb122863c690015753ddfe8e5a46a63cf8";
+    "sha256:251ac204d88a1dbb88987e1917bbfa8e34882e509bc3681a81602043765a4f94";
 pub(crate) const UPDATE_DIGEST: &str =
     "sha256:7b419d6f23fbd1ed1a111d3bcae64f854245f3b359fcb042dce355741eab330c";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
-pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];
+pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &["purchase_order_supplier_id_fkey"];
 pub(crate) const UPDATE_CHECK_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_EXCLUSION_CONSTRAINTS: &[&str] = &[];
 
@@ -81,6 +81,7 @@ pub(crate) async fn query_purchase_order_number_ascending(
     connection: &mut Connection,
     supplier_id_filter: Option<wamn_postgres_statements::Json>,
     status_filter: Option<wamn_postgres_statements::Json>,
+    purchase_order_number_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -91,6 +92,7 @@ pub(crate) async fn query_purchase_order_number_ascending(
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
                 wamn_postgres_statements::into_sql_value(status_filter),
+                wamn_postgres_statements::into_sql_value(purchase_order_number_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
@@ -116,6 +118,7 @@ pub(crate) async fn query_purchase_order_number_descending(
     connection: &mut Connection,
     supplier_id_filter: Option<wamn_postgres_statements::Json>,
     status_filter: Option<wamn_postgres_statements::Json>,
+    purchase_order_number_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -126,6 +129,7 @@ pub(crate) async fn query_purchase_order_number_descending(
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
                 wamn_postgres_statements::into_sql_value(status_filter),
+                wamn_postgres_statements::into_sql_value(purchase_order_number_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
@@ -151,6 +155,7 @@ pub(crate) async fn query_status_ascending(
     connection: &mut Connection,
     supplier_id_filter: Option<wamn_postgres_statements::Json>,
     status_filter: Option<wamn_postgres_statements::Json>,
+    purchase_order_number_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -161,6 +166,7 @@ pub(crate) async fn query_status_ascending(
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
                 wamn_postgres_statements::into_sql_value(status_filter),
+                wamn_postgres_statements::into_sql_value(purchase_order_number_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
@@ -186,6 +192,7 @@ pub(crate) async fn query_status_descending(
     connection: &mut Connection,
     supplier_id_filter: Option<wamn_postgres_statements::Json>,
     status_filter: Option<wamn_postgres_statements::Json>,
+    purchase_order_number_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -196,6 +203,7 @@ pub(crate) async fn query_status_descending(
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
                 wamn_postgres_statements::into_sql_value(status_filter),
+                wamn_postgres_statements::into_sql_value(purchase_order_number_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
@@ -221,6 +229,7 @@ pub(crate) async fn query_created_at_ascending(
     connection: &mut Connection,
     supplier_id_filter: Option<wamn_postgres_statements::Json>,
     status_filter: Option<wamn_postgres_statements::Json>,
+    purchase_order_number_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -231,6 +240,7 @@ pub(crate) async fn query_created_at_ascending(
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
                 wamn_postgres_statements::into_sql_value(status_filter),
+                wamn_postgres_statements::into_sql_value(purchase_order_number_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
@@ -256,6 +266,7 @@ pub(crate) async fn query_created_at_descending(
     connection: &mut Connection,
     supplier_id_filter: Option<wamn_postgres_statements::Json>,
     status_filter: Option<wamn_postgres_statements::Json>,
+    purchase_order_number_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -266,6 +277,7 @@ pub(crate) async fn query_created_at_descending(
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
                 wamn_postgres_statements::into_sql_value(status_filter),
+                wamn_postgres_statements::into_sql_value(purchase_order_number_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),

@@ -25,14 +25,21 @@ WHERE
         )
     )
     AND (
-        $3::text IS NULL
-        OR purchase_order.purchase_order_number < $3::text
+        $3::jsonb IS NULL
+        OR purchase_order.purchase_order_number IN (
+            SELECT filter.value
+            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)
+        )
+    )
+    AND (
+        $4::text IS NULL
+        OR purchase_order.purchase_order_number < $4::text
         OR (
-            purchase_order.purchase_order_number = $3::text
-            AND purchase_order.id < $4::uuid
+            purchase_order.purchase_order_number = $4::text
+            AND purchase_order.id < $5::uuid
         )
     )
 ORDER BY
     purchase_order.purchase_order_number DESC,
     purchase_order.id DESC
-LIMIT $5::int8;
+LIMIT $6::int8;

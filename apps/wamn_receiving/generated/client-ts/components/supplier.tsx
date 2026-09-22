@@ -1,0 +1,287 @@
+// @generated from the client-contract IR; do not edit.
+//
+// `supplier` components. Each one calls the bindings and the runtime, and
+// nothing else.
+
+import { For, Show, createSignal } from "solid-js";
+import {
+  createSolidTable,
+  flexRender,
+  getCoreRowModel,
+  type ColumnDef,
+} from "@tanstack/solid-table";
+import { createForm } from "@tanstack/solid-form";
+import { z } from "zod";
+import {
+  appendPage,
+  cellText,
+  checkedMember,
+  emptyPage,
+  firstPage,
+  hasNextPage,
+  newIdempotencyKey,
+  newRequestId,
+  refusalMarks,
+  refusedMember,
+  startRead,
+  type JsonValue,
+  type Outcome,
+  type PageState,
+  type Transport,
+  writeMember,
+} from "@wamn/web-runtime";
+import {
+  SUPPLIER_CREATE_REQUEST_FIELDS,
+  create,
+  query,
+  type SupplierCreateRequest,
+  type SupplierCreateResult,
+  type SupplierQueryRequest,
+  type SupplierQueryResult,
+  type SupplierQueryRow,
+} from "../supplier.js";
+import {
+  type PurchaseOrderUpdateFormInitial,
+} from "./purchase_order.js";
+
+/** What an operator types for `wamn-receiving:supplier/create@1.0.0`. */
+const CREATE_INPUT = z.object({
+  name: z.string(),
+});
+
+/** What the form for `wamn-receiving:supplier/create@1.0.0` can start with. */
+export interface SupplierCreateFormInitial {
+  name?: string;
+}
+
+/** What the form for `wamn-receiving:supplier/create@1.0.0` takes. */
+export interface SupplierCreateFormProps {
+  /** The transport the application supplies. */
+  readonly transport: Transport;
+  /** Values the form starts with. */
+  readonly initial?: SupplierCreateFormInitial;
+  /** Called with the outcome of every submission. */
+  readonly onSubmitted?: (outcome: Outcome<SupplierCreateResult>) => void;
+}
+
+/** What an operator calls this screen. The page decides where it goes. */
+export const SupplierCreateFormLabel = "Add a supplier";
+
+/**
+ * The form for `wamn-receiving:supplier/create@1.0.0`.
+ *
+ * It renders what the operator fills and nothing else. The reserved inputs
+ * come from the runtime at submit time, and the operator never sees them.
+ */
+export function SupplierCreateForm(props: SupplierCreateFormProps) {
+  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
+    null,
+  );
+
+  const form = createForm(() => ({
+    defaultValues: { ...props.initial } as Partial<SupplierCreateRequest>,
+    onSubmit: async ({ value }: { value: Partial<SupplierCreateRequest> }) => {
+      const checked = CREATE_INPUT.safeParse(value);
+      if (!checked.success) {
+        const issue = checked.error.issues[0];
+        setRefusal({
+          code: issue?.message ?? "the input is not valid",
+          member: checkedMember(
+            issue?.path as (string | number)[] | undefined,
+            SUPPLIER_CREATE_REQUEST_FIELDS,
+          ),
+        });
+        return;
+      }
+      let item = { ...value } as SupplierCreateRequest;
+      item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
+      item = writeMember(item, ["requestId"], newRequestId());
+      const outcome = await create(props.transport, [item]);
+      props.onSubmitted?.(outcome);
+      setRefusal(
+        outcome.status === "refused"
+          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          : null,
+      );
+    },
+  }));
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void form.handleSubmit();
+      }}
+    >
+      <Show when={refusal()?.member === null ? refusal() : undefined}>
+        <p>{refusal()?.code}</p>
+      </Show>
+      <form.Field name={`name`}>
+        {(field) => (
+          <label>
+            Supplier name
+            <input
+              type="text"
+              value={String(field().state.value ?? "")}
+              onInput={(event) => field().handleChange(event.currentTarget.value)}
+            />
+            <Show when={refusalMarks(refusal()?.member ?? null, "name")}>
+              <em>{refusal()?.code}</em>
+            </Show>
+          </label>
+        )}
+      </form.Field>
+      <button type="submit">submit</button>
+    </form>
+  );
+}
+
+/** Columns of `wamn-receiving:supplier/query@1.0.0`, in contract order. */
+const QUERY_COLUMNS: ColumnDef<SupplierQueryRow, unknown>[] = [
+  {
+    accessorKey: "createdAt",
+    header: "Added",
+    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+  },
+  {
+    accessorKey: "id",
+    header: "id",
+    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+  },
+  {
+    accessorKey: "name",
+    header: "Supplier name",
+    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+  },
+];
+
+/** What the table for `wamn-receiving:supplier/query@1.0.0` takes. */
+export interface SupplierQueryTableProps {
+  /** The transport the application supplies. */
+  readonly transport: Transport;
+  /** Input the parent fixes, which the operator does not edit. */
+  readonly fixed?: Partial<SupplierQueryRequest>;
+  /** Called when the operator picks one row. */
+  readonly onRowSelect?: (row: SupplierQueryRow) => void;
+  /** Called with the values one row hands to `wamn-receiving:purchase-order/update@1.0.0`. */
+  readonly onFillPurchaseOrderUpdate?: (initial: PurchaseOrderUpdateFormInitial) => void;
+  /** Called with every outcome this screen reads. */
+  readonly onOutcome?: (outcome: Outcome<SupplierQueryResult>) => void;
+}
+
+/** What an operator calls this screen. The page decides where it goes. */
+export const SupplierQueryTableLabel = "Suppliers";
+
+/**
+ * The table for `wamn-receiving:supplier/query@1.0.0`.
+ *
+ * It owns its page controls and its rows. A change to a control clears the
+ * rows, because a cursor names a position in the list the old input produced.
+ *
+ * It reads when the operator asks, and not when it mounts, because a read is
+ * a request that the operator did not send yet.
+ */
+export function SupplierQueryTable(props: SupplierQueryTableProps) {
+  const [controls, setControls] = createSignal<Partial<SupplierQueryRequest>>({});
+  const [page, setPage] = createSignal<PageState<SupplierQueryRow>>(emptyPage<SupplierQueryRow>());
+
+  const read = async (cursor: string | null) => {
+    setPage(startRead(page()));
+    const request = {
+      ...controls(),
+      ...props.fixed,
+      requestId: newRequestId(),
+    } as SupplierQueryRequest;
+    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as SupplierQueryRequest);
+    const outcome = await query(props.transport, [sent]);
+    props.onOutcome?.(outcome);
+    if (outcome.status !== "completed") {
+      setPage({ ...page(), busy: false });
+      return;
+    }
+    const rows = outcome.value.item;
+    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
+  };
+
+  const restart = () => {
+    setPage(emptyPage<SupplierQueryRow>());
+    void read(null);
+  };
+
+  const change = (path: readonly string[], value: JsonValue) => {
+    setControls((current) => writeMember(current, path, value));
+    restart();
+  };
+
+  const table = createSolidTable({
+    get data() {
+      return page().rows as SupplierQueryRow[];
+    },
+    columns: QUERY_COLUMNS,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  return (
+    <section>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          restart();
+        }}
+      >
+        <label>
+          limit
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={100}
+            onChange={(event) => change(["limit"], event.currentTarget.value)}
+          />
+        </label>
+        <button type="submit">read</button>
+      </form>
+      <table>
+        <thead>
+          <For each={table.getHeaderGroups()}>
+            {(group) => (
+              <tr>
+                <For each={group.headers}>
+                  {(header) => (
+                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>
+                  )}
+                </For>
+              </tr>
+            )}
+          </For>
+        </thead>
+        <tbody>
+          <For each={table.getRowModel().rows}>
+            {(row) => (
+              <tr onClick={() => props.onRowSelect?.(row.original)}>
+                <For each={row.getVisibleCells()}>
+                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
+                </For>
+                <td>
+                  <Show when={props.onFillPurchaseOrderUpdate}>
+                    <button
+                      type="button"
+                      onClick={() => props.onFillPurchaseOrderUpdate?.(writeMember({} as PurchaseOrderUpdateFormInitial, ["change", "supplierId"], row.original.id))}
+                    >
+                      update
+                    </button>
+                  </Show>
+                </td>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+      <Show when={hasNextPage(page())}>
+        <button type="button" onClick={() => void read(page().cursor)}>
+          next page
+        </button>
+      </Show>
+    </section>
+  );
+}

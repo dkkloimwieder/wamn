@@ -26,6 +26,8 @@ struct JsonFilter {
     supplier_id: Option<Vec<String>>,
     #[serde(default)]
     status: Option<Vec<String>>,
+    #[serde(default)]
+    purchase_order_number: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +51,10 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::QueryItem>, CodecError
                         .filter
                         .as_mut()
                         .and_then(|filter| filter.status.take()),
+                    purchase_order_number: request
+                        .filter
+                        .as_mut()
+                        .and_then(|filter| filter.purchase_order_number.take()),
                     sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),
                     sort_direction: request.sort.map(|sort| sort.direction),
                     cursor: request.cursor,

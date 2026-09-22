@@ -1,0 +1,112 @@
+package wamn-receiving:supplier@1.0.0;
+
+interface query {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record query-request {
+    cursor: option<string>,
+    limit: option<s64>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<s64>,
+    maximum: option<s64>,
+    observed: option<s64>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant query-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record query-item {
+    request-id: string,
+    input: result<query-request, invalid-input-detail>,
+  }
+
+  record query-row {
+    created-at: string,
+    id: string,
+    name: string,
+  }
+
+  record query-result {
+    value: list<query-row>,
+    next-cursor: option<string>,
+  }
+
+  record query-outcome {
+    request-id: string,
+    outcome: result<query-result, query-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<query-item>) -> result<list<query-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface create {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record create-request {
+    idempotency-key: string,
+    name: option<option<string>>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record unique-violation-detail {
+    constraint: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant create-error {
+    invalid-input(invalid-input-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    unique-violation(unique-violation-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record create-item {
+    request-id: string,
+    input: result<create-request, invalid-input-detail>,
+  }
+
+  record create-row {
+    created-at: string,
+    id: string,
+    name: string,
+  }
+
+  record create-result {
+    value: create-row,
+  }
+
+  record create-outcome {
+    request-id: string,
+    outcome: result<create-result, create-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<create-item>) -> result<list<create-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+

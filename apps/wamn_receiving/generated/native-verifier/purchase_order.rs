@@ -53,6 +53,10 @@ pub(crate) fn query_purchase_order_number_ascending_status_filter_bind_fixture()
 -> Option<serde_json::Value> {
     None
 }
+pub(crate) fn query_purchase_order_number_ascending_purchase_order_number_filter_bind_fixture()
+-> Option<serde_json::Value> {
+    None
+}
 pub(crate) fn query_purchase_order_number_ascending_cursor_key_bind_fixture() -> Option<String> {
     None
 }
@@ -67,6 +71,10 @@ pub(crate) fn query_purchase_order_number_descending_supplier_id_filter_bind_fix
     None
 }
 pub(crate) fn query_purchase_order_number_descending_status_filter_bind_fixture()
+-> Option<serde_json::Value> {
+    None
+}
+pub(crate) fn query_purchase_order_number_descending_purchase_order_number_filter_bind_fixture()
 -> Option<serde_json::Value> {
     None
 }
@@ -87,6 +95,10 @@ pub(crate) fn query_status_ascending_supplier_id_filter_bind_fixture() -> Option
 pub(crate) fn query_status_ascending_status_filter_bind_fixture() -> Option<serde_json::Value> {
     None
 }
+pub(crate) fn query_status_ascending_purchase_order_number_filter_bind_fixture()
+-> Option<serde_json::Value> {
+    None
+}
 pub(crate) fn query_status_ascending_cursor_key_bind_fixture() -> Option<String> {
     None
 }
@@ -101,6 +113,10 @@ pub(crate) fn query_status_descending_supplier_id_filter_bind_fixture() -> Optio
     None
 }
 pub(crate) fn query_status_descending_status_filter_bind_fixture() -> Option<serde_json::Value> {
+    None
+}
+pub(crate) fn query_status_descending_purchase_order_number_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
 pub(crate) fn query_status_descending_cursor_key_bind_fixture() -> Option<String> {
@@ -119,6 +135,10 @@ pub(crate) fn query_created_at_ascending_supplier_id_filter_bind_fixture()
 pub(crate) fn query_created_at_ascending_status_filter_bind_fixture() -> Option<serde_json::Value> {
     None
 }
+pub(crate) fn query_created_at_ascending_purchase_order_number_filter_bind_fixture()
+-> Option<serde_json::Value> {
+    None
+}
 pub(crate) fn query_created_at_ascending_cursor_key_bind_fixture()
 -> Option<chrono::DateTime<chrono::Utc>> {
     None
@@ -135,6 +155,10 @@ pub(crate) fn query_created_at_descending_supplier_id_filter_bind_fixture()
 }
 pub(crate) fn query_created_at_descending_status_filter_bind_fixture() -> Option<serde_json::Value>
 {
+    None
+}
+pub(crate) fn query_created_at_descending_purchase_order_number_filter_bind_fixture()
+-> Option<serde_json::Value> {
     None
 }
 pub(crate) fn query_created_at_descending_cursor_key_bind_fixture()

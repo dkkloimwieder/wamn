@@ -75,6 +75,7 @@ impl PurchaseOrderSort {
 pub struct QueryInput {
     pub supplier_ids: Option<Box<[Box<str>]>>,
     pub statuses: Option<Box<[PurchaseOrderStatus]>>,
+    pub purchase_order_numbers: Option<Box<[Box<str>]>>,
     pub sort: PurchaseOrderSort,
     pub cursor: Option<Box<str>>,
     pub limit: Option<i64>,
@@ -116,6 +117,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
                 connection,
                 prepared.supplier_ids,
                 prepared.statuses,
+                prepared.purchase_order_numbers,
                 cursor_key,
                 cursor_id,
                 prepared.fetch_limit,
@@ -128,6 +130,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
                 connection,
                 prepared.supplier_ids,
                 prepared.statuses,
+                prepared.purchase_order_numbers,
                 cursor_key,
                 cursor_id,
                 prepared.fetch_limit,
@@ -140,6 +143,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
                 connection,
                 prepared.supplier_ids,
                 prepared.statuses,
+                prepared.purchase_order_numbers,
                 cursor_key,
                 cursor_id,
                 prepared.fetch_limit,
@@ -152,6 +156,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
                 connection,
                 prepared.supplier_ids,
                 prepared.statuses,
+                prepared.purchase_order_numbers,
                 cursor_key,
                 cursor_id,
                 prepared.fetch_limit,
@@ -164,6 +169,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
                 connection,
                 prepared.supplier_ids,
                 prepared.statuses,
+                prepared.purchase_order_numbers,
                 cursor_key,
                 cursor_id,
                 prepared.fetch_limit,
@@ -176,6 +182,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
                 connection,
                 prepared.supplier_ids,
                 prepared.statuses,
+                prepared.purchase_order_numbers,
                 cursor_key,
                 cursor_id,
                 prepared.fetch_limit,
@@ -218,6 +225,7 @@ struct PreparedQuery {
     cursor: QueryCursor,
     supplier_ids: Option<Json>,
     statuses: Option<Json>,
+    purchase_order_numbers: Option<Json>,
     page_limit: usize,
     fetch_limit: i64,
 }
@@ -233,10 +241,12 @@ fn prepare_query(input: &QueryInput) -> Result<PreparedQuery, AccessError> {
     let limit = page_limit(input.limit)?;
     let supplier_ids = supplier_filter(input.supplier_ids.as_deref())?;
     let statuses = status_filter(input.statuses.as_deref());
+    let purchase_order_numbers = number_filter(input.purchase_order_numbers.as_deref())?;
     Ok(PreparedQuery {
         cursor,
         supplier_ids,
         statuses,
+        purchase_order_numbers,
         page_limit: usize::try_from(limit).expect("validated page limit fits usize"),
         fetch_limit: limit + 1,
     })
@@ -342,6 +352,25 @@ fn status_filter(values: Option<&[PurchaseOrderStatus]>) -> Option<Json> {
             .collect::<Vec<_>>();
         Json(serde_json::to_string(&values).expect("status literals serialize"))
     })
+}
+
+/// The declared `purchase_order_number` filter, which is the free text an
+/// operator types. An empty value matches no order, so it refuses instead of
+/// returning an empty page that looks like an answer.
+fn number_filter(values: Option<&[Box<str>]>) -> Result<Option<Json>, AccessError> {
+    values
+        .map(|values| {
+            if values.iter().any(|value| value.is_empty()) {
+                return Err(AccessError::invalid(
+                    "purchase_order_number filter carries an empty value",
+                    "filter.purchase_order_number",
+                ));
+            }
+            Ok(Json(
+                serde_json::to_string(&values).expect("strings serialize"),
+            ))
+        })
+        .transpose()
 }
 
 fn supplier_update(supplier_id: SupplierIdUpdate) -> Result<(bool, Option<WamnUuid>), AccessError> {
@@ -541,6 +570,7 @@ mod tests {
         let input = QueryInput {
             supplier_ids: Some(vec!["not-a-uuid".into()].into_boxed_slice()),
             statuses: None,
+            purchase_order_numbers: None,
             sort: PurchaseOrderSort::CreatedAtAscending,
             cursor: Some("not-base64".into()),
             limit: Some(0),
@@ -559,6 +589,11 @@ mod tests {
                 .kind(),
             AccessErrorKind::InvalidInput
         );
+        let empty_number = number_filter(Some(&["".into()])).unwrap_err();
+        assert_eq!(empty_number.kind(), AccessErrorKind::InvalidInput);
+        assert_eq!(empty_number.field(), Some("filter.purchase_order_number"));
+        assert!(number_filter(Some(&["PO-0001".into()])).unwrap().is_some());
+        assert!(number_filter(None).unwrap().is_none());
     }
 
     #[test]

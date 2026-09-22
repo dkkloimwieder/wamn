@@ -795,6 +795,11 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
                ('00000000-0000-0000-0000-000000000101', 'ITEM-101'); \
              INSERT INTO receiving.location (id, location_code) VALUES \
                ('00000000-0000-0000-0000-000000000201', 'DOCK-1'); \
+             INSERT INTO receiving.supplier (id, name) VALUES \
+               ('00000000-0000-0000-0000-000000000401', 'SUPPLIER-401'), \
+               ('00000000-0000-0000-0000-000000000402', 'SUPPLIER-402'), \
+               ('00000000-0000-0000-0000-000000000403', 'SUPPLIER-403') \
+             ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING; \
              INSERT INTO receiving.purchase_order \
                (id, purchase_order_number, supplier_id, status, row_version) \
              VALUES \
@@ -853,7 +858,10 @@ pub(super) async fn seed_materializer_trigger_rows(project: &Client) -> anyhow::
     bind_fixture_principal(project, TENANT).await?;
     project
         .batch_execute(
-            "INSERT INTO receiving.purchase_order \
+            "INSERT INTO receiving.supplier (id, name) VALUES \
+               ('00000000-0000-0000-0000-000000000404', 'SUPPLIER-404') \
+             ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING; \
+             INSERT INTO receiving.purchase_order \
                (id, purchase_order_number, supplier_id, status, row_version) \
              VALUES \
                ('00000000-0000-0000-0000-000000000304', 'PO-304', \

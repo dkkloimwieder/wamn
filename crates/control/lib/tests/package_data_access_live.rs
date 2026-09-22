@@ -797,8 +797,11 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
              INSERT INTO receiving.item (id, item_number) \
                VALUES ('00000000-0000-4000-8000-00000000b001', 'history-item'); \
+             INSERT INTO receiving.supplier (id, name) \
+               VALUES ('00000000-0000-4000-8000-00000000b004', 'history-supplier'); \
              INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) \
-               VALUES ('00000000-0000-4000-8000-00000000b002', 'history-po', gen_random_uuid()); \
+               VALUES ('00000000-0000-4000-8000-00000000b002', 'history-po', \
+                       '00000000-0000-4000-8000-00000000b004'); \
              INSERT INTO receiving.purchase_order_line \
                (id, purchase_order_id, line_number, item_id, ordered_quantity) \
                VALUES ('00000000-0000-4000-8000-00000000b003', \

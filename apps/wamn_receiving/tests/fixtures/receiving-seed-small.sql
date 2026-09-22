@@ -1,7 +1,7 @@
 -- The small Receiving dataset, saved from `receiving-seed.sql -v scale=10`.
 --
--- 10 items, 10 locations, 10 purchase orders, and 55 lines. Apply it to an
--- empty Receiving schema instead of building the rows again:
+-- 10 items, 10 locations, 5 suppliers, 10 purchase orders, and 55 lines.
+-- Apply it to an empty Receiving schema instead of building the rows again:
 --
 --   psql "$TARGET_DATABASE_URL" -f receiving-seed-small.sql
 --
@@ -12,7 +12,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ya8Eqr81PyN9AVLmDIhvsPXPQRzpfFg9cPqUjunB4SIidWoDOaHEH1yxeu3lOE7
+\restrict rXiZKKEkHtO9vKielwGjqLWNa7xEru151gdbKYyFyuQXhdmtG5DpTXFCS1ZwQJy
 
 -- Dumped from database version 18.6 (Ubuntu 18.6-1.pgdg26.04+2)
 -- Dumped by pg_dump version 18.6 (Ubuntu 18.6-1.pgdg26.04+2)
@@ -36,7 +36,7 @@ SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false),
        set_config('app.operation', 'admin:seed-receiving-fixture', false);
 
 --
--- Data for Name: item; Type: TABLE DATA; Schema: receiving; Owner: wamn_db_owner
+-- Data for Name: item; Type: TABLE DATA; Schema: receiving; Owner: postgres
 --
 
 COPY receiving.item (id, item_number) FROM stdin;
@@ -54,7 +54,7 @@ e29ca927-d6ad-3031-e198-447f41b2c629	ITEM-0008
 
 
 --
--- Data for Name: location; Type: TABLE DATA; Schema: receiving; Owner: wamn_db_owner
+-- Data for Name: location; Type: TABLE DATA; Schema: receiving; Owner: postgres
 --
 
 COPY receiving.location (id, location_code) FROM stdin;
@@ -72,25 +72,38 @@ bab357b1-0164-9377-a1c2-38475a5e134d	DOCK-0010
 
 
 --
--- Data for Name: purchase_order; Type: TABLE DATA; Schema: receiving; Owner: wamn_db_owner
+-- Data for Name: supplier; Type: TABLE DATA; Schema: receiving; Owner: postgres
 --
 
-COPY receiving.purchase_order (id, purchase_order_number, supplier_id, status, row_version, created_at, created_by, updated_at, updated_by) FROM stdin;
-a9d20c8e-13eb-f69d-e6e8-96faa5930d97	PO-0001	db63a16b-c72d-08e0-5944-2bf833f4800a	open	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-6ea8f898-6367-c762-8de5-528f23fa1f08	PO-0002	ba625e07-5740-3091-db51-6944a7519f05	open	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-37eabe22-7bc1-da4c-cc39-ed92d921562c	PO-0003	f603e48c-3f5a-61ba-8aa9-a72818dc18ca	open	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-0d979896-06a5-872e-97b5-af20a9af8a7d	PO-0004	8ca2033b-6260-1fe8-a061-e0c0ce1e3c2f	open	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-7f42d0ff-33d7-d861-1813-f43fdca1b25f	PO-0005	8c62c320-75c8-f874-c7c7-206d04daac57	complete	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-0530d327-a4da-ac37-0be0-87d800aa9370	PO-0006	db63a16b-c72d-08e0-5944-2bf833f4800a	open	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-640de8a4-f56f-840d-8e6c-18dc55f2c766	PO-0007	ba625e07-5740-3091-db51-6944a7519f05	cancelled	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-adda4f87-15af-82ce-1852-1b2409879e95	PO-0008	f603e48c-3f5a-61ba-8aa9-a72818dc18ca	open	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-5b6eb305-806c-c8ba-8b8b-c658ced1f78a	PO-0009	8ca2033b-6260-1fe8-a061-e0c0ce1e3c2f	open	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
-28949ddd-af64-b13f-7b52-8b5db8ef4756	PO-0010	8c62c320-75c8-f874-c7c7-206d04daac57	complete	1	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-21 23:05:54.33672-04	770df186-ac15-579e-b46b-c297cae2011b
+COPY receiving.supplier (id, name, created_at) FROM stdin;
+8c62c320-75c8-f874-c7c7-206d04daac57	SUPPLIER-0001	2026-09-22 13:31:26.206442-04
+db63a16b-c72d-08e0-5944-2bf833f4800a	SUPPLIER-0002	2026-09-22 13:31:26.206442-04
+ba625e07-5740-3091-db51-6944a7519f05	SUPPLIER-0003	2026-09-22 13:31:26.206442-04
+f603e48c-3f5a-61ba-8aa9-a72818dc18ca	SUPPLIER-0004	2026-09-22 13:31:26.206442-04
+8ca2033b-6260-1fe8-a061-e0c0ce1e3c2f	SUPPLIER-0005	2026-09-22 13:31:26.206442-04
 \.
 
 
 --
--- Data for Name: purchase_order_line; Type: TABLE DATA; Schema: receiving; Owner: wamn_db_owner
+-- Data for Name: purchase_order; Type: TABLE DATA; Schema: receiving; Owner: postgres
+--
+
+COPY receiving.purchase_order (id, purchase_order_number, supplier_id, status, row_version, created_at, created_by, updated_at, updated_by) FROM stdin;
+a9d20c8e-13eb-f69d-e6e8-96faa5930d97	PO-0001	db63a16b-c72d-08e0-5944-2bf833f4800a	open	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+6ea8f898-6367-c762-8de5-528f23fa1f08	PO-0002	ba625e07-5740-3091-db51-6944a7519f05	open	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+37eabe22-7bc1-da4c-cc39-ed92d921562c	PO-0003	f603e48c-3f5a-61ba-8aa9-a72818dc18ca	open	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+0d979896-06a5-872e-97b5-af20a9af8a7d	PO-0004	8ca2033b-6260-1fe8-a061-e0c0ce1e3c2f	open	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+7f42d0ff-33d7-d861-1813-f43fdca1b25f	PO-0005	8c62c320-75c8-f874-c7c7-206d04daac57	complete	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+0530d327-a4da-ac37-0be0-87d800aa9370	PO-0006	db63a16b-c72d-08e0-5944-2bf833f4800a	open	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+640de8a4-f56f-840d-8e6c-18dc55f2c766	PO-0007	ba625e07-5740-3091-db51-6944a7519f05	cancelled	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+adda4f87-15af-82ce-1852-1b2409879e95	PO-0008	f603e48c-3f5a-61ba-8aa9-a72818dc18ca	open	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+5b6eb305-806c-c8ba-8b8b-c658ced1f78a	PO-0009	8ca2033b-6260-1fe8-a061-e0c0ce1e3c2f	open	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+28949ddd-af64-b13f-7b52-8b5db8ef4756	PO-0010	8c62c320-75c8-f874-c7c7-206d04daac57	complete	1	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b	2026-09-22 13:31:26.206442-04	770df186-ac15-579e-b46b-c297cae2011b
+\.
+
+
+--
+-- Data for Name: purchase_order_line; Type: TABLE DATA; Schema: receiving; Owner: postgres
 --
 
 COPY receiving.purchase_order_line (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) FROM stdin;
@@ -156,5 +169,5 @@ bf7775ce-62cf-aa5e-322a-c6f9c5734135	28949ddd-af64-b13f-7b52-8b5db8ef4756	10	660
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ya8Eqr81PyN9AVLmDIhvsPXPQRzpfFg9cPqUjunB4SIidWoDOaHEH1yxeu3lOE7
+\unrestrict rXiZKKEkHtO9vKielwGjqLWNa7xEru151gdbKYyFyuQXhdmtG5DpTXFCS1ZwQJy
 

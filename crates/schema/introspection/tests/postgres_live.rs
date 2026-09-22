@@ -31,6 +31,8 @@ const STATEMENT_TIMEOUT: &str = "5s";
 const LOCK_TIMEOUT: &str = "2s";
 const TRANSACTION_TIMEOUT: &str = "15s";
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
+/// The supplier that the additive-column purchase orders reference.
+const ADDITIVE_SUPPLIER: &str = "00000000-0000-4000-8000-0000000004a1";
 
 struct Fixture {
     database: String,
@@ -287,8 +289,8 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
     );
     assert_eq!(
         server_tables.len(),
-        7,
-        "the real migration created seven tables"
+        9,
+        "the real migration created nine tables"
     );
     assert!(
         first
@@ -426,6 +428,16 @@ CREATE TABLE receiving.quality_inspection (
 }
 
 async fn assert_additive_columns(client: &Client) {
+    // Every order references a supplier, so one supplier exists first and each
+    // insert below names it.
+    client
+        .execute(
+            "INSERT INTO receiving.supplier (id, name) \
+             VALUES ($1::text::uuid, 'quality status supplier')",
+            &[&ADDITIVE_SUPPLIER],
+        )
+        .await
+        .expect("the referenced supplier exists");
     for (index, quality_status) in ["not_required", "pending", "approved"]
         .into_iter()
         .enumerate()
@@ -436,9 +448,9 @@ async fn assert_additive_columns(client: &Client) {
                 "INSERT INTO receiving.purchase_order \
                     (purchase_order_number, supplier_id, acme_quality_status, \
                      created_at, created_by, updated_at, updated_by) \
-                 VALUES ($1, gen_random_uuid(), $2, now(), gen_random_uuid(), \
+                 VALUES ($1, $3::text::uuid, $2, now(), gen_random_uuid(), \
                          now(), gen_random_uuid())",
-                &[&purchase_order_number, &quality_status],
+                &[&purchase_order_number, &quality_status, &ADDITIVE_SUPPLIER],
             )
             .await
             .unwrap_or_else(|error| {
@@ -450,9 +462,9 @@ async fn assert_additive_columns(client: &Client) {
             "INSERT INTO receiving.purchase_order \
                 (purchase_order_number, supplier_id, acme_quality_status, \
                  created_at, created_by, updated_at, updated_by) \
-             VALUES ('quality-status-invalid', gen_random_uuid(), 'unknown', \
+             VALUES ('quality-status-invalid', $1::text::uuid, 'unknown', \
                      now(), gen_random_uuid(), now(), gen_random_uuid())",
-            &[],
+            &[&ADDITIVE_SUPPLIER],
         )
         .await
         .expect_err("an undeclared quality status was admitted");

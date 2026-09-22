@@ -59,6 +59,7 @@ pub enum AccessErrorKind {
     InvalidInput,
     NotFound,
     ConcurrencyConflict,
+    IdempotencyConflict,
     UniqueViolation,
     ForeignKeyViolation,
     CheckViolation,
@@ -76,6 +77,7 @@ impl AccessErrorKind {
             Self::InvalidInput => "invalid_input",
             Self::NotFound => "not_found",
             Self::ConcurrencyConflict => "concurrency_conflict",
+            Self::IdempotencyConflict => "idempotency_conflict",
             Self::UniqueViolation => "unique_violation",
             Self::ForeignKeyViolation => "foreign_key_violation",
             Self::CheckViolation => "check_violation",
@@ -166,6 +168,11 @@ impl AccessError {
         let mut error = Self::new(AccessErrorKind::ConcurrencyConflict, context);
         error.observed_row_version = Some(observed_row_version);
         error
+    }
+
+    /// One idempotency key already carries a different canonical command.
+    pub(crate) fn idempotency_conflict(context: impl Into<Box<str>>, field: &'static str) -> Self {
+        Self::new(AccessErrorKind::IdempotencyConflict, context).with_field(field)
     }
 
     pub(crate) fn internal(context: impl Into<Box<str>>) -> Self {

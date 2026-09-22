@@ -268,6 +268,7 @@ impl RecordReceiptError {
             AccessErrorKind::InvalidInput
             | AccessErrorKind::NotFound
             | AccessErrorKind::ConcurrencyConflict
+            | AccessErrorKind::IdempotencyConflict
             | AccessErrorKind::UniqueViolation
             | AccessErrorKind::ForeignKeyViolation
             | AccessErrorKind::CheckViolation

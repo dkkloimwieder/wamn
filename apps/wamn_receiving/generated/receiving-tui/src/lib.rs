@@ -17,6 +17,9 @@ pub mod receipt;
 #[path = "../../client/receiving.rs"]
 pub mod receiving;
 
+#[path = "../../client/supplier.rs"]
+pub mod supplier;
+
 #[must_use]
 pub fn screens(binding: SessionBinding) -> Vec<Screen> {
     vec![
@@ -28,6 +31,8 @@ pub fn screens(binding: SessionBinding) -> Vec<Screen> {
         screens::receipt::query(binding.clone()),
         screens::receiving::load_purchase_order_history(binding.clone()),
         screens::receiving::load_receipt_screen(binding.clone()),
-        screens::receiving::record_receipt(binding),
+        screens::receiving::record_receipt(binding.clone()),
+        screens::supplier::create(binding.clone()),
+        screens::supplier::query(binding),
     ]
 }

@@ -81,7 +81,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "query",
     input: crate::purchase_order::PURCHASE_ORDER_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"status\":{\"items\":{\"enum\":[\"open\",\"complete\",\"cancelled\"]},\"type\":\"array\"},\"supplier_id\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"purchase_order_number\",\"status\",\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_number\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"status\":{\"items\":{\"enum\":[\"open\",\"complete\",\"cancelled\"]},\"type\":\"array\"},\"supplier_id\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"purchase_order_number\",\"status\",\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -160,6 +160,11 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 literal: "concurrency_conflict",
                 required: &["expected_row_version", "observed_row_version"],
                 sources: &[],
+            },
+            submission::ErrorCase {
+                literal: "foreign_key_violation",
+                required: &["constraint"],
+                sources: &["foreign_key_violation"],
             },
             submission::ErrorCase {
                 literal: "internal_error",

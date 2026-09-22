@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "supplier_create",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "receiving",
+      "interface-version": "0.1.0",
+      "operation": "wamn-receiving:supplier/create@1.0.0",
+      "terminal": "respond"
+    }
+  }
+}

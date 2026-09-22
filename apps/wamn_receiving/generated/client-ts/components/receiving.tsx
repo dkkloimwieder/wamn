@@ -14,7 +14,10 @@ import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
   appendPage,
+  canAdd,
+  canRemove,
   cellText,
+  checkedMember,
   emptyPage,
   firstPage,
   hasNextPage,
@@ -32,6 +35,7 @@ import {
   writeMember,
 } from "@wamn/web-runtime";
 import {
+  RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
   loadPurchaseOrderHistory,
   loadReceiptScreen,
   recordReceipt,
@@ -44,6 +48,12 @@ import {
   type ReceivingRecordReceiptRequest,
   type ReceivingRecordReceiptResult,
 } from "../receiving.js";
+
+/** What the release accepts: one UUID, hyphenated. */
+const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** What the release accepts: decimal text without an exponent. */
+const NUMERIC_TEXT = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
 
 /** Columns of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`, in contract order. */
 const LOAD_PURCHASE_ORDER_HISTORY_COLUMNS: ColumnDef<ReceivingLoadPurchaseOrderHistoryRow, unknown>[] = [
@@ -367,13 +377,15 @@ const RECORD_RECEIPT_INPUT = z.object({
     .object({
       line: z
         .object({
-          locationId: z.string(),
-          purchaseOrderLineId: z.string(),
-          quantity: z.string(),
+          locationId: z.string().regex(UUID_TEXT, "expected a UUID"),
+          purchaseOrderLineId: z.string().regex(UUID_TEXT, "expected a UUID"),
+          quantity: z.string().regex(NUMERIC_TEXT, "expected decimal text"),
         })
         .array()
+        .min(1)
+        .max(100)
         .optional(),
-      purchaseOrderId: z.string(),
+      purchaseOrderId: z.string().regex(UUID_TEXT, "expected a UUID"),
       receiptReference: z.string(),
     })
     .optional(),
@@ -419,7 +431,10 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
         const issue = checked.error.issues[0];
         setRefusal({
           code: issue?.message ?? "the input is not valid",
-          member: typeof issue?.path.at(-1) === "string" ? String(issue.path.at(-1)) : null,
+          member: checkedMember(
+            issue?.path as (string | number)[] | undefined,
+            RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
+          ),
         });
         return;
       }
@@ -499,13 +514,21 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                       </label>
                     )}
                   </form.Field>
-                  <button type="button" onClick={() => group().removeValue(index())}>
+                  <button
+                    type="button"
+                    disabled={!canRemove(group().state.value ?? [], 1)}
+                    onClick={() => group().removeValue(index())}
+                  >
                     remove
                   </button>
                 </fieldset>
               )}
             </For>
-            <button type="button" onClick={() => group().pushValue({} as NonNullable<NonNullable<NonNullable<ReceivingRecordReceiptRequest>["value"]>["line"]>[number])}>
+            <button
+              type="button"
+              disabled={!canAdd(group().state.value ?? [], 100)}
+              onClick={() => group().pushValue({} as NonNullable<NonNullable<NonNullable<ReceivingRecordReceiptRequest>["value"]>["line"]>[number])}
+            >
               add
             </button>
           </fieldset>

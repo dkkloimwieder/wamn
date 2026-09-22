@@ -104,6 +104,11 @@ fn error_value(error: &contract::UpdateError) -> Value {
             );
             ("concurrency_conflict", detail)
         }
+        contract::UpdateError::ForeignKeyViolation(value) => {
+            let mut detail = Map::new();
+            detail.insert("constraint".to_owned(), json!(value.constraint));
+            ("foreign_key_violation", detail)
+        }
         contract::UpdateError::Retry => ("retry", Map::new()),
         contract::UpdateError::Timeout => ("timeout", Map::new()),
         contract::UpdateError::PermissionDenied(value) => {
@@ -215,6 +220,14 @@ pub(crate) fn map_error(
             contract::UpdateError::ConcurrencyConflict(contract::ConcurrencyConflictDetail {
                 expected_row_version,
                 observed_row_version,
+            })
+        }
+        "foreign_key_violation" => {
+            let Some(constraint) = detail("constraint") else {
+                return contract::UpdateError::InternalError;
+            };
+            contract::UpdateError::ForeignKeyViolation(contract::ForeignKeyViolationDetail {
+                constraint,
             })
         }
         "retry" => contract::UpdateError::Retry,

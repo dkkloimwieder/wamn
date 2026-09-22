@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    purchase_order.created_at,\n    purchase_order.created_by,\n    purchase_order.id,\n    purchase_order.purchase_order_number,\n    purchase_order.row_version,\n    purchase_order.status,\n    purchase_order.supplier_id,\n    purchase_order.updated_at,\n    purchase_order.updated_by\nFROM purchase_order AS purchase_order\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR purchase_order.supplier_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR purchase_order.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::text IS NULL\n        OR purchase_order.purchase_order_number > $3::text\n        OR (\n            purchase_order.purchase_order_number = $3::text\n            AND purchase_order.id > $4::uuid\n        )\n    )\nORDER BY\n    purchase_order.purchase_order_number ASC,\n    purchase_order.id ASC\nLIMIT $5::int8;\n",
+  "query": "SELECT\n    purchase_order.created_at,\n    purchase_order.created_by,\n    purchase_order.id,\n    purchase_order.purchase_order_number,\n    purchase_order.row_version,\n    purchase_order.status,\n    purchase_order.supplier_id,\n    purchase_order.updated_at,\n    purchase_order.updated_by\nFROM purchase_order AS purchase_order\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR purchase_order.supplier_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR purchase_order.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR purchase_order.purchase_order_number IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $4::text IS NULL\n        OR purchase_order.status > $4::text\n        OR (\n            purchase_order.status = $4::text\n            AND purchase_order.id > $5::uuid\n        )\n    )\nORDER BY\n    purchase_order.status ASC,\n    purchase_order.id ASC\nLIMIT $6::int8;\n",
   "describe": {
     "columns": [
       {
@@ -107,6 +107,7 @@
       "Left": [
         "Jsonb",
         "Jsonb",
+        "Jsonb",
         "Text",
         "Uuid",
         "Int8"
@@ -124,5 +125,5 @@
       false
     ]
   },
-  "hash": "9bd3e9f80676150bbc60545e5409ba75c886184129dbf35fb2bf49676f5edae3"
+  "hash": "f8775f2ab5e5126b7dcab0aec92060e32491578d462e056023d064fb41173b1a"
 }

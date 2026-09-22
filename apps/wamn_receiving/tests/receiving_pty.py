@@ -46,6 +46,8 @@ INSERT INTO receiving.item (id, item_number) VALUES
   ('{ids.item}', '{prefix}-ITEM');
 INSERT INTO receiving.location (id, location_code) VALUES
   ('{ids.dock1}', '{prefix}-A'), ('{ids.dock2}', '{prefix}-B');
+INSERT INTO receiving.supplier (id, name) VALUES
+  ('{ids.supplier}', '{prefix}-SUPPLIER');
 INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id)
 VALUES ('{ids.order}', '{prefix}-PO', '{ids.supplier}');
 INSERT INTO receiving.purchase_order_line

@@ -158,6 +158,11 @@ async fn transactional_participation(
                ('00000000-0000-0000-0000-000000000710', 'ITEM-PARTICIPATION'); \
              INSERT INTO receiving.location (id, location_code) VALUES \
                ('00000000-0000-0000-0000-000000000711', 'PARTICIPATION'); \
+             INSERT INTO receiving.supplier (id, name) VALUES \
+               ('00000000-0000-0000-0000-000000000730', 'SUPPLIER-730'), \
+               ('00000000-0000-0000-0000-000000000731', 'SUPPLIER-731'), \
+               ('00000000-0000-0000-0000-000000000732', 'SUPPLIER-732'), \
+               ('00000000-0000-0000-0000-000000000733', 'SUPPLIER-733'); \
              INSERT INTO receiving.purchase_order \
                (id, purchase_order_number, supplier_id, status, row_version, \
                 acme_inspection_required, acme_quality_status) VALUES \

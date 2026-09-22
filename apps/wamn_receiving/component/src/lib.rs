@@ -10,6 +10,7 @@ use wamn::node::types::NodeError;
 use wamn_receiving_data_access::record_receipt as receipt;
 
 mod reads;
+mod supplier;
 mod update;
 
 wit_bindgen::generate!({
@@ -30,6 +31,8 @@ wit_bindgen::generate!({
           export wamn-receiving:receiving/load-purchase-order-history@1.0.0;
           export wamn-receiving:receiving/load-receipt-screen@1.0.0;
           export wamn-receiving:receiving/record-receipt@1.0.0;
+          export wamn-receiving:supplier/create@1.0.0;
+          export wamn-receiving:supplier/query@1.0.0;
         }
     "#,
     path: [
@@ -39,6 +42,7 @@ wit_bindgen::generate!({
         "../generated/wit/deps/wamn-receiving-purchase-order",
         "../generated/wit/deps/wamn-receiving-receipt",
         "../generated/wit/deps/wamn-receiving-receiving",
+        "../generated/wit/deps/wamn-receiving-supplier",
     ],
     generate_all,
     async: true,

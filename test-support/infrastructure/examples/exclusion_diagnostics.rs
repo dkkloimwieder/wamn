@@ -125,9 +125,12 @@ async fn main() -> anyhow::Result<()> {
         ))
         .await?;
     client.batch_execute("GRANT SELECT, UPDATE ON receiving.purchase_order TO wamn_app;
+        INSERT INTO receiving.supplier (id, name)
+        VALUES ('00000000-0000-4000-8000-000000000f01', 'first supplier'),
+               ('00000000-0000-4000-8000-000000000f02', 'second supplier');
         INSERT INTO receiving.purchase_order (purchase_order_number, supplier_id, created_at, created_by, updated_at, updated_by)
-        VALUES ('first', gen_random_uuid(), now(), gen_random_uuid(), now(), gen_random_uuid()),
-               ('second', gen_random_uuid(), now(), gen_random_uuid(), now(), gen_random_uuid());
+        VALUES ('first', '00000000-0000-4000-8000-000000000f01', now(), gen_random_uuid(), now(), gen_random_uuid()),
+               ('second', '00000000-0000-4000-8000-000000000f02', now(), gen_random_uuid(), now(), gen_random_uuid());
         ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_supplier_id_excl EXCLUDE USING gist (supplier_id WITH =);").await?;
     let receiving = diagnostic(&client, "UPDATE receiving.purchase_order SET supplier_id = (SELECT supplier_id FROM receiving.purchase_order WHERE purchase_order_number = 'first') WHERE purchase_order_number = 'second'").await?;
     generate_fixture(database.url(), &scratch.path().join("apps/wamn_receiving")).await?;

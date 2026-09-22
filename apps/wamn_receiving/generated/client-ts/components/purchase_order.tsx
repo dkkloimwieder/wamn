@@ -15,6 +15,7 @@ import { z } from "zod";
 import {
   appendPage,
   cellText,
+  checkedMember,
   emptyPage,
   firstPage,
   hasNextPage,
@@ -31,6 +32,7 @@ import {
   writeMember,
 } from "@wamn/web-runtime";
 import {
+  PURCHASE_ORDER_UPDATE_REQUEST_FIELDS,
   get,
   query,
   type PurchaseOrderGetRequest,
@@ -42,6 +44,14 @@ import {
   type PurchaseOrderUpdateResult,
   update,
 } from "../purchase_order.js";
+import {
+  query as supplierQuery,
+  type SupplierQueryRequest,
+  type SupplierQueryRow,
+} from "../supplier.js";
+
+/** What the release accepts: one UUID, hyphenated. */
+const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 /** The record that the detail for `wamn-receiving:purchase-order/get@1.0.0` reads. */
 export interface PurchaseOrderGetDetailInput {
@@ -237,6 +247,10 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
         }}
       >
         <label>
+          Order number
+          <input type="text" onChange={(event) => change(["filter", "purchaseOrderNumber"], event.currentTarget.value.split(",").filter((part) => part !== ""))} />
+        </label>
+        <label>
           Status
           <input type="text" onChange={(event) => change(["filter", "status"], event.currentTarget.value.split(",").filter((part) => part !== ""))} />
         </label>
@@ -319,7 +333,7 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
 const UPDATE_INPUT = z.object({
   change: z
     .object({
-      supplierId: z.string().optional(),
+      supplierId: z.string().regex(UUID_TEXT, "expected a UUID").optional(),
     })
     .optional(),
 });
@@ -366,7 +380,10 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
         const issue = checked.error.issues[0];
         setRefusal({
           code: issue?.message ?? "the input is not valid",
-          member: typeof issue?.path.at(-1) === "string" ? String(issue.path.at(-1)) : null,
+          member: checkedMember(
+            issue?.path as (string | number)[] | undefined,
+            PURCHASE_ORDER_UPDATE_REQUEST_FIELDS,
+          ),
         });
         return;
       }
@@ -392,6 +409,16 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
       );
     },
   }));
+  const [supplierQueryOptions, setSupplierQueryOptions] = createSignal<SupplierQueryRow[]>([]);
+  const readSupplierQueryOptions = async () => {
+    const outcome = await supplierQuery(props.transport, [
+      { requestId: newRequestId() } as SupplierQueryRequest,
+    ]);
+    if (outcome.status === "completed") {
+      setSupplierQueryOptions(outcome.value.item as SupplierQueryRow[]);
+    }
+  };
+  void readSupplierQueryOptions();
 
   return (
     <form
@@ -407,11 +434,22 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
         {(field) => (
           <label>
             Supplier
-            <input
-              type="text"
+            <select
               value={String(field().state.value ?? "")}
-              onInput={(event) => field().handleChange(event.currentTarget.value)}
-            />
+              onChange={(event) => field().handleChange(event.currentTarget.value)}
+            >
+              <option value=""></option>
+              <For each={supplierQueryOptions()}>
+                {(row) => (
+                  <option
+                    value={String(row.id)}
+                    selected={String(field().state.value ?? "") === String(row.id)}
+                  >
+                    {String(row.name)}
+                  </option>
+                )}
+              </For>
+            </select>
             <Show when={refusalMarks(refusal()?.member ?? null, "change.supplier_id")}>
               <em>{refusal()?.code}</em>
             </Show>

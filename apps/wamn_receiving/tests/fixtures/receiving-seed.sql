@@ -6,7 +6,8 @@
 --
 -- The size is one variable. Small is 10. Medium is 100. Large is 1000 items,
 -- locations, and purchase orders. An order carries 1 to that many lines, so
--- the large size writes about 500000 lines.
+-- the large size writes about 500000 lines. The supplier count stays at five
+-- at every size, because every order names one of five.
 --
 --   psql "$TARGET_DATABASE_URL" -v scale=10 -f receiving-seed.sql
 --
@@ -40,6 +41,7 @@ SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true),
 \if :{?reset}
 TRUNCATE receiving.receipt_line, receiving.receipt, receiving.record_receipt_command,
          receiving.purchase_order_line, receiving.purchase_order,
+         receiving.supplier, receiving.supplier_command,
          receiving.item, receiving.location;
 \endif
 
@@ -52,6 +54,14 @@ INSERT INTO receiving.location (id, location_code)
 SELECT md5('wamn-receiving-seed:location:' || n)::uuid,
        'DOCK-' || lpad(n::text, 4, '0')
 FROM generate_series(1, :scale) AS n;
+
+-- Five suppliers at every size, because an order names one of five. They are
+-- written before the orders, because purchase_order.supplier_id references
+-- this table.
+INSERT INTO receiving.supplier (id, name)
+SELECT md5('wamn-receiving-seed:supplier:' || n)::uuid,
+       'SUPPLIER-' || lpad(n::text, 4, '0')
+FROM generate_series(1, 5) AS n;
 
 -- Every fifth order is complete. Every seventh is cancelled. A filter and a
 -- sort therefore have something to separate. The rest stay open.
@@ -81,5 +91,6 @@ COMMIT;
 
 SELECT 'items' AS relation, count(*) FROM receiving.item
 UNION ALL SELECT 'locations', count(*) FROM receiving.location
+UNION ALL SELECT 'suppliers', count(*) FROM receiving.supplier
 UNION ALL SELECT 'orders', count(*) FROM receiving.purchase_order
 UNION ALL SELECT 'lines', count(*) FROM receiving.purchase_order_line;

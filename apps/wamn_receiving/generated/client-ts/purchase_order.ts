@@ -113,6 +113,8 @@ export interface PurchaseOrderQueryRequest {
 
 export interface PurchaseOrderQueryRequestFilter {
   /** `array`, omittable */
+  purchaseOrderNumber?: string[];
+  /** `array`, omittable */
   status?: ("cancelled" | "complete" | "open")[];
   /** `array`, omittable */
   supplierId?: Uuid[];
@@ -131,6 +133,7 @@ export const PURCHASE_ORDER_QUERY_REQUEST_FIELDS: FieldMap = {
   "filter": {
     member: "filter",
     fields: {
+      "purchase_order_number": "purchaseOrderNumber",
       "status": "status",
       "supplier_id": "supplierId",
     },
@@ -322,6 +325,7 @@ export const PURCHASE_ORDER_UPDATE_ROUTE: OperationRoute = {
     partialSchema: null,
     errors: [
       { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: [] },
+      { literal: "foreign_key_violation", required: ["constraint"], sources: ["foreign_key_violation"] },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded"] },
       { literal: "invalid_input", required: ["field"], sources: [] },
       { literal: "not_found", required: ["field", "id"], sources: [] },

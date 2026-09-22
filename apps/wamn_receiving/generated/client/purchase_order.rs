@@ -369,6 +369,8 @@ pub struct PurchaseOrderQueryRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderQueryRequestFilter {
     /// `array`, omittable
+    pub purchase_order_number: Option<Vec<String>>,
+    /// `array`, omittable
     pub status: Option<Vec<String>>,
     /// `array`, omittable
     pub supplier_id: Option<Vec<uuid::Uuid>>,
@@ -411,6 +413,12 @@ pub const PURCHASE_ORDER_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "cursor",
         type_name: "text",
         nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "filter.purchase_order_number[]",
+        type_name: "text",
+        nullable: false,
         values: &[],
     },
     FieldDescriptor {
@@ -533,6 +541,29 @@ pub const PURCHASE_ORDER_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSch
         minimum: None,
         maximum: None,
         children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "filter.purchase_order_number[]",
+                    type_name: "array",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[wamn_client::descriptor::FieldSchema {
+                    field: FieldDescriptor {
+                        path: "filter.purchase_order_number[]",
+                        type_name: "text",
+                        nullable: false,
+                        values: &[],
+                    },
+                    required: true,
+                    minimum: None,
+                    maximum: None,
+                    children: &[],
+                }],
+            },
             wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
                     path: "filter.status[]",
@@ -1111,6 +1142,7 @@ pub const PURCHASE_ORDER_UPDATE_GRANT: &str = "wamn-receiving:purchase-order/upd
 /// Typed refusals `wamn-receiving:purchase-order/update@1.0.0` declares.
 pub const PURCHASE_ORDER_UPDATE_ERRORS: &[&str] = &[
     "concurrency_conflict",
+    "foreign_key_violation",
     "internal_error",
     "invalid_input",
     "not_found",

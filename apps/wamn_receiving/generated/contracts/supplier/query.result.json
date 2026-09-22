@@ -1,0 +1,1 @@
+{"class":"page","fields":[{"path":"created_at","type":"timestamptz","nullable":false,"values":[],"label":"Added"},{"path":"id","type":"uuid","nullable":false,"values":[]},{"path":"name","type":"text","nullable":false,"values":[],"label":"Supplier name"}]}

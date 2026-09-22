@@ -2429,6 +2429,10 @@ const RECEIVING_MIGRATION: &str =
 const RECEIVING_HISTORY_READ: &str =
     include_str!("../../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
 const HISTORY_PURCHASE_ORDER: &str = "7a1c0a4e-2b9d-4f3e-8a61-0c5d2e9b4f17";
+/// The supplier the history purchase order references.
+const HISTORY_SUPPLIER: &str = "00000000-0000-4000-8000-000000000501";
+/// The supplier the update moves the purchase order to.
+const HISTORY_SUPPLIER_NEXT: &str = "00000000-0000-4000-8000-000000000502";
 
 /// Run `sql` as the guest under the Receiving schema and return its rows, with
 /// the unit separator between fields and the record separator between rows.
@@ -2543,6 +2547,9 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
              CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
                  ON receiving.purchase_order\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
+             INSERT INTO receiving.supplier (id, name)\n\
+                 VALUES ('{HISTORY_SUPPLIER}', 'history supplier'),\n\
+                        ('{HISTORY_SUPPLIER_NEXT}', 'next history supplier');\n\
              COMMIT;\n"
         ),
     );
@@ -2630,7 +2637,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             format!(
                 "INSERT INTO purchase_order (id, purchase_order_number, supplier_id) \
                    VALUES ('{HISTORY_PURCHASE_ORDER}', 'PO-history', \
-                           '00000000-0000-4000-8000-000000000501');"
+                           '{HISTORY_SUPPLIER}');"
             ),
         ),
         (
@@ -2646,7 +2653,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             UPDATE_OPERATION,
             format!(
                 "UPDATE purchase_order SET purchase_order_number = 'PO-history-2', \
-                   supplier_id = '00000000-0000-4000-8000-000000000502' \
+                   supplier_id = '{HISTORY_SUPPLIER_NEXT}' \
                    WHERE id = '{HISTORY_PURCHASE_ORDER}';"
             ),
         ),
@@ -2672,14 +2679,20 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     }
 
     let pages = history_pages(&db_url, &guest, HISTORY_PURCHASE_ORDER);
+    // The read answers position, kind, operation, changed_by, changed_at,
+    // before, after and current. It states no head position, so the newest
+    // position is the last entry of the last page this read took.
+    let head_position = pages
+        .last()
+        .map_or(0, |row| row[0].parse().expect("position is a bigint"));
     let rows = pages
         .iter()
         .map(|row| HistoryRow {
             position: row[0].parse().expect("position is a bigint"),
             kind: &row[1],
-            before: &row[6],
-            current: &row[8],
-            head_position: row[9].parse().expect("head position is a bigint"),
+            before: &row[5],
+            current: &row[7],
+            head_position,
         })
         .collect::<Vec<_>>();
     assert_eq!(

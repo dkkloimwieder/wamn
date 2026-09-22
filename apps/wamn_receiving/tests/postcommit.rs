@@ -267,6 +267,15 @@ async fn fixture(project: &Client, label: &str) -> anyhow::Result<(String, Strin
     let order = uuid::Uuid::new_v4().to_string();
     let line = uuid::Uuid::new_v4().to_string();
     super::bind_fixture_principal(project, super::TENANT).await?;
+    // The order references a supplier, and every label reuses the same one.
+    project
+        .execute(
+            "INSERT INTO receiving.supplier (id,name) \
+             VALUES ('00000000-0000-0000-0000-000000000404','postcommit supplier') \
+             ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING",
+            &[],
+        )
+        .await?;
     project.execute(
         "INSERT INTO receiving.purchase_order \
          (id,purchase_order_number,supplier_id,status,row_version,acme_inspection_required,acme_quality_status) \

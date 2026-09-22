@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    claim.canonical_command,\n    model.created_at,\n    model.id,\n    model.name\nFROM supplier_command AS claim\nJOIN supplier AS model\n    ON model.id = claim.supplier_id\nWHERE claim.idempotency_key = $1::text;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "supplier_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "supplier",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "supplier",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "supplier",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5af13a4e914141ca60a8801e060c09dfd274827ce3923f2da892f2a04969e2cc"
+}
