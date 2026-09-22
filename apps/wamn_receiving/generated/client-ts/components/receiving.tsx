@@ -49,42 +49,42 @@ import {
 const LOAD_PURCHASE_ORDER_HISTORY_COLUMNS: ColumnDef<ReceivingLoadPurchaseOrderHistoryRow, unknown>[] = [
   {
     accessorKey: "after",
-    header: "after",
+    header: "After",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "before",
-    header: "before",
+    header: "Before",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "changedAt",
-    header: "changed at",
+    header: "Changed at",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
   },
   {
     accessorKey: "changedBy",
-    header: "changed by",
+    header: "Changed by",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
   },
   {
     accessorKey: "current",
-    header: "current",
+    header: "Current",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "cursor",
-    header: "cursor",
+    header: "Position",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "kind",
-    header: "kind",
+    header: "Change",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "operation",
-    header: "operation",
+    header: "Operation",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
 ];
@@ -102,7 +102,7 @@ export interface ReceivingLoadPurchaseOrderHistoryTableProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const ReceivingLoadPurchaseOrderHistoryTableLabel = "load purchase order history";
+export const ReceivingLoadPurchaseOrderHistoryTableLabel = "Purchase order history";
 
 /**
  * The table for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
@@ -202,7 +202,7 @@ const LOAD_RECEIPT_SCREEN_COLUMNS: ColumnDef<ReceivingLoadReceiptScreenRow, unkn
   },
   {
     accessorKey: "itemNumber",
-    header: "item number",
+    header: "Item",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
@@ -212,12 +212,12 @@ const LOAD_RECEIPT_SCREEN_COLUMNS: ColumnDef<ReceivingLoadReceiptScreenRow, unkn
   },
   {
     accessorKey: "lineNumber",
-    header: "line number",
+    header: "Line",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
   },
   {
     accessorKey: "orderedQuantity",
-    header: "ordered quantity",
+    header: "Ordered",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
   },
   {
@@ -227,32 +227,32 @@ const LOAD_RECEIPT_SCREEN_COLUMNS: ColumnDef<ReceivingLoadReceiptScreenRow, unkn
   },
   {
     accessorKey: "purchaseOrderNumber",
-    header: "purchase order number",
+    header: "Order number",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "purchaseOrderStatus",
-    header: "purchase order status",
+    header: "Status",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "receivedQuantity",
-    header: "received quantity",
+    header: "Received",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
   },
   {
     accessorKey: "remainingQuantity",
-    header: "remaining quantity",
+    header: "Remaining",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
   },
   {
     accessorKey: "rowVersion",
-    header: "row version",
+    header: "Revision",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
   },
   {
     accessorKey: "supplierId",
-    header: "supplier id",
+    header: "Supplier",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
   },
 ];
@@ -270,7 +270,7 @@ export interface ReceivingLoadReceiptScreenTableProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const ReceivingLoadReceiptScreenTableLabel = "load receipt screen";
+export const ReceivingLoadReceiptScreenTableLabel = "Receiving screen";
 
 /**
  * The table for `wamn-receiving:receiving/load-receipt-screen@1.0.0`.
@@ -398,7 +398,7 @@ export interface ReceivingRecordReceiptFormProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const ReceivingRecordReceiptFormLabel = "record receipt";
+export const ReceivingRecordReceiptFormLabel = "Record a receipt";
 
 /**
  * The form for `wamn-receiving:receiving/record-receipt@1.0.0`.
@@ -457,7 +457,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                   <form.Field name={`value.line[${index()}].locationId`}>
                     {(field) => (
                       <label>
-                        location id
+                        Location
                         <input
                           type="text"
                           value={String(field().state.value ?? "")}
@@ -472,7 +472,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                   <form.Field name={`value.line[${index()}].purchaseOrderLineId`}>
                     {(field) => (
                       <label>
-                        purchase order line id
+                        Order line
                         <input
                           type="text"
                           value={String(field().state.value ?? "")}
@@ -487,7 +487,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                   <form.Field name={`value.line[${index()}].quantity`}>
                     {(field) => (
                       <label>
-                        quantity
+                        Quantity
                         <input
                           type="text"
                           value={String(field().state.value ?? "")}
@@ -514,7 +514,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       <form.Field name={`value.purchaseOrderId`}>
         {(field) => (
           <label>
-            purchase order id
+            Purchase order
             <input
               type="text"
               value={String(field().state.value ?? "")}
@@ -529,7 +529,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       <form.Field name={`value.receiptReference`}>
         {(field) => (
           <label>
-            receipt reference
+            Receipt reference
             <input
               type="text"
               value={String(field().state.value ?? "")}

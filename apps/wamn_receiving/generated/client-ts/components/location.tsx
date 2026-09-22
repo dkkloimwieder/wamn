@@ -39,7 +39,7 @@ const LIST_COLUMNS: ColumnDef<LocationListRow, unknown>[] = [
   },
   {
     accessorKey: "locationCode",
-    header: "location code",
+    header: "Location code",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
 ];
@@ -57,7 +57,7 @@ export interface LocationListTableProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const LocationListTableLabel = "list";
+export const LocationListTableLabel = "Locations";
 
 /**
  * The table for `wamn-receiving:location/list@1.0.0`.

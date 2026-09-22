@@ -59,7 +59,7 @@ export interface PurchaseOrderGetDetailProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const PurchaseOrderGetDetailLabel = "get";
+export const PurchaseOrderGetDetailLabel = "Purchase order";
 
 /**
  * The detail screen for `wamn-receiving:purchase-order/get@1.0.0`.
@@ -90,23 +90,23 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
         <p>{state()}</p>
       </Show>
       <dl>
-        <dt>created at</dt>
+        <dt>Created</dt>
         <dd>{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</dd>
-        <dt>created by</dt>
+        <dt>Created by</dt>
         <dd>{cellText(readMember(record(), ["createdBy"]), "uuid")}</dd>
         <dt>id</dt>
         <dd>{cellText(readMember(record(), ["id"]), "uuid")}</dd>
-        <dt>purchase order number</dt>
+        <dt>Order number</dt>
         <dd>{cellText(readMember(record(), ["purchaseOrderNumber"]), "text")}</dd>
-        <dt>row version</dt>
+        <dt>Revision</dt>
         <dd>{cellText(readMember(record(), ["rowVersion"]), "int32")}</dd>
-        <dt>status</dt>
+        <dt>Status</dt>
         <dd>{cellText(readMember(record(), ["status"]), "text")}</dd>
-        <dt>supplier id</dt>
+        <dt>Supplier</dt>
         <dd>{cellText(readMember(record(), ["supplierId"]), "uuid")}</dd>
-        <dt>updated at</dt>
+        <dt>Updated</dt>
         <dd>{cellText(readMember(record(), ["updatedAt"]), "timestamptz")}</dd>
-        <dt>updated by</dt>
+        <dt>Updated by</dt>
         <dd>{cellText(readMember(record(), ["updatedBy"]), "uuid")}</dd>
       </dl>
     </section>
@@ -117,12 +117,12 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
 const QUERY_COLUMNS: ColumnDef<PurchaseOrderQueryRow, unknown>[] = [
   {
     accessorKey: "createdAt",
-    header: "created at",
+    header: "Created",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
   },
   {
     accessorKey: "createdBy",
-    header: "created by",
+    header: "Created by",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
   },
   {
@@ -132,32 +132,32 @@ const QUERY_COLUMNS: ColumnDef<PurchaseOrderQueryRow, unknown>[] = [
   },
   {
     accessorKey: "purchaseOrderNumber",
-    header: "purchase order number",
+    header: "Order number",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "rowVersion",
-    header: "row version",
+    header: "Revision",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
   },
   {
     accessorKey: "status",
-    header: "status",
+    header: "Status",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "supplierId",
-    header: "supplier id",
+    header: "Supplier",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
   },
   {
     accessorKey: "updatedAt",
-    header: "updated at",
+    header: "Updated",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
   },
   {
     accessorKey: "updatedBy",
-    header: "updated by",
+    header: "Updated by",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
   },
 ];
@@ -177,7 +177,7 @@ export interface PurchaseOrderQueryTableProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const PurchaseOrderQueryTableLabel = "query";
+export const PurchaseOrderQueryTableLabel = "Purchase orders";
 
 /**
  * The table for `wamn-receiving:purchase-order/query@1.0.0`.
@@ -237,11 +237,11 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
         }}
       >
         <label>
-          status
+          Status
           <input type="text" onChange={(event) => change(["filter", "status"], event.currentTarget.value.split(",").filter((part) => part !== ""))} />
         </label>
         <label>
-          supplier id
+          Supplier
           <input type="text" onChange={(event) => change(["filter", "supplierId"], event.currentTarget.value.split(",").filter((part) => part !== ""))} />
         </label>
         <label>
@@ -345,7 +345,7 @@ export interface PurchaseOrderUpdateFormProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const PurchaseOrderUpdateFormLabel = "update";
+export const PurchaseOrderUpdateFormLabel = "Change the supplier";
 
 /**
  * The form for `wamn-receiving:purchase-order/update@1.0.0`.
@@ -406,7 +406,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
       <form.Field name={`change.supplierId`}>
         {(field) => (
           <label>
-            supplier id
+            Supplier
             <input
               type="text"
               value={String(field().state.value ?? "")}

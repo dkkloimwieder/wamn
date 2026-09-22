@@ -237,7 +237,11 @@ export async function query(
   );
 }
 
-/** Input for `wamn-receiving:purchase-order/update@1.0.0`. */
+/**
+ * Input for `wamn-receiving:purchase-order/update@1.0.0`.
+ *
+ * The order must carry the revision the operator read, or the write is refused.
+ */
 export interface PurchaseOrderUpdateRequest {
   /** `object` */
   change: PurchaseOrderUpdateRequestChange;

@@ -52,7 +52,7 @@ export interface ReceiptGetDetailProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const ReceiptGetDetailLabel = "get";
+export const ReceiptGetDetailLabel = "Receipt";
 
 /**
  * The detail screen for `wamn-receiving:receipt/get@1.0.0`.
@@ -83,19 +83,19 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
         <p>{state()}</p>
       </Show>
       <dl>
-        <dt>created at</dt>
+        <dt>Recorded</dt>
         <dd>{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</dd>
-        <dt>created by</dt>
+        <dt>Recorded by</dt>
         <dd>{cellText(readMember(record(), ["createdBy"]), "uuid")}</dd>
         <dt>id</dt>
         <dd>{cellText(readMember(record(), ["id"]), "uuid")}</dd>
         <dt>idempotency key</dt>
         <dd>{cellText(readMember(record(), ["idempotencyKey"]), "text")}</dd>
-        <dt>occurred at</dt>
+        <dt>Received at</dt>
         <dd>{cellText(readMember(record(), ["occurredAt"]), "timestamptz")}</dd>
-        <dt>purchase order id</dt>
+        <dt>Purchase order</dt>
         <dd>{cellText(readMember(record(), ["purchaseOrderId"]), "uuid")}</dd>
-        <dt>receipt reference</dt>
+        <dt>Receipt reference</dt>
         <dd>{cellText(readMember(record(), ["receiptReference"]), "text")}</dd>
       </dl>
     </section>
@@ -106,12 +106,12 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
 const QUERY_COLUMNS: ColumnDef<ReceiptQueryRow, unknown>[] = [
   {
     accessorKey: "createdAt",
-    header: "created at",
+    header: "Recorded",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
   },
   {
     accessorKey: "createdBy",
-    header: "created by",
+    header: "Recorded by",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
   },
   {
@@ -126,17 +126,17 @@ const QUERY_COLUMNS: ColumnDef<ReceiptQueryRow, unknown>[] = [
   },
   {
     accessorKey: "occurredAt",
-    header: "occurred at",
+    header: "Received at",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
   },
   {
     accessorKey: "purchaseOrderId",
-    header: "purchase order id",
+    header: "Purchase order",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
   },
   {
     accessorKey: "receiptReference",
-    header: "receipt reference",
+    header: "Receipt reference",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
 ];
@@ -156,7 +156,7 @@ export interface ReceiptQueryTableProps {
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
-export const ReceiptQueryTableLabel = "query";
+export const ReceiptQueryTableLabel = "Receipts";
 
 /**
  * The table for `wamn-receiving:receipt/query@1.0.0`.

@@ -7,7 +7,11 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
 export interface ReceivingLoadPurchaseOrderHistoryRequest {
-  /** `text`, omittable */
+  /**
+   * The cursor of the last entry you read. Leave it empty for the first page.
+   *
+   * `text`, omittable
+   */
   afterCursor?: string;
   /** `uuid` */
   id: Uuid;
@@ -222,7 +226,11 @@ export async function loadReceiptScreen(
   );
 }
 
-/** Input for `wamn-receiving:receiving/record-receipt@1.0.0`. */
+/**
+ * Input for `wamn-receiving:receiving/record-receipt@1.0.0`.
+ *
+ * One submission records every line of one receipt against one purchase order.
+ */
 export interface ReceivingRecordReceiptRequest {
   /** `text` */
   requestId: string;
@@ -248,7 +256,11 @@ export interface ReceivingRecordReceiptRequestValueLine {
   locationId: Uuid;
   /** `uuid` */
   purchaseOrderLineId: Uuid;
-  /** `numeric` */
+  /**
+   * More than zero, and no more than the quantity the line still has remaining.
+   *
+   * `numeric`
+   */
   quantity: Numeric;
 }
 
