@@ -53,6 +53,29 @@ fn validate_client_package_name(package: &str, name: &str) -> Result<(), Generat
     Ok(())
 }
 
+/// Refuse screen text on the envelope bound, which has no screen.
+///
+/// The `line` bound owns the repeated group a form renders. The envelope is
+/// the submission itself, and a label on it would be a member nothing reads.
+fn validate_count_text(
+    operation_name: &str,
+    operation: &crate::CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    let Some(envelope) = &operation.input.envelope else {
+        return Ok(());
+    };
+    if envelope.label.is_some() || envelope.description.is_some() {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{operation_name} states screen text on its envelope bound, which has no screen. \
+                 The line bound carries the repeated group's text."
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate(
     input: &GenerationInput<'_>,
     manifest: &PackageManifest,
@@ -111,6 +134,7 @@ pub(super) fn validate(
             operation,
         )?;
         validate_custom_claim(input.catalog, manifest, operation_name, operation)?;
+        validate_count_text(operation_name, operation)?;
     }
     Ok(())
 }

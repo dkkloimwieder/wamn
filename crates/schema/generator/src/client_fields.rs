@@ -145,6 +145,9 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
         {
             line.minimum = bounds.get("minimum").and_then(Value::as_u64);
             line.maximum = bounds.get("maximum").and_then(Value::as_u64);
+            // The line bound is the only declaration of the repeated group,
+            // so it carries that group's text as well as its bounds.
+            (line.label, line.description) = text(bounds);
         }
         return tree;
     }

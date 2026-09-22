@@ -236,11 +236,20 @@ pub struct CustomOperationInputDeclaration {
 }
 
 /// One explicit count bound whose refusal stays at the operation layer.
+///
+/// The `line` bound owns the repeated group of a command input, which is the
+/// only node of a form that no field object declares, so it also carries that
+/// group's text. The `envelope` bound has no screen, and generation refuses
+/// text on it rather than accepting a member nothing reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CountLimitDeclaration {
     pub minimum: u32,
     pub maximum: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// One typed leaf in an input or result contract.

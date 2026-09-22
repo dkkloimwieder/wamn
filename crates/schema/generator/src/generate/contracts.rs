@@ -1355,9 +1355,19 @@ fn merge_json(mut left: Value, right: &Value) -> Value {
 }
 
 fn count_contract(limit: &crate::CountLimitDeclaration) -> Value {
-    json!({
+    let mut contract = json!({
         "minimum": limit.minimum,
         "maximum": limit.maximum,
         "invalid": "invalid_input",
-    })
+    });
+    let members = contract
+        .as_object_mut()
+        .expect("a count bound is an object");
+    if let Some(label) = &limit.label {
+        members.insert("label".to_owned(), json!(label));
+    }
+    if let Some(description) = &limit.description {
+        members.insert("description".to_owned(), json!(description));
+    }
+    contract
 }

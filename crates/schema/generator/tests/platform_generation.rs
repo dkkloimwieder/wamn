@@ -875,6 +875,11 @@ fn authored_text_is_optional_and_its_key_is_closed() {
             .as_object_mut()
             .expect("the batch command")
             .remove(key);
+        // The line bound carries the repeated group's own text.
+        silent["custom_operations"]["widget.record_batch"]["input"]["line"]
+            .as_object_mut()
+            .expect("the line bound")
+            .remove(key);
         for pointer in [
             "/custom_operations/widget.record_batch/input/fields",
             "/custom_operations/widget.list/result/fields",
@@ -1030,6 +1035,11 @@ fn a_contract_carries_the_authored_text_and_nothing_else() {
             .as_object_mut()
             .expect("the batch command")
             .remove(key);
+        // The line bound carries the repeated group's own text.
+        silent["custom_operations"]["widget.record_batch"]["input"]["line"]
+            .as_object_mut()
+            .expect("the line bound")
+            .remove(key);
         for pointer in [
             "/custom_operations/widget.record_batch/input/fields",
             "/custom_operations/widget.list/result/fields",
@@ -1130,4 +1140,22 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
     );
     assert_eq!(authored["lists"]["model"], "widget");
     assert_eq!(authored["lists"]["display_field"], "code");
+}
+
+/// EXIT GATE for `wamn-rm14.6`: the envelope bound carries no screen text.
+///
+/// The line bound owns the repeated group a form renders. The envelope is the
+/// submission itself, so text on it would be a member nothing reads, and
+/// generation refuses it instead of accepting it.
+#[test]
+fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
+    let mut misplaced = fixture::manifest();
+    misplaced["custom_operations"]["widget.record_batch"]["input"]["envelope"]["label"] =
+        json!("Batch");
+    let error = fixture::try_generate_with(&fixture::catalog(), &misplaced)
+        .expect_err("screen text on the envelope bound was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    let message = error.to_string();
+    assert!(message.contains("widget.record_batch"), "{message}");
+    assert!(message.contains("line bound"), "{message}");
 }

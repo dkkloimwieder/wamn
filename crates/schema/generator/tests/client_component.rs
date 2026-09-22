@@ -223,7 +223,7 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
     assert!(widget.contains(concat!(
         "const CREATE_INPUT = z.object({\n",
         "  code: z.string().optional(),\n",
-        "  makerId: z.string().nullable().optional(),\n",
+        "  makerId: z.string().regex(UUID_TEXT, \"expected a UUID\").nullable().optional(),\n",
         "  note: z.string().nullable().optional(),\n",
         "});\n",
     )));
@@ -420,7 +420,7 @@ fn a_bound_key_is_a_prop_and_never_a_control() {
             "  change: z\n",
             "    .object({\n",
             "      code: z.string().optional(),\n",
-            "      makerId: z.string().nullable().optional(),\n",
+            "      makerId: z.string().regex(UUID_TEXT, \"expected a UUID\").nullable().optional(),\n",
             "      note: z.string().nullable().optional(),\n",
             "    })\n",
             "    .optional(),\n",
@@ -618,8 +618,8 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         "a control inside a repeated group reads its own authored label"
     );
     assert!(
-        widget.contains("            <legend>line</legend>"),
-        "a repeated group is synthesized, so its legend stays derived: wamn-j3yr"
+        widget.contains("            <legend>Batch lines</legend>"),
+        "a repeated group reads the label its line bound declares"
     );
 
     // A page control that names a model column.
@@ -772,5 +772,54 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
     assert!(
         !widget.contains("onFillWidgetGet"),
         "a record read is not a form, so no row fills it"
+    );
+}
+
+/// EXIT GATE for `wamn-rm14.6`: a repeated group states its authored label,
+/// its declared bounds and the spelling of every value that travels as text.
+///
+/// Three filed defects close here: `wamn-j3yr` for the legend, `wamn-z5vd`
+/// for the bounds, and `wamn-s3kd` for the spellings. All three are input
+/// rules. The browser still trusts the platform for the values inside a
+/// reply, which is the owner ruling of 2026-09-21.
+#[test]
+fn a_repeated_group_states_its_label_its_bounds_and_its_spellings() {
+    let files = emit(&release());
+    let widget = widget(&files);
+
+    // wamn-j3yr: the line bound declares the group, so the legend is authored.
+    assert!(
+        widget.contains("            <legend>Batch lines</legend>"),
+        "the group reads the label its line bound declares"
+    );
+
+    // wamn-z5vd: the bounds reach the schema and both controls.
+    assert!(widget.contains(concat!(
+        "        .array()\n",
+        "        .min(1)\n",
+        "        .max(10)\n",
+        "        .optional(),\n",
+    )));
+    assert!(
+        widget.contains("disabled={!canAdd(group().state.value ?? [], 10)}"),
+        "the add control stops at the declared maximum"
+    );
+    assert!(
+        widget.contains("disabled={!canRemove(group().state.value ?? [], 1)}"),
+        "the remove control stops at the declared minimum"
+    );
+
+    // wamn-s3kd: a value that travels as text states its spelling once per
+    // module, and every control that needs it names that spelling.
+    assert!(widget.contains(concat!(
+        "/** What the release accepts: one UUID, hyphenated. */\n",
+        "const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}",
+        "-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;\n",
+    )));
+    assert!(widget.contains("z.string().regex(UUID_TEXT, \"expected a UUID\")"));
+    assert!(widget.contains("z.string().regex(NUMERIC_TEXT, \"expected decimal text\")"));
+    assert!(
+        !widget.contains("const TIMESTAMP_TEXT"),
+        "a module writes no rule it does not apply"
     );
 }

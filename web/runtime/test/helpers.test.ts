@@ -1,14 +1,15 @@
 /**
  * The helpers that generated components call: the page state, the draft
- * members, and the cell text.
+ * members, the repeated group bounds, and the cell text.
  */
 
 import { describe, expect, it } from "vitest";
 
 import { ABSENT_CELL, cellText } from "../src/cell.js";
 import { clearMember, readMember, writeMember } from "../src/draft.js";
+import { canAdd, canRemove } from "../src/group.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
-import { refusalMarks, refusedMember } from "../src/transport.js";
+import { checkedMember, refusalMarks, refusedMember } from "../src/transport.js";
 
 describe("the page state", () => {
   it("appends the next page and keeps the rows already shown", () => {
@@ -131,5 +132,56 @@ describe("the control a refused path marks", () => {
     expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 0)).toBe(true);
     expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 7)).toBe(true);
     expect(refusalMarks("value.line[].quantity", "value.line[].location_id", 0)).toBe(false);
+  });
+});
+
+describe("the bounds of a repeated group", () => {
+  it("stops adding at the declared maximum", () => {
+    expect(canAdd([], 2)).toBe(true);
+    expect(canAdd([1, 2], 2)).toBe(false);
+    // A group with no declared maximum never stops.
+    expect(canAdd([1, 2, 3], null)).toBe(true);
+  });
+
+  it("stops removing at the declared minimum", () => {
+    expect(canRemove([1, 2], 1)).toBe(true);
+    expect(canRemove([1], 1)).toBe(false);
+    // There is nothing to remove.
+    expect(canRemove([], 0)).toBe(false);
+  });
+});
+
+describe("the member a checked input refuses", () => {
+  const FIELDS = {
+    request_id: "requestId",
+    value: {
+      member: "value",
+      fields: {
+        maker_id: "makerId",
+        "line[]": {
+          member: "line",
+          fields: { quantity: "quantity" },
+        },
+      },
+    },
+  };
+
+  it("states the contract's spelling, with the element it refused", () => {
+    expect(checkedMember(["value", "makerId"], FIELDS)).toBe("value.maker_id");
+    expect(checkedMember(["value", "line", 2, "quantity"], FIELDS)).toBe(
+      "value.line[2].quantity",
+    );
+  });
+
+  it("states nothing for a path no field map holds", () => {
+    expect(checkedMember(undefined, FIELDS)).toBe(null);
+    expect(checkedMember([], FIELDS)).toBe(null);
+    expect(checkedMember(["value", "unknown"], FIELDS)).toBe(null);
+  });
+
+  it("marks the control that names the same declared path", () => {
+    const member = checkedMember(["value", "line", 2, "quantity"], FIELDS);
+    expect(refusalMarks(member, "value.line[].quantity", 2)).toBe(true);
+    expect(refusalMarks(member, "value.line[].quantity", 1)).toBe(false);
   });
 });

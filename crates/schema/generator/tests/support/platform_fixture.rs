@@ -504,7 +504,12 @@ pub(crate) fn manifest() -> Value {
                 "input": {
                     "raw_body_maximum": 1_048_576,
                     "envelope": {"minimum": 1, "maximum": 100},
-                    "line": {"minimum": 1, "maximum": 10},
+                    "line": {
+                        "minimum": 1,
+                        "maximum": 10,
+                        "label": "Batch lines",
+                        "description": "One line for each widget this batch records."
+                    },
                     "fields": [
                         {"path": "request_id", "type": "text", "nullable": false},
                         {"path": "value.idempotency_key", "type": "text", "nullable": false},

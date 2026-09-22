@@ -287,6 +287,15 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         )
         .expect("writing to a String cannot fail");
     }
+    // The spellings this module's schemas name. Only the ones it uses are
+    // written, so a module carries no rule it does not apply.
+    for (name, pattern, meaning) in WIRE_SPELLINGS {
+        if body.contains(&format!("regex({name}")) {
+            writeln!(source, "\n/** What the release accepts: {meaning}. */")
+                .expect("writing to a String cannot fail");
+            writeln!(source, "const {name} = {pattern};").expect("writing to a String cannot fail");
+        }
+    }
     source.push_str(&body);
     Ok(source)
 }
@@ -754,6 +763,30 @@ fn emit_detail(
     Ok(())
 }
 
+/// The spellings a value that travels as text must match, each with the
+/// meaning the emitted comment states.
+///
+/// Each one states what `crates/client/core/src/request.rs` canonicalizes, so
+/// a form refuses exactly what the release would refuse.
+const WIRE_SPELLINGS: [(&str, &str, &str); 4] = [
+    (
+        "UUID_TEXT",
+        "/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/",
+        "one UUID, hyphenated",
+    ),
+    (
+        "TIMESTAMP_TEXT",
+        "/^\\d{4}-\\d{2}-\\d{2}[Tt ]\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?([Zz]|[+-]\\d{2}:\\d{2})$/",
+        "one RFC3339 timestamp",
+    ),
+    (
+        "NUMERIC_TEXT",
+        "/^[+-]?(\\d+(\\.\\d*)?|\\.\\d+)$/",
+        "decimal text without an exponent",
+    ),
+    ("INTEGER_TEXT", "/^[+-]?\\d+$/", "one whole number"),
+];
+
 /// The zod expression for one input field.
 ///
 /// It states what the release declared: the type, the closed value domain, the
@@ -773,6 +806,15 @@ fn zod_type(field: &FieldIr) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        // A type that travels as text states the spelling the request
+        // canonicalizer accepts, so the form names the field before the
+        // request goes out instead of the release refusing it later.
+        "uuid" => "z.string().regex(UUID_TEXT, \"expected a UUID\")".to_owned(),
+        "timestamptz" => {
+            "z.string().regex(TIMESTAMP_TEXT, \"expected an RFC3339 timestamp\")".to_owned()
+        }
+        "numeric" => "z.string().regex(NUMERIC_TEXT, \"expected decimal text\")".to_owned(),
+        "int64" => "z.string().regex(INTEGER_TEXT, \"expected a whole number\")".to_owned(),
         _ => "z.string()".to_owned(),
     };
     let mut spelling = base;
@@ -804,7 +846,13 @@ fn operator_inputs<'a>(screen: &'a ScreenPlan<'a>) -> Vec<&'a FieldIr> {
 /// The members mirror the request type exactly, so the check runs over the
 /// value the form holds. A member that carries members of its own is optional,
 /// because a form fills it one field at a time.
-fn write_input_schema(source: &mut String, inputs: &[&FieldIr], prefix: &[String], depth: usize) {
+fn write_input_schema(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    inputs: &[&FieldIr],
+    prefix: &[String],
+    depth: usize,
+) {
     let indent = "  ".repeat(depth);
     let mut written: Vec<String> = Vec::new();
     for input in inputs {
@@ -823,15 +871,25 @@ fn write_input_schema(source: &mut String, inputs: &[&FieldIr], prefix: &[String
         }
         let mut deeper = prefix.to_vec();
         deeper.push(name.clone());
-        let repeated = inputs.iter().any(|input| {
+        let group = inputs.iter().find(|input| {
             repeated_ancestor(&input.path).is_some_and(|ancestor| member_path(ancestor) == deeper)
         });
         writeln!(source, "{indent}{name}: z").expect("write");
         writeln!(source, "{indent}  .object({{").expect("write");
-        write_input_schema(source, inputs, &deeper, depth + 2);
+        write_input_schema(source, screen, inputs, &deeper, depth + 2);
         writeln!(source, "{indent}  }})").expect("write");
-        if repeated {
+        if let Some(group) = group {
+            // The declared bounds of the group, so the form refuses a list
+            // that the release would refuse.
+            let declared =
+                repeated_ancestor(&group.path).and_then(|ancestor| leaf_group(screen, ancestor));
             writeln!(source, "{indent}  .array()").expect("write");
+            if let Some(minimum) = declared.and_then(|group| group.minimum) {
+                writeln!(source, "{indent}  .min({minimum})").expect("write");
+            }
+            if let Some(maximum) = declared.and_then(|group| group.maximum) {
+                writeln!(source, "{indent}  .max({maximum})").expect("write");
+            }
         }
         writeln!(source, "{indent}  .optional(),").expect("write");
     }
@@ -965,6 +1023,7 @@ fn emit_form(
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
     })?;
     runtime.extend([
+        "checkedMember",
         "newRequestId",
         "refusalMarks",
         "refusedMember",
@@ -985,6 +1044,13 @@ fn emit_form(
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
 
+    let fields = format!(
+        "{}_{}_REQUEST_FIELDS",
+        screen.model.to_uppercase(),
+        screen.name.to_uppercase()
+    );
+    bindings.insert(fields.clone());
+
     // What the operator types, checked before the request goes out.
     writeln!(
         source,
@@ -998,7 +1064,7 @@ fn emit_form(
         screen.name.to_uppercase()
     )
     .expect("write");
-    write_input_schema(source, &operator_inputs(screen), &[], 1);
+    write_input_schema(source, screen, &operator_inputs(screen), &[], 1);
     source.push_str("});\n");
 
     // What a caller can prefill, and then the props.
@@ -1096,9 +1162,11 @@ fn emit_form(
         screen.name.to_uppercase()
     )
     .expect("write");
-    source.push_str(
-        "      if (!checked.success) {\n        const issue = checked.error.issues[0];\n        setRefusal({\n          code: issue?.message ?? \"the input is not valid\",\n          member: typeof issue?.path.at(-1) === \"string\" ? String(issue.path.at(-1)) : null,\n        });\n        return;\n      }\n",
-    );
+    writeln!(
+        source,
+        "      if (!checked.success) {{\n        const issue = checked.error.issues[0];\n        setRefusal({{\n          code: issue?.message ?? \"the input is not valid\",\n          member: checkedMember(\n            issue?.path as (string | number)[] | undefined,\n            {fields},\n          ),\n        }});\n        return;\n      }}"
+    )
+    .expect("write");
     writeln!(source, "      let item = {{ ...value }} as {stem}Request;").expect("write");
     for supplied in &screen.supplied {
         let value = match supplied.kind {
@@ -1202,6 +1270,12 @@ fn emit_form(
     );
     let inputs = operator_inputs(screen);
     let mut repeated_written: Vec<String> = Vec::new();
+    if inputs
+        .iter()
+        .any(|input| repeated_ancestor(&input.path).is_some())
+    {
+        runtime.extend(["canAdd", "canRemove"]);
+    }
     for input in &inputs {
         match repeated_ancestor(&input.path) {
             None => emit_field(
@@ -1236,6 +1310,24 @@ fn element_type(stem: &str, ancestor: &[String]) -> String {
         expression = format!("NonNullable<{expression}>[{name:?}]");
     }
     format!("NonNullable<{expression}>[number]")
+}
+
+/// The repeated group itself, which carries its text and its bounds.
+fn leaf_group<'a>(screen: &'a ScreenPlan<'_>, ancestor: &str) -> Option<&'a FieldIr> {
+    fn find<'a>(fields: &'a [FieldIr], path: &str) -> Option<&'a FieldIr> {
+        for field in fields {
+            if field.path == path {
+                return Some(field);
+            }
+            if let Some(found) = find(&field.children, path) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    // `repeated_ancestor` drops the `[]`, and the contract keeps it: the
+    // group node's own path is `value.line[]`.
+    find(&screen.contract.input_fields, &format!("{ancestor}[]"))
 }
 
 /// The plan's answer for one input, or nothing when the operator types it.
@@ -1382,18 +1474,21 @@ fn emit_repeated_group(
         .iter()
         .filter(|input| repeated_ancestor(&input.path) == Some(ancestor))
         .collect();
+    // The group itself is one field of the contract, which carries its text
+    // and its declared bounds.
+    let group = leaf_group(screen, ancestor);
+    let minimum = group.and_then(|group| group.minimum).unwrap_or(0);
+    let maximum = group.and_then(|group| group.maximum);
     writeln!(
         source,
         "      <form.Field name={{\"{member}\"}} mode=\"array\">"
     )
     .expect("write");
     source.push_str("        {(group) => (\n          <fieldset>\n");
-    // A repeated group is synthesized from the leaf paths, so no author
-    // declares it and its legend stays derived. `wamn-j3yr` holds that gap.
     writeln!(
         source,
         "            <legend>{}</legend>",
-        derived_label(ancestor)
+        group.map_or_else(|| derived_label(ancestor), label)
     )
     .expect("write");
     source.push_str("            <For each={group().state.value ?? []}>\n              {(_, index) => (\n                <fieldset>\n");
@@ -1417,10 +1512,15 @@ fn emit_repeated_group(
             populated(screen, &input.path),
         );
     }
-    source.push_str("                  <button type=\"button\" onClick={() => group().removeValue(index())}>\n                    remove\n                  </button>\n                </fieldset>\n              )}\n            </For>\n");
     writeln!(
         source,
-        "            <button type=\"button\" onClick={{() => group().pushValue({{}} as {element})}}>\n              add\n            </button>\n          </fieldset>\n        )}}\n      </form.Field>"
+        "                  <button\n                    type=\"button\"\n                    disabled={{!canRemove(group().state.value ?? [], {minimum})}}\n                    onClick={{() => group().removeValue(index())}}\n                  >\n                    remove\n                  </button>\n                </fieldset>\n              )}}\n            </For>"
+    )
+    .expect("write");
+    let bound = maximum.map_or_else(|| "null".to_owned(), |maximum| maximum.to_string());
+    writeln!(
+        source,
+        "            <button\n              type=\"button\"\n              disabled={{!canAdd(group().state.value ?? [], {bound})}}\n              onClick={{() => group().pushValue({{}} as {element})}}\n            >\n              add\n            </button>\n          </fieldset>\n        )}}\n      </form.Field>"
     )
     .expect("write");
 }
