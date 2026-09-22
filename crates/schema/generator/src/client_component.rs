@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::client_ir::FieldIr;
+use crate::client_ir::{FieldIr, leaf_fields};
 use crate::client_plan::{ClientPlan, ModelPlan, Role, ScreenPlan, SuppliedKind};
 use crate::client_ts::{RUNTIME_PACKAGE, ts_type};
 use crate::generate::GeneratedFile;
@@ -278,16 +278,42 @@ fn accessor(path: &str) -> String {
     member_path(path).join(".")
 }
 
-/// The label of one field, which is its name with spaces.
-///
-/// An authored label replaces this when the label epic lands, and the plan
-/// carries none today.
-fn label(path: &str) -> String {
+/// The label of one field when the author states none: its name with spaces.
+fn derived_label(path: &str) -> String {
     path.rsplit('.')
         .next()
         .unwrap_or(path)
         .trim_end_matches("[]")
         .replace('_', " ")
+}
+
+/// The label of one field, authored if the manifest states one.
+fn label(field: &FieldIr) -> String {
+    field
+        .label
+        .clone()
+        .unwrap_or_else(|| derived_label(&field.path))
+}
+
+/// The label of one screen, authored if the manifest states one.
+///
+/// The default applies the field rule to the operation's own name. No
+/// component renders this: each module exports it, and the page that places
+/// the component decides where the text goes. Owner ruling of 2026-09-22.
+fn screen_label(screen: &ScreenPlan<'_>) -> String {
+    screen
+        .contract
+        .label
+        .clone()
+        .unwrap_or_else(|| screen.name.replace('_', " "))
+}
+
+/// The label of one page control, which names an input the plan reserves.
+fn control_label(screen: &ScreenPlan<'_>, path: &str) -> String {
+    leaf_fields(&screen.contract.input_fields)
+        .into_iter()
+        .find(|field| field.path == path)
+        .map_or_else(|| derived_label(path), label)
 }
 
 /// The button text of one row link, which is the target operation's own name.
@@ -382,7 +408,7 @@ fn emit_table(
     for column in &screen.columns {
         writeln!(source, "  {{").expect("write");
         writeln!(source, "    accessorKey: {:?},", accessor(&column.path)).expect("write");
-        writeln!(source, "    header: {:?},", label(&column.path)).expect("write");
+        writeln!(source, "    header: {:?},", label(column)).expect("write");
         writeln!(
             source,
             "    cell: (cell) => cellText(cell.getValue() as JsonValue, {:?}),",
@@ -434,6 +460,17 @@ fn emit_table(
         source,
         "\n/**\n * The table for `{}`.\n *\n * It owns its page controls and its rows. A change to a control clears the\n * rows, because a cursor names a position in the list the old input produced.\n *\n * It reads when the operator asks, and not when it mounts, because a read is\n * a request that the operator did not send yet.\n */",
         screen.contract.operation
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */"
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export const {stem}TableLabel = {:?};",
+        screen_label(screen)
     )
     .expect("write");
     writeln!(
@@ -600,6 +637,17 @@ fn emit_detail(
     .expect("write");
     writeln!(
         source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */"
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export const {stem}DetailLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
         "export function {stem}Detail(props: {stem}DetailProps) {{"
     )
     .expect("write");
@@ -616,7 +664,7 @@ fn emit_detail(
     source.push_str("  const state = () => outcome()?.status;\n");
     source.push_str("\n  return (\n    <section>\n      <Show when={state() !== undefined && state() !== \"completed\"}>\n        <p>{state()}</p>\n      </Show>\n      <dl>\n");
     for column in &screen.columns {
-        writeln!(source, "        <dt>{}</dt>", label(&column.path)).expect("write");
+        writeln!(source, "        <dt>{}</dt>", label(column)).expect("write");
         writeln!(
             source,
             "        <dd>{{cellText(readMember(record(), {}), {:?})}}</dd>",
@@ -942,6 +990,17 @@ fn emit_form(
     .expect("write");
     writeln!(
         source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */"
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export const {stem}FormLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
         "export function {stem}Form(props: {stem}FormProps) {{"
     )
     .expect("write");
@@ -1095,7 +1154,7 @@ fn emit_field(
     writeln!(source, "{pad}<form.Field name={{`{name}`}}>").expect("write");
     writeln!(source, "{pad}  {{(field) => (").expect("write");
     writeln!(source, "{pad}    <label>").expect("write");
-    writeln!(source, "{pad}      {}", label(&input.path)).expect("write");
+    writeln!(source, "{pad}      {}", label(input)).expect("write");
     emit_input_control(source, input, indent + 6);
     writeln!(
         source,
@@ -1124,7 +1183,14 @@ fn emit_repeated_group(source: &mut String, inputs: &[&FieldIr], ancestor: &str,
     )
     .expect("write");
     source.push_str("        {(group) => (\n          <fieldset>\n");
-    writeln!(source, "            <legend>{}</legend>", label(ancestor)).expect("write");
+    // A repeated group is synthesized from the leaf paths, so no author
+    // declares it and its legend stays derived. `wamn-j3yr` holds that gap.
+    writeln!(
+        source,
+        "            <legend>{}</legend>",
+        derived_label(ancestor)
+    )
+    .expect("write");
     source.push_str("            <For each={group().state.value ?? []}>\n              {(_, index) => (\n                <fieldset>\n");
     for input in &members {
         let leaf = input
@@ -1280,6 +1346,17 @@ fn emit_delete(
     .expect("write");
     writeln!(
         source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */"
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export const {stem}DeleteLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
         "export function {stem}Delete(props: {stem}DeleteProps) {{"
     )
     .expect("write");
@@ -1374,7 +1451,7 @@ fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>) {
     for path in &paging.filter_inputs {
         let repeated = path.ends_with("[]");
         writeln!(source, "        <label>").expect("write");
-        writeln!(source, "          {}", label(path)).expect("write");
+        writeln!(source, "          {}", control_label(screen, path)).expect("write");
         let value = if repeated {
             format!(
                 "change({}, event.currentTarget.value.split(\",\").filter((part) => part !== \"\"))",
@@ -1394,14 +1471,14 @@ fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>) {
         writeln!(source, "        </label>").expect("write");
     }
     if let (Some(path), Some(sort)) = (paging.sort_field_input, paging.sort) {
-        emit_select(source, path, &sort.fields);
+        emit_select(source, path, &sort.fields, &control_label(screen, path));
     }
     if let (Some(path), Some(sort)) = (paging.sort_direction_input, paging.sort) {
-        emit_select(source, path, &sort.directions);
+        emit_select(source, path, &sort.directions, &control_label(screen, path));
     }
     if let (Some(path), Some(limit)) = (paging.limit_input, paging.limit) {
         writeln!(source, "        <label>").expect("write");
-        writeln!(source, "          {}", label(path)).expect("write");
+        writeln!(source, "          {}", control_label(screen, path)).expect("write");
         writeln!(
             source,
             "          <input\n            type=\"number\"\n            min={{{}}}\n            max={{{}}}\n            value={{{}}}\n            onChange={{(event) => change({}, event.currentTarget.value)}}\n          />",
@@ -1416,9 +1493,9 @@ fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>) {
 }
 
 /// One select whose options are exactly what the contract permits.
-fn emit_select(source: &mut String, path: &str, values: &[String]) {
+fn emit_select(source: &mut String, path: &str, values: &[String], text: &str) {
     writeln!(source, "        <label>").expect("write");
-    writeln!(source, "          {}", label(path)).expect("write");
+    writeln!(source, "          {text}").expect("write");
     writeln!(
         source,
         "          <select onChange={{(event) => change({}, event.currentTarget.value)}}>",

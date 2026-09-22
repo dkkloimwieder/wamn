@@ -59,7 +59,9 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
         "const LIST_COLUMNS: ColumnDef<WidgetListRow, unknown>[] = [\n",
         "  {\n",
         "    accessorKey: \"attributes\",\n",
-        "    header: \"attributes\",\n",
+        // The fixture authors this column's label, so the header is the
+        // authored text rather than the path. `wamn-c2y5.4` states the rule.
+        "    header: \"Attributes\",\n",
         "    cell: (cell) => cellText(cell.getValue() as JsonValue, \"json\"),\n",
         "  },\n",
     )));
@@ -572,4 +574,76 @@ fn a_record_prop_names_the_record_inputs_and_no_supplied_value() {
         widget.contains("{ ...input, requestId: newRequestId() } as WidgetGetRequest,"),
         "the component writes the request identity itself"
     );
+}
+
+/// EXIT GATE for `wamn-c2y5.4`: every place a component states text for a
+/// person reads the authored label, and a field with none keeps the derived
+/// name.
+///
+/// The screen name is an exported constant and not an element. A component
+/// does not own a heading, because the page that places it does. Owner ruling
+/// of 2026-09-22.
+#[test]
+fn a_component_reads_the_authored_label_everywhere_it_states_text() {
+    let files = emit(&release());
+    let widget = widget(&files);
+
+    // A table column header and a detail term.
+    assert!(
+        widget.contains("    header: \"Attributes\","),
+        "a table column header reads the authored label"
+    );
+    assert!(
+        widget.contains("        <dt>Widget code</dt>"),
+        "a detail term reads the authored label"
+    );
+    assert!(
+        widget.contains("        <dt>created at</dt>"),
+        "a column with no authored label keeps its derived name"
+    );
+
+    // A form control, and one inside a repeated group.
+    assert!(
+        widget.contains("      Batch note"),
+        "a form control reads the authored label"
+    );
+    assert!(
+        widget.contains("Quantity received"),
+        "a control inside a repeated group reads its own authored label"
+    );
+    assert!(
+        widget.contains("            <legend>line</legend>"),
+        "a repeated group is synthesized, so its legend stays derived: wamn-j3yr"
+    );
+
+    // A page control that names a model column.
+    assert!(
+        widget.contains("          Widget code\n          <input type=\"text\""),
+        "a filter control reads the column's authored label"
+    );
+
+    // The screen name, exported once for each component and rendered nowhere.
+    assert!(widget.contains("export const WidgetQueryTableLabel = \"Find widgets\";"));
+    assert!(
+        widget.contains("export const WidgetRecordBatchFormLabel = \"Record a batch\";"),
+        "an authored command states its own screen name"
+    );
+    assert!(
+        widget.contains("export const WidgetGetDetailLabel = \"get\";"),
+        "a screen with no authored label takes its operation name"
+    );
+    assert_eq!(
+        widget
+            .matches("export const Widget")
+            .filter(|_| true)
+            .count(),
+        widget.matches("export function Widget").count(),
+        "one exported label for each component"
+    );
+    for heading in ["<h1", "<h2", "<h3"] {
+        assert!(
+            !widget.contains(heading),
+            "no component renders a heading: {heading}"
+        );
+    }
 }

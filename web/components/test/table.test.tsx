@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
 
-import { WidgetQueryTable } from "../fixture/components/widget.js";
+import { WidgetQueryTable, WidgetQueryTableLabel } from "../fixture/components/widget.js";
 
 afterEach(cleanup);
 
@@ -66,14 +66,25 @@ describe("the generated table for a page", () => {
     // One header row, and one row for each record.
     expect(screen.getByText("a")).toBeDefined();
     expect(screen.getByText("b")).toBeDefined();
-    // The plan's columns are the headers, in contract order.
+    // The plan's columns are the headers, in contract order. A column whose
+    // model authors a label reads that text, and one that does not keeps its
+    // field name with spaces.
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
-      "code",
+      "Widget code",
       "created at",
       "edit version",
       "id",
-      "note",
+      "Operator note",
     ]);
+  });
+
+  it("names the screen without rendering a heading", () => {
+    // The label is an exported constant. A component does not own a heading,
+    // because the page that places it does.
+    expect(WidgetQueryTableLabel).toBe("Find widgets");
+    const { transport } = stub([page(["a"], null)]);
+    const { container } = render(() => <WidgetQueryTable transport={transport} />);
+    expect(container.querySelectorAll("h1, h2, h3")).toHaveLength(0);
   });
 
   it("asks for the next page with the cursor the last reply returned", async () => {
