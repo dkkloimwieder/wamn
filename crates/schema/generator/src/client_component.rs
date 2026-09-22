@@ -22,7 +22,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::client_ir::{FieldIr, leaf_fields};
-use crate::client_plan::{ClientPlan, ModelPlan, Role, ScreenPlan, SuppliedKind};
+use crate::client_plan::{
+    ClientPlan, ModelPlan, PopulatedInput, Role, Rows, ScreenPlan, SuppliedKind,
+};
 use crate::client_ts::{RUNTIME_PACKAGE, ts_type};
 use crate::generate::GeneratedFile;
 
@@ -156,6 +158,9 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     let mut body = String::new();
     let mut runtime = BTreeSet::new();
     let mut bindings = BTreeSet::new();
+    // Bindings of another model, which a selector calls. Each one is imported
+    // under an alias, because two models can both declare a `list`.
+    let mut foreign: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut solid = BTreeSet::new();
     let mut table = false;
     let mut form = false;
@@ -173,14 +178,29 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             Role::Form => {
                 form = true;
                 solid.extend(["createSignal", "Show"]);
-                if screen
-                    .inputs
-                    .iter()
-                    .any(|input| repeated_ancestor(&input.path).is_some())
+                if !screen.population.is_empty()
+                    || screen
+                        .inputs
+                        .iter()
+                        .any(|input| repeated_ancestor(&input.path).is_some())
                 {
                     solid.insert("For");
                 }
-                emit_form(&mut body, screen, &mut runtime, &mut bindings, &records)?;
+                if screen
+                    .population
+                    .iter()
+                    .any(|populated| populated.narrowed_by.is_some())
+                {
+                    solid.insert("createEffect");
+                }
+                emit_form(
+                    &mut body,
+                    screen,
+                    &mut runtime,
+                    &mut bindings,
+                    &mut foreign,
+                    &records,
+                )?;
             }
             Role::Delete => {
                 solid.extend(["createSignal", "Show"]);
@@ -241,6 +261,18 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         model.model.name
     )
     .expect("writing to a String cannot fail");
+    for (module, names) in &foreign {
+        writeln!(
+            source,
+            "import {{\n{}\n}} from \"../{module}.js\";",
+            names
+                .iter()
+                .map(|name| format!("  {name},"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+        .expect("writing to a String cannot fail");
+    }
     source.push_str(&body);
     Ok(source)
 }
@@ -870,6 +902,7 @@ fn emit_form(
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
+    foreign: &mut BTreeMap<String, BTreeSet<String>>,
     records: &BTreeMap<String, String>,
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
@@ -1085,6 +1118,29 @@ fn emit_form(
     );
     source.push_str("    },\n  }));\n");
 
+    // One selector state for each input the operator chooses from a list.
+    for populated in &screen.population {
+        runtime.insert("newRequestId");
+        let list_stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
+        let list_function =
+            crate::client_ts::function_name(populated.list_name).map_err(|error| {
+                ClientComponentError::new(
+                    ClientComponentErrorKind::UnwrittenRole,
+                    error.to_string(),
+                )
+            })?;
+        let alias = foreign_alias(populated.list_model, populated.list_name);
+        let names = if populated.list_model == screen.model {
+            &mut *bindings
+        } else {
+            foreign.entry(populated.list_model.to_owned()).or_default()
+        };
+        names.insert(format!("{list_function} as {alias}"));
+        names.insert(format!("type {list_stem}Request"));
+        names.insert(format!("type {list_stem}Row"));
+        emit_selector_state(source, populated);
+    }
+
     // The markup.
     source.push_str(
         "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <p>{refusal()?.code}</p>\n      </Show>\n",
@@ -1093,14 +1149,21 @@ fn emit_form(
     let mut repeated_written: Vec<String> = Vec::new();
     for input in &inputs {
         match repeated_ancestor(&input.path) {
-            None => emit_field(source, input, &member_path(&input.path).join("."), 6, None),
+            None => emit_field(
+                source,
+                input,
+                &member_path(&input.path).join("."),
+                6,
+                None,
+                populated(screen, &input.path),
+            ),
             Some(ancestor) => {
                 let ancestor = ancestor.to_owned();
                 if repeated_written.contains(&ancestor) {
                     continue;
                 }
                 repeated_written.push(ancestor.clone());
-                emit_repeated_group(source, &inputs, &ancestor, &stem);
+                emit_repeated_group(source, screen, &inputs, &ancestor, &stem);
             }
         }
     }
@@ -1120,6 +1183,93 @@ fn element_type(stem: &str, ancestor: &[String]) -> String {
     format!("NonNullable<{expression}>[number]")
 }
 
+/// The plan's answer for one input, or nothing when the operator types it.
+fn populated<'a>(screen: &'a ScreenPlan<'_>, path: &str) -> Option<&'a PopulatedInput<'a>> {
+    screen
+        .population
+        .iter()
+        .find(|populated| populated.input == path)
+}
+
+/// The alias one module imports another model's binding under.
+///
+/// Two models can each declare a `list`, so a foreign binding always carries
+/// the model in its alias and the import is never ambiguous.
+fn foreign_alias(model: &str, name: &str) -> String {
+    crate::client_ts::to_camel(&format!("{model}_{name}"))
+}
+
+/// The state and the read that back one selector.
+///
+/// Each selector owns its options. Two inputs that name the same model read
+/// that list twice, which is one request each and no shared cache to get
+/// stale.
+fn emit_selector_state(source: &mut String, populated: &PopulatedInput<'_>) {
+    let alias = foreign_alias(populated.list_model, populated.list_name);
+    let stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
+    let rows = match populated.list_rows {
+        Rows::List { key } => key,
+        Rows::Single => "rows",
+    };
+    writeln!(
+        source,
+        "  const [{alias}Options, set{stem}Options] = createSignal<{stem}Row[]>([]);"
+    )
+    .expect("write");
+    // A narrowed selector states the value it narrows by, so the list returns
+    // the rows of the record the operator already chose. Every other selector
+    // reads its list once.
+    if let Some(narrowing) = populated.narrowed_by {
+        {
+            let member = crate::client_ts::to_camel(
+                narrowing
+                    .list_input
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(narrowing.list_input),
+            );
+            let source_member = member_path(narrowing.input).join(".");
+            writeln!(
+                source,
+                "  const read{stem}Options = async (narrowed: string | null) => {{\n    const outcome = await {alias}(props.transport, [\n      {{ requestId: newRequestId(), {member}: narrowed }} as {stem}Request,\n    ]);\n    if (outcome.status === \"completed\") {{\n      set{stem}Options(outcome.value.{rows} as {stem}Row[]);\n    }}\n  }};"
+            )
+            .expect("write");
+            writeln!(
+                source,
+                "  createEffect(() => {{\n    const narrowed = form.getFieldValue(`{source_member}`) as string | null;\n    void read{stem}Options(narrowed ?? null);\n  }});"
+            )
+            .expect("write");
+        }
+    } else {
+        writeln!(
+            source,
+            "  const read{stem}Options = async () => {{\n    const outcome = await {alias}(props.transport, [\n      {{ requestId: newRequestId() }} as {stem}Request,\n    ]);\n    if (outcome.status === \"completed\") {{\n      set{stem}Options(outcome.value.{rows} as {stem}Row[]);\n    }}\n  }};"
+        )
+        .expect("write");
+        writeln!(source, "  void read{stem}Options();").expect("write");
+    }
+}
+
+/// One selector: the options are the rows the list returned.
+fn emit_selector_control(source: &mut String, populated: &PopulatedInput<'_>, indent: usize) {
+    let pad = " ".repeat(indent);
+    let alias = foreign_alias(populated.list_model, populated.list_name);
+    let key = crate::client_ts::to_camel(populated.key_field);
+    let display = crate::client_ts::to_camel(populated.display_field);
+    writeln!(
+        source,
+        "{pad}<select\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(event) => field().handleChange(event.currentTarget.value)}}\n{pad}>"
+    )
+    .expect("write");
+    writeln!(source, "{pad}  <option value=\"\"></option>").expect("write");
+    writeln!(
+        source,
+        "{pad}  <For each={{{alias}Options()}}>\n{pad}    {{(row) => (\n{pad}      <option value={{String(row.{key})}}>{{String(row.{display})}}</option>\n{pad}    )}}\n{pad}  </For>"
+    )
+    .expect("write");
+    writeln!(source, "{pad}</select>").expect("write");
+}
+
 /// One control, its label, and the refusal that names it.
 ///
 /// The control states the path that the contract declares, and the runtime
@@ -1132,6 +1282,7 @@ fn emit_field(
     name: &str,
     indent: usize,
     index: Option<&str>,
+    populated: Option<&PopulatedInput<'_>>,
 ) {
     let pad = " ".repeat(indent);
     let declared = input.path.as_str();
@@ -1140,7 +1291,12 @@ fn emit_field(
     writeln!(source, "{pad}  {{(field) => (").expect("write");
     writeln!(source, "{pad}    <label>").expect("write");
     writeln!(source, "{pad}      {}", label(input)).expect("write");
-    emit_input_control(source, input, indent + 6);
+    match populated {
+        // An input that names a record is chosen from the list that offers
+        // it, never typed. The options come from one read of that list.
+        Some(populated) => emit_selector_control(source, populated, indent + 6),
+        None => emit_input_control(source, input, indent + 6),
+    }
     writeln!(
         source,
         "{pad}      <Show when={{refusalMarks(refusal()?.member ?? null, {declared:?}{element})}}>\n{pad}        <em>{{refusal()?.code}}</em>\n{pad}      </Show>"
@@ -1155,7 +1311,13 @@ fn emit_field(
 ///
 /// The contract marks the group with `[]` and states its bounds. Each element
 /// carries the same members, and the field name takes the element's index.
-fn emit_repeated_group(source: &mut String, inputs: &[&FieldIr], ancestor: &str, stem: &str) {
+fn emit_repeated_group(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    inputs: &[&FieldIr],
+    ancestor: &str,
+    stem: &str,
+) {
     let member = member_path(ancestor).join(".");
     let element = element_type(stem, &member_path(ancestor));
     let members: Vec<&&FieldIr> = inputs
@@ -1188,7 +1350,14 @@ fn emit_repeated_group(source: &mut String, inputs: &[&FieldIr], ancestor: &str,
             "{member}[${{index()}}].{}",
             crate::client_ts::to_camel(leaf)
         );
-        emit_field(source, input, &name, 18, Some("index()"));
+        emit_field(
+            source,
+            input,
+            &name,
+            18,
+            Some("index()"),
+            populated(screen, &input.path),
+        );
     }
     source.push_str("                  <button type=\"button\" onClick={() => group().removeValue(index())}>\n                    remove\n                  </button>\n                </fieldset>\n              )}\n            </For>\n");
     writeln!(

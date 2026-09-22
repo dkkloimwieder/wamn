@@ -257,9 +257,15 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
         .iter()
         .find(|relation| relation["table"] == "widget")
         .unwrap();
-    assert_eq!(relation["select_fields"], json!(["edit_version", "id"]));
+    // `widget.list` selects the text a selector shows beside the key.
+    assert_eq!(
+        relation["select_fields"],
+        json!(["code", "edit_version", "id"])
+    );
     assert_eq!(relation["insert_fields"], json!([]));
     assert_eq!(relation["update_fields"], json!([]));
     assert_eq!(relation["lock"], true);
-    assert_eq!(relation["lock_update_field"], "edit_version");
+    // The carrier is the first select field when a relation writes none, so
+    // it follows the union of what every operation reads.
+    assert_eq!(relation["lock_update_field"], "code");
 }

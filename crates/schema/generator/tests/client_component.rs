@@ -653,3 +653,65 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         );
     }
 }
+
+/// EXIT GATE for `wamn-rm14.4`: an input that names a record renders a
+/// selector fed by the list the plan chose, and a plain input does not.
+///
+/// The options carry the key as the value and the display field as the text,
+/// so the operator reads a name and the release receives an identity.
+#[test]
+fn a_populated_input_renders_a_selector_fed_by_its_list() {
+    let files = emit(&release());
+    let widget = widget(&files);
+
+    // The list of another model is imported under an alias, because two
+    // models can both declare a `list`.
+    assert!(
+        widget.contains(concat!(
+            "import {\n",
+            "  list as widgetMakerList,\n",
+            "  type WidgetMakerListRequest,\n",
+            "  type WidgetMakerListRow,\n",
+            "} from \"../widget_maker.js\";\n",
+        )),
+        "{widget}"
+    );
+    assert!(
+        widget.contains("      <option value={String(row.id)}>{String(row.name)}</option>"),
+        "the option carries the key and the text the plan named"
+    );
+    assert!(
+        widget.contains("      <option value={String(row.id)}>{String(row.code)}</option>"),
+        "an authored display field reaches the option text"
+    );
+
+    // A narrowed selector reads the value the operator already chose, and it
+    // reads again when that value changes.
+    assert!(widget.contains(concat!(
+        "  createEffect(() => {\n",
+        "    const narrowed = form.getFieldValue(`value.makerId`) as string | null;\n",
+        "    void readWidgetListOptions(narrowed ?? null);\n",
+        "  });\n",
+    )));
+    assert!(
+        widget.contains("{ requestId: newRequestId(), makerId: narrowed } as WidgetListRequest,"),
+        "the narrowing value fills the list input the plan named"
+    );
+
+    // A plain control is untouched.
+    let create = widget
+        .split("export function WidgetCreateForm")
+        .nth(1)
+        .expect("the create form exists")
+        .split("\n/**")
+        .next()
+        .expect("the form ends");
+    assert!(
+        create.contains(concat!(
+            "            Widget code\n",
+            "            <input\n",
+            "              type=\"text\"\n",
+        )),
+        "an input that names no record stays a text control"
+    );
+}

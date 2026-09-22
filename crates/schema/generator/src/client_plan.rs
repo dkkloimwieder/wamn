@@ -216,6 +216,13 @@ pub struct PopulatedInput<'a> {
     pub input: &'a str,
     /// Canonical identity of the list operation the selector reads.
     pub list_operation: &'a str,
+    /// Model that owns the list operation, which is the module an emitter
+    /// imports it from. It is not always the model whose records it lists.
+    pub list_model: &'a str,
+    /// Operation name of the list inside its own model.
+    pub list_name: &'a str,
+    /// Where that list's rows come from, so a caller reads the right member.
+    pub list_rows: Rows,
     /// Result field of that list which carries the value to send.
     pub key_field: &'a str,
     /// Result field of that list which carries the text a person reads.
@@ -628,6 +635,9 @@ fn row_forms<'a>(
 /// One served list, as an input that names a record sees it.
 struct Lister<'a> {
     operation: &'a str,
+    owner: &'a str,
+    name: &'a str,
+    rows: Rows,
     model: &'a str,
     key_field: &'a str,
     display_field: Option<&'a str>,
@@ -653,6 +663,9 @@ impl<'a> Lister<'a> {
         let lists = screen.contract.lists.as_ref()?;
         Some(Self {
             operation: screen.contract.operation.as_str(),
+            owner: screen.model,
+            name: screen.name,
+            rows: screen.rows,
             model: lists.model.as_str(),
             key_field: lists.key_field.as_str(),
             display_field: lists.display_field.as_deref(),
@@ -720,6 +733,9 @@ fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<Po
             Some(PopulatedInput {
                 input: input.path.as_str(),
                 list_operation: list.operation,
+                list_model: list.owner,
+                list_name: list.name,
+                list_rows: list.rows,
                 key_field: list.key_field,
                 display_field: list.display(),
                 narrowed_by,

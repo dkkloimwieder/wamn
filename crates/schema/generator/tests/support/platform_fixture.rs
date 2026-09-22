@@ -15,9 +15,9 @@ pub(crate) const QUERY_SQL: &[u8] =
     b"SELECT id, code, note, edit_version, created_at FROM widget ORDER BY created_at, id;\n";
 pub(crate) const QUERY_DESCENDING_SQL: &[u8] =
     b"SELECT id, code, note, edit_version, created_at FROM widget ORDER BY created_at DESC, id DESC;\n";
-/// The bounded-list read. It selects exactly what `widget.archive` reads, so
-/// the fixture's data-access grant does not move.
-pub(crate) const LIST_SQL: &[u8] = b"SELECT id, edit_version FROM widget ORDER BY id;\n";
+/// The bounded-list read. A selector reads it, so it selects the key and the
+/// text a person reads beside the revision that `widget.archive` needs.
+pub(crate) const LIST_SQL: &[u8] = b"SELECT id, code, edit_version FROM widget ORDER BY id;\n";
 /// The second model's list. A selector reads it, so it selects the key and
 /// the text a person reads.
 pub(crate) const WIDGET_MAKER_LIST_SQL: &[u8] =
@@ -408,6 +408,7 @@ pub(crate) fn manifest() -> Value {
                 ]},
                 "result": {"class": "bounded_list", "fields": [
                     {"path": "id", "type": "uuid", "nullable": false},
+                    {"path": "code", "type": "text", "nullable": false},
                     {"path": "edit_version", "type": "int64", "nullable": false},
                     {
                         "path": "attributes",
@@ -424,7 +425,7 @@ pub(crate) fn manifest() -> Value {
                 "relations": [{
                     "schema": "inventory",
                     "table": "widget",
-                    "select_fields": ["id", "edit_version"],
+                    "select_fields": ["code", "id", "edit_version"],
                     "insert_fields": [],
                     "update_fields": [],
                     "lock": false,
@@ -436,6 +437,7 @@ pub(crate) fn manifest() -> Value {
                     "parameters": [],
                     "row": [
                         {"name": "id", "type": "uuid", "nullable": false},
+                        {"name": "code", "type": "text", "nullable": false},
                         {"name": "edit_version", "type": "int64", "nullable": false}
                     ]
                 }}

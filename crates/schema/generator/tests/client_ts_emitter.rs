@@ -195,6 +195,7 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
             "    member: \"rows\",\n",
             "    fields: {\n",
             "      \"attributes\": \"attributes\",\n",
+            "      \"code\": \"code\",\n",
             "      \"edit_version\": \"editVersion\",\n",
             "      \"id\": \"id\",\n",
             "    },\n",
