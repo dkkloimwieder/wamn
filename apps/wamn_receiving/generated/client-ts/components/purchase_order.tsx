@@ -45,6 +45,9 @@ import {
   update,
 } from "../purchase_order.js";
 import {
+  type ReceivingRecordReceiptFormInitial,
+} from "./receiving.js";
+import {
   query as supplierQuery,
   type SupplierQueryRequest,
   type SupplierQueryRow,
@@ -182,6 +185,8 @@ export interface PurchaseOrderQueryTableProps {
   readonly onRowSelect?: (row: PurchaseOrderQueryRow) => void;
   /** Called when the operator opens `wamn-receiving:purchase-order/get@1.0.0` from one row. */
   readonly onOpenPurchaseOrderGet?: (row: PurchaseOrderQueryRow) => void;
+  /** Called with the values one row hands to `wamn-receiving:receiving/record-receipt@1.0.0`. */
+  readonly onFillReceivingRecordReceipt?: (initial: ReceivingRecordReceiptFormInitial) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderQueryResult>) => void;
 }
@@ -312,6 +317,16 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
                   <Show when={props.onOpenPurchaseOrderGet}>
                     <button type="button" onClick={() => props.onOpenPurchaseOrderGet?.(row.original)}>
                       get
+                    </button>
+                  </Show>
+                </td>
+                <td>
+                  <Show when={props.onFillReceivingRecordReceipt}>
+                    <button
+                      type="button"
+                      onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "purchaseOrderId"], row.original.id))}
+                    >
+                      record-receipt
                     </button>
                   </Show>
                 </td>

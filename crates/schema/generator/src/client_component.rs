@@ -166,6 +166,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     let mut solid = BTreeSet::new();
     let mut table = false;
     let mut form = false;
+    let mut narrowed = false;
     for screen in &screens {
         match screen.role {
             Role::Table => {
@@ -194,6 +195,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                     .any(|populated| populated.narrowed_by.is_some())
                 {
                     solid.insert("createEffect");
+                    narrowed = true;
                 }
                 emit_form(
                     &mut body,
@@ -239,7 +241,13 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         );
     }
     if form {
-        source.push_str("import { createForm } from \"@tanstack/solid-form\";\n");
+        // A narrowed selector follows the form's own values, so it reads the
+        // store the form owns rather than a second copy of the value.
+        if narrowed {
+            source.push_str("import { createForm, useStore } from \"@tanstack/solid-form\";\n");
+        } else {
+            source.push_str("import { createForm } from \"@tanstack/solid-form\";\n");
+        }
         source.push_str("import { z } from \"zod\";\n");
     }
     writeln!(
@@ -1241,6 +1249,17 @@ fn emit_form(
     );
     source.push_str("    },\n  }));\n");
 
+    // One accessor over the form's values, when a selector narrows by one of
+    // them. `getFieldValue` reads a value without following it, so the effect
+    // below follows this accessor and then reads the member the plan named.
+    if screen
+        .population
+        .iter()
+        .any(|populated| populated.narrowed_by.is_some())
+    {
+        source.push_str("  const formValues = useStore(form.store, (state) => state.values);\n");
+    }
+
     // One selector state for each input the operator chooses from a list.
     for populated in &screen.population {
         runtime.insert("newRequestId");
@@ -1376,14 +1395,17 @@ fn emit_selector_state(source: &mut String, populated: &PopulatedInput<'_>) {
                     .unwrap_or(narrowing.list_input),
             );
             let source_member = member_path(narrowing.input).join(".");
+            // Until the operator chooses the record this list narrows by, the
+            // list has no input to read, and the release refuses a call that
+            // states none. The selector offers nothing instead of asking.
             writeln!(
                 source,
-                "  const read{stem}Options = async (narrowed: string | null) => {{\n    const outcome = await {alias}(props.transport, [\n      {{ requestId: newRequestId(), {member}: narrowed }} as {stem}Request,\n    ]);\n    if (outcome.status === \"completed\") {{\n      set{stem}Options(outcome.value.{rows} as {stem}Row[]);\n    }}\n  }};"
+                "  const read{stem}Options = async (narrowed: string | null) => {{\n    if (narrowed === null || narrowed === \"\") {{\n      set{stem}Options([]);\n      return;\n    }}\n    const outcome = await {alias}(props.transport, [\n      {{ requestId: newRequestId(), {member}: narrowed }} as {stem}Request,\n    ]);\n    if (outcome.status === \"completed\") {{\n      set{stem}Options(outcome.value.{rows} as {stem}Row[]);\n    }}\n  }};"
             )
             .expect("write");
             writeln!(
                 source,
-                "  createEffect(() => {{\n    const narrowed = form.getFieldValue(`{source_member}`) as string | null;\n    void read{stem}Options(narrowed ?? null);\n  }});"
+                "  createEffect(() => {{\n    formValues();\n    const narrowed = form.getFieldValue(`{source_member}`) as string | null;\n    void read{stem}Options(narrowed ?? null);\n  }});"
             )
             .expect("write");
         }

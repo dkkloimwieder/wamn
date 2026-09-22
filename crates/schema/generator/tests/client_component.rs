@@ -696,8 +696,12 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
 
     // A narrowed selector reads the value the operator already chose, and it
     // reads again when that value changes.
+    assert!(
+        widget.contains("  const formValues = useStore(form.store, (state) => state.values);\n")
+    );
     assert!(widget.contains(concat!(
         "  createEffect(() => {\n",
+        "    formValues();\n",
         "    const narrowed = form.getFieldValue(`value.makerId`) as string | null;\n",
         "    void readWidgetListOptions(narrowed ?? null);\n",
         "  });\n",
@@ -705,6 +709,16 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     assert!(
         widget.contains("{ requestId: newRequestId(), makerId: narrowed } as WidgetListRequest,"),
         "the narrowing value fills the list input the plan named"
+    );
+    assert!(
+        widget.contains(concat!(
+            "    if (narrowed === null || narrowed === \"\") {\n",
+            "      setWidgetListOptions([]);\n",
+            "      return;\n",
+            "    }\n",
+        )),
+        "a narrowed selector offers nothing until the operator chooses the \
+         record it narrows by, instead of calling the list with no value"
     );
 
     // A plain control is untouched.

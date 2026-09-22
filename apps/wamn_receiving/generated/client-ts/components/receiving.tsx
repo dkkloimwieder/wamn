@@ -3,14 +3,14 @@
 // `receiving` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal } from "solid-js";
 import {
   createSolidTable,
   flexRender,
   getCoreRowModel,
   type ColumnDef,
 } from "@tanstack/solid-table";
-import { createForm } from "@tanstack/solid-form";
+import { createForm, useStore } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
   appendPage,
@@ -38,6 +38,7 @@ import {
   RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
   loadPurchaseOrderHistory,
   loadReceiptScreen,
+  loadReceiptScreen as receivingLoadReceiptScreen,
   recordReceipt,
   type ReceivingLoadPurchaseOrderHistoryRequest,
   type ReceivingLoadPurchaseOrderHistoryResult,
@@ -48,6 +49,16 @@ import {
   type ReceivingRecordReceiptRequest,
   type ReceivingRecordReceiptResult,
 } from "../receiving.js";
+import {
+  list as locationList,
+  type LocationListRequest,
+  type LocationListRow,
+} from "../location.js";
+import {
+  query as purchaseOrderQuery,
+  type PurchaseOrderQueryRequest,
+  type PurchaseOrderQueryRow,
+} from "../purchase_order.js";
 
 /** What the release accepts: one UUID, hyphenated. */
 const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -275,6 +286,8 @@ export interface ReceivingLoadReceiptScreenTableProps {
   readonly fixed?: Partial<ReceivingLoadReceiptScreenRequest>;
   /** Called when the operator picks one row. */
   readonly onRowSelect?: (row: ReceivingLoadReceiptScreenRow) => void;
+  /** Called with the values one row hands to `wamn-receiving:receiving/record-receipt@1.0.0`. */
+  readonly onFillReceivingRecordReceipt?: (initial: ReceivingRecordReceiptFormInitial) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceivingLoadReceiptScreenResult>) => void;
 }
@@ -357,6 +370,16 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
                 <For each={row.getVisibleCells()}>
                   {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
                 </For>
+                <td>
+                  <Show when={props.onFillReceivingRecordReceipt}>
+                    <button
+                      type="button"
+                      onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "purchaseOrderLineId"], row.original.lineId))}
+                    >
+                      record-receipt
+                    </button>
+                  </Show>
+                </td>
               </tr>
             )}
           </For>
@@ -451,6 +474,45 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       );
     },
   }));
+  const formValues = useStore(form.store, (state) => state.values);
+  const [locationListOptions, setLocationListOptions] = createSignal<LocationListRow[]>([]);
+  const readLocationListOptions = async () => {
+    const outcome = await locationList(props.transport, [
+      { requestId: newRequestId() } as LocationListRequest,
+    ]);
+    if (outcome.status === "completed") {
+      setLocationListOptions(outcome.value.rows as LocationListRow[]);
+    }
+  };
+  void readLocationListOptions();
+  const [receivingLoadReceiptScreenOptions, setReceivingLoadReceiptScreenOptions] = createSignal<ReceivingLoadReceiptScreenRow[]>([]);
+  const readReceivingLoadReceiptScreenOptions = async (narrowed: string | null) => {
+    if (narrowed === null || narrowed === "") {
+      setReceivingLoadReceiptScreenOptions([]);
+      return;
+    }
+    const outcome = await receivingLoadReceiptScreen(props.transport, [
+      { requestId: newRequestId(), purchaseOrderId: narrowed } as ReceivingLoadReceiptScreenRequest,
+    ]);
+    if (outcome.status === "completed") {
+      setReceivingLoadReceiptScreenOptions(outcome.value.rows as ReceivingLoadReceiptScreenRow[]);
+    }
+  };
+  createEffect(() => {
+    formValues();
+    const narrowed = form.getFieldValue(`value.purchaseOrderId`) as string | null;
+    void readReceivingLoadReceiptScreenOptions(narrowed ?? null);
+  });
+  const [purchaseOrderQueryOptions, setPurchaseOrderQueryOptions] = createSignal<PurchaseOrderQueryRow[]>([]);
+  const readPurchaseOrderQueryOptions = async () => {
+    const outcome = await purchaseOrderQuery(props.transport, [
+      { requestId: newRequestId() } as PurchaseOrderQueryRequest,
+    ]);
+    if (outcome.status === "completed") {
+      setPurchaseOrderQueryOptions(outcome.value.item as PurchaseOrderQueryRow[]);
+    }
+  };
+  void readPurchaseOrderQueryOptions();
 
   return (
     <form
@@ -473,11 +535,22 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                     {(field) => (
                       <label>
                         Location
-                        <input
-                          type="text"
+                        <select
                           value={String(field().state.value ?? "")}
-                          onInput={(event) => field().handleChange(event.currentTarget.value)}
-                        />
+                          onChange={(event) => field().handleChange(event.currentTarget.value)}
+                        >
+                          <option value=""></option>
+                          <For each={locationListOptions()}>
+                            {(row) => (
+                              <option
+                                value={String(row.id)}
+                                selected={String(field().state.value ?? "") === String(row.id)}
+                              >
+                                {String(row.locationCode)}
+                              </option>
+                            )}
+                          </For>
+                        </select>
                         <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index())}>
                           <em>{refusal()?.code}</em>
                         </Show>
@@ -488,11 +561,22 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                     {(field) => (
                       <label>
                         Order line
-                        <input
-                          type="text"
+                        <select
                           value={String(field().state.value ?? "")}
-                          onInput={(event) => field().handleChange(event.currentTarget.value)}
-                        />
+                          onChange={(event) => field().handleChange(event.currentTarget.value)}
+                        >
+                          <option value=""></option>
+                          <For each={receivingLoadReceiptScreenOptions()}>
+                            {(row) => (
+                              <option
+                                value={String(row.lineId)}
+                                selected={String(field().state.value ?? "") === String(row.lineId)}
+                              >
+                                {String(row.itemNumber)}
+                              </option>
+                            )}
+                          </For>
+                        </select>
                         <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index())}>
                           <em>{refusal()?.code}</em>
                         </Show>
@@ -538,11 +622,22 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
         {(field) => (
           <label>
             Purchase order
-            <input
-              type="text"
+            <select
               value={String(field().state.value ?? "")}
-              onInput={(event) => field().handleChange(event.currentTarget.value)}
-            />
+              onChange={(event) => field().handleChange(event.currentTarget.value)}
+            >
+              <option value=""></option>
+              <For each={purchaseOrderQueryOptions()}>
+                {(row) => (
+                  <option
+                    value={String(row.id)}
+                    selected={String(field().state.value ?? "") === String(row.id)}
+                  >
+                    {String(row.purchaseOrderNumber)}
+                  </option>
+                )}
+              </For>
+            </select>
             <Show when={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id")}>
               <em>{refusal()?.code}</em>
             </Show>

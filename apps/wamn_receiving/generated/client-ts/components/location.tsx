@@ -22,6 +22,7 @@ import {
   type Outcome,
   type PageState,
   type Transport,
+  writeMember,
 } from "@wamn/web-runtime";
 import {
   list,
@@ -29,6 +30,9 @@ import {
   type LocationListResult,
   type LocationListRow,
 } from "../location.js";
+import {
+  type ReceivingRecordReceiptFormInitial,
+} from "./receiving.js";
 
 /** Columns of `wamn-receiving:location/list@1.0.0`, in contract order. */
 const LIST_COLUMNS: ColumnDef<LocationListRow, unknown>[] = [
@@ -52,6 +56,8 @@ export interface LocationListTableProps {
   readonly fixed?: Partial<LocationListRequest>;
   /** Called when the operator picks one row. */
   readonly onRowSelect?: (row: LocationListRow) => void;
+  /** Called with the values one row hands to `wamn-receiving:receiving/record-receipt@1.0.0`. */
+  readonly onFillReceivingRecordReceipt?: (initial: ReceivingRecordReceiptFormInitial) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<LocationListResult>) => void;
 }
@@ -134,6 +140,16 @@ export function LocationListTable(props: LocationListTableProps) {
                 <For each={row.getVisibleCells()}>
                   {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
                 </For>
+                <td>
+                  <Show when={props.onFillReceivingRecordReceipt}>
+                    <button
+                      type="button"
+                      onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "locationId"], row.original.id))}
+                    >
+                      record-receipt
+                    </button>
+                  </Show>
+                </td>
               </tr>
             )}
           </For>

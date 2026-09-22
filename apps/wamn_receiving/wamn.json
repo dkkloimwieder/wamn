@@ -429,7 +429,9 @@
         },
         "line": {
           "minimum": 1,
-          "maximum": 100
+          "maximum": 100,
+          "label": "Receipt lines",
+          "description": "One line for each order line this receipt records."
         },
         "fields": [
           {
@@ -446,7 +448,10 @@
             "path": "value.purchase_order_id",
             "type": "uuid",
             "nullable": false,
-            "label": "Purchase order"
+            "label": "Purchase order",
+            "references": {
+              "model": "purchase_order"
+            }
           },
           {
             "path": "value.receipt_reference",
@@ -464,7 +469,11 @@
             "path": "value.line[].purchase_order_line_id",
             "type": "uuid",
             "nullable": false,
-            "label": "Order line"
+            "label": "Order line",
+            "references": {
+              "model": "purchase_order_line",
+              "narrowed_by": "value.purchase_order_id"
+            }
           },
           {
             "path": "value.line[].quantity",
@@ -477,7 +486,10 @@
             "path": "value.line[].location_id",
             "type": "uuid",
             "nullable": false,
-            "label": "Location"
+            "label": "Location",
+            "references": {
+              "model": "location"
+            }
           }
         ]
       },
@@ -959,6 +971,11 @@
     "receiving.load_receipt_screen": {
       "kind": "projection",
       "label": "Receiving screen",
+      "lists": {
+        "model": "purchase_order_line",
+        "key_field": "line_id",
+        "display_field": "item_number"
+      },
       "visibility": "public",
       "permission": "receiving.load_receipt_screen",
       "connection": "postgres",
@@ -973,7 +990,10 @@
             "path": "purchase_order_id",
             "type": "uuid",
             "nullable": false,
-            "label": "Purchase order"
+            "label": "Purchase order",
+            "references": {
+              "model": "purchase_order"
+            }
           }
         ]
       },
@@ -1395,6 +1415,10 @@
     "location.list": {
       "kind": "projection",
       "label": "Locations",
+      "lists": {
+        "model": "location",
+        "key_field": "id"
+      },
       "visibility": "public",
       "permission": "location.list",
       "connection": "postgres",

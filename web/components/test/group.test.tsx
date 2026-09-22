@@ -55,12 +55,15 @@ describe("a repeated group", () => {
     const { transport, sent } = stub();
     render(() => <WidgetRecordBatchForm transport={transport} />);
     fireEvent.click(screen.getByRole("button", { name: "add" }));
-    await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(2));
     // Every other control is filled, so the quantity is the only value left
-    // for the schema to refuse. Each one is chosen from its own list.
-    for (const selector of screen.getAllByRole("combobox")) {
-      fireEvent.change(selector, { target: { value: WIDGET } });
-    }
+    // for the schema to refuse. Each one is chosen from its own list, and the
+    // maker comes first, because the line list narrows by it.
+    const maker = screen.getByLabelText("Maker") as HTMLSelectElement;
+    await waitFor(() => expect(maker.options.length).toBeGreaterThan(1));
+    fireEvent.change(maker, { target: { value: WIDGET } });
+    const line = screen.getByLabelText("Line") as HTMLSelectElement;
+    await waitFor(() => expect(line.options.length).toBeGreaterThan(1));
+    fireEvent.change(line, { target: { value: WIDGET } });
     fireEvent.input(screen.getByLabelText("Batch note"), { target: { value: "a note" } });
 
     const quantity = screen.getByLabelText("Quantity received") as HTMLInputElement;
