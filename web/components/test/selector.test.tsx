@@ -64,3 +64,73 @@ describe("a populated input", () => {
     expect(submission["maker_id"]).toBe(MAKER);
   });
 });
+
+const SOUTH = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+
+/** One transport that answers a search and a next page from the same list. */
+function paged(): { transport: Transport; sent: WireRequest[] } {
+  const sent: WireRequest[] = [];
+  return {
+    sent,
+    transport: {
+      invoke: (request: WireRequest) => {
+        sent.push(request);
+        if (!request.operation.includes("widget-maker")) {
+          return Promise.resolve<Outcome<JsonValue>>({
+            status: "completed",
+            value: { id: "written", edit_version: 1 },
+          });
+        }
+        const item = request.items[0] as {
+          filter?: { name?: string[] };
+          cursor?: string;
+        };
+        if (item.filter?.name !== undefined) {
+          return Promise.resolve<Outcome<JsonValue>>({
+            status: "completed",
+            value: { item: [{ id: SOUTH, name: "Southwind" }], nextCursor: null },
+          });
+        }
+        if (item.cursor === "page-2") {
+          return Promise.resolve<Outcome<JsonValue>>({
+            status: "completed",
+            value: { item: [{ id: SOUTH, name: "Southwind" }], nextCursor: null },
+          });
+        }
+        return Promise.resolve<Outcome<JsonValue>>({
+          status: "completed",
+          value: { item: [{ id: MAKER, name: "Northwind" }], nextCursor: "page-2" },
+        });
+      },
+    },
+  };
+}
+
+describe("a selector over a list that declares its display filter", () => {
+  it("searches by the value the operator typed", async () => {
+    const { transport, sent } = paged();
+    render(() => <WidgetCreateForm transport={transport} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined());
+
+    const search = screen.getByLabelText("maker id search") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "Southwind" } });
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "Southwind" })).toBeDefined());
+    expect(screen.queryByRole("option", { name: "Northwind" })).toBeNull();
+    const searched = sent[1]?.items[0] as { filter: { name: string[] }; cursor?: string };
+    expect(searched.filter.name).toEqual(["Southwind"]);
+    expect(searched.cursor).toBeUndefined();
+  });
+
+  it("appends the next page to the options it already offers", async () => {
+    const { transport, sent } = paged();
+    render(() => <WidgetCreateForm transport={transport} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined());
+
+    fireEvent.click(screen.getByLabelText("maker id next page"));
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "Southwind" })).toBeDefined());
+    expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined();
+    expect((sent[1]?.items[0] as { cursor: string }).cursor).toBe("page-2");
+  });
+});

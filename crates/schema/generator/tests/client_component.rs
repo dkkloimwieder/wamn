@@ -702,18 +702,20 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     assert!(widget.contains(concat!(
         "  createEffect(() => {\n",
         "    formValues();\n",
-        "    const narrowed = form.getFieldValue(`value.makerId`) as string | null;\n",
-        "    void readWidgetListOptions(narrowed ?? null);\n",
+        "    setWidgetListNarrowed((form.getFieldValue(`value.makerId`) as string | null) ?? null);\n",
+        "    void readWidgetListOptions(null);\n",
         "  });\n",
     )));
     assert!(
-        widget.contains("{ requestId: newRequestId(), makerId: narrowed } as WidgetListRequest,"),
+        widget.contains(
+            "    const request = { requestId: newRequestId(), makerId: narrowed } as WidgetListRequest;"
+        ),
         "the narrowing value fills the list input the plan named"
     );
     assert!(
         widget.contains(concat!(
             "    if (narrowed === null || narrowed === \"\") {\n",
-            "      setWidgetListOptions([]);\n",
+            "      setWidgetListOptions(emptyPage<WidgetListRow>());\n",
             "      return;\n",
             "    }\n",
         )),
@@ -835,5 +837,96 @@ fn a_repeated_group_states_its_label_its_bounds_and_its_spellings() {
     assert!(
         !widget.contains("const TIMESTAMP_TEXT"),
         "a module writes no rule it does not apply"
+    );
+}
+
+/// EXIT GATE for `wamn-sxb5.2`: a selector renders the search its list
+/// declares and the next page its list serves, and nothing else from that
+/// list's own screen.
+///
+/// The search asks again from the first page, the next page appends, and both
+/// call the same binding the first read called.
+#[test]
+fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let create = widget
+        .split("export function WidgetCreateForm")
+        .nth(1)
+        .expect("the create form exists")
+        .split("\n/**")
+        .next()
+        .expect("the form ends");
+
+    // The maker list declares the filter on its display field, so the selector
+    // searches by it.
+    assert!(
+        create.contains(concat!(
+            "    if (widgetMakerQuerySearch() !== \"\") {\n",
+            "      request = writeMember(request, [\"filter\", \"name\"], [widgetMakerQuerySearch()]) as WidgetMakerQueryRequest;\n",
+            "    }\n",
+        )),
+        "the search sends the declared filter, which takes a list of values"
+    );
+    assert!(
+        create.contains(concat!(
+            "              aria-label=\"maker id search\"\n",
+            "              value={widgetMakerQuerySearch()}\n",
+        )),
+        "the search control states the field it searches"
+    );
+    assert!(
+        create.contains("    void readWidgetMakerQueryOptions(null);\n"),
+        "a search reads from the first page, because a cursor names a position \
+         in the answer the old value produced"
+    );
+
+    // The same list serves pages, so the selector follows them.
+    assert!(
+        create.contains(concat!(
+            "    if (cursor !== null) {\n",
+            "      request = writeMember(request, [\"cursor\"], cursor) as WidgetMakerQueryRequest;\n",
+            "    }\n",
+        )),
+        "the next page carries the cursor the last reply returned"
+    );
+    assert!(
+        create.contains(
+            "        : appendPage(widgetMakerQueryOptions(), rows, outcome.value.nextCursor),"
+        ),
+        "a page appends, as a table does"
+    );
+    assert!(
+        create.contains(concat!(
+            "                aria-label=\"maker id next page\"\n",
+            "                onClick={() => void readWidgetMakerQueryOptions(widgetMakerQueryOptions().cursor)}\n",
+        )),
+        "the next page control reads the cursor the selector holds"
+    );
+
+    // The widget list declares no filter and serves one page, so its selector
+    // renders neither control, and the index names the gap.
+    let batch = widget
+        .split("export function WidgetRecordBatchForm")
+        .nth(1)
+        .expect("the batch form exists")
+        .split("\n/**")
+        .next()
+        .expect("the form ends");
+    assert!(
+        !batch.contains("aria-label=\"Line search\""),
+        "a list that declares no filter on its display field offers no search"
+    );
+    assert!(
+        !batch.contains("aria-label=\"Line next page\""),
+        "a bounded list has no next page to offer"
+    );
+    assert!(
+        source(&files, "generated/client-ts/components/index.ts").contains(concat!(
+            "// These selectors read the first page and render no search, because the\n",
+            "// list they read declares no filter on its display field:\n",
+            "// platform-fixture:widget/record-batch@1.0.0 value.line[].purchase_order_line_id: platform-fixture:widget/list@1.0.0\n",
+        )),
+        "the generator names the selector, its input and the list it reads"
     );
 }

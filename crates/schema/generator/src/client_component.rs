@@ -118,6 +118,22 @@ pub fn emit_ts_components(
             writeln!(index, "// {operation}: {reason}").expect("writing to a String cannot fail");
         }
     }
+    // The contract gap an author closes: a list that declares no filter on its
+    // display field gives a selector nothing to search by.
+    let unsearchable = plan.unsearchable();
+    if !unsearchable.is_empty() {
+        index.push_str(
+            "\n// These selectors read the first page and render no search, because the\n// list they read declares no filter on its display field:\n",
+        );
+        for selector in unsearchable {
+            writeln!(
+                index,
+                "// {} {}: {}",
+                selector.operation, selector.input, selector.list_operation
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
     files.push(GeneratedFile::new(
         format!("{COMPONENT_DIRECTORY}/index.ts").into_boxed_str(),
         index.into_bytes().into_boxed_slice(),
@@ -1280,7 +1296,7 @@ fn emit_form(
         names.insert(format!("{list_function} as {alias}"));
         names.insert(format!("type {list_stem}Request"));
         names.insert(format!("type {list_stem}Row"));
-        emit_selector_state(source, populated);
+        emit_selector_state(source, populated, runtime);
     }
 
     // The markup.
@@ -1370,59 +1386,151 @@ fn foreign_alias(model: &str, name: &str) -> String {
 /// Each selector owns its options. Two inputs that name the same model read
 /// that list twice, which is one request each and no shared cache to get
 /// stale.
-fn emit_selector_state(source: &mut String, populated: &PopulatedInput<'_>) {
+fn emit_selector_state(
+    source: &mut String,
+    populated: &PopulatedInput<'_>,
+    runtime: &mut BTreeSet<&'static str>,
+) {
     let alias = foreign_alias(populated.list_model, populated.list_name);
     let stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
     let rows = match populated.list_rows {
         Rows::List { key } => key,
         Rows::Single => "rows",
     };
+    // A page states where the next one starts. Every other list answers once,
+    // and its page has no cursor to follow.
+    let next_cursor = if populated.cursor_input.is_some() {
+        "outcome.value.nextCursor"
+    } else {
+        "null"
+    };
+    runtime.extend([
+        "appendPage",
+        "emptyPage",
+        "firstPage",
+        "hasNextPage",
+        "newRequestId",
+        "type PageState",
+    ]);
+    if populated.narrowed_by.is_some()
+        || populated.search_input.is_some()
+        || populated.cursor_input.is_some()
+    {
+        runtime.insert("writeMember");
+    }
     writeln!(
         source,
-        "  const [{alias}Options, set{stem}Options] = createSignal<{stem}Row[]>([]);"
+        "  const [{alias}Options, set{stem}Options] = createSignal<PageState<{stem}Row>>(emptyPage<{stem}Row>());"
     )
     .expect("write");
-    // A narrowed selector states the value it narrows by, so the list returns
-    // the rows of the record the operator already chose. Every other selector
-    // reads its list once.
+    // A narrowed selector holds the value it narrows by, so the next page of
+    // its list asks the same question the first page asked.
+    if populated.narrowed_by.is_some() {
+        writeln!(
+            source,
+            "  const [{alias}Narrowed, set{stem}Narrowed] = createSignal<string | null>(null);"
+        )
+        .expect("write");
+    }
+    if populated.search_input.is_some() {
+        writeln!(
+            source,
+            "  const [{alias}Search, set{stem}Search] = createSignal(\"\");"
+        )
+        .expect("write");
+    }
+
+    // The request gains a member for each control the selector renders, so it
+    // is rebound only where one exists.
+    let binding = if populated.search_input.is_some() || populated.cursor_input.is_some() {
+        "let"
+    } else {
+        "const"
+    };
+    writeln!(
+        source,
+        "  const read{stem}Options = async (cursor: string | null) => {{"
+    )
+    .expect("write");
     if let Some(narrowing) = populated.narrowed_by {
-        {
-            let member = crate::client_ts::to_camel(
-                narrowing
-                    .list_input
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(narrowing.list_input),
-            );
-            let source_member = member_path(narrowing.input).join(".");
-            // Until the operator chooses the record this list narrows by, the
-            // list has no input to read, and the release refuses a call that
-            // states none. The selector offers nothing instead of asking.
-            writeln!(
-                source,
-                "  const read{stem}Options = async (narrowed: string | null) => {{\n    if (narrowed === null || narrowed === \"\") {{\n      set{stem}Options([]);\n      return;\n    }}\n    const outcome = await {alias}(props.transport, [\n      {{ requestId: newRequestId(), {member}: narrowed }} as {stem}Request,\n    ]);\n    if (outcome.status === \"completed\") {{\n      set{stem}Options(outcome.value.{rows} as {stem}Row[]);\n    }}\n  }};"
-            )
-            .expect("write");
-            writeln!(
-                source,
-                "  createEffect(() => {{\n    formValues();\n    const narrowed = form.getFieldValue(`{source_member}`) as string | null;\n    void read{stem}Options(narrowed ?? null);\n  }});"
-            )
-            .expect("write");
-        }
+        // Until the operator chooses the record this list narrows by, the list
+        // has no input to read, and the release refuses a call that states
+        // none. The selector offers nothing instead of asking.
+        writeln!(
+            source,
+            "    const narrowed = {alias}Narrowed();\n    if (narrowed === null || narrowed === \"\") {{\n      set{stem}Options(emptyPage<{stem}Row>());\n      return;\n    }}"
+        )
+        .expect("write");
+        let member = crate::client_ts::to_camel(
+            narrowing
+                .list_input
+                .rsplit('.')
+                .next()
+                .unwrap_or(narrowing.list_input),
+        );
+        writeln!(
+            source,
+            "    {binding} request = {{ requestId: newRequestId(), {member}: narrowed }} as {stem}Request;"
+        )
+        .expect("write");
     } else {
         writeln!(
             source,
-            "  const read{stem}Options = async () => {{\n    const outcome = await {alias}(props.transport, [\n      {{ requestId: newRequestId() }} as {stem}Request,\n    ]);\n    if (outcome.status === \"completed\") {{\n      set{stem}Options(outcome.value.{rows} as {stem}Row[]);\n    }}\n  }};"
+            "    {binding} request = {{ requestId: newRequestId() }} as {stem}Request;"
         )
         .expect("write");
-        writeln!(source, "  void read{stem}Options();").expect("write");
+    }
+    // The search sends the declared filter, which takes a list of values and
+    // matches each one in full.
+    if let Some(path) = populated.search_input {
+        writeln!(
+            source,
+            "    if ({alias}Search() !== \"\") {{\n      request = writeMember(request, {}, [{alias}Search()]) as {stem}Request;\n    }}",
+            member_literal(path)
+        )
+        .expect("write");
+    }
+    if let Some(path) = populated.cursor_input {
+        writeln!(
+            source,
+            "    if (cursor !== null) {{\n      request = writeMember(request, {}, cursor) as {stem}Request;\n    }}",
+            member_literal(path)
+        )
+        .expect("write");
+    }
+    writeln!(
+        source,
+        "    const outcome = await {alias}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return;\n    }}\n    const rows = outcome.value.{rows} as {stem}Row[];\n    set{stem}Options(\n      cursor === null\n        ? firstPage(rows, {next_cursor})\n        : appendPage({alias}Options(), rows, {next_cursor}),\n    );\n  }};"
+    )
+    .expect("write");
+
+    if let Some(narrowing) = populated.narrowed_by {
+        let source_member = member_path(narrowing.input).join(".");
+        writeln!(
+            source,
+            "  createEffect(() => {{\n    formValues();\n    set{stem}Narrowed((form.getFieldValue(`{source_member}`) as string | null) ?? null);\n    void read{stem}Options(null);\n  }});"
+        )
+        .expect("write");
+    } else {
+        writeln!(source, "  void read{stem}Options(null);").expect("write");
     }
 }
 
 /// One selector: the options are the rows the list returned.
-fn emit_selector_control(source: &mut String, populated: &PopulatedInput<'_>, indent: usize) {
+///
+/// A list that declares a filter on its display field also gets a search
+/// control, and a list that serves pages also gets a next page control. The
+/// list's other filters stay on the list's own screen: a selector asks one
+/// question, which is the text the operator already knows.
+fn emit_selector_control(
+    source: &mut String,
+    populated: &PopulatedInput<'_>,
+    indent: usize,
+    label: &str,
+) {
     let pad = " ".repeat(indent);
     let alias = foreign_alias(populated.list_model, populated.list_name);
+    let stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
     let key = crate::client_ts::to_camel(populated.key_field);
     let display = crate::client_ts::to_camel(populated.display_field);
     writeln!(
@@ -1436,10 +1544,28 @@ fn emit_selector_control(source: &mut String, populated: &PopulatedInput<'_>, in
     // find yet is dropped.
     writeln!(
         source,
-        "{pad}  <For each={{{alias}Options()}}>\n{pad}    {{(row) => (\n{pad}      <option\n{pad}        value={{String(row.{key})}}\n{pad}        selected={{String(field().state.value ?? \"\") === String(row.{key})}}\n{pad}      >\n{pad}        {{String(row.{display})}}\n{pad}      </option>\n{pad}    )}}\n{pad}  </For>"
+        "{pad}  <For each={{{alias}Options().rows}}>\n{pad}    {{(row) => (\n{pad}      <option\n{pad}        value={{String(row.{key})}}\n{pad}        selected={{String(field().state.value ?? \"\") === String(row.{key})}}\n{pad}      >\n{pad}        {{String(row.{display})}}\n{pad}      </option>\n{pad}    )}}\n{pad}  </For>"
     )
     .expect("write");
     writeln!(source, "{pad}</select>").expect("write");
+    // The search asks the list again from its first page, because a cursor
+    // names a position in the answer the old value produced.
+    if populated.search_input.is_some() {
+        writeln!(
+            source,
+            "{pad}<input\n{pad}  type=\"search\"\n{pad}  aria-label={:?}\n{pad}  value={{{alias}Search()}}\n{pad}  onChange={{(event) => {{\n{pad}    set{stem}Search(event.currentTarget.value);\n{pad}    void read{stem}Options(null);\n{pad}  }}}}\n{pad}/>",
+            format!("{label} search")
+        )
+        .expect("write");
+    }
+    if populated.cursor_input.is_some() {
+        writeln!(
+            source,
+            "{pad}<Show when={{hasNextPage({alias}Options())}}>\n{pad}  <button\n{pad}    type=\"button\"\n{pad}    aria-label={:?}\n{pad}    onClick={{() => void read{stem}Options({alias}Options().cursor)}}\n{pad}  >\n{pad}    next page\n{pad}  </button>\n{pad}</Show>",
+            format!("{label} next page")
+        )
+        .expect("write");
+    }
 }
 
 /// One control, its label, and the refusal that names it.
@@ -1466,7 +1592,7 @@ fn emit_field(
     match populated {
         // An input that names a record is chosen from the list that offers
         // it, never typed. The options come from one read of that list.
-        Some(populated) => emit_selector_control(source, populated, indent + 6),
+        Some(populated) => emit_selector_control(source, populated, indent + 6, &label(input)),
         None => emit_input_control(source, input, indent + 6),
     }
     writeln!(
