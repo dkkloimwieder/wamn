@@ -18,7 +18,14 @@ fn platform_fixture_generates_client_descriptors() {
             .map(|operation| operation.name.as_str())
             .collect::<Vec<_>>(),
         [
-            "archive", "create", "delete", "get", "list", "query", "update"
+            "archive",
+            "create",
+            "delete",
+            "get",
+            "list",
+            "query",
+            "record_batch",
+            "update"
         ]
     );
 

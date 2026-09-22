@@ -85,11 +85,20 @@ pub(crate) fn client_release() -> ClientContractIr {
     let package = generate_fixture();
     let contracts = contracts(&package);
     let routes = [
-        "archive", "create", "delete", "get", "list", "query", "update",
+        "archive",
+        "create",
+        "delete",
+        "get",
+        "list",
+        "query",
+        "record_batch",
+        "update",
     ]
     .into_iter()
     .map(|name| {
-        let identity = format!("platform-fixture:widget/{name}@1.0.0");
+        // A contract identity spells its operation with hyphens, and a route
+        // template keeps the operation path.
+        let identity = format!("platform-fixture:widget/{}@1.0.0", name.replace('_', "-"));
         (
             identity.clone(),
             RouteIr {
@@ -337,6 +346,97 @@ pub(crate) fn manifest() -> Value {
                         {"name": "edit_version", "type": "int64", "nullable": false}
                     ]
                 }}
+            },
+            // The one command whose input nests and repeats. A form of this
+            // shape is what a refusal path with `[]` names, and the bounds of
+            // its group are declared.
+            "widget.record_batch": {
+                "kind": "command",
+                "visibility": "public",
+                "permission": "widget.record_batch",
+                "connection": "postgres",
+                "transaction": "explicit_per_input",
+                "automatic_retry": false,
+                "idempotent_by": "claim",
+                "claim": {
+                    "table": "widget_command",
+                    "identities": {"widget_id": "widget_id"},
+                    "claim": "claim_batch",
+                    "replay": "find_batch",
+                    "finalize": "finalize_batch"
+                },
+                "input": {
+                    "raw_body_maximum": 1_048_576,
+                    "envelope": {"minimum": 1, "maximum": 100},
+                    "line": {"minimum": 1, "maximum": 10},
+                    "fields": [
+                        {"path": "request_id", "type": "text", "nullable": false},
+                        {"path": "value.idempotency_key", "type": "text", "nullable": false},
+                        {"path": "value.note", "type": "text", "nullable": true},
+                        {
+                            "path": "value.line[].purchase_order_line_id",
+                            "type": "uuid",
+                            "nullable": false
+                        },
+                        {"path": "value.line[].quantity", "type": "numeric", "nullable": false}
+                    ]
+                },
+                // A line input must declare a canonical line profile. The
+                // closed vocabulary admits one literal, and that profile
+                // requires these two member names, so the fixture carries a
+                // Receiving column name. wamn-cguw owns widening it.
+                "canonicalization": {
+                    "excluded_fields": ["request_id", "value.idempotency_key"],
+                    "line_order": "purchase_order_line_id_ascending"
+                },
+                "result": {"class": "one", "fields": [
+                    {"path": "widget_id", "type": "uuid", "nullable": false}
+                ]},
+                "errors": [
+                    "invalid_input", "idempotency_conflict", "retry", "timeout",
+                    "permission_denied", "internal_error"
+                ],
+                "error_details": {"idempotency_conflict": {"required": ["field"]}},
+                "constraint_errors": {},
+                "relations": [{
+                    "schema": "inventory",
+                    "table": "widget_command",
+                    "select_fields": ["canonical_command", "idempotency_key", "widget_id"],
+                    "insert_fields": ["canonical_command", "idempotency_key"],
+                    "update_fields": [],
+                    "lock": false,
+                    "constraints": ["widget_command_pkey"]
+                }],
+                "statements": {
+                    "claim_batch": {
+                        "path": "command/widget/claim.sql",
+                        "fetch": "optional_one",
+                        "parameters": [
+                            {"name": "canonical_command", "type": "bytes", "nullable": false},
+                            {"name": "idempotency_key", "type": "text", "nullable": false}
+                        ],
+                        "row": [{"name": "widget_id", "type": "uuid", "nullable": false}]
+                    },
+                    "find_batch": {
+                        "path": "command/widget/replay.sql",
+                        "fetch": "optional_one",
+                        "parameters": [
+                            {"name": "idempotency_key", "type": "text", "nullable": false}
+                        ],
+                        "row": [
+                            {"name": "canonical_command", "type": "bytes", "nullable": false},
+                            {"name": "widget_id", "type": "uuid", "nullable": false}
+                        ]
+                    },
+                    "finalize_batch": {
+                        "path": "command/widget/finalize.sql",
+                        "fetch": "one",
+                        "parameters": [
+                            {"name": "idempotency_key", "type": "text", "nullable": false}
+                        ],
+                        "row": [{"name": "widget_id", "type": "uuid", "nullable": false}]
+                    }
+                }
             },
             "widget.archive": {
                 "kind": "command",

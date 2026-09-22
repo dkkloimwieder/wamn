@@ -46,7 +46,14 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
             .map(|screen| screen.name)
             .collect::<Vec<_>>(),
         [
-            "archive", "create", "delete", "get", "list", "query", "update"
+            "archive",
+            "create",
+            "delete",
+            "get",
+            "list",
+            "query",
+            "record_batch",
+            "update"
         ],
         "the plan drops the event handler and sorts the rest by name"
     );
@@ -289,7 +296,7 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         plan.screens()
             .filter(|screen| screen.role.is_supported())
             .count(),
-        5,
+        6,
         "the other screens keep their role"
     );
 }

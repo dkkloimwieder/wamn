@@ -77,7 +77,7 @@ fn supplier_omission_stays_absent_while_explicit_null_is_refused() {
     let mut item = json!({"request_id":"r1", "id":"00000000-0000-0000-0000-000000000001",
         "expected_row_version": 4, "change": {}});
     assert_eq!(build_request(FIELDS, &item, Some(schema)).expect("omit supplier without clearing it").body(),
-        br#"[{"change":{},"expected_row_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"r1"}]"#);
+        br#"[{"change":{},"expected_row_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"r1"}]"#);
     item["change"]["supplier_id"] = Value::Null;
     let error =
         build_request(FIELDS, &item, Some(schema)).expect_err("explicit null is invalid_input");

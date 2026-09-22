@@ -21,6 +21,7 @@ import {
   newIdempotencyKey,
   newRequestId,
   occurredAt,
+  refusalMarks,
   refusedMember,
   startRead,
   type JsonValue,
@@ -444,7 +445,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           value={String(field().state.value ?? "")}
                           onInput={(event) => field().handleChange(event.currentTarget.value)}
                         />
-                        <Show when={refusal()?.member === "location_id"}>
+                        <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index())}>
                           <em>{refusal()?.code}</em>
                         </Show>
                       </label>
@@ -459,7 +460,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           value={String(field().state.value ?? "")}
                           onInput={(event) => field().handleChange(event.currentTarget.value)}
                         />
-                        <Show when={refusal()?.member === "purchase_order_line_id"}>
+                        <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index())}>
                           <em>{refusal()?.code}</em>
                         </Show>
                       </label>
@@ -474,7 +475,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           value={String(field().state.value ?? "")}
                           onInput={(event) => field().handleChange(event.currentTarget.value)}
                         />
-                        <Show when={refusal()?.member === "quantity"}>
+                        <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index())}>
                           <em>{refusal()?.code}</em>
                         </Show>
                       </label>
@@ -501,7 +502,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
               value={String(field().state.value ?? "")}
               onInput={(event) => field().handleChange(event.currentTarget.value)}
             />
-            <Show when={refusal()?.member === "purchase_order_id"}>
+            <Show when={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id")}>
               <em>{refusal()?.code}</em>
             </Show>
           </label>
@@ -516,7 +517,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
               value={String(field().state.value ?? "")}
               onInput={(event) => field().handleChange(event.currentTarget.value)}
             />
-            <Show when={refusal()?.member === "receipt_reference"}>
+            <Show when={refusalMarks(refusal()?.member ?? null, "value.receipt_reference")}>
               <em>{refusal()?.code}</em>
             </Show>
           </label>

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { ABSENT_CELL, cellText } from "../src/cell.js";
 import { clearMember, readMember, writeMember } from "../src/draft.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
-import { refusedMember } from "../src/transport.js";
+import { refusalMarks, refusedMember } from "../src/transport.js";
 
 describe("the page state", () => {
   it("appends the next page and keeps the rows already shown", () => {
@@ -87,19 +87,49 @@ describe("the cell text", () => {
   });
 });
 
-describe("the member a refusal names", () => {
+describe("the path a refusal names", () => {
   it("reads a declared field member", () => {
     expect(refusedMember({ field: "code" })).toBe("code");
+    expect(refusedMember({ field: "value.line[].quantity" })).toBe("value.line[].quantity");
   });
 
-  it("reads the last segment of a schema pointer", () => {
-    expect(refusedMember({ data: { pointer: "/0/change/code" } })).toBe("code");
+  it("reads a schema pointer as the declared path it names", () => {
+    expect(refusedMember({ data: { pointer: "/0/change/code" } })).toBe("change.code");
     expect(refusedMember({ pointer: "/0/id" })).toBe("id");
+    expect(refusedMember({ data: { pointer: "/0/value/line/2/quantity" } })).toBe(
+      "value.line[2].quantity",
+    );
+  });
+
+  it("descends into the detail that the error carries beside its code", () => {
+    expect(refusedMember({ detail: { field: "value.line[].quantity" } })).toBe(
+      "value.line[].quantity",
+    );
   });
 
   it("names nothing when the refusal names nothing", () => {
     expect(refusedMember(null)).toBeNull();
     expect(refusedMember({ constraint: "widget_code_key" })).toBeNull();
     expect(refusedMember(["code"])).toBeNull();
+    expect(refusedMember({ detail: { constraint: "widget_code_key" } })).toBeNull();
+  });
+});
+
+describe("the control a refused path marks", () => {
+  it("marks the control whose declared path it names", () => {
+    expect(refusalMarks("change.code", "change.code")).toBe(true);
+    expect(refusalMarks("change.code", "change.note")).toBe(false);
+    expect(refusalMarks(null, "change.code")).toBe(false);
+  });
+
+  it("marks one line when the refusal names its index", () => {
+    expect(refusalMarks("value.line[2].quantity", "value.line[].quantity", 2)).toBe(true);
+    expect(refusalMarks("value.line[2].quantity", "value.line[].quantity", 1)).toBe(false);
+  });
+
+  it("marks every line when the refusal names no index", () => {
+    expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 0)).toBe(true);
+    expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 7)).toBe(true);
+    expect(refusalMarks("value.line[].quantity", "value.line[].location_id", 0)).toBe(false);
   });
 });

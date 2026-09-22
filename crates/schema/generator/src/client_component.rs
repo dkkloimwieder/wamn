@@ -700,6 +700,7 @@ fn emit_form(
     })?;
     runtime.extend([
         "newRequestId",
+        "refusalMarks",
         "refusedMember",
         "writeMember",
         "type Outcome",
@@ -891,7 +892,7 @@ fn emit_form(
     let mut repeated_written: Vec<String> = Vec::new();
     for input in &inputs {
         match repeated_ancestor(&input.path) {
-            None => emit_field(source, input, &member_path(&input.path).join("."), 6),
+            None => emit_field(source, input, &member_path(&input.path).join("."), 6, None),
             Some(ancestor) => {
                 let ancestor = ancestor.to_owned();
                 if repeated_written.contains(&ancestor) {
@@ -919,14 +920,21 @@ fn element_type(stem: &str, ancestor: &[String]) -> String {
 }
 
 /// One control, its label, and the refusal that names it.
-fn emit_field(source: &mut String, input: &FieldIr, name: &str, indent: usize) {
+///
+/// The control states the path that the contract declares, and the runtime
+/// decides whether the refused path reaches it. A control inside a repeated
+/// group also states its own index, so a refusal that names one line marks
+/// that line alone.
+fn emit_field(
+    source: &mut String,
+    input: &FieldIr,
+    name: &str,
+    indent: usize,
+    index: Option<&str>,
+) {
     let pad = " ".repeat(indent);
-    let leaf = input
-        .path
-        .rsplit('.')
-        .next()
-        .unwrap_or(&input.path)
-        .trim_end_matches("[]");
+    let declared = input.path.as_str();
+    let element = index.map_or_else(String::new, |index| format!(", {index}"));
     writeln!(source, "{pad}<form.Field name={{`{name}`}}>").expect("write");
     writeln!(source, "{pad}  {{(field) => (").expect("write");
     writeln!(source, "{pad}    <label>").expect("write");
@@ -934,7 +942,7 @@ fn emit_field(source: &mut String, input: &FieldIr, name: &str, indent: usize) {
     emit_input_control(source, input, indent + 6);
     writeln!(
         source,
-        "{pad}      <Show when={{refusal()?.member === {leaf:?}}}>\n{pad}        <em>{{refusal()?.code}}</em>\n{pad}      </Show>"
+        "{pad}      <Show when={{refusalMarks(refusal()?.member ?? null, {declared:?}{element})}}>\n{pad}        <em>{{refusal()?.code}}</em>\n{pad}      </Show>"
     )
     .expect("write");
     writeln!(source, "{pad}    </label>").expect("write");
@@ -972,7 +980,7 @@ fn emit_repeated_group(source: &mut String, inputs: &[&FieldIr], ancestor: &str,
             "{member}[${{index()}}].{}",
             crate::client_ts::to_camel(leaf)
         );
-        emit_field(source, input, &name, 18);
+        emit_field(source, input, &name, 18, Some("index()"));
     }
     source.push_str("                  <button type=\"button\" onClick={() => group().removeValue(index())}>\n                    remove\n                  </button>\n                </fieldset>\n              )}\n            </For>\n");
     writeln!(

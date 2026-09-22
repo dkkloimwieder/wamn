@@ -20,6 +20,7 @@ import {
   hasNextPage,
   newRequestId,
   readMember,
+  refusalMarks,
   refusedMember,
   startRead,
   type JsonValue,
@@ -389,7 +390,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
               value={String(field().state.value ?? "")}
               onInput={(event) => field().handleChange(event.currentTarget.value)}
             />
-            <Show when={refusal()?.member === "supplier_id"}>
+            <Show when={refusalMarks(refusal()?.member ?? null, "change.supplier_id")}>
               <em>{refusal()?.code}</em>
             </Show>
           </label>

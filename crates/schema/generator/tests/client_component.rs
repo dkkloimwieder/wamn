@@ -50,7 +50,7 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     }
     assert_eq!(
         widget.matches("export function ").count(),
-        7,
+        8,
         "every screen the plan gives a role has one component"
     );
     // The columns are the plan's columns, in contract order, with the cell type
@@ -249,8 +249,8 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "a refusal that names a member reaches that member"
     );
     assert!(
-        create.contains("<Show when={refusal()?.member === \"code\"}>"),
-        "the marked member shows the refusal beside its control"
+        create.contains("<Show when={refusalMarks(refusal()?.member ?? null, \"code\")}>"),
+        "the control states the path it declares, and the runtime decides"
     );
 
     // A nested input keeps its shape in the schema and in the field name.
@@ -261,6 +261,43 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "      code: z.string().optional(),\n",
     )));
     assert!(widget.contains("<form.Field name={`change.code`}>"));
+    let update = widget
+        .split("export function WidgetUpdateForm")
+        .nth(1)
+        .expect("the update form exists");
+    assert!(
+        update.contains("<Show when={refusalMarks(refusal()?.member ?? null, \"change.code\")}>"),
+        "a nested control states its whole declared path"
+    );
+}
+
+/// A refusal that names a path inside a repeated group marks the control of the
+/// line it names, and of every line when it names none. The runtime holds that
+/// rule, and the control states its declared path and its own index.
+#[test]
+fn a_repeated_control_states_its_declared_path_and_its_index() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let batch = widget
+        .split("export function WidgetRecordBatchForm")
+        .nth(1)
+        .expect("the record batch form exists");
+
+    assert!(
+        batch.contains("<form.Field name={\"value.line\"} mode=\"array\">"),
+        "the repeated group renders as a list"
+    );
+    assert!(
+        batch.contains(concat!(
+            "<Show when={refusalMarks(refusal()?.member ?? null, ",
+            "\"value.line[].quantity\", index())}>"
+        )),
+        "a control inside the group states its declared path and its index"
+    );
+    assert!(
+        batch.contains("<Show when={refusalMarks(refusal()?.member ?? null, \"value.note\")}>"),
+        "a control outside the group states no index"
+    );
 }
 
 /// A command that sends a revision reads the record first, because a stale

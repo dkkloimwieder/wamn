@@ -80,7 +80,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "{operation} carries its exact canonical identity"
         );
     }
-    assert_eq!(widget.matches("export async function ").count(), 7);
+    assert_eq!(widget.matches("export async function ").count(), 8);
     assert_eq!(
         source(&files, "generated/client-ts/index.ts"),
         concat!(
@@ -206,8 +206,8 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
     );
     assert_eq!(
         widget.matches(": FieldMap = ").count(),
-        14,
-        "seven operations carry one input map and one result map each"
+        16,
+        "eight operations carry one input map and one result map each"
     );
     assert!(
         widget.contains(

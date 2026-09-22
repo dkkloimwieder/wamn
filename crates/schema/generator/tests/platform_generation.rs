@@ -328,6 +328,11 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
         .as_object_mut()
         .unwrap()
         .remove("create");
+    // The claim table is a model here, so no operation can claim it.
+    ownership_only["custom_operations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("widget.record_batch");
     let package = fixture::generate_with(&fixture::catalog(), &ownership_only);
     assert!(package.file("generated/wamn/command_state.rs").is_none());
     assert!(

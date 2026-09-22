@@ -412,32 +412,81 @@ function submittedRequestId(request: WireRequest): string {
 }
 
 /**
- * The declared member that one refusal names, or null.
+ * The declared path that one refusal names, or null.
  *
  * A refusal states its code, and its detail carries what else the operation
- * declared. A case that requires a `field` member names the member directly. A
- * schema refusal names it through a pointer, whose last segment is the member.
- * A form marks that member, and shows the refusal above the fields otherwise.
+ * declared. A case that requires a `field` member names the path directly, in
+ * the contract spelling, such as `value.line[].quantity`. A schema refusal
+ * names it through a pointer, such as `/0/value/line/2/quantity`, which carries
+ * the index of the item it refused. Both forms come back as one declared path,
+ * and `refusalMarks` decides which control that path names.
+ *
+ * The detail of a typed refusal can nest one level, because the error object
+ * carries its own `detail` member beside the code, so the reader descends once.
  */
 export function refusedMember(detail: JsonValue): string | null {
-  if (detail === null || typeof detail !== "object" || Array.isArray(detail)) {
+  const members = object(detail);
+  if (members === null) {
     return null;
   }
-  const members = detail as { [key: string]: JsonValue };
   const field = members["field"];
   if (typeof field === "string" && field !== "") {
     return field;
   }
-  const data = members["data"];
-  const pointer =
-    typeof members["pointer"] === "string"
-      ? members["pointer"]
-      : data !== null && typeof data === "object" && !Array.isArray(data)
-        ? (data as { [key: string]: JsonValue })["pointer"]
-        : null;
-  if (typeof pointer !== "string" || pointer === "") {
-    return null;
+  const pointer = members["pointer"] ?? object(members["data"])?.["pointer"];
+  if (typeof pointer === "string" && pointer !== "") {
+    return declaredPath(pointer);
   }
-  const segment = pointer.split("/").pop();
-  return segment === undefined || segment === "" ? null : segment;
+  const nested = object(members["detail"]);
+  return nested === null ? null : refusedMember(nested);
+}
+
+/** One JSON object, or null for every other value. */
+function object(value: JsonValue | undefined): { [key: string]: JsonValue } | null {
+  return value === undefined || value === null || typeof value !== "object" || Array.isArray(value)
+    ? null
+    : (value as { [key: string]: JsonValue });
+}
+
+/**
+ * The declared path that one JSON pointer names.
+ *
+ * The first segment is the item of the envelope, which one submission always
+ * fills with a single item, so it drops. A segment of digits is the index of
+ * the element before it, and it stays, so the form marks one line.
+ */
+function declaredPath(pointer: string): string | null {
+  const segments = pointer.split("/").filter((segment) => segment !== "");
+  if (segments.length > 0 && /^\d+$/.test(segments[0] ?? "")) {
+    segments.shift();
+  }
+  let path = "";
+  for (const segment of segments) {
+    if (/^\d+$/.test(segment)) {
+      path += `[${segment}]`;
+    } else {
+      path = path === "" ? segment : `${path}.${segment}`;
+    }
+  }
+  return path === "" ? null : path;
+}
+
+/**
+ * Does the path that a refusal names reach this control?
+ *
+ * A control states the path the contract declares, such as
+ * `value.line[].quantity`. A refusal that names an index marks the control of
+ * that element alone. A refusal that names none marks the control of every
+ * element, because the operation refused the group without saying which line.
+ */
+export function refusalMarks(member: string | null, declared: string, index?: number): boolean {
+  if (member === null) {
+    return false;
+  }
+  const refused = member.replace(/\[\d+\]/g, "[]");
+  if (refused !== declared) {
+    return false;
+  }
+  const named = /\[(\d+)\]/.exec(member);
+  return named === null || index === undefined || Number(named[1]) === index;
 }
