@@ -138,9 +138,9 @@ The epic split in two at its scope. The runtime came first, and the component em
 
 ## 7. Later epics
 
-The Epic 4 evaluation proposes the order below. The owner review confirms it.
+The Epic 4 evaluation proposed the order below, and the owner review of 2026-09-22 confirmed it.
 
-1. **The defects the demo found.** `wamn-uuo6`: an `int64` is a string and the wire wants a number. `wamn-v8ku`: a refusal marks no field. `wamn-m9qt`: initial values cannot reach a nested member. `wamn-wrlp`: a detail demands a request identity it discards. The first one blocks a whole operation.
+1. **The defects the demo found.** Epic 5, Beads `wamn-iq82`. `wamn-uuo6`: an `int64` is a string and the wire wants a number. `wamn-v8ku`: a refusal marks no field. `wamn-m9qt`: initial values cannot reach a nested member. `wamn-wrlp`: a detail demands a request identity it discards. `wamn-br5r`: a revision reads as 0. The first one blocks a whole operation. The integer ruling of 2026-09-22 governs the fix. An application integer is `int32` by default, and an `int64` is opt-in with a reason. A Postgres internal never enters an application contract. A real `int64` stays a string on the wire and opaque in the browser.
 2. **Authored labels and descriptions** in the manifest, contract, and IR. Every screen today reads `purchase order line id`, derived from a field path.
 3. **Screen population:** selectors fed by a list, table row to form. Multiple outer items per submit. The demo made the operator paste identifiers by hand, which is the largest ergonomic cost measured.
 4. **Cookie session and CSRF** in the identity service.
