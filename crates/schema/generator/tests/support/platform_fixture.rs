@@ -396,7 +396,15 @@ pub(crate) fn manifest() -> Value {
                 "connection": "postgres",
                 "input": {"fields": [
                     {"path": "request_id", "type": "text", "nullable": false},
-                    {"path": "selector", "type": "json", "nullable": false}
+                    {"path": "selector", "type": "json", "nullable": false},
+                    // The input a narrowed selector fills: list the widgets of
+                    // one maker. The plan matches it by the model it names.
+                    {
+                        "path": "maker_id",
+                        "type": "uuid",
+                        "nullable": true,
+                        "references": {"model": "widget_maker"}
+                    }
                 ]},
                 "result": {"class": "bounded_list", "fields": [
                     {"path": "id", "type": "uuid", "nullable": false},
@@ -520,7 +528,7 @@ pub(crate) fn manifest() -> Value {
                             "nullable": false,
                             "label": "Line",
                             "references": {
-                                "model": "widget_maker",
+                                "model": "widget",
                                 "narrowed_by": "value.maker_id"
                             }
                         },

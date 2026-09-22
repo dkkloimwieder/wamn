@@ -750,8 +750,8 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
     let line = leaf(&batch.input_fields, "value.line[].purchase_order_line_id")
         .references
         .as_ref()
-        .expect("a line names a maker");
-    assert_eq!(line.model, "widget_maker");
+        .expect("a line names a widget");
+    assert_eq!(line.model, "widget");
     assert_eq!(
         line.narrowed_by.as_deref(),
         Some("value.maker_id"),

@@ -610,3 +610,66 @@ fn the_plan_hands_the_authored_text_to_an_emitter() {
     );
     assert_eq!(screen(&plan, "get").contract.label, None);
 }
+
+/// EXIT GATE for `wamn-rm14.2`: the plan states which list offers each input
+/// that names a record, and it states nothing where no list can.
+///
+/// An emitter reads this and calls one binding. It never matches a name, and
+/// it never reads the manifest.
+#[test]
+fn the_plan_states_the_list_that_offers_each_referenced_input() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    let populated = |name: &str, path: &str| {
+        screen(&plan, name)
+            .population
+            .iter()
+            .find(|input| input.input == path)
+            .unwrap_or_else(|| panic!("{name} populates {path}"))
+    };
+
+    // An authored reference, served by the second model's list. Its display
+    // field is absent, so the plan takes the first text column.
+    let maker = populated("record_batch", "value.maker_id");
+    assert_eq!(
+        maker.list_operation,
+        "platform-fixture:widget-maker/list@1.0.0"
+    );
+    assert_eq!(maker.key_field, "id");
+    assert_eq!(maker.display_field, "name", "the default is the first text");
+    assert_eq!(maker.narrowed_by, None);
+
+    // A nested reference inside a repeated group, narrowed by a sibling.
+    let line = populated("record_batch", "value.line[].purchase_order_line_id");
+    assert_eq!(line.list_operation, "platform-fixture:widget/list@1.0.0");
+    assert_eq!(
+        line.display_field, "code",
+        "an authored display field wins over the default"
+    );
+    let narrowing = line.narrowed_by.expect("the line list is narrowed");
+    assert_eq!(narrowing.input, "value.maker_id");
+    assert_eq!(
+        narrowing.list_input, "maker_id",
+        "the list input is matched by the model it names, never by its name"
+    );
+
+    // A derived reference on a generated action.
+    let update = populated("update", "change.maker_id");
+    assert_eq!(
+        update.list_operation,
+        "platform-fixture:widget-maker/list@1.0.0"
+    );
+
+    // An input that names no record states nothing.
+    assert!(
+        screen(&plan, "update")
+            .population
+            .iter()
+            .all(|input| input.input != "change.code"),
+        "a plain control is absent from the population"
+    );
+    assert!(
+        screen(&plan, "get").population.is_empty(),
+        "a record read fills nothing from a list"
+    );
+}

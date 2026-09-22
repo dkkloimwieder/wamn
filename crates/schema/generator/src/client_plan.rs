@@ -15,6 +15,9 @@ use crate::client_ir::{
     revision_inputs,
 };
 
+/// The contract type a display field falls back to when nobody states one.
+const DISPLAY_TYPE: &str = "text";
+
 /// Contract input paths that carry a platform value instead of operator input.
 const SUPPLIED_PATHS: [(&str, SuppliedKind); 5] = [
     ("request_id", SuppliedKind::RequestId),
@@ -203,6 +206,33 @@ pub struct RevisionBinding<'a> {
     pub command_revision_input: &'a str,
 }
 
+/// One input the operator chooses from a list instead of typing.
+///
+/// The reference is a contract fact, and choosing WHICH list serves it is a
+/// rule about two operations, so it is resolved here beside the row links.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PopulatedInput<'a> {
+    /// Input path this selector fills.
+    pub input: &'a str,
+    /// Canonical identity of the list operation the selector reads.
+    pub list_operation: &'a str,
+    /// Result field of that list which carries the value to send.
+    pub key_field: &'a str,
+    /// Result field of that list which carries the text a person reads.
+    pub display_field: &'a str,
+    /// How one selector narrows another, when the reference states it.
+    pub narrowed_by: Option<Narrowing<'a>>,
+}
+
+/// One selector narrowing another: this screen's value fills that list input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Narrowing<'a> {
+    /// Input path of THIS screen whose value narrows the list.
+    pub input: &'a str,
+    /// Input path of the LIST operation that takes it.
+    pub list_input: &'a str,
+}
+
 /// One callable operation's screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenPlan<'a> {
@@ -244,6 +274,8 @@ pub struct ScreenPlan<'a> {
     pub record: Option<RecordLink<'a>>,
     /// The read operation that supplies the revision this screen sends.
     pub revision: Option<RevisionBinding<'a>>,
+    /// Inputs the operator chooses from a list, in contract order.
+    pub population: Vec<PopulatedInput<'a>>,
 }
 
 /// One model's screens.
@@ -278,6 +310,7 @@ impl<'a> ClientPlan<'a> {
             models,
         };
         plan.link_rows();
+        plan.populate_inputs();
         plan
     }
 
@@ -292,6 +325,27 @@ impl<'a> ClientPlan<'a> {
         for model in &mut self.models {
             for screen in &mut model.screens {
                 screen.row_links = links.next().expect("one link list for each screen");
+            }
+        }
+    }
+
+    /// Bind each input that names a record to the list that offers it.
+    ///
+    /// This runs after every screen exists, for the reason `link_rows` does:
+    /// the list that serves an input belongs to another operation, and one
+    /// screen's IR never states another's.
+    fn populate_inputs(&mut self) {
+        let lists: Vec<Lister<'a>> = self.screens().filter_map(Lister::of).collect();
+        let populated: Vec<_> = self
+            .screens()
+            .map(|screen| populated_inputs(screen, &lists))
+            .collect();
+        let mut populated = populated.into_iter();
+        for model in &mut self.models {
+            for screen in &mut model.screens {
+                screen.population = populated
+                    .next()
+                    .expect("one population list for each screen");
             }
         }
     }
@@ -428,6 +482,7 @@ impl<'a> ScreenPlan<'a> {
             revision_inputs,
             record,
             revision,
+            population: Vec::new(),
         }
     }
 
@@ -489,6 +544,114 @@ fn row_links<'a>(from: &Target<'a>, targets: &[Target<'a>]) -> Vec<RowLink<'a>> 
             Some(RowLink {
                 operation: to.operation,
                 reason,
+            })
+        })
+        .collect()
+}
+
+/// One served list, as an input that names a record sees it.
+struct Lister<'a> {
+    operation: &'a str,
+    model: &'a str,
+    key_field: &'a str,
+    display_field: Option<&'a str>,
+    /// Input paths of the list, each with the model it names.
+    references: Vec<(&'a str, &'a str)>,
+    /// Result leaves, which the default display field reads.
+    columns: Vec<&'a FieldIr>,
+}
+
+impl<'a> Lister<'a> {
+    /// The list a selector can call, or nothing.
+    ///
+    /// A selector reads rows over HTTP, so an unserved read offers none. A
+    /// generated `query` states its model through the record it declares, and
+    /// an authored read states it in `lists`.
+    fn of(screen: &ScreenPlan<'a>) -> Option<Self> {
+        if screen.role != Role::Table || screen.contract.route.is_none() {
+            return None;
+        }
+        let (model, key_field, display_field) = match (&screen.contract.lists, screen.record) {
+            (Some(lists), _) => (
+                lists.model.as_str(),
+                lists.key_field.as_str(),
+                lists.display_field.as_deref(),
+            ),
+            (None, Some(record)) => (screen.model, record.key_field, None),
+            (None, None) => return None,
+        };
+        Some(Self {
+            operation: screen.contract.operation.as_str(),
+            model,
+            key_field,
+            display_field,
+            references: leaf_fields(&screen.contract.input_fields)
+                .into_iter()
+                .filter_map(|field| {
+                    field
+                        .references
+                        .as_ref()
+                        .map(|reference| (field.path.as_str(), reference.model.as_str()))
+                })
+                .collect(),
+            columns: screen.columns.clone(),
+        })
+    }
+
+    /// The result field a person reads, authored or defaulted.
+    ///
+    /// The default is the first text field in contract order. A list whose
+    /// rows carry no text falls back to the key, so a selector always shows
+    /// something an operator can tell apart.
+    fn display(&self) -> &'a str {
+        self.display_field.unwrap_or_else(|| {
+            self.columns
+                .iter()
+                .find(|field| field.type_name == DISPLAY_TYPE)
+                .map_or(self.key_field, |field| field.path.as_str())
+        })
+    }
+}
+
+/// Bind one screen's inputs to the lists that offer their records.
+fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<PopulatedInput<'a>> {
+    screen
+        .inputs
+        .iter()
+        .filter_map(|input| {
+            let reference = input.references.as_ref()?;
+            // An input whose model has no served list stays a plain control.
+            // That is a fact about the release, not a failure.
+            let list = lists.iter().find(|list| {
+                list.model == reference.model && list.operation != screen.contract.operation
+            })?;
+            let narrowed_by = reference.narrowed_by.as_deref().and_then(|path| {
+                let sibling = screen
+                    .inputs
+                    .iter()
+                    .find(|field| field.path == path)?
+                    .references
+                    .as_ref()?;
+                let list_input = list
+                    .references
+                    .iter()
+                    .find(|(_, model)| *model == sibling.model)
+                    .map(|(path, _)| *path)?;
+                Some(Narrowing {
+                    input: screen
+                        .inputs
+                        .iter()
+                        .find(|field| field.path == path)
+                        .map(|field| field.path.as_str())?,
+                    list_input,
+                })
+            });
+            Some(PopulatedInput {
+                input: input.path.as_str(),
+                list_operation: list.operation,
+                key_field: list.key_field,
+                display_field: list.display(),
+                narrowed_by,
             })
         })
         .collect()
