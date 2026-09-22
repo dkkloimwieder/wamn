@@ -11,7 +11,7 @@ use super::{
     CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT, CREATE_STATEMENT, CREATE_STATEMENTS,
     CURSOR_VERSION, CatalogIr, ColumnType, ConstraintKind, ContractFieldDeclaration, CrudAction,
     CustomOperationDeclaration, CustomOperationKind, CustomOperationResultDeclaration, DeleteMode,
-    GenerateError, GenerateErrorKind, ModelDeclaration, OperationDeclaration,
+    FieldText, GenerateError, GenerateErrorKind, ModelDeclaration, OperationDeclaration,
     OperationErrorDetailDeclaration, PackageManifest, Projection, ProjectionContents,
     RequiredConstraint, RequiredField, RequiredSchemaContract, RequiredTable, ResultClass,
     StatementContract, StatementTransactionality, StatementValueContract, Table, Value, WamnApi,
@@ -264,6 +264,11 @@ fn emit_custom_operation_contracts(
     if operation.fresh_only {
         operation_contract.insert("fresh_only".to_owned(), json!(true));
     }
+    insert_operation_text(
+        &mut operation_contract,
+        operation.label.as_deref(),
+        operation.description.as_deref(),
+    );
     if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
         let mut dependency_contract = serde_json::Map::from_iter([
             ("alias".to_owned(), json!(alias)),
@@ -791,6 +796,11 @@ fn emit_operation_contracts(
     if operation.fresh_only {
         operation_contract.insert("fresh_only".to_owned(), json!(true));
     }
+    insert_operation_text(
+        &mut operation_contract,
+        operation.label.as_deref(),
+        operation.description.as_deref(),
+    );
     if let Some(claim) = claim.filter(|_| action == CrudAction::Create) {
         operation_contract.insert("idempotent_by".to_owned(), json!("claim"));
         operation_contract.insert("idempotency".to_owned(), idempotency_contract(claim));
@@ -829,6 +839,44 @@ fn emit_operation_contracts(
 ///
 /// Model fields use their declared domains. A successful delete exposes only
 /// the SQL-owned deleted outcome; other outcomes become typed refusals.
+/// Write an operation's authored text into its contract, when it states any.
+///
+/// Absent members write nothing, so a package that authors none keeps the
+/// contract bytes it has today.
+fn insert_operation_text(
+    contract: &mut serde_json::Map<String, Value>,
+    label: Option<&str>,
+    description: Option<&str>,
+) {
+    if let Some(label) = label {
+        contract.insert("label".to_owned(), json!(label));
+    }
+    if let Some(description) = description {
+        contract.insert("description".to_owned(), json!(description));
+    }
+}
+
+/// The authored text of one model column, or nothing.
+///
+/// A generated action declares no field of its own, so the model is the only
+/// carrier its inputs and results can read.
+fn model_text(model: &ModelDeclaration, column: &str) -> FieldText {
+    model.field_text.get(column).cloned().unwrap_or_default()
+}
+
+/// The two text members of a model column, as contract JSON members.
+fn model_text_members(model: &ModelDeclaration, column: &str) -> Vec<(String, Value)> {
+    let text = model_text(model, column);
+    text.label
+        .map(|label| ("label".to_owned(), json!(label)))
+        .into_iter()
+        .chain(
+            text.description
+                .map(|description| ("description".to_owned(), json!(description))),
+        )
+        .collect()
+}
+
 fn crud_result_contract(
     model: &ModelDeclaration,
     action: CrudAction,
@@ -855,10 +903,10 @@ fn crud_result_contract(
                         .cloned()
                         .unwrap_or_default()
                 },
-                // The model's authored text reaches a result field in
-                // `wamn-c2y5.2`, which owns the contract carriers.
-                label: None,
-                description: None,
+                // A generated action declares no result field, so the column's
+                // own text is the only text this result can carry.
+                label: model_text(model, &column.name).label,
+                description: model_text(model, &column.name).description,
             })
             .collect(),
     }
@@ -875,13 +923,18 @@ fn input_contract(
         .iter()
         .map(|field| {
             let column = column(table, field).expect("validation resolved writable fields");
-            json!({
+            let mut declared = json!({
                 "field": field,
                 "path": if action == CrudAction::Update { format!("change.{field}") } else { field.clone() },
                 "type": column.column_type().as_str(),
                 "omitted": if action == CrudAction::Update { "unchanged" } else { "postgres_default" },
                 "explicit_null": if column.nullable() { "accepted" } else { "invalid_input" },
-            })
+            });
+            // A control the operator fills reads the column's own text, at the
+            // path the input states, which is `change.<field>` on an update.
+            let members = declared.as_object_mut().expect("a writable field object");
+            members.extend(model_text_members(model, field));
+            declared
         })
         .collect::<Vec<_>>();
     let common = json!({
@@ -892,18 +945,30 @@ fn input_contract(
         },
         "writable_fields": writable,
     });
+    // The key input and a filter both name a model column, so both read that
+    // column's text. The revision input names one too, and it is deliberately
+    // left silent: no screen renders it, because the plan reserves it.
+    let mut key = json!({"type": "uuid", "required": true});
+    key.as_object_mut()
+        .expect("the key input object")
+        .extend(model_text_members(model, "id"));
     match action {
-        CrudAction::Get => merge_json(common, &json!({"id": {"type": "uuid", "required": true}})),
+        CrudAction::Get => merge_json(common, &json!({"id": key})),
         CrudAction::Query => merge_json(
             common,
             &json!({
                 "filters": operation.filters.iter().map(|filter| {
                     let column = column(table, &filter.field).expect("validated filter column");
-                    json!({
+                    let mut declared = json!({
                         "field": filter.field,
                         "binding": "json_array",
                         "type": column.column_type().as_str(),
-                    })
+                    });
+                    declared
+                        .as_object_mut()
+                        .expect("a filter object")
+                        .extend(model_text_members(model, &filter.field));
+                    declared
                 }).collect::<Vec<_>>(),
                 "sort": operation.sort.as_ref().map(|sort| json!({
                     "fields": sort.fields,
@@ -949,9 +1014,7 @@ fn input_contract(
                 .revision_field
                 .as_deref()
                 .expect("mutation validation requires a revision field");
-            let mut mutation = json!({
-                "id": {"type": "uuid", "required": true},
-            });
+            let mut mutation = json!({ "id": key });
             mutation
                 .as_object_mut()
                 .expect("mutation input contract is an object")

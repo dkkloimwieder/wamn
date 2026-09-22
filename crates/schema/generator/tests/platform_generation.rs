@@ -931,3 +931,129 @@ fn authored_text_is_optional_and_its_key_is_closed() {
         assert!(names_the_member(&error, "labels"), "{error}");
     }
 }
+
+/// Every JSON object under `value`, including `value` itself.
+fn objects(value: &Value) -> Vec<&serde_json::Map<String, Value>> {
+    match value {
+        Value::Object(members) => std::iter::once(members)
+            .chain(members.values().flat_map(objects))
+            .collect(),
+        Value::Array(items) => items.iter().flat_map(objects).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// EXIT GATE for `wamn-c2y5.2`: the contract carries the authored text to the
+/// only reader that matters, and it carries nothing when nobody authored any.
+///
+/// The silence half is the load-bearing one. A member written as `null` or as
+/// an empty string would move the contract bytes of three applications that
+/// author nothing, and with them every hash those bytes feed.
+#[test]
+fn a_contract_carries_the_authored_text_and_nothing_else() {
+    let package = fixture::generate_fixture();
+
+    // A generated action declares no field, so its result reads the column.
+    let result = artifact(&package, "generated/contracts/widget/get.result.json");
+    let code = result["fields"]
+        .as_array()
+        .expect("result fields")
+        .iter()
+        .find(|field| field["path"] == "code")
+        .expect("the code column");
+    assert_eq!(code["label"], "Widget code");
+    assert!(code["description"].is_string());
+    let identity = result["fields"]
+        .as_array()
+        .expect("result fields")
+        .iter()
+        .find(|field| field["path"] == "id")
+        .expect("the id column");
+    assert_eq!(
+        identity.get("label"),
+        None,
+        "a column with no authored text carries none"
+    );
+
+    // An update states the same column at the path its input uses.
+    let update = artifact(&package, "generated/contracts/widget/update.input.json");
+    let writable = update["writable_fields"]
+        .as_array()
+        .expect("writable fields")
+        .iter()
+        .find(|field| field["path"] == "change.code")
+        .expect("the code control");
+    assert_eq!(writable["label"], "Widget code");
+
+    // A filter names a column, so it reads that column's text.
+    let query = artifact(&package, "generated/contracts/widget/query.input.json");
+    assert_eq!(query["filters"][0]["field"], "code");
+    assert_eq!(query["filters"][0]["label"], "Widget code");
+    let query_operation = artifact(&package, "generated/contracts/widget/query.operation.json");
+    assert_eq!(query_operation["label"], "Find widgets");
+
+    // An authored operation states its own text, on itself and on its fields.
+    let batch = artifact(
+        &package,
+        "generated/contracts/widget/record_batch.operation.json",
+    );
+    assert_eq!(batch["label"], "Record a batch");
+    assert!(batch["description"].is_string());
+    let input = artifact(
+        &package,
+        "generated/contracts/widget/record_batch.input.json",
+    );
+    let quantity = input["fields"]
+        .as_array()
+        .expect("input fields")
+        .iter()
+        .find(|field| field["path"] == "value.line[].quantity")
+        .expect("the line quantity");
+    assert_eq!(quantity["label"], "Quantity received");
+
+    // Nobody authored any: no contract file carries either member anywhere.
+    let mut silent = fixture::manifest();
+    silent["models"]["widget"]
+        .as_object_mut()
+        .expect("the widget model")
+        .remove("field_text");
+    silent["models"]["widget"]["operations"]["query"]
+        .as_object_mut()
+        .expect("the query operation")
+        .remove("label");
+    for key in ["label", "description"] {
+        silent["custom_operations"]["widget.record_batch"]
+            .as_object_mut()
+            .expect("the batch command")
+            .remove(key);
+        for pointer in [
+            "/custom_operations/widget.record_batch/input/fields",
+            "/custom_operations/widget.list/result/fields",
+        ] {
+            for field in silent
+                .pointer_mut(pointer)
+                .expect("declared fields")
+                .as_array_mut()
+                .expect("declared fields")
+            {
+                field.as_object_mut().expect("a field object").remove(key);
+            }
+        }
+    }
+    let quiet = fixture::generate_with(&fixture::catalog(), &silent);
+    for file in quiet.files() {
+        let path = file.path();
+        if !path.starts_with("generated/contracts/") {
+            continue;
+        }
+        let contract: Value = serde_json::from_slice(file.bytes()).expect("generated JSON");
+        for members in objects(&contract) {
+            for key in ["label", "description"] {
+                assert!(
+                    !members.contains_key(key),
+                    "{path} carries {key} although nothing was authored"
+                );
+            }
+        }
+    }
+}
