@@ -687,6 +687,61 @@ fn write_input_schema(source: &mut String, inputs: &[&FieldIr], prefix: &[String
     }
 }
 
+/// The values one form can start with, as a type of its own.
+///
+/// The members are the operator inputs alone, and every level is optional, so a
+/// caller can prefill one member of a nested value. A repeated group is not a
+/// member: the form owns the list that the operator adds to.
+fn write_initial_members(
+    source: &mut String,
+    inputs: &[&FieldIr],
+    prefix: &[String],
+    depth: usize,
+) {
+    let indent = "  ".repeat(depth);
+    let mut written: Vec<String> = Vec::new();
+    for input in inputs {
+        let path = member_path(&input.path);
+        if path.len() <= prefix.len() || !path.starts_with(prefix) {
+            continue;
+        }
+        let name = path[prefix.len()].clone();
+        if written.contains(&name) {
+            continue;
+        }
+        let mut deeper = prefix.to_vec();
+        deeper.push(name.clone());
+        let repeated = inputs.iter().any(|input| {
+            repeated_ancestor(&input.path).is_some_and(|ancestor| member_path(ancestor) == deeper)
+        });
+        if repeated {
+            continue;
+        }
+        written.push(name.clone());
+        if path.len() == prefix.len() + 1 {
+            // A declared domain types as its union, as the bindings do.
+            let spelling = if input.values.is_empty() {
+                crate::client_ts::ts_type(&input.type_name)
+                    .unwrap_or("string")
+                    .to_owned()
+            } else {
+                input
+                    .values
+                    .iter()
+                    .map(|value| format!("{value:?}"))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            };
+            let nullable = if input.nullable { " | null" } else { "" };
+            writeln!(source, "{indent}{name}?: {spelling}{nullable};").expect("write");
+            continue;
+        }
+        writeln!(source, "{indent}{name}?: {{").expect("write");
+        write_initial_members(source, inputs, &deeper, depth + 1);
+        writeln!(source, "{indent}}};").expect("write");
+    }
+}
+
 /// One form screen: what the operator types, and what the platform supplies.
 fn emit_form(
     source: &mut String,
@@ -735,7 +790,29 @@ fn emit_form(
     write_input_schema(source, &operator_inputs(screen), &[], 1);
     source.push_str("});\n");
 
-    // The props.
+    // What a caller can prefill, and then the props.
+    writeln!(
+        source,
+        "\n/** What the form for `{}` can start with. */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(source, "export interface {stem}FormInitial {{").expect("write");
+    // The initial values name the wire aliases their leaves carry.
+    for input in operator_inputs(screen)
+        .iter()
+        .filter(|input| repeated_ancestor(&input.path).is_none())
+    {
+        match crate::client_ts::ts_type(&input.type_name).unwrap_or("string") {
+            "Int64" => runtime.insert("type Int64"),
+            "Numeric" => runtime.insert("type Numeric"),
+            "Timestamptz" => runtime.insert("type Timestamptz"),
+            "Uuid" => runtime.insert("type Uuid"),
+            _ => false,
+        };
+    }
+    write_initial_members(source, &operator_inputs(screen), &[], 1);
+    source.push_str("}\n");
     writeln!(
         source,
         "\n/** What the form for `{}` takes. */",
@@ -746,7 +823,7 @@ fn emit_form(
     source.push_str("  /** The transport the application supplies. */\n");
     source.push_str("  readonly transport: Transport;\n");
     source.push_str("  /** Values the form starts with. */\n");
-    writeln!(source, "  readonly initial?: Partial<{stem}Request>;").expect("write");
+    writeln!(source, "  readonly initial?: {stem}FormInitial;").expect("write");
     if let Some(binding) = screen.revision {
         let read = crate::client_ts::operation_stem(binding.read_operation);
         writeln!(
@@ -794,6 +871,8 @@ fn emit_form(
         "  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(\n    null,\n  );\n",
     );
     source.push_str("\n  const form = createForm(() => ({\n");
+    // The form holds the whole request, including the repeated group it owns.
+    // The caller states the operator inputs alone, which `initial` names.
     writeln!(
         source,
         "    defaultValues: {{ ...props.initial }} as Partial<{stem}Request>,"

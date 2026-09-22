@@ -28,6 +28,7 @@ import {
   type Outcome,
   type PageState,
   type Transport,
+  type Uuid,
   writeMember,
 } from "@wamn/web-runtime";
 import {
@@ -372,12 +373,20 @@ const RECORD_RECEIPT_INPUT = z.object({
     .optional(),
 });
 
+/** What the form for `wamn-receiving:receiving/record-receipt@1.0.0` can start with. */
+export interface ReceivingRecordReceiptFormInitial {
+  value?: {
+    purchaseOrderId?: Uuid;
+    receiptReference?: string;
+  };
+}
+
 /** What the form for `wamn-receiving:receiving/record-receipt@1.0.0` takes. */
 export interface ReceivingRecordReceiptFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Values the form starts with. */
-  readonly initial?: Partial<ReceivingRecordReceiptRequest>;
+  readonly initial?: ReceivingRecordReceiptFormInitial;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<ReceivingRecordReceiptResult>) => void;
 }

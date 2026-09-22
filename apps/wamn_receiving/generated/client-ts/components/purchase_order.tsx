@@ -27,6 +27,7 @@ import {
   type Outcome,
   type PageState,
   type Transport,
+  type Uuid,
   writeMember,
 } from "@wamn/web-runtime";
 import {
@@ -312,12 +313,19 @@ const UPDATE_INPUT = z.object({
     .optional(),
 });
 
+/** What the form for `wamn-receiving:purchase-order/update@1.0.0` can start with. */
+export interface PurchaseOrderUpdateFormInitial {
+  change?: {
+    supplierId?: Uuid;
+  };
+}
+
 /** What the form for `wamn-receiving:purchase-order/update@1.0.0` takes. */
 export interface PurchaseOrderUpdateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Values the form starts with. */
-  readonly initial?: Partial<PurchaseOrderUpdateRequest>;
+  readonly initial?: PurchaseOrderUpdateFormInitial;
   /** The record this command changes. The form reads it, and sends the
    * revision it read, because `wamn-receiving:purchase-order/get@1.0.0` states that binding. */
   readonly key: PurchaseOrderGetRequest;

@@ -498,3 +498,43 @@ fn a_component_states_no_deployment_fact_and_no_supplied_input() {
         "the request identity comes from the runtime"
     );
 }
+
+/// A caller prefills one member of a nested value, so the initial values state
+/// every level as optional. A supplied field and a repeated group are not part
+/// of that type: the platform writes the first, and the form owns the second.
+#[test]
+fn initial_values_reach_a_nested_member_and_name_no_group() {
+    let files = emit(&release());
+    let widget = widget(&files);
+
+    assert!(
+        widget.contains(concat!(
+            "export interface WidgetUpdateFormInitial {\n",
+            "  change?: {\n",
+            "    code?: string;\n",
+            "    note?: string | null;\n",
+            "  };\n",
+            "}\n",
+        )),
+        "a nested member is optional at every level, and it takes the type the \
+         served input states"
+    );
+    assert!(
+        widget.contains(concat!(
+            "export interface WidgetRecordBatchFormInitial {\n",
+            "  value?: {\n",
+            "    note?: string | null;\n",
+            "  };\n",
+            "}\n",
+        )),
+        "the repeated group is not a member, and neither is a supplied field"
+    );
+    assert!(
+        widget.contains("  readonly initial?: WidgetRecordBatchFormInitial;"),
+        "the prop states that type"
+    );
+    assert!(
+        !widget.contains("readonly initial?: Partial<"),
+        "no form states a shallow partial of its request"
+    );
+}
