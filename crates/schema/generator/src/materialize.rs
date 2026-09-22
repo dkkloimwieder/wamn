@@ -11,7 +11,9 @@ use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::StatementTransactionality;
+use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
+use crate::client_plan::ClientPlan;
 use crate::client_rust::emit_rust_client;
 use crate::client_ts::{emit_ts_client, emit_ts_package_json};
 use crate::client_tui::{component_contract, emit_tui, read_operator, read_tui_workspace};
@@ -352,6 +354,9 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
     // a browser application imports. Generation never infers one.
     if let Some(distribution) = &manifest.npm_distribution {
         files.extend(emit_ts_client(&ir).context("emit the TypeScript client bindings")?);
+        files.extend(
+            emit_ts_components(&ClientPlan::from_ir(&ir)).context("emit the browser components")?,
+        );
         files.push(emit_ts_package_json(
             &distribution.name,
             &manifest.package.version,

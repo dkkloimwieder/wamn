@@ -424,6 +424,7 @@ fn emit_operation(
         &operation.input_fields,
         used,
         sort,
+        Carrier::Request,
     )?;
     writeln!(
         source,
@@ -668,11 +669,25 @@ fn write_result(
         Some("page") => true,
         _ => {
             writeln!(source, "\n/** Result of `{operation}`. */").expect("write");
-            return write_interface(source, &format!("{type_stem}Result"), fields, used, None);
+            return write_interface(
+                source,
+                &format!("{type_stem}Result"),
+                fields,
+                used,
+                None,
+                Carrier::Result,
+            );
         }
     };
     writeln!(source, "\n/** One row of `{operation}`. */").expect("write");
-    write_interface(source, &format!("{type_stem}Row"), fields, used, None)?;
+    write_interface(
+        source,
+        &format!("{type_stem}Row"),
+        fields,
+        used,
+        None,
+        Carrier::Result,
+    )?;
     writeln!(source, "\n/** Result of `{operation}`. */").expect("write");
     writeln!(source, "export interface {type_stem}Result {{").expect("write");
     if paged {
@@ -724,12 +739,35 @@ fn scalar_spelling(
     }
 }
 
+/// Whether one interface describes what a caller sends or what a release
+/// returned.
+///
+/// A result is a fact that came back, so its members are read only. A request
+/// is a value the caller builds, and a form library writes into it one member
+/// at a time, so its members stay writable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Carrier {
+    Request,
+    Result,
+}
+
+impl Carrier {
+    /// The prefix of one member declaration.
+    const fn prefix(self) -> &'static str {
+        match self {
+            Self::Request => "",
+            Self::Result => "readonly ",
+        }
+    }
+}
+
 fn write_interface(
     source: &mut String,
     name: &str,
     fields: &[FieldIr],
     used: &mut BTreeSet<&'static str>,
     sort: Option<&SortIr>,
+    carrier: Carrier,
 ) -> Result<(), ClientTsError> {
     writeln!(source, "export interface {name} {{").expect("write");
     let mut nested = Vec::new();
@@ -764,7 +802,10 @@ fn write_interface(
                     nested.push((child_name.clone(), field.children.as_slice()));
                     child_name
                 };
-                format!("readonly {item}[]")
+                match carrier {
+                    Carrier::Request => format!("{item}[]"),
+                    Carrier::Result => format!("readonly {item}[]"),
+                }
             }
             other => scalar_spelling(other, domain(field, sort), used),
         };
@@ -780,7 +821,8 @@ fn write_interface(
         .expect("write");
         writeln!(
             source,
-            "  readonly {member}{}: {spelling};",
+            "  {}{member}{}: {spelling};",
+            carrier.prefix(),
             if field.required { "" } else { "?" }
         )
         .expect("write");
@@ -788,7 +830,7 @@ fn write_interface(
     writeln!(source, "}}").expect("write");
     for (child_name, children) in nested {
         source.push('\n');
-        write_interface(source, &child_name, children, used, sort)?;
+        write_interface(source, &child_name, children, used, sort, carrier)?;
     }
     Ok(())
 }
@@ -813,16 +855,18 @@ pub fn type_stem(model: &str, operation: &str) -> String {
 /// The type stem of one operation, from its canonical identity.
 ///
 /// A row link states the operation it opens by identity, and a component names
-/// that operation's types.
+/// that operation's types. An identity spells a name with hyphens where the
+/// contract spells it with underscores, so the hyphens turn back first.
 #[must_use]
 pub fn operation_stem(identity: &str) -> String {
     let after_package = identity.split_once(':').map_or(identity, |(_, rest)| rest);
     let without_version = after_package
         .split_once('@')
         .map_or(after_package, |(name, _)| name);
+    let contract_name = |name: &str| name.replace('-', "_");
     match without_version.split_once('/') {
-        Some((model, operation)) => type_stem(model, operation),
-        None => pascal_case(without_version),
+        Some((model, operation)) => type_stem(&contract_name(model), &contract_name(operation)),
+        None => pascal_case(&contract_name(without_version)),
     }
 }
 
@@ -960,6 +1004,25 @@ mod tests {
             refusal.to_string().starts_with("unknown_type: "),
             "{refusal}"
         );
+    }
+
+    /// An identity spells `purchase_order` as `purchase-order`, and the types
+    /// keep the contract's own spelling.
+    #[test]
+    fn an_operation_stem_reads_the_contract_name_out_of_an_identity() {
+        for (identity, stem) in [
+            ("platform-fixture:widget/get@1.0.0", "WidgetGet"),
+            (
+                "wamn-receiving:purchase-order/get@1.0.0",
+                "PurchaseOrderGet",
+            ),
+            (
+                "wamn-receiving:receipt/record-receipt@1.0.0",
+                "ReceiptRecordReceipt",
+            ),
+        ] {
+            assert_eq!(operation_stem(identity), stem, "{identity}");
+        }
     }
 
     #[test]

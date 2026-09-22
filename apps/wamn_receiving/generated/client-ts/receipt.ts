@@ -8,9 +8,9 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 /** Input for `wamn-receiving:receipt/get@1.0.0`. */
 export interface ReceiptGetRequest {
   /** `uuid` */
-  readonly id: Uuid;
+  id: Uuid;
   /** `string` */
-  readonly requestId: string;
+  requestId: string;
 }
 
 /** What `wamn-receiving:receipt/get@1.0.0` calls its input members. */
@@ -94,11 +94,11 @@ export async function get(
 /** Input for `wamn-receiving:receipt/query@1.0.0`. */
 export interface ReceiptQueryRequest {
   /** `text`, omittable */
-  readonly cursor?: string;
+  cursor?: string;
   /** `int64`, omittable */
-  readonly limit?: Int64;
+  limit?: Int64;
   /** `string` */
-  readonly requestId: string;
+  requestId: string;
 }
 
 /** What `wamn-receiving:receipt/query@1.0.0` calls its input members. */

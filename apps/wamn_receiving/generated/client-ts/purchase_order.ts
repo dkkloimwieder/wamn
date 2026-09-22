@@ -8,9 +8,9 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 /** Input for `wamn-receiving:purchase-order/get@1.0.0`. */
 export interface PurchaseOrderGetRequest {
   /** `uuid` */
-  readonly id: Uuid;
+  id: Uuid;
   /** `string` */
-  readonly requestId: string;
+  requestId: string;
 }
 
 /** What `wamn-receiving:purchase-order/get@1.0.0` calls its input members. */
@@ -100,29 +100,29 @@ export async function get(
 /** Input for `wamn-receiving:purchase-order/query@1.0.0`. */
 export interface PurchaseOrderQueryRequest {
   /** `text`, omittable */
-  readonly cursor?: string;
+  cursor?: string;
   /** `object`, omittable */
-  readonly filter?: PurchaseOrderQueryRequestFilter;
+  filter?: PurchaseOrderQueryRequestFilter;
   /** `int64`, omittable */
-  readonly limit?: Int64;
+  limit?: Int64;
   /** `string` */
-  readonly requestId: string;
+  requestId: string;
   /** `object`, omittable */
-  readonly sort?: PurchaseOrderQueryRequestSort;
+  sort?: PurchaseOrderQueryRequestSort;
 }
 
 export interface PurchaseOrderQueryRequestFilter {
   /** `array`, omittable */
-  readonly status?: readonly ("cancelled" | "complete" | "open")[];
+  status?: ("cancelled" | "complete" | "open")[];
   /** `array`, omittable */
-  readonly supplierId?: readonly Uuid[];
+  supplierId?: Uuid[];
 }
 
 export interface PurchaseOrderQueryRequestSort {
   /** `text` */
-  readonly direction: "ascending" | "descending";
+  direction: "ascending" | "descending";
   /** `text` */
-  readonly field: "created_at" | "purchase_order_number" | "status";
+  field: "created_at" | "purchase_order_number" | "status";
 }
 
 /** What `wamn-receiving:purchase-order/query@1.0.0` calls its input members. */
@@ -240,18 +240,18 @@ export async function query(
 /** Input for `wamn-receiving:purchase-order/update@1.0.0`. */
 export interface PurchaseOrderUpdateRequest {
   /** `object` */
-  readonly change: PurchaseOrderUpdateRequestChange;
+  change: PurchaseOrderUpdateRequestChange;
   /** `int64` */
-  readonly expectedRowVersion: Int64;
+  expectedRowVersion: Int64;
   /** `uuid` */
-  readonly id: Uuid;
+  id: Uuid;
   /** `string` */
-  readonly requestId: string;
+  requestId: string;
 }
 
 export interface PurchaseOrderUpdateRequestChange {
   /** `uuid`, omittable */
-  readonly supplierId?: Uuid;
+  supplierId?: Uuid;
 }
 
 /** What `wamn-receiving:purchase-order/update@1.0.0` calls its input members. */

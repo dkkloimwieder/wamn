@@ -158,6 +158,13 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             Role::Form => {
                 form = true;
                 solid.extend(["createSignal", "Show"]);
+                if screen
+                    .inputs
+                    .iter()
+                    .any(|input| repeated_ancestor(&input.path).is_some())
+                {
+                    solid.insert("For");
+                }
                 emit_form(&mut body, screen, &mut runtime, &mut bindings)?;
             }
             Role::Delete => {
@@ -228,6 +235,15 @@ fn member_path(path: &str) -> Vec<String> {
     path.split('.')
         .map(|part| crate::client_ts::to_camel(part.trim_end_matches("[]")))
         .collect()
+}
+
+/// The repeated ancestor of one input path, when the contract declares one.
+///
+/// A contract marks a repeated member with `[]`, and every member below it
+/// belongs to one element of that list.
+fn repeated_ancestor(path: &str) -> Option<&str> {
+    let end = path.find("[]")?;
+    Some(&path[..end])
 }
 
 /// The member path as a TypeScript literal, for a runtime helper.
@@ -657,10 +673,16 @@ fn write_input_schema(source: &mut String, inputs: &[&FieldIr], prefix: &[String
         }
         let mut deeper = prefix.to_vec();
         deeper.push(name.clone());
+        let repeated = inputs.iter().any(|input| {
+            repeated_ancestor(&input.path).is_some_and(|ancestor| member_path(ancestor) == deeper)
+        });
         writeln!(source, "{indent}{name}: z").expect("write");
         writeln!(source, "{indent}  .object({{").expect("write");
         write_input_schema(source, inputs, &deeper, depth + 2);
         writeln!(source, "{indent}  }})").expect("write");
+        if repeated {
+            writeln!(source, "{indent}  .array()").expect("write");
+        }
         writeln!(source, "{indent}  .optional(),").expect("write");
     }
 }
@@ -865,53 +887,130 @@ fn emit_form(
     source.push_str(
         "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <p>{refusal()?.code}</p>\n      </Show>\n",
     );
-    for input in operator_inputs(screen) {
-        let member = member_path(&input.path).join(".");
+    let inputs = operator_inputs(screen);
+    let mut repeated_written: Vec<String> = Vec::new();
+    for input in &inputs {
+        match repeated_ancestor(&input.path) {
+            None => emit_field(source, input, &member_path(&input.path).join("."), 6),
+            Some(ancestor) => {
+                let ancestor = ancestor.to_owned();
+                if repeated_written.contains(&ancestor) {
+                    continue;
+                }
+                repeated_written.push(ancestor.clone());
+                emit_repeated_group(source, &inputs, &ancestor, &stem);
+            }
+        }
+    }
+    source.push_str("      <button type=\"submit\">submit</button>\n    </form>\n  );\n}\n");
+    Ok(())
+}
+
+/// The element type of one repeated group, read out of the request type.
+///
+/// A member can admit null or be absent, so each step drops those before it
+/// reaches the next member, and the last step takes one element of the list.
+fn element_type(stem: &str, ancestor: &[String]) -> String {
+    let mut expression = format!("{stem}Request");
+    for name in ancestor {
+        expression = format!("NonNullable<{expression}>[{name:?}]");
+    }
+    format!("NonNullable<{expression}>[number]")
+}
+
+/// One control, its label, and the refusal that names it.
+fn emit_field(source: &mut String, input: &FieldIr, name: &str, indent: usize) {
+    let pad = " ".repeat(indent);
+    let leaf = input
+        .path
+        .rsplit('.')
+        .next()
+        .unwrap_or(&input.path)
+        .trim_end_matches("[]");
+    writeln!(source, "{pad}<form.Field name={{`{name}`}}>").expect("write");
+    writeln!(source, "{pad}  {{(field) => (").expect("write");
+    writeln!(source, "{pad}    <label>").expect("write");
+    writeln!(source, "{pad}      {}", label(&input.path)).expect("write");
+    emit_input_control(source, input, indent + 6);
+    writeln!(
+        source,
+        "{pad}      <Show when={{refusal()?.member === {leaf:?}}}>\n{pad}        <em>{{refusal()?.code}}</em>\n{pad}      </Show>"
+    )
+    .expect("write");
+    writeln!(source, "{pad}    </label>").expect("write");
+    writeln!(source, "{pad}  )}}").expect("write");
+    writeln!(source, "{pad}</form.Field>").expect("write");
+}
+
+/// One repeated input group: a list of elements the operator adds and removes.
+///
+/// The contract marks the group with `[]` and states its bounds. Each element
+/// carries the same members, and the field name takes the element's index.
+fn emit_repeated_group(source: &mut String, inputs: &[&FieldIr], ancestor: &str, stem: &str) {
+    let member = member_path(ancestor).join(".");
+    let element = element_type(stem, &member_path(ancestor));
+    let members: Vec<&&FieldIr> = inputs
+        .iter()
+        .filter(|input| repeated_ancestor(&input.path) == Some(ancestor))
+        .collect();
+    writeln!(
+        source,
+        "      <form.Field name={{\"{member}\"}} mode=\"array\">"
+    )
+    .expect("write");
+    source.push_str("        {(group) => (\n          <fieldset>\n");
+    writeln!(source, "            <legend>{}</legend>", label(ancestor)).expect("write");
+    source.push_str("            <For each={group().state.value ?? []}>\n              {(_, index) => (\n                <fieldset>\n");
+    for input in &members {
         let leaf = input
             .path
             .rsplit('.')
             .next()
             .unwrap_or(&input.path)
             .trim_end_matches("[]");
-        writeln!(source, "      <form.Field name={{\"{member}\"}}>").expect("write");
-        source.push_str("        {(field) => (\n          <label>\n");
-        writeln!(source, "            {}", label(&input.path)).expect("write");
-        emit_input_control(source, input);
-        writeln!(
-            source,
-            "            <Show when={{refusal()?.member === {leaf:?}}}>\n              <em>{{refusal()?.code}}</em>\n            </Show>"
-        )
-        .expect("write");
-        source.push_str("          </label>\n        )}\n      </form.Field>\n");
+        let name = format!(
+            "{member}[${{index()}}].{}",
+            crate::client_ts::to_camel(leaf)
+        );
+        emit_field(source, input, &name, 18);
     }
-    source.push_str("      <button type=\"submit\">submit</button>\n    </form>\n  );\n}\n");
-    Ok(())
+    source.push_str("                  <button type=\"button\" onClick={() => group().removeValue(index())}>\n                    remove\n                  </button>\n                </fieldset>\n              )}\n            </For>\n");
+    writeln!(
+        source,
+        "            <button type=\"button\" onClick={{() => group().pushValue({{}} as {element})}}>\n              add\n            </button>\n          </fieldset>\n        )}}\n      </form.Field>"
+    )
+    .expect("write");
 }
 
 /// One control for one operator field, chosen by what the contract declares.
-fn emit_input_control(source: &mut String, input: &FieldIr) {
+fn emit_input_control(source: &mut String, input: &FieldIr, indent: usize) {
+    let pad = " ".repeat(indent);
     if input.type_name == "boolean" {
-        source.push_str(
-            "            <input\n              type=\"checkbox\"\n              checked={field().state.value === true}\n              onChange={(event) => field().handleChange(event.currentTarget.checked)}\n            />\n",
-        );
+        writeln!(
+            source,
+            "{pad}<input\n{pad}  type=\"checkbox\"\n{pad}  checked={{field().state.value === true}}\n{pad}  onChange={{(event) => field().handleChange(event.currentTarget.checked)}}\n{pad}/>"
+        )
+        .expect("write");
         return;
     }
     if !input.values.is_empty() {
-        source.push_str(
-            "            <select\n              value={String(field().state.value ?? \"\")}\n              onChange={(event) => field().handleChange(event.currentTarget.value)}\n            >\n",
-        );
+        writeln!(
+            source,
+            "{pad}<select\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(event) => field().handleChange(event.currentTarget.value)}}\n{pad}>"
+        )
+        .expect("write");
         if !input.required || input.nullable {
-            source.push_str("              <option value=\"\"></option>\n");
+            writeln!(source, "{pad}  <option value=\"\"></option>").expect("write");
         }
         for value in &input.values {
             writeln!(
                 source,
-                "              <option value={value:?}>{}</option>",
+                "{pad}  <option value={value:?}>{}</option>",
                 value.replace('_', " ")
             )
             .expect("write");
         }
-        source.push_str("            </select>\n");
+        writeln!(source, "{pad}</select>").expect("write");
         return;
     }
     let kind = if matches!(input.type_name.as_str(), "int32" | "float64") {
@@ -921,7 +1020,7 @@ fn emit_input_control(source: &mut String, input: &FieldIr) {
     };
     writeln!(
         source,
-        "            <input\n              type=\"{kind}\"\n              value={{String(field().state.value ?? \"\")}}\n              onInput={{(event) => field().handleChange(event.currentTarget.value)}}\n            />"
+        "{pad}<input\n{pad}  type=\"{kind}\"\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onInput={{(event) => field().handleChange(event.currentTarget.value)}}\n{pad}/>"
     )
     .expect("write");
 }

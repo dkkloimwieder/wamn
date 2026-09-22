@@ -255,15 +255,15 @@ fn a_declared_value_domain_types_as_a_union_of_its_literals() {
         widget.contains(concat!(
             "export interface WidgetQueryRequestSort {\n",
             "  /** `text` */\n",
-            "  readonly direction: \"ascending\" | \"descending\";\n",
+            "  direction: \"ascending\" | \"descending\";\n",
             "  /** `text` */\n",
-            "  readonly field: \"created_at\";\n",
+            "  field: \"created_at\";\n",
             "}\n",
         )),
         "the sort takes its domain from the paging contract, not from the release schema"
     );
     assert!(
-        widget.contains("  readonly cursor?: string;\n"),
+        widget.contains("  cursor?: string;\n"),
         "an opaque cursor keeps its type"
     );
 
@@ -279,7 +279,7 @@ fn a_declared_value_domain_types_as_a_union_of_its_literals() {
     let widened = emit_ts_client(&widened).unwrap();
     assert!(
         source(&widened, "generated/client-ts/widget.ts")
-            .contains("  readonly field: \"created_at\" | \"code\";\n"),
+            .contains("  field: \"created_at\" | \"code\";\n"),
         "the union states exactly what the contract permits"
     );
 }

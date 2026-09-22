@@ -8,7 +8,7 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 /** Input for `wamn-receiving:location/list@1.0.0`. */
 export interface LocationListRequest {
   /** `text` */
-  readonly requestId: string;
+  requestId: string;
 }
 
 /** What `wamn-receiving:location/list@1.0.0` calls its input members. */

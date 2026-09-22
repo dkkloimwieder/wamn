@@ -8,13 +8,13 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 /** Input for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
 export interface ReceivingLoadPurchaseOrderHistoryRequest {
   /** `int64` */
-  readonly afterPosition: Int64;
+  afterPosition: Int64;
   /** `uuid` */
-  readonly id: Uuid;
+  id: Uuid;
   /** `int64` */
-  readonly limit: Int64;
+  limit: Int64;
   /** `text` */
-  readonly requestId: string;
+  requestId: string;
 }
 
 /** What `wamn-receiving:receiving/load-purchase-order-history@1.0.0` calls its input members. */
@@ -119,9 +119,9 @@ export async function loadPurchaseOrderHistory(
 /** Input for `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */
 export interface ReceivingLoadReceiptScreenRequest {
   /** `uuid` */
-  readonly purchaseOrderId: Uuid;
+  purchaseOrderId: Uuid;
   /** `text` */
-  readonly requestId: string;
+  requestId: string;
 }
 
 /** What `wamn-receiving:receiving/load-receipt-screen@1.0.0` calls its input members. */
@@ -231,31 +231,31 @@ export async function loadReceiptScreen(
 /** Input for `wamn-receiving:receiving/record-receipt@1.0.0`. */
 export interface ReceivingRecordReceiptRequest {
   /** `text` */
-  readonly requestId: string;
+  requestId: string;
   /** `object` */
-  readonly value: ReceivingRecordReceiptRequestValue;
+  value: ReceivingRecordReceiptRequestValue;
 }
 
 export interface ReceivingRecordReceiptRequestValue {
   /** `text` */
-  readonly idempotencyKey: string;
+  idempotencyKey: string;
   /** `array` */
-  readonly line: readonly ReceivingRecordReceiptRequestValueLine[];
+  line: ReceivingRecordReceiptRequestValueLine[];
   /** `timestamptz` */
-  readonly occurredAt: Timestamptz;
+  occurredAt: Timestamptz;
   /** `uuid` */
-  readonly purchaseOrderId: Uuid;
+  purchaseOrderId: Uuid;
   /** `text` */
-  readonly receiptReference: string;
+  receiptReference: string;
 }
 
 export interface ReceivingRecordReceiptRequestValueLine {
   /** `uuid` */
-  readonly locationId: Uuid;
+  locationId: Uuid;
   /** `uuid` */
-  readonly purchaseOrderLineId: Uuid;
+  purchaseOrderLineId: Uuid;
   /** `numeric` */
-  readonly quantity: Numeric;
+  quantity: Numeric;
 }
 
 /** What `wamn-receiving:receiving/record-receipt@1.0.0` calls its input members. */

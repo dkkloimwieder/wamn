@@ -233,9 +233,9 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
                 .contains("item = writeMember(item, [\"idempotencyKey\"], newIdempotencyKey());"),
         "the reserved inputs come from the runtime at submit time"
     );
-    for reserved in ["requestId\"", "idempotencyKey\""] {
+    for reserved in ["requestId", "idempotencyKey"] {
         assert!(
-            !create.contains(&format!("<form.Field name={{\"{reserved}}}>")),
+            !create.contains(&format!("<form.Field name={{`{reserved}`}}>")),
             "the operator never sees {reserved}"
         );
     }
@@ -260,7 +260,7 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "    .object({\n",
         "      code: z.string().optional(),\n",
     )));
-    assert!(widget.contains("<form.Field name={\"change.code\"}>"));
+    assert!(widget.contains("<form.Field name={`change.code`}>"));
 }
 
 /// A command that sends a revision reads the record first, because a stale
@@ -364,7 +364,7 @@ fn a_bound_key_is_a_prop_and_never_a_control() {
         .next()
         .expect("the form ends");
     assert!(
-        !update.contains("<form.Field name={\"id\"}>"),
+        !update.contains("<form.Field name={`id`}>"),
         "the record key comes from the props"
     );
     assert!(
