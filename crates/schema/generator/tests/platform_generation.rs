@@ -808,3 +808,126 @@ fn authored_claims_require_exact_finalization() {
     );
     assert!(error.to_string().contains("automatic_retry: false"));
 }
+
+/// Whether a refusal names the member that caused it. The top line states the
+/// closed vocabulary, and the parser's own message underneath names the key.
+fn names_the_member(error: &wamn_schema_generator::GenerateError, member: &str) -> bool {
+    std::error::Error::source(error).is_some_and(|source| source.to_string().contains(member))
+}
+
+/// EXIT GATE for `wamn-c2y5.1`: authored text is optional everywhere, it is
+/// carried where the author wrote it, and a misspelled key is refused.
+///
+/// The refusal matters more than the parse. A label that silently disappears
+/// because its key is `labels` would reach an operator as a field path, and
+/// nothing would say why.
+#[test]
+fn authored_text_is_optional_and_its_key_is_closed() {
+    let declared = parsed(&fixture::manifest());
+    let widget = &declared.models["widget"];
+    assert_eq!(
+        widget.field_text["code"].label.as_deref(),
+        Some("Widget code")
+    );
+    assert!(widget.field_text["code"].description.is_some());
+    assert_eq!(
+        widget.field_text["note"].label.as_deref(),
+        Some("Operator note")
+    );
+    assert_eq!(
+        widget.field_text["note"].description, None,
+        "a label alone is a complete declaration"
+    );
+    assert_eq!(
+        widget.operations[&wamn_schema_generator::CrudAction::Query]
+            .label
+            .as_deref(),
+        Some("Find widgets")
+    );
+    let batch = &declared.custom_operations["widget.record_batch"];
+    assert_eq!(batch.label.as_deref(), Some("Record a batch"));
+    assert!(batch.description.is_some());
+    let line = batch
+        .input
+        .fields
+        .iter()
+        .find(|field| field.path == "value.line[].quantity")
+        .expect("the repeated line quantity");
+    assert_eq!(line.label.as_deref(), Some("Quantity received"));
+
+    // Every text member removed: the same manifest still parses, and the
+    // whole vocabulary reads as absent rather than as empty text.
+    let mut silent = fixture::manifest();
+    silent["models"]["widget"]
+        .as_object_mut()
+        .expect("the widget model")
+        .remove("field_text");
+    silent["models"]["widget"]["operations"]["query"]
+        .as_object_mut()
+        .expect("the query operation")
+        .remove("label");
+    for key in ["label", "description"] {
+        silent["custom_operations"]["widget.record_batch"]
+            .as_object_mut()
+            .expect("the batch command")
+            .remove(key);
+        for pointer in [
+            "/custom_operations/widget.record_batch/input/fields",
+            "/custom_operations/widget.list/result/fields",
+        ] {
+            for field in silent
+                .pointer_mut(pointer)
+                .expect("declared fields")
+                .as_array_mut()
+                .expect("declared fields")
+            {
+                field.as_object_mut().expect("a field object").remove(key);
+            }
+        }
+    }
+    let quiet = parsed(&silent);
+    assert!(quiet.models["widget"].field_text.is_empty());
+    assert_eq!(
+        quiet.custom_operations["widget.record_batch"].label, None,
+        "an absent label is absent, never an empty string"
+    );
+
+    // A misspelled key is refused by the closed vocabulary, at each carrier.
+    let mut model_text = fixture::manifest();
+    model_text["models"]["widget"]["field_text"]["code"]["labels"] = json!("Widget code");
+    let error =
+        PackageManifest::from_slice(&serde_json::to_vec(&model_text).expect("serialize manifest"))
+            .expect_err("a misspelled model label key was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+    assert!(names_the_member(&error, "labels"), "{error}");
+
+    let mut field_text = fixture::manifest();
+    field_text["custom_operations"]["widget.record_batch"]["input"]["fields"][0]["labels"] =
+        json!("Request");
+    let error =
+        PackageManifest::from_slice(&serde_json::to_vec(&field_text).expect("serialize manifest"))
+            .expect_err("a misspelled field label key was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+    assert!(names_the_member(&error, "labels"), "{error}");
+
+    for path in [
+        "/models/widget/operations/query",
+        "/custom_operations/widget.record_batch",
+    ] {
+        let mut spelling = fixture::manifest();
+        *spelling.pointer_mut(path).expect("the operation") = {
+            let mut operation = spelling.pointer(path).expect("the operation").clone();
+            operation
+                .as_object_mut()
+                .expect("an operation object")
+                .insert("labels".to_owned(), json!("Find widgets"));
+            operation
+        };
+        let error = PackageManifest::from_slice(
+            &serde_json::to_vec(&spelling).expect("serialize manifest"),
+        )
+        .expect_err("a misspelled operation label key was accepted");
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+        assert!(names_the_member(&error, "labels"), "{error}");
+    }
+}

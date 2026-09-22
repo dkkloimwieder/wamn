@@ -82,6 +82,12 @@ pub struct CustomOperationDeclaration {
     pub canonicalization: Option<CommandCanonicalization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<EventRegistrationDeclaration>,
+    /// Authored screen text for the operation itself. A component exports the
+    /// label, and the page that places the component decides where it goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Closed non-CRUD operation kinds admitted by the package manifest.
@@ -245,6 +251,47 @@ pub struct ContractFieldDeclaration {
     pub revision: bool,
     #[serde(default)]
     pub values: Vec<String>,
+    /// Authored screen text. Flattening [`FieldText`] here is not available,
+    /// because serde refuses `flatten` beside `deny_unknown_fields`, and the
+    /// refusal of a misspelled key is the rule this epic keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Authored text that a screen shows, and that an author reads.
+///
+/// Text for a person, never a name: it changes no path, no wire spelling and
+/// no generated identifier. An absent member writes nothing, so a package that
+/// authors none keeps the bytes it has today.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldText {
+    /// What a control, a column header or a term reads. The default is the
+    /// field name with its underscores as spaces, applied by the emitter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// One sentence for an author. It reaches a comment, never a screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl FieldText {
+    /// Whether the author stated neither member.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.label.is_none() && self.description.is_none()
+    }
+
+    /// The text of one contract field, as the field object states it.
+    #[must_use]
+    pub fn of_field(field: &ContractFieldDeclaration) -> Self {
+        Self {
+            label: field.label.clone(),
+            description: field.description.clone(),
+        }
+    }
 }
 
 /// Typed custom-operation result contract.
@@ -2123,6 +2170,13 @@ pub struct ModelDeclaration {
     pub server_owned_fields: Vec<String>,
     #[serde(default)]
     pub enum_fields: BTreeMap<String, Vec<String>>,
+    /// Authored screen text for a column, keyed by column name.
+    ///
+    /// A model has no per-field object, because its fields come from
+    /// introspection rather than from `wamn.json`. It addresses a column
+    /// through a map, the way `enum_fields` does, and the text follows.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub field_text: BTreeMap<String, FieldText>,
     /// Record-history declaration. A relation-owning model requires it, and
     /// an overlay model inherits the declaration of the relation owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2300,6 +2354,12 @@ pub struct OperationDeclaration {
     /// Required for `create` and refused for every other action.
     #[serde(default)]
     pub claim: Option<ClaimDeclaration>,
+    /// Authored screen text for the operation itself. A component exports the
+    /// label, and the page that places the component decides where it goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub result: ResultClass,
 }
 

@@ -855,6 +855,10 @@ fn crud_result_contract(
                         .cloned()
                         .unwrap_or_default()
                 },
+                // The model's authored text reaches a result field in
+                // `wamn-c2y5.2`, which owns the contract carriers.
+                label: None,
+                description: None,
             })
             .collect(),
     }

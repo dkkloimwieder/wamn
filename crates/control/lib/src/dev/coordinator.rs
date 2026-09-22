@@ -1615,7 +1615,8 @@ fn target_structure_digest(packages: &[PackageInput], config: &DevConfig) -> Str
 /// The package identity, the models with their definition owners, and the internal relations.
 ///
 /// A kept target takes appended migrations, enum_fields, server_owned_fields,
-/// and audit_log in place, so they are not structure. delete_mode IS
+/// audit_log, and field_text in place, so they are not structure. Authored
+/// text changes a screen and never a table or a grant. delete_mode IS
 /// structure: a tombstone needs two columns the target may not carry, and the
 /// mode decides both the emitted statement and the table grant.
 fn package_structure_inputs(manifest: &PackageManifest) -> Value {
@@ -1632,6 +1633,7 @@ fn package_structure_inputs(manifest: &PackageManifest) -> Value {
                 constraint_owners,
                 server_owned_fields: _,
                 enum_fields: _,
+                field_text: _,
                 audit_log: _,
                 delete_mode,
                 operations: _,

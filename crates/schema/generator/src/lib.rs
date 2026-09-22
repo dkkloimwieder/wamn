@@ -58,7 +58,7 @@ pub use manifest::{
     CommandIdempotence, CommandLineOrder, CommandTransaction, ComponentDeclaration,
     ContractFieldDeclaration, CountLimitDeclaration, CrudAction, CursorDirection,
     CustomClaimDeclaration, CustomOperationDeclaration, CustomOperationInputDeclaration,
-    CustomOperationKind, CustomOperationResultDeclaration, EventRegistrationDeclaration,
+    CustomOperationKind, CustomOperationResultDeclaration, EventRegistrationDeclaration, FieldText,
     FilterDeclaration, InheritedClaimDeclaration, InternalRelationDeclaration, LimitDeclaration,
     ModelDeclaration, NpmDistribution, OperationDeclaration, OperationErrorDetailDeclaration,
     OperationErrorDetailKey, OperationVisibility, PackageIdentity, PackageManifest,

@@ -242,6 +242,16 @@ pub(crate) fn manifest() -> Value {
                 "owner": "platform_fixture",
                 "server_owned_fields": ["id", "edit_version", "created_at"],
                 "enum_fields": {"code": ["priority", "standard"]},
+                // A model has no per-field object, so its text is a map keyed
+                // by column name. `note` states a label alone, which proves
+                // that the two members are independent.
+                "field_text": {
+                    "code": {
+                        "label": "Widget code",
+                        "description": "The code an operator types to find one widget."
+                    },
+                    "note": {"label": "Operator note"}
+                },
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "delete_mode": "hard",
                 "operations": {
@@ -257,6 +267,7 @@ pub(crate) fn manifest() -> Value {
                     "get": {"permission": "widget.get", "result": "one"},
                     "query": {
                         "permission": "widget.query",
+                        "label": "Find widgets",
                         "authored_sql": {
                             "default": "query/widget.sql",
                             "variants": [
@@ -322,7 +333,13 @@ pub(crate) fn manifest() -> Value {
                 "result": {"class": "bounded_list", "fields": [
                     {"path": "id", "type": "uuid", "nullable": false},
                     {"path": "edit_version", "type": "int64", "nullable": false},
-                    {"path": "attributes", "type": "json", "nullable": false}
+                    {
+                        "path": "attributes",
+                        "type": "json",
+                        "nullable": false,
+                        "label": "Attributes",
+                        "description": "Every key the widget carries, as the release stored it."
+                    }
                 ]},
                 "errors": [
                     "invalid_input", "retry", "timeout", "permission_denied", "internal_error"
@@ -352,6 +369,8 @@ pub(crate) fn manifest() -> Value {
             // its group are declared.
             "widget.record_batch": {
                 "kind": "command",
+                "label": "Record a batch",
+                "description": "One submission that records several lines at once.",
                 "visibility": "public",
                 "permission": "widget.record_batch",
                 "connection": "postgres",
@@ -372,13 +391,25 @@ pub(crate) fn manifest() -> Value {
                     "fields": [
                         {"path": "request_id", "type": "text", "nullable": false},
                         {"path": "value.idempotency_key", "type": "text", "nullable": false},
-                        {"path": "value.note", "type": "text", "nullable": true},
+                        {
+                            "path": "value.note",
+                            "type": "text",
+                            "nullable": true,
+                            "label": "Batch note",
+                            "description": "What the operator recorded about this batch."
+                        },
                         {
                             "path": "value.line[].purchase_order_line_id",
                             "type": "uuid",
-                            "nullable": false
+                            "nullable": false,
+                            "label": "Line"
                         },
-                        {"path": "value.line[].quantity", "type": "numeric", "nullable": false}
+                        {
+                            "path": "value.line[].quantity",
+                            "type": "numeric",
+                            "nullable": false,
+                            "label": "Quantity received"
+                        }
                     ]
                 },
                 // A line input must declare a canonical line profile. The
