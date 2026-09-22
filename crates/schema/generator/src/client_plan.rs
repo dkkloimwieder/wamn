@@ -647,20 +647,15 @@ impl<'a> Lister<'a> {
         if screen.role != Role::Table || screen.contract.route.is_none() {
             return None;
         }
-        let (model, key_field, display_field) = match (&screen.contract.lists, screen.record) {
-            (Some(lists), _) => (
-                lists.model.as_str(),
-                lists.key_field.as_str(),
-                lists.display_field.as_deref(),
-            ),
-            (None, Some(record)) => (screen.model, record.key_field, None),
-            (None, None) => return None,
-        };
+        // One member, one rule. Every read that serves rows states `lists`,
+        // whether an author wrote it or generation derived it, so nothing
+        // here asks where the fact came from.
+        let lists = screen.contract.lists.as_ref()?;
         Some(Self {
             operation: screen.contract.operation.as_str(),
-            model,
-            key_field,
-            display_field,
+            model: lists.model.as_str(),
+            key_field: lists.key_field.as_str(),
+            display_field: lists.display_field.as_deref(),
             references: leaf_fields(&screen.contract.input_fields)
                 .into_iter()
                 .filter_map(|field| {

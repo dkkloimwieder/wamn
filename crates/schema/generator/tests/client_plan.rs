@@ -730,3 +730,38 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
         "the two existing row-link reasons are unchanged"
     );
 }
+
+/// EXIT GATE for the uniformity rule, owner instruction of 2026-09-22: a
+/// generated read and an authored read state the same member, and the plan
+/// applies one rule to both.
+///
+/// A reader that branched on the origin would give two screens of the same
+/// shape two behaviors, which is the defect this states cannot happen.
+#[test]
+fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    for name in ["query", "list"] {
+        let lists = screen(&plan, name)
+            .contract
+            .lists
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name} states what it lists"));
+        assert_eq!(lists.model, "widget", "{name}");
+        assert_eq!(lists.key_field, "id", "{name}");
+    }
+    // The generated query authors no display field, so the plan defaults it,
+    // and the authored list states one. Both reach an emitter the same way.
+    let update = screen(&plan, "update")
+        .population
+        .iter()
+        .find(|input| input.input == "change.maker_id")
+        .expect("the derived reference is populated");
+    assert_eq!(update.display_field, "name");
+    let batch = screen(&plan, "record_batch")
+        .population
+        .iter()
+        .find(|input| input.input == "value.line[].purchase_order_line_id")
+        .expect("the authored reference is populated");
+    assert_eq!(batch.display_field, "code");
+}

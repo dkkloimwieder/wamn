@@ -804,6 +804,17 @@ fn emit_operation_contracts(
         operation.label.as_deref(),
         operation.description.as_deref(),
     );
+    // A read that serves rows states what it lists, whoever wrote it. A
+    // generated action carries the same member an authored one declares, so
+    // every reader downstream applies one rule with no fallback.
+    if matches!(action, CrudAction::Query) {
+        // The display field stays absent, which means the default rule, the
+        // same as an authored read that states none.
+        operation_contract.insert(
+            "lists".to_owned(),
+            json!({"model": model_name, "key_field": "id"}),
+        );
+    }
     if let Some(claim) = claim.filter(|_| action == CrudAction::Create) {
         operation_contract.insert("idempotent_by".to_owned(), json!("claim"));
         operation_contract.insert("idempotency".to_owned(), idempotency_contract(claim));

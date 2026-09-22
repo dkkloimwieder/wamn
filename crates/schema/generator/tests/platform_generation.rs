@@ -1062,12 +1062,14 @@ fn a_contract_carries_the_authored_text_and_nothing_else() {
     }
 }
 
-/// EXIT GATE for `wamn-rm14.1`: a package that states no reference and no list
-/// writes contract files that carry neither member.
+/// EXIT GATE for `wamn-rm14.1`: a package whose inputs name no record writes
+/// no reference anywhere, and every read that serves rows states what it
+/// lists whoever wrote it.
 ///
 /// The silence matters for the same reason the authored text's did: a member
 /// written as null would move the contract bytes of three applications that
-/// declare nothing.
+/// declare nothing. The second half is the uniformity rule: one member, one
+/// meaning, whether an author states it or generation derives it.
 #[test]
 fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
     let mut silent = fixture::manifest();
@@ -1109,12 +1111,23 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
         }
         let contract: Value = serde_json::from_slice(file.bytes()).expect("generated JSON");
         for members in objects(&contract) {
-            for key in ["references", "lists"] {
-                assert!(
-                    !members.contains_key(key),
-                    "{path} carries {key} although nothing states one"
-                );
-            }
+            assert!(
+                !members.contains_key("references"),
+                "{path} carries a reference although no input names a record"
+            );
         }
     }
+
+    // One member, one meaning. A generated query states what it lists with
+    // nothing authored, and it states no display field, which is the default.
+    let generated = artifact(&quiet, "generated/contracts/widget/query.operation.json");
+    assert_eq!(generated["lists"]["model"], "widget");
+    assert_eq!(generated["lists"]["key_field"], "id");
+    assert_eq!(generated["lists"].get("display_field"), None);
+    let authored = artifact(
+        &fixture::generate_fixture(),
+        "generated/contracts/widget/list.operation.json",
+    );
+    assert_eq!(authored["lists"]["model"], "widget");
+    assert_eq!(authored["lists"]["display_field"], "code");
 }

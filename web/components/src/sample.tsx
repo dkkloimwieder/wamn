@@ -24,7 +24,10 @@ export interface SampleProps {
 export function Sample(props: SampleProps) {
   const [outcome] = createResource(
     () => props.selector,
-    (selector: JsonValue) => list(props.transport, [{ requestId: "sample", selector }]),
+    // `makerId` is the input that narrows the list to one maker. It is
+    // nullable and present, which is how this platform spells "not chosen".
+    (selector: JsonValue) =>
+      list(props.transport, [{ requestId: "sample", selector, makerId: null }]),
   );
   const rows = () => {
     const read = outcome();
