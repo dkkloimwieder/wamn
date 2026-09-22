@@ -1,7 +1,7 @@
 # Receiving demo
 
-This package is disposable. It exists to judge the generated components, and the close of Epic 6 ends it.
-Epic 4 used it for the evaluation, Epic 5 read the two fixes that only a browser shows, and Epic 6 reads the authored labels.
+This package is disposable. It exists to judge the generated components, and the close of Epic 7 ends it.
+Epic 4 used it for the evaluation, Epic 5 read the two fixes that only a browser shows, Epic 6 reads the authored labels, and Epic 7 reads the selectors and the prefilled form.
 It has no routes, no navigation, and no layout system. Nothing here is the start of an operator product.
 
 Delete it with two steps: remove `web/demo`, and remove its line in [the web README](../README.md).
@@ -39,7 +39,7 @@ The account is a demo credential in a disposable local environment.
 The browser sees one origin, and the local stack has two.
 The application host serves plain HTTP and selects its release by the `Host` header, which a browser cannot set.
 The identity process serves HTTPS with a certificate it signed itself, which a browser does not trust.
-`vite.config.ts` carries `/password` to the issuer and the four model prefixes to the release.
+`vite.config.ts` carries `/password` to the issuer and the five model prefixes to the release.
 
 ## Seed data
 
@@ -82,3 +82,10 @@ The history draws its rows, and the refused line marks its own quantity control.
 One result needs the running page, and Beads `wamn-c2y5.6` records it.
 Read a purchase order table and open the record receipt form.
 Each control and each column header states the text that `apps/wamn_receiving/wamn.json` authors, and a field with no authored text keeps its own name.
+
+## The Epic 7 check
+
+One result needs the running page, and Beads `wamn-rm14.7` records it.
+Open the record receipt form and choose its purchase order, then its line, then its location, each from a list.
+The line list offers the lines of the chosen order alone, the update form chooses a supplier from a list, and a purchase order row opens the receipt form already filled.
+No control asks the operator to paste an identity.

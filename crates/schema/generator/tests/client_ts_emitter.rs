@@ -575,10 +575,23 @@ fn a_described_member_carries_its_description_and_the_rest_are_unchanged() {
             "  /**\n",
             "   * What the operator recorded about this batch.\n",
             "   *\n",
-            "   * `text`\n",
+            // The release publishes this command, and its schema does not
+            // require the note, so the member states that beside its type.
+            "   * `text`, omittable\n",
             "   */\n",
         )),
         "the authored sentence comes before the wire spelling"
+    );
+    assert!(
+        widget.contains(concat!(
+            "  /**\n",
+            "   * One line for each widget this batch records.\n",
+            "   *\n",
+            "   * `array`\n",
+            "   */\n",
+        )),
+        "a repeated group's declared description reaches the type, although \
+         the published schema states none"
     );
     assert!(
         widget.contains("  /** `uuid` */\n"),

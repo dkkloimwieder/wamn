@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::client_ir::{FieldIr, leaf_fields};
+use crate::client_ir::FieldIr;
 
 fn field(path: String, type_name: String, required: bool, nullable: bool) -> FieldIr {
     FieldIr {
@@ -252,7 +252,10 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
 /// A served input schema states property presence and repeated bounds.
 /// Descriptor hints retain UUID, timestamp and numeric types that JSON calls strings.
 pub(super) fn schema_fields(schema: &Value, hints: &[FieldIr]) -> Vec<FieldIr> {
-    let hints = leaf_fields(hints);
+    // Every node, not only the leaves: a repeated group carries its own
+    // declared text, and the published schema states none. The declaration
+    // means the same thing whether or not the release publishes a schema.
+    let hints = every_field(hints);
     let unknown = Value::Null;
     let item = if schema.get("type").and_then(Value::as_str) == Some("array") {
         schema.get("items").unwrap_or(&unknown)
@@ -264,6 +267,23 @@ pub(super) fn schema_fields(schema: &Value, hints: &[FieldIr]) -> Vec<FieldIr> {
     } else {
         vec![schema_field(item, String::new(), true, &hints)]
     }
+}
+
+/// Every node of a hint tree, parents included, children first.
+///
+/// A scalar array declares two nodes with one path, the array and its item,
+/// and the item carries the text. Children come first so that a lookup by path
+/// finds the item, and a group node, whose path nothing else carries, is still
+/// found.
+fn every_field(fields: &[FieldIr]) -> Vec<&FieldIr> {
+    fields
+        .iter()
+        .flat_map(|field| {
+            let mut nodes = every_field(&field.children);
+            nodes.push(field);
+            nodes
+        })
+        .collect()
 }
 
 fn object_fields(schema: &Value, prefix: &str, hints: &[&FieldIr]) -> Vec<FieldIr> {
@@ -324,6 +344,10 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
             result.type_name = "array".into();
             result.minimum = schema.get("minItems").and_then(Value::as_u64);
             result.maximum = schema.get("maxItems").and_then(Value::as_u64);
+            if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
+                result.label.clone_from(&hint.label);
+                result.description.clone_from(&hint.description);
+            }
             if let Some(item) = schema.get("items") {
                 result.children = if item.get("type").and_then(Value::as_str) == Some("object") {
                     object_fields(item, &path, hints)

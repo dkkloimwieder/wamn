@@ -162,6 +162,53 @@ pub(crate) fn client_release() -> ClientContractIr {
                             }
                         }
                     })),
+                    // A command with lines, published the way a release
+                    // publishes one. The schema states the group's bounds and
+                    // no text, so the group's declared label has to reach the
+                    // IR through the declared contract beside it.
+                    "record_batch" => Some(json!({
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                            "type": "object",
+                            "required": ["request_id", "value"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "request_id": {"type": "string", "minLength": 1},
+                                "value": {
+                                    "type": "object",
+                                    "required": ["idempotency_key", "line"],
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "idempotency_key": {"type": "string", "minLength": 1},
+                                        "note": {"type": ["string", "null"]},
+                                        "maker_id": {"type": ["string", "null"], "format": "uuid"},
+                                        "line": {
+                                            "type": "array",
+                                            "minItems": 1,
+                                            "maxItems": 10,
+                                            "items": {
+                                                "type": "object",
+                                                "required": [
+                                                    "purchase_order_line_id",
+                                                    "quantity"
+                                                ],
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                    "purchase_order_line_id": {
+                                                        "type": "string",
+                                                        "format": "uuid"
+                                                    },
+                                                    "quantity": {"type": "string"}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    })),
                     _ => None,
                 },
                 terminal_operation: Some(identity),

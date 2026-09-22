@@ -527,7 +527,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       <form.Field name={"value.line"} mode="array">
         {(group) => (
           <fieldset>
-            <legend>line</legend>
+            <legend>Receipt lines</legend>
             <For each={group().state.value ?? []}>
               {(_, index) => (
                 <fieldset>

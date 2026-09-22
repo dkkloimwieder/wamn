@@ -241,7 +241,11 @@ export interface ReceivingRecordReceiptRequest {
 export interface ReceivingRecordReceiptRequestValue {
   /** `text` */
   idempotencyKey: string;
-  /** `array` */
+  /**
+   * One line for each order line this receipt records.
+   *
+   * `array`
+   */
   line: ReceivingRecordReceiptRequestValueLine[];
   /** `timestamptz` */
   occurredAt: Timestamptz;

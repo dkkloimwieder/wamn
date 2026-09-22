@@ -14,8 +14,8 @@ import { fileURLToPath } from "node:url";
 import solid from "vite-plugin-solid";
 import { defineConfig, type ProxyOptions } from "vite";
 
-/** The four models of the Receiving release, which are its path prefixes. */
-const MODELS = ["/purchase_order", "/receipt", "/receiving", "/location"];
+/** The five models of the Receiving release, which are its path prefixes. */
+const MODELS = ["/purchase_order", "/receipt", "/receiving", "/location", "/supplier"];
 
 /** One path inside this package, as an absolute path. */
 function local(path: string): string {
