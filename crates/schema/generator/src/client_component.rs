@@ -18,7 +18,7 @@
 //! No component for a shape with no role. [`ClientPlan::unsupported`] names
 //! those operations, and the emitted index lists them with the reason.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::client_ir::FieldIr;
@@ -137,6 +137,21 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     if screens.is_empty() {
         return Ok(String::new());
     }
+    // A command that binds a revision names the record its read states, and
+    // that read is the detail screen of this model.
+    let records: BTreeMap<String, String> = screens
+        .iter()
+        .filter(|screen| screen.role == Role::Detail)
+        .map(|screen| {
+            (
+                screen.contract.operation.clone(),
+                format!(
+                    "{}DetailInput",
+                    crate::client_ts::type_stem(screen.model, screen.name)
+                ),
+            )
+        })
+        .collect();
 
     let mut body = String::new();
     let mut runtime = BTreeSet::new();
@@ -165,11 +180,11 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 {
                     solid.insert("For");
                 }
-                emit_form(&mut body, screen, &mut runtime, &mut bindings)?;
+                emit_form(&mut body, screen, &mut runtime, &mut bindings, &records)?;
             }
             Role::Delete => {
                 solid.extend(["createSignal", "Show"]);
-                emit_delete(&mut body, screen, &mut runtime, &mut bindings)?;
+                emit_delete(&mut body, screen, &mut runtime, &mut bindings, &records)?;
             }
             role @ Role::Unsupported(_) => {
                 return Err(ClientComponentError::new(
@@ -550,6 +565,16 @@ fn emit_detail(
 
     writeln!(
         source,
+        "\n/** The record that the detail for `{}` reads. */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(source, "export interface {stem}DetailInput {{").expect("write");
+    alias_imports(&operator_inputs(screen), runtime);
+    write_record_members(source, &operator_inputs(screen), &[], 1);
+    source.push_str("}\n");
+    writeln!(
+        source,
         "\n/** What the detail screen for `{}` takes. */",
         screen.contract.operation
     )
@@ -558,7 +583,7 @@ fn emit_detail(
     source.push_str("  /** The transport the application supplies. */\n");
     source.push_str("  readonly transport: Transport;\n");
     source.push_str("  /** The input that names the record. */\n");
-    writeln!(source, "  readonly input: {stem}Request;").expect("write");
+    writeln!(source, "  readonly input: {stem}DetailInput;").expect("write");
     source.push_str("  /** Called with every outcome this screen reads. */\n");
     writeln!(
         source,
@@ -580,7 +605,7 @@ fn emit_detail(
     .expect("write");
     writeln!(
         source,
-        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}Request) => {{\n      const read = await {function}(props.transport, [\n        {{ ...input, requestId: newRequestId() }},\n      ]);\n      props.onOutcome?.(read);\n      return read;\n    }},\n  );"
+        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        {{ ...input, requestId: newRequestId() }} as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      return read;\n    }},\n  );"
     )
     .expect("write");
     writeln!(
@@ -687,6 +712,65 @@ fn write_input_schema(source: &mut String, inputs: &[&FieldIr], prefix: &[String
     }
 }
 
+/// The members that name one record, as a caller states them.
+///
+/// The members are the operator inputs alone, so a caller never states a value
+/// that the platform writes, such as the request identity. Each member keeps
+/// what the contract declares: a required member stays required.
+fn write_record_members(source: &mut String, inputs: &[&FieldIr], prefix: &[String], depth: usize) {
+    let indent = "  ".repeat(depth);
+    let mut written: Vec<String> = Vec::new();
+    for input in inputs {
+        let path = member_path(&input.path);
+        if path.len() <= prefix.len() || !path.starts_with(prefix) {
+            continue;
+        }
+        let name = path[prefix.len()].clone();
+        if written.contains(&name) {
+            continue;
+        }
+        let mut deeper = prefix.to_vec();
+        deeper.push(name.clone());
+        let repeated = inputs.iter().any(|input| {
+            repeated_ancestor(&input.path).is_some_and(|ancestor| member_path(ancestor) == deeper)
+        });
+        if repeated {
+            continue;
+        }
+        written.push(name.clone());
+        let optional = if input.required { "" } else { "?" };
+        if path.len() == prefix.len() + 1 {
+            let spelling = crate::client_ts::ts_type(&input.type_name).unwrap_or("string");
+            let nullable = if input.nullable { " | null" } else { "" };
+            writeln!(
+                source,
+                "{indent}readonly {name}{optional}: {spelling}{nullable};"
+            )
+            .expect("write");
+            continue;
+        }
+        writeln!(source, "{indent}readonly {name}{optional}: {{").expect("write");
+        write_record_members(source, inputs, &deeper, depth + 1);
+        writeln!(source, "{indent}}};").expect("write");
+    }
+}
+
+/// The wire aliases that one set of inputs names.
+fn alias_imports(inputs: &[&FieldIr], runtime: &mut BTreeSet<&'static str>) {
+    for input in inputs
+        .iter()
+        .filter(|input| repeated_ancestor(&input.path).is_none())
+    {
+        match crate::client_ts::ts_type(&input.type_name).unwrap_or("string") {
+            "Int64" => runtime.insert("type Int64"),
+            "Numeric" => runtime.insert("type Numeric"),
+            "Timestamptz" => runtime.insert("type Timestamptz"),
+            "Uuid" => runtime.insert("type Uuid"),
+            _ => false,
+        };
+    }
+}
+
 /// The values one form can start with, as a type of its own.
 ///
 /// The members are the operator inputs alone, and every level is optional, so a
@@ -748,6 +832,7 @@ fn emit_form(
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
+    records: &BTreeMap<String, String>,
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
@@ -799,18 +884,7 @@ fn emit_form(
     .expect("write");
     writeln!(source, "export interface {stem}FormInitial {{").expect("write");
     // The initial values name the wire aliases their leaves carry.
-    for input in operator_inputs(screen)
-        .iter()
-        .filter(|input| repeated_ancestor(&input.path).is_none())
-    {
-        match crate::client_ts::ts_type(&input.type_name).unwrap_or("string") {
-            "Int64" => runtime.insert("type Int64"),
-            "Numeric" => runtime.insert("type Numeric"),
-            "Timestamptz" => runtime.insert("type Timestamptz"),
-            "Uuid" => runtime.insert("type Uuid"),
-            _ => false,
-        };
-    }
+    alias_imports(&operator_inputs(screen), runtime);
     write_initial_members(source, &operator_inputs(screen), &[], 1);
     source.push_str("}\n");
     writeln!(
@@ -826,13 +900,17 @@ fn emit_form(
     writeln!(source, "  readonly initial?: {stem}FormInitial;").expect("write");
     if let Some(binding) = screen.revision {
         let read = crate::client_ts::operation_stem(binding.read_operation);
+        let key = records
+            .get(binding.read_operation)
+            .cloned()
+            .unwrap_or_else(|| format!("{read}Request"));
         writeln!(
             source,
             "  /** The record this command changes. The form reads it, and sends the\n   * revision it read, because `{}` states that binding. */",
             binding.read_operation
         )
         .expect("write");
-        writeln!(source, "  readonly key: {read}Request;").expect("write");
+        writeln!(source, "  readonly key: {key};").expect("write");
     } else {
         for revision in &screen.revision_inputs {
             source.push_str(
@@ -1118,6 +1196,7 @@ fn emit_delete(
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
+    records: &BTreeMap<String, String>,
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
@@ -1141,6 +1220,20 @@ fn emit_delete(
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
 
+    // A delete that binds no read states the record itself, so it carries its
+    // own input type.
+    if screen.revision.is_none() {
+        writeln!(
+            source,
+            "\n/** The record that the delete for `{}` removes. */",
+            screen.contract.operation
+        )
+        .expect("write");
+        writeln!(source, "export interface {stem}DeleteInput {{").expect("write");
+        alias_imports(&operator_inputs(screen), runtime);
+        write_record_members(source, &operator_inputs(screen), &[], 1);
+        source.push_str("}\n");
+    }
     writeln!(
         source,
         "\n/** What the delete for `{}` takes. */",
@@ -1152,6 +1245,10 @@ fn emit_delete(
     source.push_str("  readonly transport: Transport;\n");
     if let Some(binding) = screen.revision {
         let read = crate::client_ts::operation_stem(binding.read_operation);
+        let key = records
+            .get(binding.read_operation)
+            .cloned()
+            .unwrap_or_else(|| format!("{read}Request"));
         bindings.insert(format!("type {read}Request"));
         writeln!(
             source,
@@ -1159,11 +1256,11 @@ fn emit_delete(
             binding.read_operation
         )
         .expect("write");
-        writeln!(source, "  readonly key: {read}Request;").expect("write");
+        writeln!(source, "  readonly key: {key};").expect("write");
     } else {
         writeln!(
             source,
-            "  /** The input that names the record to remove. */\n  readonly input: {stem}Request;"
+            "  /** The input that names the record to remove. */\n  readonly input: {stem}DeleteInput;"
         )
         .expect("write");
     }

@@ -152,7 +152,7 @@ fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
         "  /** The transport the application supplies. */\n",
         "  readonly transport: Transport;\n",
         "  /** The input that names the record. */\n",
-        "  readonly input: WidgetGetRequest;\n",
+        "  readonly input: WidgetGetDetailInput;\n",
     )));
     let detail = widget
         .split("export function WidgetGetDetail")
@@ -166,7 +166,7 @@ fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
         "it reads on mount and again when the input changes"
     );
     assert!(
-        detail.contains("{ ...input, requestId: newRequestId() },"),
+        detail.contains("{ ...input, requestId: newRequestId() } as WidgetGetRequest,"),
         "the request identity comes from the runtime"
     );
     for (label, member, cell) in [
@@ -311,7 +311,7 @@ fn a_revision_bound_form_reads_the_record_before_it_sends() {
         .nth(1)
         .expect("the update form exists");
     assert!(
-        widget.contains("  readonly key: WidgetGetRequest;"),
+        widget.contains("  readonly key: WidgetGetDetailInput;"),
         "the form takes the record it changes"
     );
     assert!(
@@ -356,7 +356,7 @@ fn a_delete_confirms_and_sends_the_revision_it_read() {
         "  readonly transport: Transport;\n",
     )));
     assert!(
-        widget.contains("  readonly key: WidgetGetRequest;"),
+        widget.contains("  readonly key: WidgetGetDetailInput;"),
         "the delete takes the record it removes"
     );
     let remove = widget
@@ -536,5 +536,40 @@ fn initial_values_reach_a_nested_member_and_name_no_group() {
     assert!(
         !widget.contains("readonly initial?: Partial<"),
         "no form states a shallow partial of its request"
+    );
+}
+
+/// A screen that names a record states the record inputs alone. The request
+/// identity is supplied, so no caller states a value that the component writes
+/// over.
+#[test]
+fn a_record_prop_names_the_record_inputs_and_no_supplied_value() {
+    let files = emit(&release());
+    let widget = widget(&files);
+
+    assert!(
+        widget.contains(concat!(
+            "export interface WidgetGetDetailInput {\n",
+            "  readonly id: Uuid;\n",
+            "}\n",
+        )),
+        "the detail states the record inputs alone"
+    );
+    assert!(
+        widget.contains("  readonly input: WidgetGetDetailInput;"),
+        "the detail prop takes that type"
+    );
+    assert!(
+        widget.contains("  readonly key: WidgetGetDetailInput;"),
+        "a command that binds a read takes the same record"
+    );
+    assert!(
+        !widget.contains("readonly input: WidgetGetRequest;")
+            && !widget.contains("readonly key: WidgetGetRequest;"),
+        "no prop takes the whole request of a read"
+    );
+    assert!(
+        widget.contains("{ ...input, requestId: newRequestId() } as WidgetGetRequest,"),
+        "the component writes the request identity itself"
     );
 }

@@ -23,6 +23,7 @@ import {
   type Outcome,
   type PageState,
   type Transport,
+  type Uuid,
   writeMember,
 } from "@wamn/web-runtime";
 import {
@@ -35,12 +36,17 @@ import {
   type ReceiptQueryRow,
 } from "../receipt.js";
 
+/** The record that the detail for `wamn-receiving:receipt/get@1.0.0` reads. */
+export interface ReceiptGetDetailInput {
+  readonly id: Uuid;
+}
+
 /** What the detail screen for `wamn-receiving:receipt/get@1.0.0` takes. */
 export interface ReceiptGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** The input that names the record. */
-  readonly input: ReceiptGetRequest;
+  readonly input: ReceiptGetDetailInput;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceiptGetResult>) => void;
 }
@@ -54,9 +60,9 @@ export interface ReceiptGetDetailProps {
 export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
   const [outcome] = createResource(
     () => props.input,
-    async (input: ReceiptGetRequest) => {
+    async (input: ReceiptGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() },
+        { ...input, requestId: newRequestId() } as ReceiptGetRequest,
       ]);
       props.onOutcome?.(read);
       return read;

@@ -43,12 +43,17 @@ import {
   update,
 } from "../purchase_order.js";
 
+/** The record that the detail for `wamn-receiving:purchase-order/get@1.0.0` reads. */
+export interface PurchaseOrderGetDetailInput {
+  readonly id: Uuid;
+}
+
 /** What the detail screen for `wamn-receiving:purchase-order/get@1.0.0` takes. */
 export interface PurchaseOrderGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** The input that names the record. */
-  readonly input: PurchaseOrderGetRequest;
+  readonly input: PurchaseOrderGetDetailInput;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderGetResult>) => void;
 }
@@ -62,9 +67,9 @@ export interface PurchaseOrderGetDetailProps {
 export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
   const [outcome] = createResource(
     () => props.input,
-    async (input: PurchaseOrderGetRequest) => {
+    async (input: PurchaseOrderGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() },
+        { ...input, requestId: newRequestId() } as PurchaseOrderGetRequest,
       ]);
       props.onOutcome?.(read);
       return read;
@@ -328,7 +333,7 @@ export interface PurchaseOrderUpdateFormProps {
   readonly initial?: PurchaseOrderUpdateFormInitial;
   /** The record this command changes. The form reads it, and sends the
    * revision it read, because `wamn-receiving:purchase-order/get@1.0.0` states that binding. */
-  readonly key: PurchaseOrderGetRequest;
+  readonly key: PurchaseOrderGetDetailInput;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<PurchaseOrderUpdateResult>) => void;
 }
