@@ -17,7 +17,25 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         maximum: None,
         label: None,
         description: None,
+        references: None,
     }
+}
+
+/// Read the record one declared field names, when it names one.
+fn reference(declared: &Value) -> Option<crate::client_ir::ReferenceIr> {
+    let model = declared
+        .get("references")?
+        .get("model")?
+        .as_str()?
+        .to_owned();
+    Some(crate::client_ir::ReferenceIr {
+        model,
+        narrowed_by: declared
+            .get("references")
+            .and_then(|reference| reference.get("narrowed_by"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
 }
 
 /// Read the two authored text members of one declared field.
@@ -108,6 +126,7 @@ pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         (leaf.label, leaf.description) = text(declared);
+        leaf.references = reference(declared);
         insert(&mut tree, leaf, &path.split('.').collect::<Vec<_>>(), "");
     }
     tree
@@ -152,6 +171,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             (declared.label, declared.description) = text(member);
+            declared.references = reference(member);
             tree.push(declared);
         }
     }
@@ -183,6 +203,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
         );
         declared.values = values(writable.get("values"));
         (declared.label, declared.description) = text(writable);
+        declared.references = reference(writable);
         insert(
             &mut tree,
             declared,
@@ -334,6 +355,7 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
                 result.revision = hint.revision;
                 result.label.clone_from(&hint.label);
                 result.description.clone_from(&hint.description);
+                result.references.clone_from(&hint.references);
                 if !hint.values.is_empty() {
                     if result.values.is_empty() {
                         result.values.clone_from(&hint.values);

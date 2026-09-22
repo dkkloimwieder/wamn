@@ -74,6 +74,7 @@ describe("the generated table for a page", () => {
       "created at",
       "edit version",
       "id",
+      "maker id",
       "Operator note",
     ]);
   });

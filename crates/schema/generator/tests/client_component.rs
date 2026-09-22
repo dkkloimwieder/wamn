@@ -36,6 +36,7 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
         files.iter().map(GeneratedFile::path).collect::<Vec<_>>(),
         [
             "generated/client-ts/components/widget.tsx",
+            "generated/client-ts/components/widget_maker.tsx",
             "generated/client-ts/components/index.ts",
         ]
     );
@@ -222,6 +223,7 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
     assert!(widget.contains(concat!(
         "const CREATE_INPUT = z.object({\n",
         "  code: z.string().optional(),\n",
+        "  makerId: z.string().nullable().optional(),\n",
         "  note: z.string().nullable().optional(),\n",
         "});\n",
     )));
@@ -243,7 +245,7 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
     }
     assert_eq!(
         create.matches("<form.Field").count(),
-        2,
+        3,
         "one control for each plan input, and no other"
     );
     assert!(
@@ -418,6 +420,7 @@ fn a_bound_key_is_a_prop_and_never_a_control() {
             "  change: z\n",
             "    .object({\n",
             "      code: z.string().optional(),\n",
+            "      makerId: z.string().nullable().optional(),\n",
             "      note: z.string().nullable().optional(),\n",
             "    })\n",
             "    .optional(),\n",
@@ -451,9 +454,10 @@ fn the_index_names_every_shape_that_gets_no_component() {
     );
 
     let mut unsupported = release();
-    unsupported.models[0]
-        .operations
+    unsupported
+        .models
         .iter_mut()
+        .flat_map(|model| model.operations.iter_mut())
         .find(|operation| operation.name == "archive")
         .expect("the fixture declares widget.archive")
         .kind = "wrangle".to_owned();
@@ -514,6 +518,7 @@ fn initial_values_reach_a_nested_member_and_name_no_group() {
             "export interface WidgetUpdateFormInitial {\n",
             "  change?: {\n",
             "    code?: string;\n",
+            "    makerId?: Uuid | null;\n",
             "    note?: string | null;\n",
             "  };\n",
             "}\n",
@@ -525,6 +530,7 @@ fn initial_values_reach_a_nested_member_and_name_no_group() {
         widget.contains(concat!(
             "export interface WidgetRecordBatchFormInitial {\n",
             "  value?: {\n",
+            "    makerId?: Uuid | null;\n",
             "    note?: string | null;\n",
             "  };\n",
             "}\n",

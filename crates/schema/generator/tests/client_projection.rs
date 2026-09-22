@@ -592,9 +592,9 @@ fn leaf<'a>(
 fn authored_text_reaches_every_field_the_client_reads() {
     let ir = fixture::client_release();
     let operation = |name: &str| {
-        ir.models[0]
-            .operations
+        ir.models
             .iter()
+            .flat_map(|model| &model.operations)
             .find(|operation| operation.name == name)
             .unwrap_or_else(|| panic!("the fixture declares {name}"))
     };
@@ -686,6 +686,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         values: Vec::new(),
         label: None,
         description: None,
+        references: None,
     };
     let routes = BTreeMap::from([(
         identity.to_owned(),
@@ -705,9 +706,10 @@ fn a_published_response_takes_its_text_from_the_terminal() {
     )]);
     let ir = ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
         .expect("the fixture projects with a published response");
-    let get = ir.models[0]
-        .operations
+    let get = ir
+        .models
         .iter()
+        .flat_map(|model| &model.operations)
         .find(|operation| operation.name == "get")
         .expect("the fixture declares get");
     let response = &get.route.as_ref().expect("the get route").response;
@@ -717,4 +719,83 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         "the terminal's declared text joins the published shape"
     );
     assert_eq!(leaf(&response.fields, "id").label, None);
+}
+
+/// EXIT GATE for `wamn-rm14.1`: a client reads what an input references and
+/// what a list serves, from two sources that meet in one IR member.
+///
+/// An authored operation declares the reference, because it has no column. A
+/// generated action derives the same fact from its column's foreign key, and
+/// an author writes nothing there. A screen cannot tell the two apart, which
+/// is the point.
+#[test]
+fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
+    let ir = fixture::client_release();
+    let operation = |name: &str| {
+        ir.models
+            .iter()
+            .flat_map(|model| &model.operations)
+            .find(|operation| operation.name == name)
+            .unwrap_or_else(|| panic!("the fixture declares {name}"))
+    };
+
+    // Authored, on a command that has no column of its own.
+    let batch = operation("record_batch");
+    let maker = leaf(&batch.input_fields, "value.maker_id")
+        .references
+        .as_ref()
+        .expect("the batch names a maker");
+    assert_eq!(maker.model, "widget_maker");
+    assert_eq!(maker.narrowed_by, None);
+    let line = leaf(&batch.input_fields, "value.line[].purchase_order_line_id")
+        .references
+        .as_ref()
+        .expect("a line names a maker");
+    assert_eq!(line.model, "widget_maker");
+    assert_eq!(
+        line.narrowed_by.as_deref(),
+        Some("value.maker_id"),
+        "a nested selector states the input that narrows it"
+    );
+
+    // Derived, from the column's own foreign key, through the served schema.
+    let update = operation("update");
+    assert_eq!(
+        leaf(&update.input_fields, "change.maker_id")
+            .references
+            .as_ref()
+            .map(|reference| reference.model.as_str()),
+        Some("widget_maker"),
+        "a writable column states the record it names with no authoring"
+    );
+    assert_eq!(
+        leaf(&update.input_fields, "change.code").references,
+        None,
+        "a column with no foreign key names no record"
+    );
+
+    // What a list serves, authored and defaulted.
+    let widget_list = operation("list").lists.as_ref().expect("the widget list");
+    assert_eq!(widget_list.model, "widget");
+    assert_eq!(widget_list.key_field, "id");
+    assert_eq!(widget_list.display_field.as_deref(), Some("code"));
+    let maker_list = ir
+        .models
+        .iter()
+        .find(|model| model.name == "widget_maker")
+        .expect("the second model")
+        .operations
+        .iter()
+        .find(|operation| operation.name == "list")
+        .expect("its list");
+    assert_eq!(
+        maker_list.lists.as_ref().expect("a list").model,
+        "widget_maker"
+    );
+    assert_eq!(
+        maker_list.lists.as_ref().expect("a list").display_field,
+        None,
+        "an absent display field takes the plan's default"
+    );
+    assert_eq!(operation("get").lists, None, "a record read lists nothing");
 }

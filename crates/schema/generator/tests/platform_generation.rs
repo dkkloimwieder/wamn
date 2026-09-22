@@ -580,6 +580,10 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
 fn inherited_composition_is_exact_and_carries_its_contract() {
     let mut manifest = fixture::manifest();
     manifest["package"]["id"] = json!("decorator_fixture");
+    // An overlay owns no relation of the base package, so neither model
+    // declares a record history here.
+    let maker = manifest["models"]["widget_maker"].as_object_mut().unwrap();
+    maker.remove("audit_log");
     let model = manifest["models"]["widget"].as_object_mut().unwrap();
     model.remove("audit_log");
     model.remove("delete_mode");
@@ -1052,6 +1056,62 @@ fn a_contract_carries_the_authored_text_and_nothing_else() {
                 assert!(
                     !members.contains_key(key),
                     "{path} carries {key} although nothing was authored"
+                );
+            }
+        }
+    }
+}
+
+/// EXIT GATE for `wamn-rm14.1`: a package that states no reference and no list
+/// writes contract files that carry neither member.
+///
+/// The silence matters for the same reason the authored text's did: a member
+/// written as null would move the contract bytes of three applications that
+/// declare nothing.
+#[test]
+fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
+    let mut silent = fixture::manifest();
+    for pointer in [
+        "/custom_operations/widget.record_batch/input/fields",
+        "/custom_operations/widget.list/result/fields",
+    ] {
+        for field in silent
+            .pointer_mut(pointer)
+            .expect("declared fields")
+            .as_array_mut()
+            .expect("declared fields")
+        {
+            field
+                .as_object_mut()
+                .expect("a field object")
+                .remove("references");
+        }
+    }
+    for operation in ["widget.list", "widget_maker.list"] {
+        silent["custom_operations"][operation]
+            .as_object_mut()
+            .expect("an authored operation")
+            .remove("lists");
+    }
+    // The one derived reference leaves with its column.
+    for action in ["create", "update"] {
+        let writable = silent["models"]["widget"]["operations"][action]["writable_fields"]
+            .as_array_mut()
+            .expect("writable fields");
+        writable.retain(|field| field != "maker_id");
+    }
+    let quiet = fixture::generate_with(&fixture::catalog(), &silent);
+    for file in quiet.files() {
+        let path = file.path();
+        if !path.starts_with("generated/contracts/") {
+            continue;
+        }
+        let contract: Value = serde_json::from_slice(file.bytes()).expect("generated JSON");
+        for members in objects(&contract) {
+            for key in ["references", "lists"] {
+                assert!(
+                    !members.contains_key(key),
+                    "{path} carries {key} although nothing states one"
                 );
             }
         }

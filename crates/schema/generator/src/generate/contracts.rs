@@ -269,6 +269,9 @@ fn emit_custom_operation_contracts(
         operation.label.as_deref(),
         operation.description.as_deref(),
     );
+    if let Some(lists) = &operation.lists {
+        operation_contract.insert("lists".to_owned(), json!(lists));
+    }
     if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
         let mut dependency_contract = serde_json::Map::from_iter([
             ("alias".to_owned(), json!(alias)),
@@ -813,7 +816,7 @@ fn emit_operation_contracts(
     insert_json(
         files,
         &format!("{root}.input.json"),
-        &input_contract(model, table, action, operation),
+        &input_contract(manifest, model, table, action, operation),
     )?;
     insert_json(
         files,
@@ -865,6 +868,45 @@ fn model_text(model: &ModelDeclaration, column: &str) -> FieldText {
 }
 
 /// The two text members of a model column, as contract JSON members.
+/// The model whose record one column names, from its own foreign key.
+///
+/// A generated action reads this instead of an authored declaration, because
+/// its writable field IS a model column and the catalog already states where
+/// that column points. The referenced table maps back to the model that
+/// declares it, so a relation with no model states nothing.
+fn column_reference(
+    manifest: &PackageManifest,
+    table: &Table,
+    column: &str,
+) -> Option<(String, String)> {
+    let (schema, referenced, key) = table.constraints().iter().find_map(|constraint| {
+        let ConstraintKind::ForeignKey {
+            columns,
+            referenced_schema,
+            referenced_table,
+            ..
+        } = constraint.kind()
+        else {
+            return None;
+        };
+        // One column only: a composite key has no single value a selector
+        // could hand back, and no model declares one today.
+        let [pair] = &columns[..] else { return None };
+        (pair.column() == column).then(|| {
+            (
+                referenced_schema.to_string(),
+                referenced_table.to_string(),
+                pair.referenced_column().to_owned(),
+            )
+        })
+    })?;
+    let (model_name, _) = manifest
+        .models
+        .iter()
+        .find(|(_, model)| model.schema == schema && model.table == referenced)?;
+    Some((model_name.clone(), key))
+}
+
 fn model_text_members(model: &ModelDeclaration, column: &str) -> Vec<(String, Value)> {
     let text = model_text(model, column);
     text.label
@@ -907,12 +949,15 @@ fn crud_result_contract(
                 // own text is the only text this result can carry.
                 label: model_text(model, &column.name).label,
                 description: model_text(model, &column.name).description,
+                // A result field is read, never chosen, so it names no list.
+                references: None,
             })
             .collect(),
     }
 }
 
 fn input_contract(
+    manifest: &PackageManifest,
     model: &ModelDeclaration,
     table: &Table,
     action: CrudAction,
@@ -934,6 +979,11 @@ fn input_contract(
             // path the input states, which is `change.<field>` on an update.
             let members = declared.as_object_mut().expect("a writable field object");
             members.extend(model_text_members(model, field));
+            // The column's own foreign key states the record it names, so a
+            // generated action derives what an authored operation declares.
+            if let Some((referenced, _)) = column_reference(manifest, table, field) {
+                members.insert("references".to_owned(), json!({"model": referenced}));
+            }
             declared
         })
         .collect::<Vec<_>>();

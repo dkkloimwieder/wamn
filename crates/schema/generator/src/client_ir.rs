@@ -231,6 +231,43 @@ pub struct FieldIr {
     /// Authored text for an author, which reaches a comment and no screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The record this input names, when it names one.
+    ///
+    /// An authored operation declares it. A generated action derives it from
+    /// the column's own foreign key, so both arrive here the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<ReferenceIr>,
+}
+
+/// The model whose record one input names.
+///
+/// Read straight from the contract file, so its members keep the spelling
+/// `generate/contracts.rs` writes, exactly as [`RecordIr`] does.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceIr {
+    /// Model whose record the value names.
+    pub model: String,
+    /// Input path of the same operation that narrows the list, when one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narrowed_by: Option<String>,
+}
+
+/// What one read operation lists, so a selector can offer its rows.
+///
+/// Read straight from the contract file, so its members keep the spelling
+/// `generate/contracts.rs` writes, exactly as [`RecordIr`] does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListIr {
+    /// Model whose records the rows are.
+    pub model: String,
+    /// Result field that carries the record key.
+    pub key_field: String,
+    /// Result field that carries the text a person reads, when the author
+    /// states one. The plan applies the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_field: Option<String>,
 }
 
 impl FieldIr {
@@ -291,6 +328,12 @@ pub struct OperationIr {
     /// Authored text for an author, which reaches a comment and no screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// What this read lists, when a selector can offer its rows.
+    ///
+    /// A generated `query` states none: its `record` already names the
+    /// relation and the key field that a row carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lists: Option<ListIr>,
     /// Where this operation is published, when the release exposes it over
     /// HTTP.
     ///
@@ -1033,6 +1076,17 @@ fn build_operation(
         fresh_only,
         label: text("label"),
         description: text("description"),
+        lists: operation
+            .get("lists")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| {
+                ClientIrError::new(
+                    ClientIrErrorKind::MalformedContract,
+                    format!("{module}/{name} lists: {error}"),
+                )
+            })?,
         result_class: operation
             .get("result")
             .and_then(Value::as_str)

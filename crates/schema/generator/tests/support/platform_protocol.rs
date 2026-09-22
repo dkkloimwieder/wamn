@@ -35,6 +35,9 @@ fn crud_errors_and_details_are_derived_from_action_and_catalog() {
             "create",
             vec![
                 "check_violation",
+                // widget.maker_id names another model, so a write that points
+                // at no maker is refused by the catalog's own foreign key.
+                "foreign_key_violation",
                 "idempotency_conflict",
                 "unique_violation",
             ],
@@ -43,7 +46,12 @@ fn crud_errors_and_details_are_derived_from_action_and_catalog() {
         ("query", vec![]),
         (
             "update",
-            vec!["concurrency_conflict", "not_found", "unique_violation"],
+            vec![
+                "concurrency_conflict",
+                "foreign_key_violation",
+                "not_found",
+                "unique_violation",
+            ],
         ),
         ("delete", vec!["concurrency_conflict", "not_found"]),
     ] {

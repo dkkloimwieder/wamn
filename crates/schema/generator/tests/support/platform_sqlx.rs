@@ -64,6 +64,10 @@ fn materialize_fixture(root: &std::path::Path) {
             fixture::QUERY_DESCENDING_SQL,
         ),
         ("query/widget_list.sql", fixture::LIST_SQL),
+        (
+            "query/widget_maker_list.sql",
+            fixture::WIDGET_MAKER_LIST_SQL,
+        ),
         ("command/widget/archive.sql", fixture::ARCHIVE_SQL),
         ("command/widget/claim.sql", fixture::CLAIM_SQL),
         ("command/widget/replay.sql", fixture::REPLAY_SQL),

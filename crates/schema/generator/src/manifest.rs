@@ -89,6 +89,9 @@ pub struct CustomOperationDeclaration {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// What this read lists, when a selector can offer its rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lists: Option<ListDeclaration>,
 }
 
 /// Closed non-CRUD operation kinds admitted by the package manifest.
@@ -259,6 +262,46 @@ pub struct ContractFieldDeclaration {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The record this input names, when it names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<FieldReference>,
+}
+
+/// The model whose record one input names.
+///
+/// An authored operation declares this, because it has no column to read it
+/// from. A generated action derives the same fact from its column's foreign
+/// key, so an author writes nothing there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldReference {
+    /// Model whose record the value names.
+    pub model: String,
+    /// Input path of the same operation that narrows the list, when one does.
+    ///
+    /// A receipt line names a line of the purchase order the operator already
+    /// chose, so the line list reads that order and nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narrowed_by: Option<String>,
+}
+
+/// What one authored read operation lists, so a selector can offer its rows.
+///
+/// A generated `query` needs none: its `record` already states the relation
+/// and the key field that a row carries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListDeclaration {
+    /// Model whose records the rows are.
+    pub model: String,
+    /// Result field of this operation that carries the record key.
+    pub key_field: String,
+    /// Result field that carries the text a person reads.
+    ///
+    /// Absent takes the default: the first text field of the model, in the
+    /// contract order the IR states.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_field: Option<String>,
 }
 
 /// Authored text that a screen shows, and that an author reads.

@@ -12,9 +12,9 @@ fn release() -> ClientContractIr {
 }
 
 fn operation<'a>(ir: &'a mut ClientContractIr, name: &str) -> &'a mut OperationIr {
-    ir.models[0]
-        .operations
+    ir.models
         .iter_mut()
+        .flat_map(|model| model.operations.iter_mut())
         .find(|operation| operation.name == name)
         .expect("the platform fixture declares the operation")
 }
@@ -32,15 +32,16 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
     handler.name = "widget_archived".to_owned();
     handler.kind = "event_handler".to_owned();
     handler.operation = "platform-fixture:widget/widget-archived@1.0.0".to_owned();
-    ir.models[0].operations.push(handler);
-    ir.models[0].operations.reverse();
+    let widget = fixture::widget_index(&ir);
+    ir.models[widget].operations.push(handler);
+    ir.models[widget].operations.reverse();
 
     let plan = ClientPlan::from_ir(&ir);
     assert_eq!(plan.package, "platform_fixture");
-    assert_eq!(plan.models.len(), 1, "a private operation keeps its model");
-    assert_eq!(plan.models[0].model.name, "widget");
+    assert_eq!(plan.models.len(), 2, "a private operation keeps its model");
+    assert_eq!(plan.models[widget].model.name, "widget");
     assert_eq!(
-        plan.models[0]
+        plan.models[widget]
             .screens
             .iter()
             .map(|screen| screen.name)
@@ -57,7 +58,11 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
         ],
         "the plan drops the event handler and sorts the rest by name"
     );
-    assert!(plan.screens().all(|screen| screen.model == "widget"));
+    assert!(
+        plan.screens()
+            .all(|screen| screen.model == "widget" || screen.model == "widget_maker"),
+        "every screen states the model that owns it"
+    );
 }
 
 #[test]
@@ -296,8 +301,8 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         plan.screens()
             .filter(|screen| screen.role.is_supported())
             .count(),
-        6,
-        "the other screens keep their role"
+        7,
+        "the other screens keep their role, and the second model lists"
     );
 }
 
@@ -312,7 +317,14 @@ fn columns_are_the_served_result_leaves_in_contract_order() {
     for name in ["create", "get", "query", "update"] {
         assert_eq!(
             paths(&screen(&plan, name).columns),
-            ["code", "created_at", "edit_version", "id", "note"],
+            [
+                "code",
+                "created_at",
+                "edit_version",
+                "id",
+                "maker_id",
+                "note"
+            ],
             "{name}"
         );
     }
@@ -345,14 +357,17 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
         ["id"],
         "request_id is supplied and expected_edit_version is a revision"
     );
-    assert_eq!(paths(&screen(&plan, "create").inputs), ["code", "note"]);
+    assert_eq!(
+        paths(&screen(&plan, "create").inputs),
+        ["code", "maker_id", "note"]
+    );
     assert!(
         screen(&plan, "query").inputs.is_empty(),
         "every input of the fixture query is a page control or a supplied value"
     );
     assert_eq!(
         paths(&screen(&plan, "update").inputs),
-        ["change.code", "change.note", "id"],
+        ["change.code", "change.maker_id", "change.note", "id"],
         "the record key is operator input, and the revision is not"
     );
 

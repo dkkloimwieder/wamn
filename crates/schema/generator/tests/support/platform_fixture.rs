@@ -7,7 +7,8 @@ use wamn_schema_generator::{
     StatementTransactionality, generate,
 };
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Table,
+    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
+    Table,
 };
 
 pub(crate) const QUERY_SQL: &[u8] =
@@ -17,6 +18,10 @@ pub(crate) const QUERY_DESCENDING_SQL: &[u8] =
 /// The bounded-list read. It selects exactly what `widget.archive` reads, so
 /// the fixture's data-access grant does not move.
 pub(crate) const LIST_SQL: &[u8] = b"SELECT id, edit_version FROM widget ORDER BY id;\n";
+/// The second model's list. A selector reads it, so it selects the key and
+/// the text a person reads.
+pub(crate) const WIDGET_MAKER_LIST_SQL: &[u8] =
+    b"SELECT id, name FROM widget_maker ORDER BY name;\n";
 pub(crate) const ARCHIVE_SQL: &[u8] =
     b"SELECT id, edit_version FROM widget WHERE id = $1 FOR UPDATE;\n";
 pub(crate) const CLAIM_SQL: &[u8] = b"INSERT INTO widget_command (canonical_command, idempotency_key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING widget_id;\n";
@@ -45,6 +50,7 @@ pub(crate) fn try_generate_with(
             QUERY_DESCENDING_SQL,
         ),
         AuthoredSql::new("query/widget_list.sql", LIST_SQL),
+        AuthoredSql::new("query/widget_maker_list.sql", WIDGET_MAKER_LIST_SQL),
         AuthoredSql::new("command/widget/archive.sql", ARCHIVE_SQL),
         AuthoredSql::new("command/widget/claim.sql", CLAIM_SQL),
         AuthoredSql::new("command/widget/replay.sql", REPLAY_SQL),
@@ -85,25 +91,28 @@ pub(crate) fn client_release() -> ClientContractIr {
     let package = generate_fixture();
     let contracts = contracts(&package);
     let routes = [
-        "archive",
-        "create",
-        "delete",
-        "get",
-        "list",
-        "query",
-        "record_batch",
-        "update",
+        ("widget", "archive"),
+        ("widget", "create"),
+        ("widget", "delete"),
+        ("widget", "get"),
+        ("widget", "list"),
+        ("widget", "query"),
+        ("widget", "record_batch"),
+        ("widget", "update"),
+        // A selector reads a served list, so the second model's list is
+        // published like every other operation.
+        ("widget-maker", "list"),
     ]
     .into_iter()
-    .map(|name| {
+    .map(|(model, name)| {
         // A contract identity spells its operation with hyphens, and a route
         // template keeps the operation path.
-        let identity = format!("platform-fixture:widget/{}@1.0.0", name.replace('_', "-"));
+        let identity = format!("platform-fixture:{model}/{}@1.0.0", name.replace('_', "-"));
         (
             identity.clone(),
             RouteIr {
                 method: "POST".to_owned(),
-                template: format!("/widget/{name}"),
+                template: format!("/{model}/{name}"),
                 input_schema: match name {
                     // The shape a real release publishes: the record key, the
                     // revision it expects, the request identity, and the change.
@@ -114,7 +123,11 @@ pub(crate) fn client_release() -> ClientContractIr {
                             "expected_edit_version": {"type": "string"},
                             "request_id": {"type": "string"},
                             "change": {
-                            "type": "object", "properties": {"note": {
+                            "type": "object", "properties": {"maker_id": {
+                                "type": ["string", "null"],
+                                "format": "uuid",
+                                "x-wamn-explicit-null": "accepted"
+                            }, "note": {
                                 "type": ["string", "null"],
                                 "x-wamn-explicit-null": "accepted"
                             }, "code": {
@@ -163,6 +176,18 @@ pub(crate) fn client_release() -> ClientContractIr {
         .expect("platform fixture projects as a release")
 }
 
+/// The index of the widget model, which every emitter test reads.
+///
+/// The fixture holds two models now, and their order is the contract order,
+/// so a test states the model it means instead of the first one.
+#[allow(dead_code, reason = "not every test module reads the widget model")]
+pub(crate) fn widget_index(ir: &ClientContractIr) -> usize {
+    ir.models
+        .iter()
+        .position(|model| model.name == "widget")
+        .expect("the fixture declares the widget model")
+}
+
 pub(crate) fn catalog() -> CatalogIr {
     let widget = Table::new(
         "inventory",
@@ -177,6 +202,9 @@ pub(crate) fn catalog() -> CatalogIr {
             ),
             Column::new("code", ColumnType::Text, false, None, None),
             Column::new("note", ColumnType::Text, true, None, None),
+            // The one column that names another model's record. A selector
+            // for it is derived from this foreign key alone.
+            Column::new("maker_id", ColumnType::Uuid, true, None, None),
             Column::new(
                 "edit_version",
                 ColumnType::Int64,
@@ -200,7 +228,36 @@ pub(crate) fn catalog() -> CatalogIr {
                 "code = ANY (ARRAY['priority'::text, 'standard'::text])",
             )
             .expect("valid check constraint"),
+            Constraint::foreign_key(
+                "widget_maker_id_fkey",
+                vec![ForeignKeyColumn::new("maker_id", "id")],
+                "inventory",
+                "widget_maker",
+                ForeignKeyAction::NoAction,
+                ForeignKeyAction::NoAction,
+            )
+            .expect("valid foreign key"),
         ],
+        Vec::new(),
+    );
+    // The second model. It is as small as the first: an identity, one text
+    // column, and one list operation that a selector reads. Its name keeps it
+    // after `widget` in contract order, so every model index a test states
+    // stays where it was.
+    let widget_maker = Table::new(
+        "inventory",
+        "widget_maker",
+        vec![
+            Column::new(
+                "id",
+                ColumnType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("name", ColumnType::Text, false, None, None),
+        ],
+        vec![Constraint::primary_key("widget_maker_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
     );
     let command = Table::new(
@@ -225,7 +282,7 @@ pub(crate) fn catalog() -> CatalogIr {
         ],
         Vec::new(),
     );
-    CatalogIr::new(vec![widget, command])
+    CatalogIr::new(vec![widget, widget_maker, command])
 }
 
 pub(crate) fn manifest() -> Value {
@@ -236,6 +293,15 @@ pub(crate) fn manifest() -> Value {
             "state": "unsatisfied"
         },
         "models": {
+            "widget_maker": {
+                "schema": "inventory",
+                "table": "widget_maker",
+                "owner": "platform_fixture",
+                "server_owned_fields": ["id"],
+                "enum_fields": {},
+                "audit_log": {"columns": [], "retention": "none"},
+                "operations": {}
+            },
             "widget": {
                 "schema": "inventory",
                 "table": "widget",
@@ -257,7 +323,7 @@ pub(crate) fn manifest() -> Value {
                 "operations": {
                     "create": {
                         "permission": "widget.create",
-                        "writable_fields": ["code", "note"],
+                        "writable_fields": ["code", "maker_id", "note"],
                         "claim": {
                             "table": "widget_command",
                             "identities": {"id": "widget_id"}
@@ -297,7 +363,7 @@ pub(crate) fn manifest() -> Value {
                     },
                     "update": {
                         "permission": "widget.update",
-                        "writable_fields": ["code", "note"],
+                        "writable_fields": ["code", "maker_id", "note"],
                         "revision_field": "edit_version",
                         "result": "one"
                     },
@@ -323,6 +389,8 @@ pub(crate) fn manifest() -> Value {
             // because a json value keeps its own keys.
             "widget.list": {
                 "kind": "projection",
+                // A selector over widgets reads the code, not the identity.
+                "lists": {"model": "widget", "key_field": "id", "display_field": "code"},
                 "visibility": "public",
                 "permission": "widget.list",
                 "connection": "postgres",
@@ -364,6 +432,45 @@ pub(crate) fn manifest() -> Value {
                     ]
                 }}
             },
+            // The second model's list, which a selector reads. It declares
+            // what it lists and states no display field, so the plan applies
+            // the default: the model's first text field.
+            "widget_maker.list": {
+                "kind": "projection",
+                "visibility": "public",
+                "permission": "widget_maker.list",
+                "connection": "postgres",
+                "lists": {"model": "widget_maker", "key_field": "id"},
+                "input": {"fields": [
+                    {"path": "request_id", "type": "text", "nullable": false}
+                ]},
+                "result": {"class": "bounded_list", "fields": [
+                    {"path": "id", "type": "uuid", "nullable": false},
+                    {"path": "name", "type": "text", "nullable": false}
+                ]},
+                "errors": [
+                    "invalid_input", "retry", "timeout", "permission_denied", "internal_error"
+                ],
+                "constraint_errors": {},
+                "relations": [{
+                    "schema": "inventory",
+                    "table": "widget_maker",
+                    "select_fields": ["id", "name"],
+                    "insert_fields": [],
+                    "update_fields": [],
+                    "lock": false,
+                    "constraints": []
+                }],
+                "statements": {"list": {
+                    "path": "query/widget_maker_list.sql",
+                    "fetch": "bounded_list",
+                    "parameters": [],
+                    "row": [
+                        {"name": "id", "type": "uuid", "nullable": false},
+                        {"name": "name", "type": "text", "nullable": false}
+                    ]
+                }}
+            },
             // The one command whose input nests and repeats. A form of this
             // shape is what a refusal path with `[]` names, and the bounds of
             // its group are declared.
@@ -398,11 +505,24 @@ pub(crate) fn manifest() -> Value {
                             "label": "Batch note",
                             "description": "What the operator recorded about this batch."
                         },
+                        // The authored reference: this command has no column,
+                        // so it declares the record each input names.
+                        {
+                            "path": "value.maker_id",
+                            "type": "uuid",
+                            "nullable": true,
+                            "label": "Maker",
+                            "references": {"model": "widget_maker"}
+                        },
                         {
                             "path": "value.line[].purchase_order_line_id",
                             "type": "uuid",
                             "nullable": false,
-                            "label": "Line"
+                            "label": "Line",
+                            "references": {
+                                "model": "widget_maker",
+                                "narrowed_by": "value.maker_id"
+                            }
                         },
                         {
                             "path": "value.line[].quantity",

@@ -42,6 +42,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
         [
             "generated/client-ts/index.ts",
             "generated/client-ts/widget.ts",
+            "generated/client-ts/widget_maker.ts",
         ]
     );
     let widget = widget(&files);
@@ -88,6 +89,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "// The wire contract lives in `@wamn/web-runtime`, which this package",
             " depends on.\n\n",
             "export * as widget from \"./widget.js\";\n",
+            "export * as widgetMaker from \"./widget_maker.js\";\n",
         )
     );
 }
