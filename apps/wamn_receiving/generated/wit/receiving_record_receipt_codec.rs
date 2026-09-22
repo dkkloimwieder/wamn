@@ -76,7 +76,7 @@ pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {
                     "receipt_id": value.receipt_id,
                     "purchase_order_id": value.purchase_order_id,
                     "purchase_order_status": value.purchase_order_status,
-                    "row_version": value.row_version.to_string(),
+                    "row_version": value.row_version,
                 }
             }),
             Err(error) => json!({

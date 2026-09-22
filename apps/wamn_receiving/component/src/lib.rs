@@ -308,21 +308,22 @@ mod tests {
         }));
     }
 
+    /// A revision is an int32, so the result carries it as a JSON number.
     #[test]
-    fn codec_encodes_row_version_as_a_decimal_string() {
+    fn codec_encodes_row_version_as_a_number() {
         let output = [contract::RecordReceiptOutcome {
             request_id: "request-1".to_owned(),
             outcome: Ok(contract::RecordReceiptResult {
                 receipt_id: "00000000-0000-0000-0000-000000000001".to_owned(),
                 purchase_order_id: "00000000-0000-0000-0000-000000000002".to_owned(),
                 purchase_order_status: "open".to_owned(),
-                row_version: 4_294_967_297,
+                row_version: 2_147_483_647,
             }),
         }];
         let encoded: serde_json::Value =
             serde_json::from_str(&receipt_codec::encode(&output)).expect("the output is JSON");
         assert_eq!(encoded[0]["request_id"], "request-1");
-        assert_eq!(encoded[0]["value"]["row_version"], "4294967297");
+        assert_eq!(encoded[0]["value"]["row_version"], 2_147_483_647);
     }
 }
 

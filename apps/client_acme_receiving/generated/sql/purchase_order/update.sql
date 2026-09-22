@@ -17,7 +17,7 @@ updated AS (
         END
     FROM target
     WHERE model.id = target.id
-      AND target.row_version = $2::int8
+      AND target.row_version = $2::int4
     RETURNING
     model.acme_inspection_required,
     model.acme_quality_status,

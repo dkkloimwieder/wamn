@@ -89,7 +89,7 @@ mod tests {
         created_by: Option<Uuid>,
         id: Option<Uuid>,
         purchase_order_number: Option<String>,
-        row_version: Option<i64>,
+        row_version: Option<i32>,
         status: Option<String>,
         supplier_id: Option<Uuid>,
         updated_at: Option<DateTime<Utc>>,
@@ -126,7 +126,7 @@ mod tests {
         receipt_id: Uuid,
         purchase_order_id: Uuid,
         purchase_order_status: String,
-        row_version: i64,
+        row_version: i32,
     }
 
     #[derive(Debug)]
@@ -160,7 +160,7 @@ mod tests {
         first_received: String,
         second_received: String,
         purchase_order_status: String,
-        row_version: i64,
+        row_version: i32,
         purchase_order_stamps: Stamps,
         receipt_stamps: Value,
         history_entries: i64,
@@ -263,7 +263,7 @@ mod tests {
             .batch_execute("SAVEPOINT wildcard_projection")
             .await?;
         let refusal = client
-            .query_one(&wildcard, &[&id, &1_i64, &true, &Some(changed_supplier)])
+            .query_one(&wildcard, &[&id, &1_i32, &true, &Some(changed_supplier)])
             .await
             .expect_err("wildcard RETURNING must require SELECT on the added field");
         client
@@ -294,14 +294,14 @@ mod tests {
         let overlay = client
             .query_one(
                 OVERLAY_UPDATE_SQL,
-                &[&id, &2_i64, &true, &Some(true), &false, &None::<String>],
+                &[&id, &2_i32, &true, &Some(true), &false, &None::<String>],
             )
             .await
             .context("execute exact overlay UPDATE with an ungranted additive field")?;
         ensure!(
             overlay.get::<_, String>("outcome") == "updated"
                 && overlay.get::<_, Option<Uuid>>("id") == Some(id)
-                && overlay.get::<_, Option<i64>>("row_version") == Some(3)
+                && overlay.get::<_, Option<i32>>("row_version") == Some(3)
                 && overlay.get::<_, Option<bool>>("acme_inspection_required") == Some(true)
                 && overlay
                     .get::<_, Option<String>>("acme_quality_status")
@@ -328,7 +328,7 @@ mod tests {
         ).await?;
         ensure!(
             stored.get::<_, Uuid>(0) == changed_supplier
-                && stored.get::<_, i64>(1) == 3
+                && stored.get::<_, i32>(1) == 3
                 && stored.get::<_, String>(2) == "untouched",
             "updates changed unrelated stored state"
         );
@@ -411,19 +411,19 @@ mod tests {
         let updated = client
             .query_one(
                 OVERLAY_UPDATE_SQL,
-                &[&id, &1_i64, &true, &Some(true), &false, &None::<String>],
+                &[&id, &1_i32, &true, &Some(true), &false, &None::<String>],
             )
             .await
             .context("execute exact Acme purchase_order.update SQL as wamn_app")?;
         bind_actor(&client, FIXTURE_PRINCIPAL).await?;
         ensure!(
             updated.get::<_, String>("outcome") == "updated"
-                && updated.get::<_, Option<i64>>("row_version") == Some(2)
+                && updated.get::<_, Option<i32>>("row_version") == Some(2)
                 && updated.get::<_, Option<bool>>("acme_inspection_required") == Some(true),
             "Acme purchase_order.update returned the wrong row"
         );
         let read = client
-            .query(HISTORY_SQL, &[&id, &0_i64, &100_i64])
+            .query(HISTORY_SQL, &[&id, &0_i64, &100_i32])
             .await
             .context("execute the Receiving history read as wamn_app")?;
         client.batch_execute("RESET ROLE").await?;
@@ -545,22 +545,21 @@ mod tests {
                     row.get::<_, String>("kind"),
                     declared_image("before")?,
                     declared_image("current")?,
-                    row.get::<_, Option<i64>>("head_position")
-                        .context("the history read returned its head position")?,
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
+        // The read states no head position, so the newest row it returned is
+        // the head. The read asked for the whole retained history.
+        let base_head = filtered.last().map_or(0, |(position, ..)| *position);
         let base_rows = filtered
             .iter()
-            .map(
-                |(position, kind, before, current, head_position)| HistoryRow {
-                    position: *position,
-                    kind,
-                    before,
-                    current,
-                    head_position: *head_position,
-                },
-            )
+            .map(|(position, kind, before, current)| HistoryRow {
+                position: *position,
+                kind,
+                before,
+                current,
+                head_position: base_head,
+            })
             .collect::<Vec<_>>();
         let RowState::Present(base) = state_at(&base_rows, head)? else {
             bail!("the base history read does not show the purchase order");
@@ -807,7 +806,7 @@ mod tests {
     async fn assert_no_op_keeps_revision_and_stamps(
         client: &Client,
         id: Uuid,
-        (supplier_id, row_version): (Uuid, i64),
+        (supplier_id, row_version): (Uuid, i32),
     ) -> Result<()> {
         let before = stamps(client, id).await?;
         bind_actor(client, COMMAND_PRINCIPAL).await?;
@@ -866,7 +865,7 @@ mod tests {
                 OVERLAY_UPDATE_SQL,
                 &[
                     &purchase_order_id,
-                    &1_i64,
+                    &1_i32,
                     &true,
                     &enabled,
                     &false,
@@ -882,7 +881,7 @@ mod tests {
                     .get::<_, Option<String>>("acme_quality_status")
                     .as_deref()
                     == Some("not_required")
-                && updated.get::<_, Option<i64>>("row_version") == Some(2),
+                && updated.get::<_, Option<i32>>("row_version") == Some(2),
             "Acme purchase_order.update returned the wrong state"
         );
         // The overlay declares no record history, and its update stamps the base columns.
@@ -959,7 +958,7 @@ mod tests {
         ensure!(
             detail.get::<_, bool>("acme_inspection_required")
                 && detail.get::<_, String>("acme_quality_status") == "not_required"
-                && detail.get::<_, i64>("row_version") == 3,
+                && detail.get::<_, i32>("row_version") == 3,
             "Acme detail projection returned the wrong pre-approval state"
         );
 
@@ -974,7 +973,7 @@ mod tests {
             approved.get::<_, String>("outcome") == "approved"
                 && approved.get::<_, Option<String>>("status").as_deref() == Some("approved")
                 && approved.get::<_, Option<i64>>("row_version") == Some(2)
-                && approved.get::<_, Option<i64>>("purchase_order_row_version") == Some(4),
+                && approved.get::<_, Option<i32>>("purchase_order_row_version") == Some(4),
             "Acme approve_inspection returned the wrong committed state"
         );
 
@@ -985,7 +984,7 @@ mod tests {
         ensure!(
             fetched.get::<_, bool>("acme_inspection_required")
                 && fetched.get::<_, String>("acme_quality_status") == "approved"
-                && fetched.get::<_, i64>("row_version") == 4,
+                && fetched.get::<_, i32>("row_version") == 4,
             "Acme purchase_order.get returned the wrong approved state"
         );
         Ok(())
@@ -1619,7 +1618,7 @@ mod tests {
             .await
             .map_err(CommandAttemptError::Database)?;
         let purchase_order_status = finished.get::<_, String>("status");
-        let row_version = finished.get::<_, i64>("row_version");
+        let row_version = finished.get::<_, i32>("row_version");
         let finalized = transaction
             .query_one(
                 FINALIZE_COMMAND_SQL,
@@ -1637,7 +1636,7 @@ mod tests {
             .get::<_, Option<String>>("purchase_order_status")
             .as_deref()
             != Some(purchase_order_status.as_str())
-            || finalized.get::<_, Option<i64>>("row_version") != Some(row_version)
+            || finalized.get::<_, Option<i32>>("row_version") != Some(row_version)
         {
             return Err(CommandAttemptError::Internal(
                 "stored command result differs from purchase_order result".to_owned(),
@@ -1668,7 +1667,7 @@ mod tests {
                 .ok_or_else(|| {
                     CommandAttemptError::Internal("replay status is absent".to_owned())
                 })?,
-            row_version: row.get::<_, Option<i64>>("row_version").ok_or_else(|| {
+            row_version: row.get::<_, Option<i32>>("row_version").ok_or_else(|| {
                 CommandAttemptError::Internal("replay row_version is absent".to_owned())
             })?,
         })
@@ -1886,7 +1885,7 @@ mod tests {
     async fn execute_update(
         client: &Client,
         id: Uuid,
-        expected_row_version: i64,
+        expected_row_version: i32,
         supplier_id: Uuid,
     ) -> Result<UpdateResult> {
         let supplier_id = Some(supplier_id);
@@ -1932,7 +1931,7 @@ mod tests {
         }
     }
 
-    async fn persisted_revision(client: &Client, id: Uuid) -> Result<(Uuid, i64)> {
+    async fn persisted_revision(client: &Client, id: Uuid) -> Result<(Uuid, i32)> {
         let row = client
             .query_one(
                 "SELECT supplier_id, row_version FROM purchase_order WHERE id = $1",

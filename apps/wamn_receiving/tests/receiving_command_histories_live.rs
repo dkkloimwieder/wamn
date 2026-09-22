@@ -343,7 +343,7 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
                 (
                     "/purchase_order/update",
                     json!([{"request_id":request_id,
-                    "id":fixture.id.to_string(),"expected_row_version":revision.to_string(),
+                    "id":fixture.id.to_string(),"expected_row_version":revision,
                     "change":{"supplier_id":supplier.to_string()}}]),
                 )
             };
@@ -386,9 +386,8 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
                         "REC-HISTORY/commit-response",
                         &outcome,
                     )?;
-                    let expected_revision = revision.to_string();
                     history_assert(
-                        value["row_version"].as_str() == Some(expected_revision.as_str()),
+                        value["row_version"] == revision,
                         "REC-REVISION/response",
                         &outcome,
                         format_args!("REC-HISTORY revision at step {index}: {value}"),
@@ -621,7 +620,7 @@ async fn mixed_items(db: &Client, route: &Route, evidence: &mut File) -> Result<
             refused(&individual, &request, "quantity_exceeds_remaining")?;
         } else {
             let value = succeeded(&individual, &request)?;
-            let revision = if index == 0 { "2" } else { "3" };
+            let revision = if index == 0 { 2 } else { 3 };
             ensure!(
                 value["row_version"] == revision,
                 "mixed item result lost its own transaction"
@@ -827,17 +826,19 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     );
     call.await.context("join response suppression")??;
     let value = succeeded(&route.post(RECEIPT_PATH, &body).await?, "lost-response")?;
-    let expected=db.query_one(
-        "SELECT receipt_id::text,purchase_order_id::text,purchase_order_status,row_version::text \
+    let expected = db
+        .query_one(
+            "SELECT receipt_id::text,purchase_order_id::text,purchase_order_status,row_version \
          FROM receiving.record_receipt_command WHERE idempotency_key=$1",
-        &[&format!("{}-0",fixture.key_prefix)],
-    ).await?;
+            &[&format!("{}-0", fixture.key_prefix)],
+        )
+        .await?;
     ensure!(
         value
             == json!({"receipt_id":expected.get::<_,String>(0),
         "purchase_order_id":expected.get::<_,String>(1),
         "purchase_order_status":expected.get::<_,String>(2),
-        "row_version":expected.get::<_,String>(3)}),
+        "row_version":expected.get::<_,i32>(3)}),
         "REC-LOST-RESPONSE retry did not return the independently observed original result"
     );
     ensure!(

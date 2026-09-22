@@ -8,7 +8,7 @@ pub(super) fn error_detail(
     key: &str,
     operation: &str,
     id: Option<(&str, &str)>,
-    expected: Option<i64>,
+    expected: Option<i32>,
 ) -> Option<String> {
     match key {
         "field" if error.kind() == AccessErrorKind::NotFound => {
@@ -258,7 +258,7 @@ pub(super) mod receiving_load_purchase_order_history {
         read::purchase_order_history(
             connection,
             Uuid(request.id.clone()),
-            request.after_position,
+            request.after_cursor.as_deref(),
             request.limit,
         )
         .await
@@ -454,7 +454,7 @@ mod tests {
         }];
         let value: serde_json::Value = serde_json::from_str(&screen::encode(&output)).unwrap();
         let row = &value[0]["value"]["rows"][0];
-        assert_eq!(row["row_version"], "4");
+        assert_eq!(row["row_version"], 4, "a revision is an int32 number");
         assert!(row["line_id"].is_null());
         assert_eq!(row["ordered_quantity"], "12.3400");
     }

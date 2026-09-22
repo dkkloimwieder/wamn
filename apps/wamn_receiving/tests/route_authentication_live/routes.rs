@@ -329,7 +329,7 @@ async fn receiving_release_journey(
             })
             && value["purchase_order_id"] == "00000000-0000-0000-0000-000000000302"
             && value["purchase_order_status"] == "complete"
-            && value["row_version"] == "2"
+            && value["row_version"] == 2
             && value.get("acme_inspection_required").is_none()
             && value.get("acme_quality_status").is_none(),
         "cold Acme receiving.record_receipt did not return the exact base result: {value}"
@@ -407,7 +407,7 @@ async fn receiving_release_journey(
     .await?;
     let value = successful_value(&response, "purchase-order-get")?;
     anyhow::ensure!(
-        value["id"] == "00000000-0000-0000-0000-000000000301" && value["row_version"] == "1",
+        value["id"] == "00000000-0000-0000-0000-000000000301" && value["row_version"] == 1,
         "purchase_order.get returned the wrong row: {value}"
     );
     expected_direct_traces.push((
@@ -461,14 +461,13 @@ async fn receiving_release_journey(
         Some(&route.token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"purchase-order-update","id":"00000000-0000-0000-0000-000000000301","expected_row_version":"1","change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
+            br#"[{"request_id":"purchase-order-update","id":"00000000-0000-0000-0000-000000000301","expected_row_version":1,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
         ),
     )
     .await?;
     let value = successful_value(&response, "purchase-order-update")?;
     anyhow::ensure!(
-        value["supplier_id"] == "00000000-0000-0000-0000-000000000402"
-            && value["row_version"] == "2",
+        value["supplier_id"] == "00000000-0000-0000-0000-000000000402" && value["row_version"] == 2,
         "purchase_order.update returned the wrong row: {value}"
     );
     // The service principal stamps its own id. The seeded row keeps its creator.
@@ -513,7 +512,7 @@ async fn receiving_release_journey(
     .await?;
     let value = successful_value(&response, "record-receipt")?;
     anyhow::ensure!(
-        value["purchase_order_status"] == "complete" && value["row_version"] == "3",
+        value["purchase_order_status"] == "complete" && value["row_version"] == 3,
         "receiving.record_receipt returned the wrong command result: {value}"
     );
     let receipt_id = value["receipt_id"]
@@ -633,7 +632,7 @@ async fn receiving_release_journey(
     let value = successful_value(&response, "acme-purchase-order-get")?;
     anyhow::ensure!(
         value["id"] == "00000000-0000-0000-0000-000000000302"
-            && value["row_version"] == "2"
+            && value["row_version"] == 2
             && value["acme_inspection_required"] == false
             && value["acme_quality_status"] == "not_required",
         "the separate Acme purchase_order.get returned the wrong receipt details: {value}"
@@ -658,13 +657,13 @@ async fn receiving_release_journey(
         Some(&route.token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"acme-purchase-order-update","id":"00000000-0000-0000-0000-000000000302","expected_row_version":"2","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]"#,
+            br#"[{"request_id":"acme-purchase-order-update","id":"00000000-0000-0000-0000-000000000302","expected_row_version":2,"change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]"#,
         ),
     )
     .await?;
     let value = successful_value(&response, "acme-purchase-order-update")?;
     anyhow::ensure!(
-        value["row_version"] == "3"
+        value["row_version"] == 3
             && value["acme_inspection_required"] == true
             && value["acme_quality_status"] == "pending",
         "Acme purchase_order.update returned the wrong row: {value}"
@@ -713,7 +712,7 @@ async fn receiving_release_journey(
     let value = successful_value(&response, "quality-load-detail")?;
     anyhow::ensure!(
         value["id"] == "00000000-0000-0000-0000-000000000302"
-            && value["row_version"] == "3"
+            && value["row_version"] == 3
             && value["acme_quality_status"] == "pending",
         "quality.load_purchase_order_detail returned the wrong row: {value}"
     );
@@ -749,7 +748,7 @@ async fn receiving_release_journey(
         value["status"] == "approved"
             && value["row_version"] == "2"
             && value["purchase_order_id"] == "00000000-0000-0000-0000-000000000303"
-            && value["purchase_order_row_version"] == "3",
+            && value["purchase_order_row_version"] == 3,
         "quality.approve_inspection returned the wrong result: {value}"
     );
     expected_direct_traces.push((
@@ -786,7 +785,7 @@ async fn receiving_release_journey(
         Some(&route.token),
         &denied_history_parent,
         Bytes::from_static(
-            br#"[{"request_id":"history-permission-denied","id":"00000000-0000-0000-0000-000000000302","after_position":0,"limit":100}]"#,
+            br#"[{"request_id":"history-permission-denied","id":"00000000-0000-0000-0000-000000000302","limit":100}]"#,
         ),
     )
     .await?;
@@ -1027,7 +1026,7 @@ async fn assert_route_update_record_history(
         Some(token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"purchase-order-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":"2","change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
+            br#"[{"request_id":"purchase-order-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":2,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
         ),
     )
     .await?;
@@ -1050,7 +1049,7 @@ async fn assert_route_update_record_history(
         Some(token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"purchase-order-stale-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":"1","change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
+            br#"[{"request_id":"purchase-order-stale-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":1,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
         ),
     )
     .await?;
@@ -1078,7 +1077,7 @@ async fn assert_route_update_record_history(
         Some(token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"purchase-order-supplied-stamp","id":"00000000-0000-0000-0000-000000000301","expected_row_version":"2","change":{"created_by":"00000000-0000-0000-0000-000000000401"}}]"#,
+            br#"[{"request_id":"purchase-order-supplied-stamp","id":"00000000-0000-0000-0000-000000000301","expected_row_version":2,"change":{"created_by":"00000000-0000-0000-0000-000000000401"}}]"#,
         ),
     )
     .await?;
@@ -1132,7 +1131,7 @@ async fn assert_route_history_read(
         Some(token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"purchase-order-history","id":"00000000-0000-0000-0000-000000000302","after_position":0,"limit":100}]"#,
+            br#"[{"request_id":"purchase-order-history","id":"00000000-0000-0000-0000-000000000302","limit":100}]"#,
         ),
     )
     .await?;
@@ -1146,11 +1145,6 @@ async fn assert_route_history_read(
             .map(str::to_owned)
             .with_context(|| format!("the history row carries no text {field}: {row}"))
     };
-    let int64 = |row: &Value, field: &str| -> anyhow::Result<i64> {
-        row[field]
-            .as_i64()
-            .with_context(|| format!("the history row carries no int64 {field}: {row}"))
-    };
     let mut fields = Vec::with_capacity(served.len());
     for row in served {
         for image in ["before", "after", "current"] {
@@ -1162,25 +1156,29 @@ async fn assert_route_history_read(
                 "the base history read served an Acme column in {image}: {row}"
             );
         }
+        // The contract carries no database position, so the entry order is
+        // what the fold reads, and the newest entry is the head.
+        anyhow::ensure!(
+            !text(row, "cursor")?.is_empty(),
+            "the history row carries no cursor: {row}"
+        );
         fields.push((
-            int64(row, "position")?,
+            i64::try_from(fields.len())? + 1,
             text(row, "kind")?,
             text(row, "before")?,
             text(row, "current")?,
-            int64(row, "head_position")?,
         ));
     }
+    let newest_position = i64::try_from(fields.len())?;
     let rows = fields
         .iter()
-        .map(
-            |(position, kind, before, current, head_position)| HistoryRow {
-                position: *position,
-                kind,
-                before,
-                current,
-                head_position: *head_position,
-            },
-        )
+        .map(|(position, kind, before, current)| HistoryRow {
+            position: *position,
+            kind,
+            before,
+            current,
+            head_position: newest_position,
+        })
         .collect::<Vec<_>>();
     anyhow::ensure!(
         rows.iter().map(|row| row.kind).collect::<Vec<_>>() == ["insert", "update", "update"],
@@ -1225,7 +1223,7 @@ async fn assert_route_history_read(
         "purchase_order_number": held.get::<_, String>(1),
         "supplier_id": uuid(2),
         "status": held.get::<_, String>(3),
-        "row_version": held.get::<_, i64>(4),
+        "row_version": held.get::<_, i32>(4),
         "created_at": instant(5),
         "created_by": uuid(6),
         "updated_at": instant(7),
@@ -1278,7 +1276,7 @@ async fn assert_unauthorized_no_op_refuses(
     let body = serde_json::to_vec(&serde_json::json!([{
         "request_id": "purchase-order-unauthorized-no-op",
         "id": "00000000-0000-0000-0000-000000000301",
-        "expected_row_version": before["row_version"].to_string(),
+        "expected_row_version": before["row_version"],
         "change": {"supplier_id": before["supplier_id"]},
     }]))?;
     let (_, traceparent) = journey_trace(20);

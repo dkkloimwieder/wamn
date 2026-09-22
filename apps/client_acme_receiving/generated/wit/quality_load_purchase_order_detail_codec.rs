@@ -45,7 +45,7 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderDetailOutcome]) -> Str
                     "purchase_order_number": value.purchase_order_number,
                     "supplier_id": value.supplier_id,
                     "status": value.status,
-                    "row_version": value.row_version.to_string(),
+                    "row_version": value.row_version,
                     "acme_inspection_required": value.acme_inspection_required,
                     "acme_quality_status": value.acme_quality_status,
                 }

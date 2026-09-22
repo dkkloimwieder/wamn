@@ -64,7 +64,7 @@ pub fn orders(numbers: &[u8], cursor: Option<&str>) -> Value {
     json!({"item": numbers.iter().map(|number| json!({
         "id": format!("00000000-0000-0000-0000-{number:012}"),
         "purchase_order_number": format!("PO-{number}"),
-        "status": "open", "row_version": "4",
+        "status": "open", "row_version": 4,
         "supplier_id": "aaaaaaaa-0000-0000-0000-000000000001",
         "created_at": "2026-09-03T00:00:00Z", "updated_at": "2026-09-03T00:00:00Z",
         "created_by": "cccccccc-0000-0000-0000-000000000001",

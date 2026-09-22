@@ -33,7 +33,7 @@
     "package-id": "client_acme_receiving",
     "wiring-id": "purchase_order_update",
     "wiring-version": 1,
-    "definition-hash": "sha256:077fe760dc3c65136ca31e9642f671cf5e5ce02b88a0a05108d56a2178c7f8b9",
+    "definition-hash": "sha256:31873edf342f882f478de97c38a651a75ad9a1b42bc86816ad536f8ccdfee97a",
     "definition": {
       "id": "client-acme-receiving-purchase-order-update-http",
       "kind": "http",
@@ -50,7 +50,7 @@
           "properties": {
             "request_id": {"type": "string", "minLength": 1},
             "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-            "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+            "expected_row_version": {"type": "integer"},
             "change": {
               "type": "object",
               "additionalProperties": false,
@@ -159,7 +159,7 @@
     "package-id": "client_acme_receiving",
     "wiring-id": "quality_approve_inspection",
     "wiring-version": 1,
-    "definition-hash": "sha256:82b9ee17eb2657d800eaf8024b3fba6b4b8b1384ad0dd5afd1281d759cf8a05f",
+    "definition-hash": "sha256:cd1af17c09b45c9df5d122bd565bcf82117f737bdde7a3242430b7df28a1afe0",
     "definition": {
       "id": "client-acme-receiving-quality-approve-inspection-http",
       "kind": "http",
@@ -174,7 +174,7 @@
           "properties": {
             "request_id": {"type": "string", "minLength": 1},
             "receipt_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-            "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"}
+            "expected_row_version": {"type": "integer"}
           }
         }
       }

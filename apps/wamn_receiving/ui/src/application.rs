@@ -27,7 +27,7 @@ static ACME_RECEIPT: ScreenSpec = ScreenSpec {
 };
 
 /// The largest page that one purchase order history request asks for.
-const HISTORY_PAGE: i64 = 100;
+const HISTORY_PAGE: usize = 100;
 
 /// Generated screens in the Receiving workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,8 +192,8 @@ impl ReceivingApplication {
             .as_ref()
             .filter(|history| history.complete)
             .ok_or("The purchase order history is not loaded.")?;
-        let rows = history_rows(&history.rows)
-            .ok_or("The history read returned a malformed position or image.")?;
+        let rows =
+            history_rows(&history.rows).ok_or("The history read returned a malformed row.")?;
         let position = rows.get(history.selected).map_or(0, |row| row.position);
         state_at(&rows, position).map_err(|error| format!("The history cannot fold: {error}."))
     }
@@ -226,24 +226,29 @@ impl ReceivingApplication {
             selected: 0,
         });
         self.generated.open_screen(Panel::History as usize);
-        self.request_history_page(0)
+        self.request_history_page(None)
     }
 
     /// Bind the next page of the open history and queue its read.
-    fn request_history_page(&mut self, after_position: i64) -> Result<(), String> {
+    ///
+    /// The first page states no cursor. Every later page states the cursor of
+    /// the last entry it received, which is opaque to this application.
+    fn request_history_page(&mut self, after_cursor: Option<&str>) -> Result<(), String> {
         let order = self
             .history
             .as_ref()
             .map(|history| history.order.clone())
             .ok_or("No purchase order history is open.")?;
         let screen = self.screen_mut(Panel::History);
-        for (pointer, value) in [
-            ("/id", order),
-            ("/after_position", after_position.to_string()),
-            ("/limit", HISTORY_PAGE.to_string()),
-        ] {
+        for (pointer, value) in [("/id", json!(order)), ("/limit", json!(HISTORY_PAGE))] {
             screen
-                .bind(pointer, json!(value))
+                .bind(pointer, value)
+                .map_err(|error| error.to_string())?;
+        }
+        // The first page states no cursor, so it leaves the input out.
+        if let Some(cursor) = after_cursor {
+            screen
+                .bind("/after_cursor", json!(cursor))
                 .map_err(|error| error.to_string())?;
         }
         self.queued_read = Some(Panel::History);
@@ -258,28 +263,32 @@ impl ReceivingApplication {
             .history
             .as_mut()
             .ok_or("No purchase order history is open.")?;
-        let head = |row: &Value| int64(&row["head_position"]);
         if let (Some(known), Some(next)) = (history.rows.first(), page.first())
-            && head(known) != head(next)
+            && known["current"] != next["current"]
         {
-            // A write between two pages changes the head, so the rows of the
-            // earlier pages no longer fold with the later ones.
+            // A write between two pages changes the current image, so the rows
+            // of the earlier pages no longer fold with the later ones.
             history.rows.clear();
             self.generated.set_message(
                 "The purchase order changed while its history loaded. Reading it again.".into(),
             );
-            return self.request_history_page(0);
+            // A fresh command drops the cursor that the last page bound.
+            self.screen_mut(Panel::History)
+                .new_command()
+                .map_err(|error| error.to_string())?;
+            return self.request_history_page(None);
         }
-        let received = !page.is_empty();
+        // A page that fills the limit can have more entries behind it. A
+        // shorter page is the last one.
+        let full = page.len() == HISTORY_PAGE;
         history.rows.extend(page);
-        let next = history
+        let cursor = history
             .rows
             .last()
-            .and_then(|row| Some((int64(&row["position"])?, head(row)?)));
-        match next {
-            Some((position, head)) if received && position < head => {
-                self.request_history_page(position)
-            }
+            .and_then(|row| row["cursor"].as_str())
+            .map(str::to_owned);
+        match cursor {
+            Some(cursor) if full => self.request_history_page(Some(&cursor)),
             _ => {
                 history.complete = true;
                 history.selected = history.rows.len().saturating_sub(1);
@@ -324,9 +333,11 @@ impl ReceivingApplication {
                     .as_str()
                     .map_or_else(|| row[name].to_string(), str::to_owned)
             };
+            // The entry number counts the rows this panel holds. The contract
+            // states no database position.
             lines.push(format!(
                 "{marker} {} {} {} {} {}",
-                field("position"),
+                index + 1,
                 field("kind"),
                 field("operation"),
                 field("changed_by"),
@@ -734,23 +745,22 @@ impl Application for ReceivingApplication {
     }
 }
 
-/// An int64 result value, spelled as a JSON string or a JSON number.
-fn int64(value: &Value) -> Option<i64> {
-    value
-        .as_i64()
-        .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
-}
-
 /// The fold rows of a history read, or `None` for a malformed row.
+///
+/// The operation states no database position, so the fold reads the order of
+/// the rows it received. The last row it holds is the newest entry it read,
+/// and the entry chain itself refuses a page that is missing.
 fn history_rows(rows: &[Value]) -> Option<Vec<HistoryRow<'_>>> {
+    let head = i64::try_from(rows.len()).ok()?;
     rows.iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(index, row)| {
             Some(HistoryRow {
-                position: int64(&row["position"])?,
+                position: i64::try_from(index).ok()? + 1,
                 kind: row["kind"].as_str()?,
                 before: row["before"].as_str()?,
                 current: row["current"].as_str()?,
-                head_position: int64(&row["head_position"])?,
+                head_position: head,
             })
         })
         .collect()

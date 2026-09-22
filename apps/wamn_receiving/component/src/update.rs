@@ -68,28 +68,34 @@ mod tests {
 
     fn decode(change: &str, revision: &str) -> contract::UpdateRequest {
         let input = format!(
-            r#"[{{"request_id":"update-1","id":"00000000-0000-0000-0000-000000000001","expected_row_version":"{revision}","change":{change}}}]"#
+            r#"[{{"request_id":"update-1","id":"00000000-0000-0000-0000-000000000001","expected_row_version":{revision},"change":{change}}}]"#
         );
         codec::decode(&input).unwrap().pop().unwrap().input.unwrap()
     }
 
+    fn refusal(change: &str, revision: &str) -> serde_json::Value {
+        let input = format!(
+            r#"[{{"request_id":"update-1","id":"00000000-0000-0000-0000-000000000001","expected_row_version":{revision},"change":{change}}}]"#
+        );
+        let item = codec::decode(&input).unwrap().pop().unwrap();
+        serde_json::to_value(item.input.expect_err("the request refuses").field).unwrap()
+    }
+
+    /// A revision is an int32, so it is one JSON number with one spelling, and
+    /// a value outside that width refuses instead of wrapping.
     #[test]
-    fn two_spellings_of_one_int64_make_one_command() {
-        assert_eq!(
-            decode("{}", "01").expected_row_version,
-            decode("{}", "1").expected_row_version
-        );
-        assert_eq!(decode("{}", "+1").expected_row_version, 1);
-        assert_eq!(
-            decode("{}", "9223372036854775807").expected_row_version,
-            i64::MAX
-        );
+    fn a_revision_is_one_number_inside_its_width() {
+        assert_eq!(decode("{}", "1").expected_row_version, 1);
+        assert_eq!(decode("{}", "2147483647").expected_row_version, i32::MAX);
+        assert_eq!(refusal("{}", "2147483648"), "expected_row_version");
+        assert_eq!(refusal("{}", r#""1""#), "input");
+
         let output = [contract::UpdateOutcome {
             request_id: "conflict".to_owned(),
             outcome: Err(contract::UpdateError::ConcurrencyConflict(
                 contract::ConcurrencyConflictDetail {
-                    expected_row_version: i64::MAX,
-                    observed_row_version: 4_294_967_297,
+                    expected_row_version: i32::MAX,
+                    observed_row_version: 7,
                 },
             )),
         }];
@@ -97,12 +103,9 @@ mod tests {
         assert_eq!(encoded[0]["request_id"], "conflict");
         assert_eq!(
             encoded[0]["error"]["detail"]["expected_row_version"],
-            "9223372036854775807"
+            2_147_483_647
         );
-        assert_eq!(
-            encoded[0]["error"]["detail"]["observed_row_version"],
-            "4294967297"
-        );
+        assert_eq!(encoded[0]["error"]["detail"]["observed_row_version"], 7);
     }
 
     #[test]
@@ -122,9 +125,9 @@ mod tests {
             Some(Some("00000000-0000-0000-0000-000000000002".to_owned()))
         );
         let input = codec::decode(r#"[
-            {"request_id":"null","id":"00000000-0000-0000-0000-000000000001","expected_row_version":"1","change":{"supplier_id":null}},
-            {"request_id":"unknown","id":"00000000-0000-0000-0000-000000000001","expected_row_version":"1","change":{"status":"complete"}},
-            {"request_id":"wrong-type","id":"00000000-0000-0000-0000-000000000001","expected_row_version":1,"change":{}}
+            {"request_id":"null","id":"00000000-0000-0000-0000-000000000001","expected_row_version":1,"change":{"supplier_id":null}},
+            {"request_id":"unknown","id":"00000000-0000-0000-0000-000000000001","expected_row_version":1,"change":{"status":"complete"}},
+            {"request_id":"wrong-type","id":"00000000-0000-0000-0000-000000000001","expected_row_version":"1","change":{}}
         ]"#).unwrap();
         let mut call = std::pin::pin!(super::run(input));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());

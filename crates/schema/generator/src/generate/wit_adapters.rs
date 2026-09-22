@@ -40,7 +40,14 @@ pub(super) fn emit_row_adapter<'a>(
 pub(super) fn emit_error_mapper<'a>(
     error_type: &str,
     cases: impl IntoIterator<Item = (&'a str, &'a OperationErrorDetailDeclaration)>,
+    revision: Option<ColumnType>,
 ) -> String {
+    // A revision detail parses at the width its own column declares.
+    let revision_type = if revision == Some(ColumnType::Int32) {
+        "i32"
+    } else {
+        "i64"
+    };
     let mut source = format!(
         "\n#[allow(dead_code)]\npub(crate) fn map_error(code: &str, mut detail: impl FnMut(&str) -> Option<String>) -> contract::{error_type} {{\n    match code {{\n"
     );
@@ -66,16 +73,25 @@ pub(super) fn emit_error_mapper<'a>(
                     | OperationErrorDetailKey::ExpectedRowVersion
                     | OperationErrorDetailKey::ObservedRowVersion
             );
+            let parsed = if matches!(
+                key,
+                OperationErrorDetailKey::ExpectedRowVersion
+                    | OperationErrorDetailKey::ObservedRowVersion
+            ) {
+                revision_type
+            } else {
+                "i64"
+            };
             if required {
                 let value = if numeric {
-                    format!("{value}.and_then(|value| value.parse::<i64>().ok())")
+                    format!("{value}.and_then(|value| value.parse::<{parsed}>().ok())")
                 } else {
                     value
                 };
                 writeln!(source, "            let Some({name}) = {value} else {{ return contract::{error_type}::InternalError; }};")
                     .expect("writing to a String cannot fail");
             } else if numeric {
-                writeln!(source, "            let Ok({name}) = {value}.map(|value| value.parse::<i64>()).transpose() else {{ return contract::{error_type}::InternalError; }};")
+                writeln!(source, "            let Ok({name}) = {value}.map(|value| value.parse::<{parsed}>()).transpose() else {{ return contract::{error_type}::InternalError; }};")
                     .expect("writing to a String cannot fail");
             } else {
                 writeln!(source, "            let {name} = {value};")

@@ -38,7 +38,7 @@ pub const QUALITY_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "purchase_order_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -84,8 +84,8 @@ pub struct QualityApproveInspectionRequest {
 pub struct QualityApproveInspectionResult {
     /// `uuid`
     pub purchase_order_id: uuid::Uuid,
-    /// `int64`
-    pub purchase_order_row_version: i64,
+    /// `int32`
+    pub purchase_order_row_version: i32,
     /// `uuid`
     pub receipt_id: uuid::Uuid,
     /// `int64`
@@ -126,7 +126,7 @@ pub const QUALITY_APPROVE_INSPECTION_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "purchase_order_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -205,7 +205,7 @@ pub const QUALITY_APPROVE_INSPECTION_RESULT_SCHEMA: &[wamn_client::descriptor::F
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "purchase_order_row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -323,8 +323,8 @@ pub struct QualityLoadPurchaseOrderDetailResult {
     pub id: uuid::Uuid,
     /// `text`
     pub purchase_order_number: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `text`
     pub status: String,
     /// `uuid`
@@ -375,7 +375,7 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -474,7 +474,7 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT_SCHEMA:
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

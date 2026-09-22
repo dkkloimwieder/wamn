@@ -43,7 +43,7 @@ pub(crate) fn encode(output: &[contract::LoadReceiptScreenOutcome]) -> String {
                     "purchase_order_number": row.purchase_order_number,
                     "purchase_order_status": row.purchase_order_status,
                     "supplier_id": row.supplier_id,
-                    "row_version": row.row_version.to_string(),
+                    "row_version": row.row_version,
                     "line_id": row.line_id,
                     "line_number": row.line_number,
                     "item_id": row.item_id,

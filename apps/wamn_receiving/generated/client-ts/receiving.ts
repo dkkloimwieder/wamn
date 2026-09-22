@@ -2,24 +2,24 @@
 //
 // `receiving` operations of package `wamn_receiving`.
 
-import type { FieldMap, Int64, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
 export interface ReceivingLoadPurchaseOrderHistoryRequest {
-  /** `int64` */
-  afterPosition: Int64;
+  /** `text`, omittable */
+  afterCursor?: string;
   /** `uuid` */
   id: Uuid;
-  /** `int64` */
-  limit: Int64;
+  /** `int32` */
+  limit: number;
   /** `text` */
   requestId: string;
 }
 
 /** What `wamn-receiving:receiving/load-purchase-order-history@1.0.0` calls its input members. */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REQUEST_FIELDS: FieldMap = {
-  "after_position": "afterPosition",
+  "after_cursor": "afterCursor",
   "id": "id",
   "limit": "limit",
   "request_id": "requestId",
@@ -37,16 +37,12 @@ export interface ReceivingLoadPurchaseOrderHistoryRow {
   readonly changedBy: Uuid;
   /** `text` */
   readonly current: string;
-  /** `int64` */
-  readonly headPosition: Int64;
+  /** `text` */
+  readonly cursor: string;
   /** `text` */
   readonly kind: "delete" | "insert" | "update";
   /** `text` */
   readonly operation: string;
-  /** `int64` */
-  readonly position: Int64;
-  /** `int64` */
-  readonly transactionId: Int64;
 }
 
 /** Result of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
@@ -65,11 +61,9 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS: FieldMap = {
       "changed_at": "changedAt",
       "changed_by": "changedBy",
       "current": "current",
-      "head_position": "headPosition",
+      "cursor": "cursor",
       "kind": "kind",
       "operation": "operation",
-      "position": "position",
-      "transaction_id": "transactionId",
     },
   },
 };
@@ -152,8 +146,8 @@ export interface ReceivingLoadReceiptScreenRow {
   readonly receivedQuantity: Numeric | null;
   /** `numeric` */
   readonly remainingQuantity: Numeric | null;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `uuid` */
   readonly supplierId: Uuid;
 }
@@ -288,8 +282,8 @@ export interface ReceivingRecordReceiptResult {
   readonly purchaseOrderStatus: "complete" | "open";
   /** `uuid` */
   readonly receiptId: Uuid;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
 }
 
 /** What `wamn-receiving:receiving/record-receipt@1.0.0` calls its result members. */

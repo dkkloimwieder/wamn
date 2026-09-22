@@ -10,7 +10,7 @@ pub struct PurchaseOrderRow {
     pub created_by: wamn_postgres_statements::Uuid,
     pub id: wamn_postgres_statements::Uuid,
     pub purchase_order_number: String,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
     pub supplier_id: wamn_postgres_statements::Uuid,
     pub updated_at: wamn_postgres_statements::TimestampTz,
@@ -20,14 +20,14 @@ pub struct PurchaseOrderRow {
 #[derive(Debug)]
 pub struct PurchaseOrderUpdateRow {
     pub outcome: Option<String>,
-    pub observed_row_version: Option<i64>,
+    pub observed_row_version: Option<i32>,
     pub acme_inspection_required: Option<bool>,
     pub acme_quality_status: Option<String>,
     pub created_at: Option<wamn_postgres_statements::TimestampTz>,
     pub created_by: Option<wamn_postgres_statements::Uuid>,
     pub id: Option<wamn_postgres_statements::Uuid>,
     pub purchase_order_number: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
     pub status: Option<String>,
     pub supplier_id: Option<wamn_postgres_statements::Uuid>,
     pub updated_at: Option<wamn_postgres_statements::TimestampTz>,
@@ -37,7 +37,7 @@ pub struct PurchaseOrderUpdateRow {
 pub(crate) const GET_DIGEST: &str =
     "sha256:39b89be8cfeb1ad9031416d2aac96a6fdcfa092e0f1300f7ed1dfd8799cd415c";
 pub(crate) const UPDATE_DIGEST: &str =
-    "sha256:09f969f5adda1cbaf63ccc3c6f034e2b44a4a199509cef2085e5a06e14bbbf13";
+    "sha256:b9e899bbc22c8d91a9454017ebea250c19979525e15ad1198fa344697af942f1";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];
@@ -74,7 +74,7 @@ pub(crate) async fn get(
 pub(crate) async fn update(
     connection: &mut Connection,
     id: wamn_postgres_statements::Uuid,
-    expected_row_version: i64,
+    expected_row_version: i32,
     acme_inspection_required_present: bool,
     acme_inspection_required_value: Option<bool>,
     acme_quality_status_present: bool,

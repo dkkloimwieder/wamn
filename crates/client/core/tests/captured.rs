@@ -216,8 +216,8 @@ async fn generated_supplier_contract_preserves_absence_and_value_on_the_wire_and
         .lock()
         .expect("read actual outgoing requests");
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].body, br#"[{"change":{},"expected_row_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"supplier-absent"}]"#);
-    assert_eq!(requests[1].body, br#"[{"change":{"supplier_id":"abcdef00-0000-0000-0000-000000000002"},"expected_row_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"supplier-value"}]"#);
+    assert_eq!(requests[0].body, br#"[{"change":{},"expected_row_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"supplier-absent"}]"#);
+    assert_eq!(requests[1].body, br#"[{"change":{"supplier_id":"abcdef00-0000-0000-0000-000000000002"},"expected_row_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"supplier-value"}]"#);
     for request in requests.iter() {
         assert_eq!(request.url, "http://127.0.0.1:12345/purchase_order/update");
         assert_eq!(request.method, "POST");

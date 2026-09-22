@@ -8,7 +8,7 @@ pub struct ClaimCommandRow {
 #[derive(Debug, sqlx::FromRow)]
 pub struct FinalizeCommandRow {
     pub purchase_order_status: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -17,13 +17,13 @@ pub struct FindReplayRow {
     pub receipt_id: uuid::Uuid,
     pub purchase_order_id: uuid::Uuid,
     pub purchase_order_status: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct FinishPurchaseOrderRow {
     pub status: String,
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -92,8 +92,8 @@ pub(crate) fn finalize_command_receipt_id_bind_fixture() -> uuid::Uuid {
 pub(crate) fn finalize_command_purchase_order_status_bind_fixture() -> String {
     String::new()
 }
-pub(crate) fn finalize_command_row_version_bind_fixture() -> i64 {
-    0_i64
+pub(crate) fn finalize_command_row_version_bind_fixture() -> i32 {
+    0_i32
 }
 pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
     String::new()

@@ -722,13 +722,24 @@ fn operation_result_row(
             .revision_field
             .as_deref()
             .expect("update validation requires a revision field");
+        // The observed revision is the column the model declares, at its width.
+        let revision_type = table
+            .columns()
+            .iter()
+            .find(|column| column.name() == revision)
+            .expect("update validation requires a revision column")
+            .column_type();
         fields.push(RustMember {
             name: format!(
                 "observed_{}",
                 rust_identifier(revision).expect("model field names were validated for Rust")
             ),
-            rust_type: "Option<i64>".to_owned(),
-            statement_type: ColumnType::Int64,
+            rust_type: if revision_type == ColumnType::Int32 {
+                "Option<i32>".to_owned()
+            } else {
+                "Option<i64>".to_owned()
+            },
+            statement_type: revision_type,
             nullable: true,
         });
         fields.extend(table.columns().iter().map(|column| RustMember {

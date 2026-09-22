@@ -39,7 +39,7 @@ interface get {
     created-by: string,
     id: string,
     purchase-order-number: string,
-    row-version: s64,
+    row-version: s32,
     status: string,
     supplier-id: string,
     updated-at: string,
@@ -100,7 +100,7 @@ interface query {
     created-by: string,
     id: string,
     purchase-order-number: string,
-    row-version: s64,
+    row-version: s32,
     status: string,
     supplier-id: string,
     updated-at: string,
@@ -130,7 +130,7 @@ interface update {
 
   record update-request {
     id: string,
-    expected-row-version: s64,
+    expected-row-version: s32,
     change: update-change,
   }
 
@@ -144,8 +144,8 @@ interface update {
   }
 
   record concurrency-conflict-detail {
-    expected-row-version: s64,
-    observed-row-version: s64,
+    expected-row-version: s32,
+    observed-row-version: s32,
   }
 
   record permission-denied-detail {
@@ -172,7 +172,7 @@ interface update {
     created-by: string,
     id: string,
     purchase-order-number: string,
-    row-version: s64,
+    row-version: s32,
     status: string,
     supplier-id: string,
     updated-at: string,

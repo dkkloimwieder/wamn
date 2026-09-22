@@ -27,7 +27,7 @@ pub struct PurchaseOrderDetailValue {
     pub purchase_order_number: String,
     pub supplier_id: WamnUuid,
     pub status: String,
-    pub row_version: i64,
+    pub row_version: i32,
     pub acme_inspection_required: bool,
     pub acme_quality_status: String,
 }
@@ -53,7 +53,7 @@ pub struct ApproveInspectionValue {
     pub status: String,
     pub row_version: i64,
     pub purchase_order_id: WamnUuid,
-    pub purchase_order_row_version: i64,
+    pub purchase_order_row_version: i32,
 }
 
 /// Parse any accepted UUID spelling and re-spell it lowercase-hyphenated.
@@ -99,7 +99,7 @@ fn quality_status(value: String) -> Result<String, AccessError> {
 
 fn purchase_order_update_value(
     row: purchase_order_sql::PurchaseOrderUpdateRow,
-    expected_row_version: i64,
+    expected_row_version: i32,
 ) -> Result<PurchaseOrderRow, AccessError> {
     match row.outcome.as_deref() {
         Some("not_found") => Err(AccessError::not_found("purchase_order does not exist")),
@@ -114,7 +114,7 @@ fn purchase_order_update_value(
                     format!(
                         "purchase_order row_version {observed} does not match {expected_row_version}"
                     ),
-                    observed,
+                    i64::from(observed),
                 ))
             },
         ),
@@ -233,7 +233,7 @@ pub async fn purchase_order_get(
 pub async fn purchase_order_update(
     connection: &mut Connection,
     id: &str,
-    expected_row_version: i64,
+    expected_row_version: i32,
     acme_inspection_required: Option<Option<bool>>,
     acme_quality_status: Option<Option<String>>,
 ) -> Result<PurchaseOrderRow, AccessError> {

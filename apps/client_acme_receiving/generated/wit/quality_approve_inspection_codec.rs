@@ -45,7 +45,7 @@ pub(crate) fn encode(output: &[contract::ApproveInspectionOutcome]) -> String {
                     "status": value.status,
                     "row_version": value.row_version.to_string(),
                     "purchase_order_id": value.purchase_order_id,
-                    "purchase_order_row_version": value.purchase_order_row_version.to_string(),
+                    "purchase_order_row_version": value.purchase_order_row_version,
                 }
             }),
             Err(error) => json!({

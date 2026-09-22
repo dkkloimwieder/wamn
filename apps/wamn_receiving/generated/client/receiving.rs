@@ -37,8 +37,8 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "head_position",
-        type_name: "int64",
+        path: "cursor",
+        type_name: "text",
         nullable: false,
         values: &[],
     },
@@ -85,12 +85,6 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "position",
-        type_name: "int64",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
         path: "purchase_order_id",
         type_name: "uuid",
         nullable: false,
@@ -128,7 +122,7 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -138,23 +132,17 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
-    FieldDescriptor {
-        path: "transaction_id",
-        type_name: "int64",
-        nullable: false,
-        values: &[],
-    },
 ];
 
 /// Input for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingLoadPurchaseOrderHistoryRequest {
-    /// `int64`
-    pub after_position: i64,
+    /// `text`, omittable
+    pub after_cursor: Option<String>,
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `int64`
-    pub limit: i64,
+    /// `int32`
+    pub limit: i32,
     /// `text`
     pub request_id: String,
 }
@@ -172,24 +160,20 @@ pub struct ReceivingLoadPurchaseOrderHistoryResult {
     pub changed_by: uuid::Uuid,
     /// `text`
     pub current: String,
-    /// `int64`
-    pub head_position: i64,
+    /// `text`
+    pub cursor: String,
     /// `text`
     pub kind: String,
     /// `text`
     pub operation: String,
-    /// `int64`
-    pub position: i64,
-    /// `int64`
-    pub transaction_id: i64,
 }
 
 /// Input descriptors for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
-        path: "after_position",
-        type_name: "int64",
-        nullable: false,
+        path: "after_cursor",
+        type_name: "text",
+        nullable: true,
         values: &[],
     },
     FieldDescriptor {
@@ -200,7 +184,7 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "limit",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -245,8 +229,8 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "head_position",
-        type_name: "int64",
+        path: "cursor",
+        type_name: "text",
         nullable: false,
         values: &[],
     },
@@ -262,30 +246,18 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
-    FieldDescriptor {
-        path: "position",
-        type_name: "int64",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "transaction_id",
-        type_name: "int64",
-        nullable: false,
-        values: &[],
-    },
 ];
 
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA:
     &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "after_position",
-            type_name: "int64",
+            path: "after_cursor",
+            type_name: "text",
             nullable: false,
             values: &[],
         },
-        required: true,
+        required: false,
         minimum: None,
         maximum: None,
         children: &[],
@@ -305,7 +277,7 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA:
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "limit",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -392,8 +364,8 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_SCHEMA:
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "head_position",
-            type_name: "int64",
+            path: "cursor",
+            type_name: "text",
             nullable: false,
             values: &[],
         },
@@ -418,30 +390,6 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_SCHEMA:
         field: FieldDescriptor {
             path: "operation",
             type_name: "text",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "position",
-            type_name: "int64",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "transaction_id",
-            type_name: "int64",
             nullable: false,
             values: &[],
         },
@@ -534,8 +482,8 @@ pub struct ReceivingLoadReceiptScreenResult {
     pub received_quantity: Option<rust_decimal::Decimal>,
     /// `numeric`
     pub remaining_quantity: Option<rust_decimal::Decimal>,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `uuid`
     pub supplier_id: uuid::Uuid,
 }
@@ -620,7 +568,7 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -783,7 +731,7 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_SCHEMA: &[wamn_client::descriptor
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -899,8 +847,8 @@ pub struct ReceivingRecordReceiptResult {
     pub purchase_order_status: String,
     /// `uuid`
     pub receipt_id: uuid::Uuid,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
 }
 
 /// Input descriptors for `wamn-receiving:receiving/record-receipt@1.0.0`.
@@ -977,7 +925,7 @@ pub const RECEIVING_RECORD_RECEIPT_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -1148,7 +1096,7 @@ pub const RECEIVING_RECORD_RECEIPT_RESULT_SCHEMA: &[wamn_client::descriptor::Fie
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

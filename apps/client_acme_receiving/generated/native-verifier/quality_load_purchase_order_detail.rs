@@ -6,7 +6,7 @@ pub struct LoadPurchaseOrderDetailRow {
     pub purchase_order_number: String,
     pub supplier_id: uuid::Uuid,
     pub status: String,
-    pub row_version: i64,
+    pub row_version: i32,
     pub acme_inspection_required: bool,
     pub acme_quality_status: String,
 }

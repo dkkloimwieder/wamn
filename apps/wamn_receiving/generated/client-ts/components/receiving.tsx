@@ -71,9 +71,9 @@ const LOAD_PURCHASE_ORDER_HISTORY_COLUMNS: ColumnDef<ReceivingLoadPurchaseOrderH
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
-    accessorKey: "headPosition",
-    header: "head position",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int64"),
+    accessorKey: "cursor",
+    header: "cursor",
+    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
   },
   {
     accessorKey: "kind",
@@ -84,16 +84,6 @@ const LOAD_PURCHASE_ORDER_HISTORY_COLUMNS: ColumnDef<ReceivingLoadPurchaseOrderH
     accessorKey: "operation",
     header: "operation",
     cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "position",
-    header: "position",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int64"),
-  },
-  {
-    accessorKey: "transactionId",
-    header: "transaction id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int64"),
   },
 ];
 
@@ -253,7 +243,7 @@ const LOAD_RECEIPT_SCREEN_COLUMNS: ColumnDef<ReceivingLoadReceiptScreenRow, unkn
   {
     accessorKey: "rowVersion",
     header: "row version",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int64"),
+    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
   },
   {
     accessorKey: "supplierId",

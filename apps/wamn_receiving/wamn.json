@@ -345,7 +345,7 @@
           },
           {
             "path": "row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           }
@@ -561,7 +561,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -742,7 +742,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ]
@@ -773,7 +773,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ],
@@ -785,7 +785,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -841,7 +841,7 @@
           },
           {
             "path": "row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           },
@@ -970,7 +970,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -1030,13 +1030,13 @@
             "nullable": false
           },
           {
-            "path": "after_position",
-            "type": "int64",
-            "nullable": false
+            "path": "after_cursor",
+            "type": "text",
+            "nullable": true
           },
           {
             "path": "limit",
-            "type": "int64",
+            "type": "int32",
             "nullable": false
           }
         ]
@@ -1045,8 +1045,8 @@
         "class": "bounded_list",
         "fields": [
           {
-            "path": "position",
-            "type": "int64",
+            "path": "cursor",
+            "type": "text",
             "nullable": false
           },
           {
@@ -1075,11 +1075,6 @@
             "nullable": false
           },
           {
-            "path": "transaction_id",
-            "type": "int64",
-            "nullable": false
-          },
-          {
             "path": "before",
             "type": "text",
             "nullable": false
@@ -1092,11 +1087,6 @@
           {
             "path": "current",
             "type": "text",
-            "nullable": false
-          },
-          {
-            "path": "head_position",
-            "type": "int64",
             "nullable": false
           }
         ]
@@ -1139,7 +1129,6 @@
             "operation",
             "changed_by",
             "changed_at",
-            "transaction_id",
             "before",
             "after"
           ],
@@ -1166,7 +1155,7 @@
             },
             {
               "name": "limit",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ],
@@ -1197,11 +1186,6 @@
               "nullable": false
             },
             {
-              "name": "transaction_id",
-              "type": "int64",
-              "nullable": false
-            },
-            {
               "name": "before",
               "type": "text",
               "nullable": true
@@ -1214,11 +1198,6 @@
             {
               "name": "current",
               "type": "text",
-              "nullable": true
-            },
-            {
-              "name": "head_position",
-              "type": "int64",
               "nullable": true
             }
           ]

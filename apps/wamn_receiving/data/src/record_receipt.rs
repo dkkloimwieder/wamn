@@ -42,7 +42,7 @@ pub struct RecordReceiptResult {
     pub receipt_id: Box<str>,
     pub purchase_order_id: Box<str>,
     pub purchase_order_status: PurchaseOrderStatus,
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 /// Values the base command exposes to its selected pre-commit participant.

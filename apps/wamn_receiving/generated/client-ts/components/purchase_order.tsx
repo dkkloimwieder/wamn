@@ -89,7 +89,7 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
         <dt>purchase order number</dt>
         <dd>{cellText(readMember(record(), ["purchaseOrderNumber"]), "text")}</dd>
         <dt>row version</dt>
-        <dd>{cellText(readMember(record(), ["rowVersion"]), "int64")}</dd>
+        <dd>{cellText(readMember(record(), ["rowVersion"]), "int32")}</dd>
         <dt>status</dt>
         <dd>{cellText(readMember(record(), ["status"]), "text")}</dd>
         <dt>supplier id</dt>
@@ -128,7 +128,7 @@ const QUERY_COLUMNS: ColumnDef<PurchaseOrderQueryRow, unknown>[] = [
   {
     accessorKey: "rowVersion",
     header: "row version",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int64"),
+    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
   },
   {
     accessorKey: "status",

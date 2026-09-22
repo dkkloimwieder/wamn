@@ -9,21 +9,19 @@ pub struct LoadPurchaseOrderHistoryRow {
     pub operation: String,
     pub changed_by: wamn_postgres_statements::Uuid,
     pub changed_at: wamn_postgres_statements::TimestampTz,
-    pub transaction_id: i64,
     pub before: Option<String>,
     pub after: Option<String>,
     pub current: Option<String>,
-    pub head_position: Option<i64>,
 }
 
 pub(crate) const LOAD_PURCHASE_ORDER_HISTORY_DIGEST: &str =
-    "sha256:985bbbfdaaf76a1939b287a21c2c805c8cfaa8ea007d73c2199bb85d04f238fd";
+    "sha256:8e7fed965506033afe7e2272e54f13c492a466815aa643809a5f616704024a62";
 
 pub(crate) async fn load_purchase_order_history(
     transaction: &mut Transaction,
     id: wamn_postgres_statements::Uuid,
     after_position: i64,
-    limit: i64,
+    limit: i32,
 ) -> Result<Vec<LoadPurchaseOrderHistoryRow>, wamn_postgres_statements::StatementError> {
     let rows = transaction
         .run(
@@ -42,11 +40,9 @@ pub(crate) async fn load_purchase_order_history(
             operation: row.decode("operation")?,
             changed_by: row.decode("changed_by")?,
             changed_at: row.decode("changed_at")?,
-            transaction_id: row.decode("transaction_id")?,
             before: row.decode("before")?,
             after: row.decode("after")?,
             current: row.decode("current")?,
-            head_position: row.decode("head_position")?,
         })
     })
 }

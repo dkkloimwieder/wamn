@@ -10,7 +10,7 @@ pub struct ApproveInspectionRow {
     pub status: Option<String>,
     pub row_version: Option<i64>,
     pub purchase_order_id: Option<wamn_postgres_statements::Uuid>,
-    pub purchase_order_row_version: Option<i64>,
+    pub purchase_order_row_version: Option<i32>,
 }
 
 pub(crate) const APPROVE_INSPECTION_DIGEST: &str =

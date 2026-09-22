@@ -46,7 +46,7 @@ interface approve-inspection {
     status: string,
     row-version: s64,
     purchase-order-id: string,
-    purchase-order-row-version: s64,
+    purchase-order-row-version: s32,
   }
 
   record approve-inspection-outcome {
@@ -113,7 +113,7 @@ interface load-purchase-order-detail {
     purchase-order-number: string,
     supplier-id: string,
     status: string,
-    row-version: s64,
+    row-version: s32,
     acme-inspection-required: bool,
     acme-quality-status: string,
   }

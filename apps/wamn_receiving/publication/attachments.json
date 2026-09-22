@@ -143,7 +143,7 @@
     "package-id": "wamn_receiving",
     "wiring-id": "purchase_order_update",
     "wiring-version": 1,
-    "definition-hash": "sha256:9ded5b10c3e29a6ab36b7add270a41010a619adf6e05df449683063994173847",
+    "definition-hash": "sha256:7ee1527b4a23237d2528d6ae18edde62f2b0baf84a877605f147c10cd9e0f61d",
     "definition": {
       "id": "purchase-order-update-http",
       "kind": "http",
@@ -177,8 +177,7 @@
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
             },
             "expected_row_version": {
-              "type": "string",
-              "pattern": "^-?(0|[1-9][0-9]*)$"
+              "type": "integer"
             },
             "change": {
               "type": "object",
@@ -439,7 +438,7 @@
     "package-id": "wamn_receiving",
     "wiring-id": "receiving_load_purchase_order_history",
     "wiring-version": 1,
-    "definition-hash": "sha256:1834c65d23b0c7ee1e177fb2f50528165f6ca44e494b5389bff87cf81b82e0c1",
+    "definition-hash": "sha256:c503c1630f7313e08b5b597c6fed9ce98ae8d62296a74d18f1ef6556d21ba4b5",
     "definition": {
       "id": "receiving-load-purchase-order-history-http",
       "kind": "http",
@@ -459,7 +458,6 @@
           "required": [
             "request_id",
             "id",
-            "after_position",
             "limit"
           ],
           "additionalProperties": false,
@@ -472,8 +470,9 @@
               "type": "string",
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
             },
-            "after_position": {
-              "type": "integer"
+            "after_cursor": {
+              "type": "string",
+              "minLength": 1
             },
             "limit": {
               "type": "integer"

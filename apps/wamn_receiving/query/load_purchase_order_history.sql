@@ -1,17 +1,17 @@
 -- One page of the history of one purchase order, in ascending position order.
--- Every row repeats the current row image and the head position, so the
--- fold reads one snapshot. A deleted row has the current image '{}'.
+-- Every row repeats the current row image, so the fold reads one snapshot.
+-- A deleted row has the current image '{}'.
 -- The current image names each declared purchase_order column, so the read
 -- needs no grant on a column that an overlay adds. It spells each timestamptz
 -- column through the platform image function, like the entry images.
--- A page holds at most 100 entries.
+-- A page holds at most 100 entries. The position stays inside this read: the
+-- operation answers with an opaque cursor, and a short page is the last page.
 SELECT
     history.position,
     history.kind,
     history.operation,
     history.changed_by,
     history.changed_at,
-    history.transaction_id,
     history.before::text AS before,
     history.after::text AS after,
     COALESCE(
@@ -29,12 +29,9 @@ SELECT
            FROM purchase_order AS purchase_order
           WHERE purchase_order.id = $1::uuid),
         '{}'
-    ) AS current,
-    (SELECT max(head.position)
-       FROM purchase_order_history AS head
-      WHERE head.row_key = jsonb_build_object('id', $1::uuid)) AS head_position
+    ) AS current
 FROM purchase_order_history AS history
 WHERE history.row_key = jsonb_build_object('id', $1::uuid)
   AND history.position > $2::bigint
 ORDER BY history.position ASC
-LIMIT LEAST($3::bigint, 100);
+LIMIT LEAST($3::int4, 100);

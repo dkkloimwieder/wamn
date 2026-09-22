@@ -98,7 +98,7 @@ pub struct AccessError {
     minimum: Option<i64>,
     maximum: Option<i64>,
     observed: Option<i64>,
-    observed_row_version: Option<i64>,
+    observed_row_version: Option<i32>,
 }
 
 impl AccessError {
@@ -133,7 +133,7 @@ impl AccessError {
     }
 
     /// Current row version returned by an optimistic-concurrency refusal.
-    pub const fn observed_row_version(&self) -> Option<i64> {
+    pub const fn observed_row_version(&self) -> Option<i32> {
         self.observed_row_version
     }
 
@@ -161,7 +161,7 @@ impl AccessError {
 
     pub(crate) fn concurrency_conflict(
         context: impl Into<Box<str>>,
-        observed_row_version: i64,
+        observed_row_version: i32,
     ) -> Self {
         let mut error = Self::new(AccessErrorKind::ConcurrencyConflict, context);
         error.observed_row_version = Some(observed_row_version);

@@ -53,6 +53,18 @@ impl CursorKey for Box<str> {
     }
 }
 
+impl CursorKey for i64 {
+    fn to_json(&self) -> Value {
+        Value::from(*self)
+    }
+
+    fn from_json(value: Value) -> Result<Self, AccessError> {
+        value.as_i64().ok_or_else(|| {
+            AccessError::invalid("cursor key type does not match the sort field", "cursor")
+        })
+    }
+}
+
 impl CursorKey for DateTime<Utc> {
     fn to_json(&self) -> Value {
         Value::String(canonical_timestamp(self))

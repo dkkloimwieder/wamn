@@ -84,7 +84,7 @@ Facts from the code at `cdb6dd1e`, after Epics 1, 2, 3A, and 3B.
 - Admin functions are `ctl` verbs only. No HTTP admin API. No HTTP read API for runs (grep only).
 - `web/demo` is the disposable page that runs the Receiving components against a local stack. It resolves the runtime, the generated client and the four framework packages by alias, because a generated module sits outside the package that installs them. Its Vite proxy gives the browser one origin: the release routes by a `Host` header, and the issuer signs its own certificate.
 - `apps/wamn_receiving/tests/fixtures/receiving-seed.sql` builds 10, 100 or 1000 items, locations and purchase orders, deterministically. The small dataset is saved beside it. Receiving declares no operation that creates any of those records.
-- Two `int64` spellings exist on the wire. A model column is a JSON string both ways. An integer the operation contract declares, such as a page limit or a history position, is a JSON number. `wamn-uuo6` owns the difference.
+- An application integer is `int32` by default, and `int64` is opt-in with a reason. A Postgres internal, such as a transaction identity or a history position, never enters an application contract. A real `int64` stays a string on the wire and opaque in the browser. The Receiving contract carries no `int64`: a revision is `int32`, and the purchase order history pages by an opaque cursor. Two spellings of `int64` still exist inside the platform, which `wamn-wpvg` owns.
 
 ## 5. Process
 

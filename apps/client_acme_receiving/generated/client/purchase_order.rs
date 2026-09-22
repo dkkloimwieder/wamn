@@ -44,7 +44,7 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -98,8 +98,8 @@ pub struct PurchaseOrderGetResult {
     pub id: uuid::Uuid,
     /// `text`
     pub purchase_order_number: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `text`
     pub status: String,
     /// `uuid`
@@ -166,7 +166,7 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -299,7 +299,7 @@ pub const PURCHASE_ORDER_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSche
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -408,8 +408,8 @@ pub async fn get(
 pub struct PurchaseOrderUpdateRequest {
     /// `object`
     pub change: PurchaseOrderUpdateRequestChange,
-    /// `int64`
-    pub expected_row_version: i64,
+    /// `int32`
+    pub expected_row_version: i32,
     /// `uuid`
     pub id: uuid::Uuid,
     /// `string`
@@ -439,8 +439,8 @@ pub struct PurchaseOrderUpdateResult {
     pub id: uuid::Uuid,
     /// `text`
     pub purchase_order_number: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `text`
     pub status: String,
     /// `uuid`
@@ -467,7 +467,7 @@ pub const PURCHASE_ORDER_UPDATE_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "expected_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -525,7 +525,7 @@ pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -596,7 +596,7 @@ pub const PURCHASE_ORDER_UPDATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSc
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "expected_row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -707,7 +707,7 @@ pub const PURCHASE_ORDER_UPDATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldS
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

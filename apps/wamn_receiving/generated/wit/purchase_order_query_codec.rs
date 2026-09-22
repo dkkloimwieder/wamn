@@ -79,7 +79,7 @@ pub(crate) fn encode(output: &[contract::QueryOutcome]) -> String {
                                 "created_by": row.created_by,
                                 "id": row.id,
                                 "purchase_order_number": row.purchase_order_number,
-                                "row_version": row.row_version.to_string(),
+                                "row_version": row.row_version,
                                 "status": row.status,
                                 "supplier_id": row.supplier_id,
                                 "updated_at": row.updated_at,

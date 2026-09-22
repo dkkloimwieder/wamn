@@ -1,1 +1,1 @@
-{"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"id","type":"uuid","values":[]},{"nullable":false,"path":"after_position","type":"int64","values":[]},{"nullable":false,"path":"limit","type":"int64","values":[]}]}
+{"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"id","type":"uuid","values":[]},{"nullable":true,"path":"after_cursor","type":"text","values":[]},{"nullable":false,"path":"limit","type":"int32","values":[]}]}

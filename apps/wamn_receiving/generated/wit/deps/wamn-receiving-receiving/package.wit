@@ -4,9 +4,9 @@ interface load-purchase-order-history {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record load-purchase-order-history-request {
-    after-position: s64,
+    after-cursor: option<string>,
     id: string,
-    limit: s64,
+    limit: s32,
   }
 
   record invalid-input-detail {
@@ -31,16 +31,14 @@ interface load-purchase-order-history {
   }
 
   record load-purchase-order-history-row {
-    position: s64,
+    cursor: string,
     kind: string,
     operation: string,
     changed-by: string,
     changed-at: string,
-    transaction-id: s64,
     before: string,
     after: string,
     current: string,
-    head-position: s64,
   }
 
   record load-purchase-order-history-result {
@@ -95,7 +93,7 @@ interface load-receipt-screen {
     purchase-order-number: string,
     purchase-order-status: string,
     supplier-id: string,
-    row-version: s64,
+    row-version: s32,
     line-id: option<string>,
     line-number: option<s32>,
     item-id: option<string>,
@@ -207,7 +205,7 @@ interface record-receipt {
     receipt-id: string,
     purchase-order-id: string,
     purchase-order-status: string,
-    row-version: s64,
+    row-version: s32,
   }
 
   record record-receipt-outcome {

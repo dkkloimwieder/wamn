@@ -21,20 +21,42 @@ const CURRENT: &str =
 const CHANGED: &str =
     r#"{"id": "00000000-0000-0000-0000-000000000001", "status": "complete", "row_version": 3}"#;
 
-fn entry(position: i64, kind: &str, before: &str, after: &str, current: &str, head: i64) -> Value {
+/// One history entry. The operation states no database position, so an entry
+/// carries the opaque cursor that reads the page after it.
+fn entry(index: i64, kind: &str, before: &str, after: &str, current: &str) -> Value {
     json!({
-        "position": position.to_string(), "kind": kind,
+        "cursor": format!("cursor-{index}"), "kind": kind,
         "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
         "changed_by": "cccccccc-0000-0000-0000-000000000001",
         "changed_at": "2026-09-03T00:00:00.000000Z",
-        "transaction_id": "4294967297",
         "before": before, "after": after, "current": current,
-        "head_position": head.to_string(),
     })
 }
 
+/// A page that fills the declared limit, so the panel asks for another one.
+/// One insert, then ninety-nine updates that raise the revision by one.
+fn full_page(current: &str) -> Value {
+    let mut rows = vec![entry(
+        1,
+        "insert",
+        "{}",
+        r#"{"id": "00000000-0000-0000-0000-000000000001", "status": "complete", "row_version": 1}"#,
+        current,
+    )];
+    for step in 2..=100 {
+        rows.push(entry(
+            step,
+            "update",
+            &format!(r#"{{"row_version": {}}}"#, step - 1),
+            &format!(r#"{{"row_version": {step}}}"#),
+            current,
+        ));
+    }
+    Value::Array(rows)
+}
+
 /// Open the history of the first purchase order and answer each queued page.
-/// Returns the `after_position` of every request that the panel sent.
+/// Returns the `after_cursor` of every request that the panel sent.
 fn history(pages: &[Value]) -> (ReceivingApplication, Vec<Value>) {
     let mut app = application();
     read(&mut app, "orders", orders(&[1], None));
@@ -52,7 +74,7 @@ fn history(pages: &[Value]) -> (ReceivingApplication, Vec<Value>) {
             .expect("a valid history page request");
         let item = request.body.item();
         assert_eq!((&item["id"], &item["limit"]), (&json!(ORDER), &json!(100)));
-        requested.push(item["after_position"].clone());
+        requested.push(item["after_cursor"].clone());
         reply(&mut app, request, json!({ "rows": rows }));
     }
     assert!(
@@ -78,17 +100,16 @@ fn present(app: &ReceivingApplication) -> Vec<(String, String)> {
 #[test]
 fn a_present_row_shows_its_columns_at_each_entry() {
     let (mut app, requested) = history(&[json!([
-        entry(1, "insert", "{}", INSERTED, CURRENT, 2),
+        entry(1, "insert", "{}", INSERTED, CURRENT),
         entry(
             2,
             "update",
             r#"{"status": "open", "row_version": 1}"#,
             r#"{"status": "complete", "row_version": 2}"#,
-            CURRENT,
-            2
+            CURRENT
         ),
     ])]);
-    assert_eq!(requested, [json!(0)]);
+    assert_eq!(requested, [Value::Null], "the first page states no cursor");
     assert_eq!(present(&app)[1], ("row_version".to_owned(), "2".to_owned()));
     let displayed = render(&app);
     assert!(displayed.contains("State: present"), "{displayed}");
@@ -105,8 +126,8 @@ fn a_present_row_shows_its_columns_at_each_entry() {
 #[test]
 fn a_deleted_row_is_absent_after_its_delete() {
     let (app, _) = history(&[json!([
-        entry(1, "insert", "{}", INSERTED, "{}", 2),
-        entry(2, "delete", INSERTED, "{}", "{}", 2),
+        entry(1, "insert", "{}", INSERTED, "{}"),
+        entry(2, "delete", INSERTED, "{}", "{}"),
     ])]);
     assert_eq!(app.history_state(), Ok(RowState::Absent));
     assert!(render(&app).contains("State: absent"));
@@ -115,58 +136,88 @@ fn a_deleted_row_is_absent_after_its_delete() {
 #[test]
 fn a_row_with_no_retained_entries_is_unavailable() {
     let (app, requested) = history(&[json!([])]);
-    assert_eq!(requested, [json!(0)]);
+    assert_eq!(requested, [Value::Null]);
     assert_eq!(app.history_state(), Ok(RowState::Unavailable));
     assert!(render(&app).contains("State: unavailable"));
 }
 
+/// A full page is followed by another read, and a short page ends the history.
 #[test]
-fn a_head_change_between_pages_reads_the_history_again() {
+fn a_full_page_reads_the_page_after_it() {
+    let last = r#"{"id": "00000000-0000-0000-0000-000000000001", "status": "complete", "row_version": 101}"#;
     let (app, requested) = history(&[
-        json!([entry(1, "insert", "{}", INSERTED, CURRENT, 2)]),
+        full_page(last),
         json!([entry(
-            3,
+            101,
+            "update",
+            r#"{"row_version": 100}"#,
+            r#"{"row_version": 101}"#,
+            last
+        )]),
+    ]);
+    assert_eq!(
+        requested,
+        [Value::Null, json!("cursor-100")],
+        "the second page follows the cursor of the last entry"
+    );
+    assert_eq!(
+        present(&app)[1],
+        ("row_version".to_owned(), "101".to_owned())
+    );
+}
+
+/// A write between two pages changes the current image, so the panel reads the
+/// history again from its first page.
+#[test]
+fn a_changed_row_between_pages_reads_the_history_again() {
+    let (app, requested) = history(&[
+        full_page(CURRENT),
+        json!([entry(
+            101,
             "update",
             r#"{"row_version": 2}"#,
             r#"{"row_version": 3}"#,
-            CHANGED,
-            3
+            CHANGED
         )]),
         json!([
-            entry(1, "insert", "{}", INSERTED, CHANGED, 3),
+            entry(1, "insert", "{}", INSERTED, CHANGED),
             entry(
                 2,
                 "update",
                 r#"{"status": "open", "row_version": 1}"#,
                 r#"{"status": "complete", "row_version": 2}"#,
-                CHANGED,
-                3
+                CHANGED
             ),
             entry(
                 3,
                 "update",
                 r#"{"row_version": 2}"#,
                 r#"{"row_version": 3}"#,
-                CHANGED,
-                3
+                CHANGED
             ),
         ]),
     ]);
-    assert_eq!(requested, [json!(0), json!(1), json!(0)]);
+    assert_eq!(requested, [Value::Null, json!("cursor-100"), Value::Null]);
     assert_eq!(present(&app)[1], ("row_version".to_owned(), "3".to_owned()));
     assert!(render(&app).contains("State: present"));
 }
 
+/// The fold refuses a history it cannot trust, and the panel shows the reason.
+/// Two inserts of one row cannot both hold, so the state before the second one
+/// does not follow.
 #[test]
 fn rows_that_do_not_fold_show_the_refusal() {
-    let (app, requested) = history(&[
-        json!([entry(1, "insert", "{}", INSERTED, CURRENT, 2)]),
-        json!([]),
-    ]);
-    assert_eq!(requested, [json!(0), json!(1)]);
+    let (mut app, requested) = history(&[json!([
+        entry(1, "insert", "{}", INSERTED, CURRENT),
+        entry(2, "insert", "{}", INSERTED, CURRENT),
+        entry(3, "insert", "{}", INSERTED, CURRENT),
+    ])]);
+    assert_eq!(requested, [Value::Null]);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
     let refusal = app
         .history_state()
-        .expect_err("a read that ends before its head does not fold");
-    assert!(refusal.contains("IncompleteRead"), "{refusal}");
+        .expect_err("an entry that does not follow the state after it refuses");
+    assert!(refusal.contains("BrokenChain"), "{refusal}");
     assert!(render(&app).contains("The history cannot fold"));
 }

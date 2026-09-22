@@ -40,7 +40,7 @@ pub(crate) fn encode(output: &[contract::GetOutcome]) -> String {
                                 "created_by": value.value.created_by,
                                 "id": value.value.id,
                                 "purchase_order_number": value.value.purchase_order_number,
-                                "row_version": value.value.row_version.to_string(),
+                                "row_version": value.value.row_version,
                                 "status": value.value.status,
                                 "supplier_id": value.value.supplier_id,
                                 "updated_at": value.value.updated_at,

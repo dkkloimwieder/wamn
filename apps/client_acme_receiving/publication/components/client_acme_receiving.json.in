@@ -44,7 +44,7 @@
             "properties": {
               "request_id": {"type": "string", "minLength": 1},
               "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-              "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+              "expected_row_version": {"type": "integer"},
               "change": {
                 "type": "object",
                 "additionalProperties": false,
@@ -182,7 +182,7 @@
             "properties": {
               "request_id": {"type": "string", "minLength": 1},
               "receipt_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-              "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"}
+              "expected_row_version": {"type": "integer"}
             }
           }
         }

@@ -9,9 +9,9 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
-    after_position: i64,
+    after_cursor: Option<String>,
     id: String,
-    limit: i64,
+    limit: i32,
 }
 
 pub(crate) fn decode(
@@ -22,7 +22,7 @@ pub(crate) fn decode(
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::LoadPurchaseOrderHistoryRequest {
-                    after_position: request.after_position,
+                    after_cursor: request.after_cursor,
                     id: request.id,
                     limit: request.limit,
                 })
@@ -45,16 +45,14 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderHistoryOutcome]) -> St
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": { "rows": value.rows.iter().map(|row| json!({
-                    "position": row.position,
+                    "cursor": row.cursor,
                     "kind": row.kind,
                     "operation": row.operation,
                     "changed_by": row.changed_by,
                     "changed_at": row.changed_at,
-                    "transaction_id": row.transaction_id,
                     "before": row.before,
                     "after": row.after,
                     "current": row.current,
-                    "head_position": row.head_position,
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
@@ -135,16 +133,14 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            position: row.position,
+            cursor: row.cursor,
             kind: row.kind,
             operation: row.operation,
             changed_by: row.changed_by.0,
             changed_at: row.changed_at.0,
-            transaction_id: row.transaction_id,
             before: row.before,
             after: row.after,
             current: row.current,
-            head_position: row.head_position,
         }
     }};
 }

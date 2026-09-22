@@ -10,7 +10,7 @@ const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
     id: String,
-    expected_row_version: String,
+    expected_row_version: i64,
     change: JsonUpdateChange,
 }
 
@@ -28,7 +28,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecErro
         .into_iter()
         .map(|(request_id, body)| {
             let input = match serde_json::from_value::<JsonRequest>(body) {
-                Ok(request) => match request.expected_row_version.parse::<i64>() {
+                Ok(request) => match i32::try_from(request.expected_row_version) {
                     Ok(expected_row_version) => {
                         let request = contract::UpdateRequest {
                             id: request.id,
@@ -70,7 +70,7 @@ pub(crate) fn encode(output: &[contract::UpdateOutcome]) -> String {
                     "created_by": value.created_by,
                     "id": value.id,
                     "purchase_order_number": value.purchase_order_number,
-                    "row_version": value.row_version.to_string(),
+                    "row_version": value.row_version,
                     "status": value.status,
                     "supplier_id": value.supplier_id,
                     "updated_at": value.updated_at,
@@ -103,11 +103,11 @@ fn error_value(error: &contract::UpdateError) -> Value {
             let mut detail = Map::new();
             detail.insert(
                 "expected_row_version".to_owned(),
-                json!(JsonInt64(value.expected_row_version)),
+                json!(value.expected_row_version),
             );
             detail.insert(
                 "observed_row_version".to_owned(),
-                json!(JsonInt64(value.observed_row_version)),
+                json!(value.observed_row_version),
             );
             ("concurrency_conflict", detail)
         }
@@ -215,12 +215,12 @@ pub(crate) fn map_error(
         }
         "concurrency_conflict" => {
             let Some(expected_row_version) =
-                detail("expected_row_version").and_then(|value| value.parse::<i64>().ok())
+                detail("expected_row_version").and_then(|value| value.parse::<i32>().ok())
             else {
                 return contract::UpdateError::InternalError;
             };
             let Some(observed_row_version) =
-                detail("observed_row_version").and_then(|value| value.parse::<i64>().ok())
+                detail("observed_row_version").and_then(|value| value.parse::<i32>().ok())
             else {
                 return contract::UpdateError::InternalError;
             };

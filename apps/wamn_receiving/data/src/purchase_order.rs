@@ -194,7 +194,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
 pub async fn update(
     connection: &mut Connection,
     id: &str,
-    expected_row_version: i64,
+    expected_row_version: i32,
     supplier_id: SupplierIdUpdate,
 ) -> Result<PurchaseOrderRow, AccessError> {
     let id = canonical_uuid(id, "purchase_order id", "id")?;
@@ -458,7 +458,7 @@ fn canonical_timestamp(value: &DateTime<Utc>) -> String {
 
 fn update_result(
     row: generated::PurchaseOrderUpdateRow,
-    expected_row_version: i64,
+    expected_row_version: i32,
 ) -> Result<PurchaseOrderRow, AccessError> {
     match row.outcome.as_deref() {
         Some("not_found") => Err(AccessError::not_found("purchase_order does not exist")),

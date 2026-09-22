@@ -14,7 +14,7 @@ CREATE TABLE receiving.purchase_order (
         CONSTRAINT purchase_order_purchase_order_number_key UNIQUE,
     supplier_id uuid NOT NULL,
     status text NOT NULL DEFAULT 'open',
-    row_version int8 NOT NULL DEFAULT 1,
+    row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE receiving.record_receipt_command (
         CONSTRAINT record_receipt_command_receipt_id_key UNIQUE,
     purchase_order_id uuid NOT NULL,
     purchase_order_status text,
-    row_version int8,
+    row_version int4,
     CONSTRAINT record_receipt_command_canonical_command_check
         CHECK (octet_length(canonical_command) > 0),
     CONSTRAINT record_receipt_command_purchase_order_status_check

@@ -2,7 +2,7 @@
 //
 // `purchase_order` operations of package `wamn_receiving`.
 
-import type { FieldMap, Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:purchase-order/get@1.0.0`. */
@@ -29,8 +29,8 @@ export interface PurchaseOrderGetResult {
   readonly id: Uuid;
   /** `text` */
   readonly purchaseOrderNumber: string;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `text` */
   readonly status: "cancelled" | "complete" | "open";
   /** `uuid` */
@@ -156,8 +156,8 @@ export interface PurchaseOrderQueryRow {
   readonly id: Uuid;
   /** `text` */
   readonly purchaseOrderNumber: string;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `text` */
   readonly status: "cancelled" | "complete" | "open";
   /** `uuid` */
@@ -241,8 +241,8 @@ export async function query(
 export interface PurchaseOrderUpdateRequest {
   /** `object` */
   change: PurchaseOrderUpdateRequestChange;
-  /** `int64` */
-  expectedRowVersion: Int64;
+  /** `int32` */
+  expectedRowVersion: number;
   /** `uuid` */
   id: Uuid;
   /** `string` */
@@ -277,8 +277,8 @@ export interface PurchaseOrderUpdateResult {
   readonly id: Uuid;
   /** `text` */
   readonly purchaseOrderNumber: string;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `text` */
   readonly status: "cancelled" | "complete" | "open";
   /** `uuid` */

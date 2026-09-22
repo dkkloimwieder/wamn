@@ -8,7 +8,7 @@ pub struct LoadReceiptScreenRow {
     pub purchase_order_number: String,
     pub purchase_order_status: String,
     pub supplier_id: wamn_postgres_statements::Uuid,
-    pub row_version: i64,
+    pub row_version: i32,
     pub line_id: Option<wamn_postgres_statements::Uuid>,
     pub line_number: Option<i32>,
     pub item_id: Option<wamn_postgres_statements::Uuid>,

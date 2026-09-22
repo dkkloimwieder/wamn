@@ -415,6 +415,7 @@ fn emit_update_codec(
         details
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
+        revision_width(table, operation),
     ));
     source.push_str(&emit_export_adapter("Update", false, false));
     source
@@ -447,6 +448,7 @@ fn emit_crud_codec(
         details
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
+        revision_width(table, operation),
     ));
     source.push_str(&emit_export_adapter(&type_name, false, false));
     source
@@ -1683,6 +1685,11 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         error_details
             .iter()
             .map(|(literal, detail)| (*literal, detail)),
+        operation
+            .result
+            .as_ref()
+            .and_then(|result| result.fields.iter().find(|field| field.revision))
+            .map(|field| field.ty),
     ));
     source.push_str(&emit_export_adapter(
         &type_name,

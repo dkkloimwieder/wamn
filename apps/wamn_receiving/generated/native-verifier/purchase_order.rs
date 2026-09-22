@@ -6,7 +6,7 @@ pub struct PurchaseOrderRow {
     pub created_by: uuid::Uuid,
     pub id: uuid::Uuid,
     pub purchase_order_number: String,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
     pub supplier_id: uuid::Uuid,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -16,12 +16,12 @@ pub struct PurchaseOrderRow {
 #[derive(Debug, sqlx::FromRow)]
 pub struct PurchaseOrderUpdateRow {
     pub outcome: Option<String>,
-    pub observed_row_version: Option<i64>,
+    pub observed_row_version: Option<i32>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_by: Option<uuid::Uuid>,
     pub id: Option<uuid::Uuid>,
     pub purchase_order_number: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
     pub status: Option<String>,
     pub supplier_id: Option<uuid::Uuid>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -150,8 +150,8 @@ pub(crate) fn query_created_at_descending_limit_bind_fixture() -> i64 {
 pub(crate) fn update_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn update_expected_row_version_bind_fixture() -> i64 {
-    0_i64
+pub(crate) fn update_expected_row_version_bind_fixture() -> i32 {
+    0_i32
 }
 pub(crate) fn update_supplier_id_present_bind_fixture() -> bool {
     false

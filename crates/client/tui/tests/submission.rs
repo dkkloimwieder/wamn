@@ -546,7 +546,7 @@ fn receiving_update_validates_the_public_success_row_without_sql_bookkeeping_col
         "purchase_order_number":"PO-100",
         "supplier_id":"00000000-0000-0000-0000-000000000002",
         "status":"open",
-        "row_version":"8",
+        "row_version":8,
         "created_at":"2026-09-08T16:00:00.000000Z",
         "created_by":"00000000-0000-0000-0000-000000000003",
         "updated_at":"2026-09-08T17:00:00.000000Z",

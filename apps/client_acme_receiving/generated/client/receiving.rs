@@ -26,7 +26,7 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -74,8 +74,8 @@ pub struct ReceivingRecordReceiptResult {
     pub purchase_order_status: String,
     /// `uuid`
     pub receipt_id: uuid::Uuid,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
 }
 
 /// Input descriptors for `client-acme-receiving:receiving/record-receipt@3.0.0`.
@@ -152,7 +152,7 @@ pub const RECEIVING_RECORD_RECEIPT_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -323,7 +323,7 @@ pub const RECEIVING_RECORD_RECEIPT_RESULT_SCHEMA: &[wamn_client::descriptor::Fie
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
