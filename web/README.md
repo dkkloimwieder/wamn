@@ -7,6 +7,7 @@ The generator writes the bindings, and this directory holds what the bindings ca
 | --- | --- |
 | [runtime](runtime/) | `@wamn/web-runtime`: the wire contract, and the transport that classifies one response |
 | [components](components/README.md) | The harness that type checks and tests generated components |
+| [demo](demo/README.md) | Disposable page that runs the generated Receiving components against a local stack |
 
 ## Runtime
 
