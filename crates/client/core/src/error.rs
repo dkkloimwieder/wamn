@@ -88,10 +88,19 @@ impl ClientError {
                     .to_owned(),
             },
             "concurrency_conflict" => {
+                // A revision is a JSON number when the application declares an
+                // int32 revision, and a JSON string when it declares an int64.
+                // `unknown_with_literal` in the terminal reads both spellings,
+                // and this reader states the same rule.
                 let revision = |name: &str| {
-                    detail
-                        .get(name)
+                    let value = detail.get(name);
+                    value
                         .and_then(serde_json::Value::as_i64)
+                        .or_else(|| {
+                            value
+                                .and_then(serde_json::Value::as_str)
+                                .and_then(|text| text.parse::<i64>().ok())
+                        })
                         .unwrap_or_default()
                 };
                 Self::ConcurrencyConflict {
@@ -240,6 +249,39 @@ mod tests {
         assert!(
             rendered.contains('4') && rendered.contains('7'),
             "{rendered}"
+        );
+    }
+
+    /// EXIT GATE: a revision reads the same whether the application declares it
+    /// as an int32, which is a JSON number, or as an int64, which is a JSON
+    /// string. Reading one spelling alone gave 0 for the other.
+    #[test]
+    fn a_revision_reads_both_of_its_wire_spellings() {
+        for detail in [
+            json!({ "expected_row_version": 4, "observed_row_version": 7 }),
+            json!({ "expected_row_version": "4", "observed_row_version": "7" }),
+        ] {
+            assert_eq!(
+                ClientError::from_item_error(&json!({
+                    "code": "concurrency_conflict",
+                    "detail": detail,
+                })),
+                ClientError::ConcurrencyConflict {
+                    expected_row_version: 4,
+                    observed_row_version: 7,
+                }
+            );
+        }
+        assert_eq!(
+            ClientError::from_item_error(&json!({
+                "code": "concurrency_conflict",
+                "detail": { "expected_row_version": "four", "observed_row_version": null },
+            })),
+            ClientError::ConcurrencyConflict {
+                expected_row_version: 0,
+                observed_row_version: 0,
+            },
+            "a detail that states no number states nothing"
         );
     }
 
