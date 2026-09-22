@@ -50,8 +50,8 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     }
     assert_eq!(
         widget.matches("export function ").count(),
-        6,
-        "the two tables, the one detail and the three forms have components"
+        7,
+        "every screen the plan gives a role has one component"
     );
     // The columns are the plan's columns, in contract order, with the cell type
     // that the release declared.
@@ -305,6 +305,100 @@ fn a_revision_bound_form_reads_the_record_before_it_sends() {
             "readonly expectedEditVersion: WidgetArchiveRequest[\"expectedEditVersion\"];"
         ),
         "a revision with no binding stays a prop, because only the caller knows it"
+    );
+}
+
+/// A removal is not an edit that an operator undoes, so it confirms first.
+#[test]
+fn a_delete_confirms_and_sends_the_revision_it_read() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    assert!(widget.contains(concat!(
+        "export interface WidgetDeleteDeleteProps {\n",
+        "  /** The transport the application supplies. */\n",
+        "  readonly transport: Transport;\n",
+    )));
+    assert!(
+        widget.contains("  readonly key: WidgetGetRequest;"),
+        "the delete takes the record it removes"
+    );
+    let remove = widget
+        .split("export function WidgetDeleteDelete")
+        .nth(1)
+        .expect("the delete exists")
+        .split("\n/**")
+        .next()
+        .expect("the delete ends");
+    assert!(
+        remove.contains("const [confirming, setConfirming] = createSignal(false);"),
+        "it asks before it acts"
+    );
+    assert!(
+        remove.contains("<p>remove this record?</p>") && remove.contains(">\n          confirm\n"),
+        "the confirmation states what it removes"
+    );
+    assert!(
+        remove.contains("const record = await get(props.transport, ["),
+        "it reads the record first"
+    );
+    assert!(
+        remove.contains(
+            "item = writeMember(item, [\"expectedEditVersion\"], readMember(record.value, [\"editVersion\"]) ?? null);"
+        ),
+        "it sends the revision it read"
+    );
+    assert!(!remove.contains("<form.Field"), "a delete fills no field");
+}
+
+/// A bound command writes its key from the record it read, so a control for
+/// that key would show a value the submission overwrites.
+#[test]
+fn a_bound_key_is_a_prop_and_never_a_control() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let update = widget
+        .split("export function WidgetUpdateForm")
+        .nth(1)
+        .expect("the update form exists")
+        .split("\n/**")
+        .next()
+        .expect("the form ends");
+    assert!(
+        !update.contains("<form.Field name={\"id\"}>"),
+        "the record key comes from the props"
+    );
+    assert!(
+        update.contains(
+            "item = writeMember(item, [\"id\"], readMember(record.value, [\"id\"]) ?? null);"
+        ),
+        "the submission writes the key from the record it read"
+    );
+    assert!(
+        widget.contains(concat!(
+            "const UPDATE_INPUT = z.object({\n",
+            "  change: z\n",
+            "    .object({\n",
+            "      code: z.string().optional(),\n",
+            "      note: z.string().nullable().optional(),\n",
+            "    })\n",
+            "    .optional(),\n",
+            "});\n",
+        )),
+        "the schema states what the operator fills, and the bound key is absent"
+    );
+}
+
+/// The bytes must not move when nothing in the contract moved.
+#[test]
+fn the_emitted_components_are_byte_stable() {
+    let mut ir = release();
+    let first = emit(&ir);
+    assert_eq!(first, emit(&ir));
+    ir.models[0].operations.reverse();
+    assert_eq!(
+        first,
+        emit(&ir),
+        "the contract's incidental order does not reach the bytes"
     );
 }
 

@@ -125,7 +125,7 @@ pub fn emit_ts_components(
 
 /// The screens this emitter writes today.
 fn written(screen: &ScreenPlan<'_>) -> bool {
-    matches!(screen.role, Role::Table | Role::Detail | Role::Form)
+    screen.role.is_supported()
 }
 
 fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
@@ -160,11 +160,15 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 solid.extend(["createSignal", "Show"]);
                 emit_form(&mut body, screen, &mut runtime, &mut bindings)?;
             }
-            role => {
+            Role::Delete => {
+                solid.extend(["createSignal", "Show"]);
+                emit_delete(&mut body, screen, &mut runtime, &mut bindings)?;
+            }
+            role @ Role::Unsupported(_) => {
                 return Err(ClientComponentError::new(
                     ClientComponentErrorKind::UnwrittenRole,
                     format!(
-                        "{} states the role {role:?}, which has no component yet",
+                        "{} states the role {role:?}, which gets no component",
                         screen.contract.operation
                     ),
                 ));
@@ -615,6 +619,20 @@ fn zod_type(field: &FieldIr) -> String {
     spelling
 }
 
+/// The inputs an operator fills, which excludes a key the binding supplies.
+///
+/// A bound command takes the record as a prop and writes its key from the read,
+/// so a control for that key would show a value the submission overwrites.
+fn operator_inputs<'a>(screen: &'a ScreenPlan<'a>) -> Vec<&'a FieldIr> {
+    let bound = screen.revision.map(|binding| binding.command_key_input);
+    screen
+        .inputs
+        .iter()
+        .filter(|input| Some(input.path.as_str()) != bound)
+        .copied()
+        .collect()
+}
+
 /// The zod object of one level of the operator's input.
 ///
 /// The members mirror the request type exactly, so the check runs over the
@@ -691,7 +709,7 @@ fn emit_form(
         screen.name.to_uppercase()
     )
     .expect("write");
-    write_input_schema(source, &screen.inputs, &[], 1);
+    write_input_schema(source, &operator_inputs(screen), &[], 1);
     source.push_str("});\n");
 
     // The props.
@@ -784,19 +802,14 @@ fn emit_form(
         .expect("write");
     }
     if let Some(binding) = screen.revision {
-        let read = crate::client_ts::function_name(
-            binding
-                .read_operation
-                .rsplit('/')
-                .next()
-                .unwrap_or(binding.read_operation)
-                .split('@')
-                .next()
-                .unwrap_or(binding.read_operation),
-        )
-        .map_err(|error| {
-            ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
-        })?;
+        let read = crate::client_ts::function_name(local_name(binding.read_operation)).map_err(
+            |error| {
+                ClientComponentError::new(
+                    ClientComponentErrorKind::UnwrittenRole,
+                    error.to_string(),
+                )
+            },
+        )?;
         bindings.insert(read.clone());
         bindings.insert(format!(
             "type {}Request",
@@ -852,7 +865,7 @@ fn emit_form(
     source.push_str(
         "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <p>{refusal()?.code}</p>\n      </Show>\n",
     );
-    for input in &screen.inputs {
+    for input in operator_inputs(screen) {
         let member = member_path(&input.path).join(".");
         let leaf = input
             .path
@@ -911,6 +924,163 @@ fn emit_input_control(source: &mut String, input: &FieldIr) {
         "            <input\n              type=\"{kind}\"\n              value={{String(field().state.value ?? \"\")}}\n              onInput={{(event) => field().handleChange(event.currentTarget.value)}}\n            />"
     )
     .expect("write");
+}
+
+/// One delete screen: a removal that the operator confirms first.
+fn emit_delete(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    runtime: &mut BTreeSet<&'static str>,
+    bindings: &mut BTreeSet<String>,
+) -> Result<(), ClientComponentError> {
+    let stem = crate::client_ts::type_stem(screen.model, screen.name);
+    let function = crate::client_ts::function_name(screen.name).map_err(|error| {
+        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+    })?;
+    runtime.extend([
+        "newRequestId",
+        "refusedMember",
+        "writeMember",
+        "type Outcome",
+        "type Transport",
+    ]);
+    for supplied in &screen.supplied {
+        match supplied.kind {
+            SuppliedKind::RequestId => runtime.insert("newRequestId"),
+            SuppliedKind::IdempotencyKey => runtime.insert("newIdempotencyKey"),
+            SuppliedKind::OccurredAt => runtime.insert("occurredAt"),
+        };
+    }
+    bindings.insert(function.clone());
+    bindings.insert(format!("type {stem}Request"));
+    bindings.insert(format!("type {stem}Result"));
+
+    writeln!(
+        source,
+        "\n/** What the delete for `{}` takes. */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(source, "export interface {stem}DeleteProps {{").expect("write");
+    source.push_str("  /** The transport the application supplies. */\n");
+    source.push_str("  readonly transport: Transport;\n");
+    if let Some(binding) = screen.revision {
+        let read = crate::client_ts::operation_stem(binding.read_operation);
+        bindings.insert(format!("type {read}Request"));
+        writeln!(
+            source,
+            "  /** The record to remove. The component reads it, and sends the\n   * revision it read, because `{}` states that binding. */",
+            binding.read_operation
+        )
+        .expect("write");
+        writeln!(source, "  readonly key: {read}Request;").expect("write");
+    } else {
+        writeln!(
+            source,
+            "  /** The input that names the record to remove. */\n  readonly input: {stem}Request;"
+        )
+        .expect("write");
+    }
+    source.push_str("  /** Called with the outcome of the removal. */\n");
+    writeln!(
+        source,
+        "  readonly onSubmitted?: (outcome: Outcome<{stem}Result>) => void;"
+    )
+    .expect("write");
+    source.push_str("}\n");
+
+    writeln!(
+        source,
+        "\n/**\n * The delete for `{}`.\n *\n * It asks for a confirmation first, because a removal is not an edit that an\n * operator undoes.\n */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export function {stem}Delete(props: {stem}DeleteProps) {{"
+    )
+    .expect("write");
+    source.push_str("  const [confirming, setConfirming] = createSignal(false);\n");
+    source.push_str(
+        "  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(\n    null,\n  );\n",
+    );
+    source.push_str("\n  const remove = async () => {\n");
+    if let Some(binding) = screen.revision {
+        let read = crate::client_ts::function_name(local_name(binding.read_operation)).map_err(
+            |error| {
+                ClientComponentError::new(
+                    ClientComponentErrorKind::UnwrittenRole,
+                    error.to_string(),
+                )
+            },
+        )?;
+        bindings.insert(read.clone());
+        runtime.insert("readMember");
+        writeln!(
+            source,
+            "    const record = await {read}(props.transport, [\n      {{ ...props.key, requestId: newRequestId() }},\n    ]);"
+        )
+        .expect("write");
+        source.push_str(
+            "    if (record.status !== \"completed\") {\n      setRefusal({ code: record.status, member: null });\n      return;\n    }\n",
+        );
+        writeln!(source, "    let item = {{}} as {stem}Request;").expect("write");
+        writeln!(
+            source,
+            "    item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            member_literal(binding.command_key_input),
+            member_literal(binding.key_field)
+        )
+        .expect("write");
+        writeln!(
+            source,
+            "    item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            member_literal(binding.command_revision_input),
+            member_literal(binding.revision_field)
+        )
+        .expect("write");
+    } else {
+        writeln!(
+            source,
+            "    let item = {{ ...props.input }} as {stem}Request;"
+        )
+        .expect("write");
+    }
+    for supplied in &screen.supplied {
+        let value = match supplied.kind {
+            SuppliedKind::RequestId => "newRequestId()",
+            SuppliedKind::IdempotencyKey => "newIdempotencyKey()",
+            SuppliedKind::OccurredAt => "occurredAt()",
+        };
+        writeln!(
+            source,
+            "    item = writeMember(item, {}, {value});",
+            member_literal(supplied.path)
+        )
+        .expect("write");
+    }
+    writeln!(
+        source,
+        "    const outcome = await {function}(props.transport, [item]);"
+    )
+    .expect("write");
+    source.push_str("    props.onSubmitted?.(outcome);\n");
+    source.push_str(
+        "    setRefusal(\n      outcome.status === \"refused\"\n        ? { code: outcome.code, member: refusedMember(outcome.detail) }\n        : null,\n    );\n  };\n",
+    );
+    source.push_str(
+        "\n  return (\n    <section>\n      <Show when={refusal()}>\n        <p>{refusal()?.code}</p>\n      </Show>\n      <Show\n        when={confirming()}\n        fallback={\n          <button type=\"button\" onClick={() => setConfirming(true)}>\n            delete\n          </button>\n        }\n      >\n        <p>remove this record?</p>\n        <button\n          type=\"button\"\n          onClick={() => {\n            setConfirming(false);\n            void remove();\n          }}\n        >\n          confirm\n        </button>\n        <button type=\"button\" onClick={() => setConfirming(false)}>\n          cancel\n        </button>\n      </Show>\n    </section>\n  );\n}\n",
+    );
+    Ok(())
+}
+
+/// The local name of one operation, from its canonical identity.
+fn local_name(identity: &str) -> &str {
+    let without_version = identity.split('@').next().unwrap_or(identity);
+    without_version
+        .rsplit('/')
+        .next()
+        .unwrap_or(without_version)
 }
 
 /// One control for each page control the plan names.
