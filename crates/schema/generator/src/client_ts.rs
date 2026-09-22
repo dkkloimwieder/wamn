@@ -417,7 +417,17 @@ fn emit_operation(
         .paging
         .as_ref()
         .and_then(|paging| paging.sort.as_ref());
-    writeln!(source, "\n/** Input for `{}`. */", operation.operation).expect("write");
+    match operation.description.as_deref() {
+        // An authored description belongs to the operation, so it reaches the
+        // type an author reads first. No screen shows it.
+        Some(description) => writeln!(
+            source,
+            "\n/**\n * Input for `{}`.\n *\n * {description}\n */",
+            operation.operation
+        ),
+        None => writeln!(source, "\n/** Input for `{}`. */", operation.operation),
+    }
+    .expect("write");
     write_interface(
         source,
         &format!("{type_stem}Request"),
@@ -812,12 +822,20 @@ fn write_interface(
         if field.nullable {
             spelling = format!("{spelling} | null");
         }
-        writeln!(
-            source,
-            "  /** `{}`{} */",
+        let wire = format!(
+            "`{}`{}",
             field.type_name,
             if field.required { "" } else { ", omittable" }
-        )
+        );
+        match field.description.as_deref() {
+            // The authored sentence comes first, because a reader wants the
+            // meaning before the wire spelling.
+            Some(description) => writeln!(
+                source,
+                "  /**\n   * {description}\n   *\n   * {wire}\n   */"
+            ),
+            None => writeln!(source, "  /** {wire} */"),
+        }
         .expect("write");
         writeln!(
             source,

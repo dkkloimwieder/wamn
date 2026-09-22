@@ -554,3 +554,48 @@ fn a_contract_integer_is_a_number_and_a_declared_int64_stays_opaque() {
         "a declared int64 keeps its opaque alias"
     );
 }
+
+/// EXIT GATE for `wamn-c2y5.5`: an authored description reaches the type an
+/// author reads, and an undescribed member keeps the one line it had.
+///
+/// A label changes no TypeScript text. A label is for a screen, and a comment
+/// is for the person who writes the code that calls this.
+#[test]
+fn a_described_member_carries_its_description_and_the_rest_are_unchanged() {
+    let ir = release();
+    let files = emit_ts_client(&ir).unwrap();
+    let widget = widget(&files);
+
+    assert!(
+        widget.contains(concat!(
+            "  /**\n",
+            "   * What the operator recorded about this batch.\n",
+            "   *\n",
+            "   * `text`\n",
+            "   */\n",
+        )),
+        "the authored sentence comes before the wire spelling"
+    );
+    assert!(
+        widget.contains("  /** `uuid` */\n"),
+        "a member with no description keeps its single line"
+    );
+    assert!(
+        widget.contains(concat!(
+            "/**\n",
+            " * Input for `platform-fixture:widget/record-batch@1.0.0`.\n",
+            " *\n",
+            " * One submission that records several lines at once.\n",
+            " */\n",
+        )),
+        "an operation states its own description above its input type"
+    );
+    assert!(
+        widget.contains("/** Input for `platform-fixture:widget/get@1.0.0`. */\n"),
+        "an operation with no description keeps its single line"
+    );
+    assert!(
+        !widget.contains("Widget code"),
+        "a label is for a screen, and the bindings state none"
+    );
+}
