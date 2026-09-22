@@ -199,12 +199,8 @@ fn emit_operation(
         model.name.to_uppercase(),
         operation.name.to_uppercase()
     );
-    let result_fields = operation
-        .route
-        .as_ref()
-        .map_or(operation.result_fields.as_slice(), |route| {
-            route.response.fields.as_slice()
-        });
+    // The plan owns this rule, so the bindings and the screens cannot drift.
+    let result_fields = crate::client_plan::effective_result_fields(operation);
 
     writeln!(source).expect("writing to a String cannot fail");
     writeln!(source, "/// Input for `{}`.", operation.operation).expect("write");

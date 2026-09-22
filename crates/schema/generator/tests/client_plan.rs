@@ -2,7 +2,7 @@ use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
 use wamn_schema_generator::client_plan::{
     ClientPlan, LinkReason, NoRole, Role, RowLink, Rows, ScreenPlan, SuppliedKind,
-    UnsearchableSelector,
+    UnsearchableSelector, effective_result_fields,
 };
 
 #[path = "support/platform_fixture.rs"]
@@ -801,4 +801,45 @@ fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
         .find(|input| input.input == "value.line[].widget_id")
         .expect("the authored reference is populated");
     assert_eq!(batch.display_field, "code");
+}
+
+#[test]
+fn the_result_fields_of_an_operation_have_one_owner() {
+    // client_rust.rs held the same rule and could drift from the columns.
+    // wamn-7kmr.
+    let mut ir = release();
+    let served = operation(&mut ir, "get");
+    let route_fields = served
+        .route
+        .as_ref()
+        .expect("the release serves get")
+        .response
+        .fields
+        .clone();
+    assert_eq!(
+        effective_result_fields(served)
+            .iter()
+            .map(|field| field.path.as_str())
+            .collect::<Vec<_>>(),
+        route_fields
+            .iter()
+            .map(|field| field.path.as_str())
+            .collect::<Vec<_>>(),
+        "a served route states its own result fields"
+    );
+
+    let unserved = operation(&mut ir, "get");
+    unserved.route = None;
+    assert_eq!(
+        effective_result_fields(unserved)
+            .iter()
+            .map(|field| field.path.as_str())
+            .collect::<Vec<_>>(),
+        unserved
+            .result_fields
+            .iter()
+            .map(|field| field.path.as_str())
+            .collect::<Vec<_>>(),
+        "an operation with no route keeps the fields it declared"
+    );
 }

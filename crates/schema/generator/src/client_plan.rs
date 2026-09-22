@@ -521,12 +521,7 @@ impl<'a> ScreenPlan<'a> {
             || Some(operation.result_class.as_str()),
             |route| route.response.result_class.as_deref(),
         );
-        let result_fields = operation
-            .route
-            .as_ref()
-            .map_or(operation.result_fields.as_slice(), |route| {
-                route.response.fields.as_slice()
-            });
+        let result_fields = effective_result_fields(operation);
         let revision_inputs = revision_inputs(operation);
         let input_leaves = leaf_fields(&operation.input_fields);
         let declared = |path: &str| input_leaves.iter().any(|field| field.path == path);
@@ -831,6 +826,22 @@ fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<Po
 fn filter_input(path: &str, field: &str) -> bool {
     path.strip_prefix(FILTER_PREFIX)
         .is_some_and(|rest| rest == field || rest.trim_end_matches("[]") == field)
+}
+
+/// The result fields one operation serves.
+///
+/// A served route states its own fields, because the release publishes them.
+/// An operation with no route keeps the fields it declared. Every emitter
+/// reads this one rule, including the emitters that run for an operation the
+/// plan holds no screen for.
+#[must_use]
+pub fn effective_result_fields(operation: &OperationIr) -> &[FieldIr] {
+    operation
+        .route
+        .as_ref()
+        .map_or(operation.result_fields.as_slice(), |route| {
+            route.response.fields.as_slice()
+        })
 }
 
 /// Select the screen role for one contract shape.
