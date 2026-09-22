@@ -1602,7 +1602,11 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum);
     source.push_str(&emit_custom_decoder(&type_name, operation));
     emit_invalid_detail(&mut source, operation);
-    source.push_str("pub(crate) fn encode(output: &[contract::RecordReceiptOutcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": ");
+    // The template states the type name of the operation under generation.
+    // No application name reaches this file.
+    source.push_str("pub(crate) fn encode(output: &[contract::");
+    source.push_str(&type_name);
+    source.push_str("Outcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": ");
     if result.class == ResultClass::BoundedList {
         source.push_str("{ \"rows\": value.rows.iter().map(|row| json!({\n");
         for field in &result.fields {
@@ -1646,11 +1650,14 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         source.push_str("                }\n");
     }
     source.push_str("            }),\n");
-    source.push_str(RECEIPT_CODEC_ERROR_PREFIX);
+    source.push_str(CUSTOM_CODEC_ERROR_HEAD);
+    source.push_str(&type_name);
+    source.push_str(CUSTOM_CODEC_ERROR_TAIL);
+    let error_type = format!("{type_name}Error");
     for literal in &operation.errors {
         emit_codec_error_arm(
             &mut source,
-            "RecordReceiptError",
+            &error_type,
             literal,
             &crate::manifest::custom_operation_error_detail(operation, literal),
             operation
@@ -1660,8 +1667,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
                 .map(|field| field.ty),
         );
     }
-    source.push_str(RECEIPT_CODEC_FOOTER);
-    source = source.replace("RecordReceipt", &type_name);
+    source.push_str(CUSTOM_CODEC_FOOTER);
     source.push_str(&emit_custom_normalizer(&type_name, operation));
     source.push_str(&emit_handler(&type_name));
     source.push_str(&emit_row_adapter(
@@ -2159,20 +2165,24 @@ fn emit_codec_result_field_for(
     .expect("writing to a String cannot fail");
 }
 
-const RECEIPT_CODEC_ERROR_PREFIX: &str = r#"            Err(error) => json!({
+/// The error arm of the custom codec, up to the error type of the operation.
+const CUSTOM_CODEC_ERROR_HEAD: &str = r#"            Err(error) => json!({
                 "request_id": item.request_id,
                 "error": error_value(error),
             }),
         }
     }).collect::<Vec<_>>();
-    serde_json::to_string(&values).expect("typed receipt outcomes always serialize")
+    serde_json::to_string(&values).expect("typed outcomes always serialize")
 }
 
-fn error_value(error: &contract::RecordReceiptError) -> Value {
+fn error_value(error: &contract::"#;
+
+/// The same arm, from the error type to the first match case.
+const CUSTOM_CODEC_ERROR_TAIL: &str = r#"Error) -> Value {
     let (code, detail) = match error {
 "#;
 
-const RECEIPT_CODEC_FOOTER: &str = r#"    };
+const CUSTOM_CODEC_FOOTER: &str = r#"    };
     json!({"code": code, "detail": detail})
 }
 "#;

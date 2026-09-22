@@ -69,7 +69,7 @@ pub(crate) fn encode(output: &[contract::MergeOutcome]) -> String {
             }),
         })
         .collect::<Vec<_>>();
-    serde_json::to_string(&values).expect("typed receipt outcomes always serialize")
+    serde_json::to_string(&values).expect("typed outcomes always serialize")
 }
 
 fn error_value(error: &contract::MergeError) -> Value {

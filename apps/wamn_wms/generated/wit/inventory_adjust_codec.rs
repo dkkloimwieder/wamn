@@ -75,7 +75,7 @@ pub(crate) fn encode(output: &[contract::AdjustOutcome]) -> String {
             }),
         })
         .collect::<Vec<_>>();
-    serde_json::to_string(&values).expect("typed receipt outcomes always serialize")
+    serde_json::to_string(&values).expect("typed outcomes always serialize")
 }
 
 fn error_value(error: &contract::AdjustError) -> Value {

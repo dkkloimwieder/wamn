@@ -42,6 +42,49 @@ fn typed_wit_and_codec_follow_package_and_envelope_declarations() {
 }
 
 #[test]
+fn a_custom_codec_names_the_type_of_its_own_operation() {
+    // The template used to spell one application's type and rename it with a
+    // string replace over the whole file. wamn-d8pr.
+    let mut manifest = fixture::manifest();
+    let mut again = manifest["custom_operations"]["widget.archive"].clone();
+    again["permission"] = json!("widget.archive_again");
+    manifest["custom_operations"]["widget.archive_again"] = again;
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+
+    for (path, type_name, other) in [
+        (
+            "generated/wit/widget_archive_codec.rs",
+            "Archive",
+            "ArchiveAgain",
+        ),
+        (
+            "generated/wit/widget_archive_again_codec.rs",
+            "ArchiveAgain",
+            "ArchiveOutcome",
+        ),
+    ] {
+        let codec = source(&package, path);
+        assert!(
+            codec.contains(&format!(
+                "pub(crate) fn encode(output: &[contract::{type_name}Outcome])"
+            )),
+            "{path} encodes its own outcome"
+        );
+        assert!(
+            codec.contains(&format!(
+                "fn error_value(error: &contract::{type_name}Error)"
+            )),
+            "{path} reads its own error"
+        );
+        assert!(
+            !codec.contains(other),
+            "{path} names {other}, which belongs to another operation"
+        );
+        assert!(codec.contains("typed outcomes always serialize"));
+    }
+}
+
+#[test]
 fn typed_custom_shapes_do_not_depend_on_application_names() {
     let mut manifest = fixture::manifest();
     let mut operation = manifest["custom_operations"]["widget.archive"].clone();
