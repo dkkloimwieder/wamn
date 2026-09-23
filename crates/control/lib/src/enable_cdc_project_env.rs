@@ -18,7 +18,7 @@
 //!
 //! This command also creates the declared source and advisory streams and
 //! materializer consumers with explicit event provisioning credentials.
-//! Existing broker objects must match their complete declarations.
+//! Existing broker objects must match the fields their declarations own.
 //!
 //! What this tool does directly (given `--system-database-url`): derive the
 //! target cluster from the org's placement, and record the
