@@ -3,7 +3,7 @@
     "items": [
         {
             "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
-            "environment": "wamn-receiving-journey",
+            "environment": "wamn-fixture-journey",
             "hostId": "59b076b0-2398-4c43-9499-36809f293e6c",
             "hostname": "10.244.1.6",
             "httpPort": 80,
@@ -49,7 +49,7 @@
         },
         {
             "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
-            "environment": "wamn-receiving-journey",
+            "environment": "wamn-fixture-journey",
             "hostId": "fb87b737-640c-471e-bb11-2aa110f82c3b",
             "hostname": "10.244.2.6",
             "httpPort": 80,
@@ -95,7 +95,7 @@
         },
         {
             "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
-            "environment": "wamn-receiving-journey",
+            "environment": "wamn-fixture-journey",
             "hostId": "b68ed388-3963-4d24-819e-c58031236b41",
             "hostname": "10.244.1.5",
             "httpPort": 80,

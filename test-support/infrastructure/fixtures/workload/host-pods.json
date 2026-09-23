@@ -22,7 +22,7 @@
                     "wasmcloud.com/name": "hostgroup"
                 },
                 "name": "hostgroup-default-59ffdf759f-2qk2h",
-                "namespace": "wamn-receiving-journey",
+                "namespace": "wamn-fixture-journey",
                 "ownerReferences": [
                     {
                         "apiVersion": "apps/v1",
@@ -100,7 +100,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-guest-acme--receiving--dev"
+                                        "name": "wamn-guest-example--fixture--dev"
                                     }
                                 }
                             },
@@ -150,22 +150,22 @@
                             },
                             {
                                 "name": "WAMN_ORG",
-                                "value": "acme"
+                                "value": "example"
                             },
                             {
                                 "name": "WAMN_PROJECT",
-                                "value": "receiving"
+                                "value": "fixture"
                             },
                             {
                                 "name": "WAMN_SCHEMA",
-                                "value": "receiving"
+                                "value": "fixture"
                             },
                             {
                                 "name": "WAMN_SYSTEM_URL",
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-identity-reader-acme--receiving--dev",
+                                        "name": "wamn-identity-reader-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -175,7 +175,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-executor-platform-acme--receiving--dev",
+                                        "name": "wamn-executor-platform-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -185,7 +185,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-http-admitter-acme--receiving--dev",
+                                        "name": "wamn-http-admitter-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -195,13 +195,13 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-event-materializer-acme--receiving--dev",
+                                        "name": "wamn-event-materializer-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
                             }
                         ],
-                        "image": "wamn-host:receiving-726657ad2efc-1559014-debug",
+                        "image": "wamn-host:fixture-726657ad2efc-1559014-debug",
                         "imagePullPolicy": "Never",
                         "livenessProbe": {
                             "failureThreshold": 3,
@@ -282,7 +282,7 @@
                 ],
                 "dnsPolicy": "ClusterFirst",
                 "enableServiceLinks": true,
-                "nodeName": "wamn-receiving-journey-worker",
+                "nodeName": "wamn-fixture-journey-worker",
                 "preemptionPolicy": "PreemptLowerPriority",
                 "priority": 0,
                 "restartPolicy": "Always",
@@ -401,7 +401,7 @@
                             "memory": "256Mi"
                         },
                         "containerID": "containerd://6ac5c2ea5fed6e2a91de8b885168200c10dde0e3192471ae075c3cd9ac12edfb",
-                        "image": "docker.io/library/wamn-host:receiving-726657ad2efc-1559014-debug",
+                        "image": "docker.io/library/wamn-host:fixture-726657ad2efc-1559014-debug",
                         "imageID": "docker.io/library/import-2026-09-04@sha256:3cb20e8ed25188bd3fb95762e21f2004b8f12ebf8030597cd6509fc8ae539eaa",
                         "lastState": {},
                         "name": "host",
@@ -511,7 +511,7 @@
                     "wasmcloud.com/name": "hostgroup"
                 },
                 "name": "hostgroup-default-59ffdf759f-thwmm",
-                "namespace": "wamn-receiving-journey",
+                "namespace": "wamn-fixture-journey",
                 "ownerReferences": [
                     {
                         "apiVersion": "apps/v1",
@@ -589,7 +589,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-guest-acme--receiving--dev"
+                                        "name": "wamn-guest-example--fixture--dev"
                                     }
                                 }
                             },
@@ -639,22 +639,22 @@
                             },
                             {
                                 "name": "WAMN_ORG",
-                                "value": "acme"
+                                "value": "example"
                             },
                             {
                                 "name": "WAMN_PROJECT",
-                                "value": "receiving"
+                                "value": "fixture"
                             },
                             {
                                 "name": "WAMN_SCHEMA",
-                                "value": "receiving"
+                                "value": "fixture"
                             },
                             {
                                 "name": "WAMN_SYSTEM_URL",
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-identity-reader-acme--receiving--dev",
+                                        "name": "wamn-identity-reader-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -664,7 +664,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-executor-platform-acme--receiving--dev",
+                                        "name": "wamn-executor-platform-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -674,7 +674,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-http-admitter-acme--receiving--dev",
+                                        "name": "wamn-http-admitter-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -684,13 +684,13 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-event-materializer-acme--receiving--dev",
+                                        "name": "wamn-event-materializer-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
                             }
                         ],
-                        "image": "wamn-host:receiving-726657ad2efc-1559014-debug",
+                        "image": "wamn-host:fixture-726657ad2efc-1559014-debug",
                         "imagePullPolicy": "Never",
                         "livenessProbe": {
                             "failureThreshold": 3,
@@ -771,7 +771,7 @@
                 ],
                 "dnsPolicy": "ClusterFirst",
                 "enableServiceLinks": true,
-                "nodeName": "wamn-receiving-journey-worker2",
+                "nodeName": "wamn-fixture-journey-worker2",
                 "preemptionPolicy": "PreemptLowerPriority",
                 "priority": 0,
                 "restartPolicy": "Always",
@@ -890,7 +890,7 @@
                             "memory": "256Mi"
                         },
                         "containerID": "containerd://14887179ea7f5a3464f0eef2a7f2e333dc2eb58c37ff62a57c7bd6ab7f6baaca",
-                        "image": "docker.io/library/wamn-host:receiving-726657ad2efc-1559014-debug",
+                        "image": "docker.io/library/wamn-host:fixture-726657ad2efc-1559014-debug",
                         "imageID": "docker.io/library/import-2026-09-04@sha256:3cb20e8ed25188bd3fb95762e21f2004b8f12ebf8030597cd6509fc8ae539eaa",
                         "lastState": {},
                         "name": "host",
@@ -1000,7 +1000,7 @@
                     "wasmcloud.com/name": "hostgroup"
                 },
                 "name": "hostgroup-default-59ffdf759f-vlsnt",
-                "namespace": "wamn-receiving-journey",
+                "namespace": "wamn-fixture-journey",
                 "ownerReferences": [
                     {
                         "apiVersion": "apps/v1",
@@ -1078,7 +1078,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-guest-acme--receiving--dev"
+                                        "name": "wamn-guest-example--fixture--dev"
                                     }
                                 }
                             },
@@ -1128,22 +1128,22 @@
                             },
                             {
                                 "name": "WAMN_ORG",
-                                "value": "acme"
+                                "value": "example"
                             },
                             {
                                 "name": "WAMN_PROJECT",
-                                "value": "receiving"
+                                "value": "fixture"
                             },
                             {
                                 "name": "WAMN_SCHEMA",
-                                "value": "receiving"
+                                "value": "fixture"
                             },
                             {
                                 "name": "WAMN_SYSTEM_URL",
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-identity-reader-acme--receiving--dev",
+                                        "name": "wamn-identity-reader-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -1153,7 +1153,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-executor-platform-acme--receiving--dev",
+                                        "name": "wamn-executor-platform-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -1163,7 +1163,7 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-http-admitter-acme--receiving--dev",
+                                        "name": "wamn-http-admitter-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
@@ -1173,13 +1173,13 @@
                                 "valueFrom": {
                                     "secretKeyRef": {
                                         "key": "url",
-                                        "name": "wamn-event-materializer-acme--receiving--dev",
+                                        "name": "wamn-event-materializer-example--fixture--dev",
                                         "optional": false
                                     }
                                 }
                             }
                         ],
-                        "image": "wamn-host:receiving-726657ad2efc-1559014-debug",
+                        "image": "wamn-host:fixture-726657ad2efc-1559014-debug",
                         "imagePullPolicy": "Never",
                         "livenessProbe": {
                             "failureThreshold": 3,
@@ -1260,7 +1260,7 @@
                 ],
                 "dnsPolicy": "ClusterFirst",
                 "enableServiceLinks": true,
-                "nodeName": "wamn-receiving-journey-worker",
+                "nodeName": "wamn-fixture-journey-worker",
                 "preemptionPolicy": "PreemptLowerPriority",
                 "priority": 0,
                 "restartPolicy": "Always",
@@ -1379,7 +1379,7 @@
                             "memory": "256Mi"
                         },
                         "containerID": "containerd://02ebff164dd7043d168b7b55a13779efa621ff9b9da2b7b6f8fe279ac563af85",
-                        "image": "docker.io/library/wamn-host:receiving-726657ad2efc-1559014-debug",
+                        "image": "docker.io/library/wamn-host:fixture-726657ad2efc-1559014-debug",
                         "imageID": "docker.io/library/import-2026-09-04@sha256:3cb20e8ed25188bd3fb95762e21f2004b8f12ebf8030597cd6509fc8ae539eaa",
                         "lastState": {},
                         "name": "host",

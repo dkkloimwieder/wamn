@@ -395,11 +395,11 @@ pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const TRACE: &str = include_str!("../fixtures/traces/receiving-update.json");
+    const TRACE: &str = include_str!("../fixtures/traces/fixture-update.json");
     const ID: &str = "655833bf599cf31d4f5422f6e06c7347";
 
     fn observed(document: &Value) -> anyhow::Result<Value> {
-        request_trace(document, ID, "receiving-route-auth", "receiving", "dev")
+        request_trace(document, ID, "fixture-route-auth", "fixture", "dev")
     }
 
     #[test]
@@ -426,15 +426,15 @@ mod tests {
             }
             assert!(observed(&changed).is_err(), "{field_name}");
         }
-        assert!(request_trace(&original, ID, "foreign", "receiving", "dev").is_err());
-        assert!(request_trace(&original, ID, "receiving-route-auth", "foreign", "dev").is_err());
-        assert!(request_trace(&original, ID, "receiving-route-auth", "receiving", "prod").is_err());
+        assert!(request_trace(&original, ID, "foreign", "fixture", "dev").is_err());
+        assert!(request_trace(&original, ID, "fixture-route-auth", "foreign", "dev").is_err());
+        assert!(request_trace(&original, ID, "fixture-route-auth", "fixture", "prod").is_err());
     }
 
     #[test]
     fn metrics_require_each_scoped_counter_and_refuse_invalid_counts() {
-        let valid = "guest_invocation_duration_count{workload_namespace=\"owned\",component=\"flow-http\",plugin=\"wasi-http\",http_request_method=\"POST\"} 2\nwamn_postgres_query_duration_ms_count{wamn_project=\"receiving\"} 1\nwamn_jetstream_duration_ms_count{wamn_project=\"receiving\"} 1\n";
-        assert!(metrics(valid, "owned", "receiving").is_ok());
+        let valid = "guest_invocation_duration_count{workload_namespace=\"owned\",component=\"flow-http\",plugin=\"wasi-http\",http_request_method=\"POST\"} 2\nwamn_postgres_query_duration_ms_count{wamn_project=\"fixture\"} 1\nwamn_jetstream_duration_ms_count{wamn_project=\"fixture\"} 1\n";
+        assert!(metrics(valid, "owned", "fixture").is_ok());
         for omitted in 0..3 {
             let changed = valid
                 .lines()
@@ -443,15 +443,15 @@ mod tests {
                 .map(|(_, line)| line)
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(metrics(&changed, "owned", "receiving").is_err());
+            assert!(metrics(&changed, "owned", "fixture").is_err());
         }
-        assert!(metrics(valid, "foreign", "receiving").is_err());
+        assert!(metrics(valid, "foreign", "fixture").is_err());
         for count in ["NaN", "+Inf", "-1", "0"] {
             assert!(
                 metrics(
                     &valid.replace("} 1", &format!("}} {count}")),
                     "owned",
-                    "receiving"
+                    "fixture"
                 )
                 .is_err()
             );

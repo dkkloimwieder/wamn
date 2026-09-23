@@ -11,7 +11,7 @@
     ],
     "generation": 1,
     "name": "flow-http-86644ff688-5c6564897d",
-    "namespace": "wamn-receiving-journey",
+    "namespace": "wamn-fixture-journey",
     "ownerReferences": [
       {
         "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
@@ -34,19 +34,19 @@
           "config": {
             "wamn.catalog": "default",
             "wamn.environment": "dev",
-            "wamn.project": "receiving",
-            "wamn.schema": "receiving",
-            "wamn.tenant": "receiving-route-auth"
+            "wamn.project": "fixture",
+            "wamn.schema": "fixture",
+            "wamn.tenant": "fixture-route-auth"
           }
         },
         "name": "flow-http"
       }
     ],
-    "environment": "wamn-receiving-journey",
+    "environment": "wamn-fixture-journey",
     "hostInterfaces": [
       {
         "config": {
-          "host": "receiving.localhost"
+          "host": "fixture.localhost"
         },
         "interfaces": [
           "incoming-handler"
@@ -113,7 +113,7 @@
         "type": "Ready"
       }
     ],
-    "environment": "wamn-receiving-journey",
+    "environment": "wamn-fixture-journey",
     "hostId": "b68ed388-3963-4d24-819e-c58031236b41",
     "workloadId": "2a625835-1b95-4c04-9c3f-6924cc02b9e1"
   }

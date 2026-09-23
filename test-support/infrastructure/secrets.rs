@@ -212,7 +212,7 @@ mod tests {
             };
             write_secret(
                 &root.path().join(file),
-                &workload_secret_name(family, "acme", "receiving", "dev"),
+                &workload_secret_name(family, "example", "fixture", "dev"),
                 &input.namespace,
                 &format!(
                     "postgresql://user:test-password@{}:5432/database",
@@ -236,7 +236,7 @@ mod tests {
             for secret in selected {
                 assert_eq!(
                     secret.name,
-                    workload_secret_name(secret.family, "acme", "receiving", "dev")
+                    workload_secret_name(secret.family, "example", "fixture", "dev")
                 );
                 assert!(secret.path.is_file());
             }
@@ -355,6 +355,58 @@ mod tests {
         );
     }
 
+    /// One application's host values overlay, in the layout of the deployed files.
+    const OVERLAY: &str = r#"runtime:
+  hostGroups:
+    - name: default
+      namespace: wamn-system
+      replicas: 3
+      env:
+        - name: WAMN_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-host-db
+              key: url
+        - { name: WAMN_WASMTIME_CACHE_DIR, value: /tmp/wamn-wasmtime-cache }
+        - name: WAMN_COMPONENT_ARTIFACT_BASE
+          value: registry.wamn-system.svc.cluster.local:5000/wamn/components
+        - name: WAMN_EVT_NATS_URL
+          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+        - { name: WAMN_EVT_ORG, value: example }
+        - { name: WAMN_EVT_PROJECT, value: fixture }
+        - { name: WAMN_EVT_ENV, value: dev }
+        - { name: WAMN_EVT_STREAM_REPLICAS, value: "3" }
+        - { name: WAMN_EVT_DUP_WINDOW_SECS, value: "120" }
+        - name: WAMN_SYSTEM_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-identity-reader-example--fixture--dev
+              key: url
+              optional: false
+        - name: WAMN_EXECUTOR_PLATFORM_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-executor-platform-example--fixture--dev
+              key: url
+              optional: false
+        - name: WAMN_HTTP_ADMITTER_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-http-admitter-example--fixture--dev
+              key: url
+              optional: false
+        - name: WAMN_EVENT_MATERIALIZER_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-materializer-example--fixture--dev
+              key: url
+              optional: false
+      volumes: []
+      extraArgs:
+        - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
+        - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
+"#;
+
     #[test]
     fn role_secret_names_keep_the_selected_overlay_binding() {
         use crate::rendering::{
@@ -378,8 +430,8 @@ mod tests {
             stream_replicas: 1,
             dup_window_secs: 120,
             event: EventIdentity {
-                org: "acme".into(),
-                project: "receiving".into(),
+                org: "example".into(),
+                project: "fixture".into(),
                 environment: "dev".into(),
             },
             guest_secret_name: guest.name,
@@ -392,12 +444,11 @@ mod tests {
             object_store_secret_name: None,
         };
         let base = include_str!("../../deploy/platform/values-host-default.yaml");
-        let overlay = include_str!("../../deploy/platform/values-host-receiving-pat.yaml");
-        assert!(render_host_values(base, overlay, &host).is_ok());
+        assert!(render_host_values(base, OVERLAY, &host).is_ok());
         let mut wrong = host;
-        wrong.event.project = "wms".into();
+        wrong.event.project = "other".into();
         assert!(
-            render_host_values(base, overlay, &wrong)
+            render_host_values(base, OVERLAY, &wrong)
                 .unwrap_err()
                 .to_string()
                 .contains("missing role Secret")

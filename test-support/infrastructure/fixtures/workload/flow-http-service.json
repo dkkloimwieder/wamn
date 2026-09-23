@@ -3,14 +3,14 @@
     "kind": "Service",
     "metadata": {
         "annotations": {
-            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Service\",\"metadata\":{\"annotations\":{},\"labels\":{\"app\":\"flow-http\"},\"name\":\"flow-http\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"protocol\":\"TCP\",\"targetPort\":80}],\"type\":\"ClusterIP\"}}\n"
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Service\",\"metadata\":{\"annotations\":{},\"labels\":{\"app\":\"flow-http\"},\"name\":\"flow-http\",\"namespace\":\"wamn-fixture-journey\"},\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"protocol\":\"TCP\",\"targetPort\":80}],\"type\":\"ClusterIP\"}}\n"
         },
         "creationTimestamp": "2026-09-04T14:03:36Z",
         "labels": {
             "app": "flow-http"
         },
         "name": "flow-http",
-        "namespace": "wamn-receiving-journey",
+        "namespace": "wamn-fixture-journey",
         "resourceVersion": "1562",
         "uid": "a8e527f4-58dc-48cb-ac2b-d9c5cb3a4349"
     },

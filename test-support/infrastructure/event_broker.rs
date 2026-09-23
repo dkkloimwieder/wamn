@@ -312,10 +312,10 @@ mod tests {
     }
 
     fn declarations() -> (Triple, stream::Config, stream::Config, pull::Config) {
-        let scope = Triple::new("acme", "receiving", "dev");
+        let scope = Triple::new("example", "fixture", "dev");
         let source = stream::Config {
-            name: "EVT_4_acme_9_receiving_3_dev".into(),
-            subjects: vec!["evt.acme.receiving.dev.>".into()],
+            name: "EVT_7_example_7_fixture_3_dev".into(),
+            subjects: vec!["evt.example.fixture.dev.>".into()],
             ..Default::default()
         };
         let advisory = stream::Config {
@@ -323,7 +323,7 @@ mod tests {
             ..Default::default()
         };
         let consumer = pull::Config {
-            durable_name: Some("mat_acme_wamn_receiving_registered".into()),
+            durable_name: Some("mat_example_platform_fixture_registered".into()),
             ..Default::default()
         };
         (scope, source, advisory, consumer)
@@ -333,7 +333,15 @@ mod tests {
     fn private_files_keep_passwords_out_of_debug_and_bind_the_inspected_server() {
         let root = directory();
         let (scope, source, advisory, consumer) = declarations();
-        let broker = prepare(root.path(), &scope, "acme", &source, &advisory, &[consumer]).unwrap();
+        let broker = prepare(
+            root.path(),
+            &scope,
+            "example",
+            &source,
+            &advisory,
+            &[consumer],
+        )
+        .unwrap();
         assert!(!broker.binding.exists());
         write_binding(&broker, "nats://172.20.0.9:4222", &source).unwrap();
         assert_eq!(
@@ -366,7 +374,15 @@ mod tests {
     fn runtime_roles_cannot_manage_streams_or_consumers() {
         let root = directory();
         let (scope, source, advisory, consumer) = declarations();
-        let broker = prepare(root.path(), &scope, "acme", &source, &advisory, &[consumer]).unwrap();
+        let broker = prepare(
+            root.path(),
+            &scope,
+            "example",
+            &source,
+            &advisory,
+            &[consumer],
+        )
+        .unwrap();
         let configuration: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&broker.configuration).unwrap()).unwrap();
         assert_eq!(configuration["http"], "127.0.0.1:8222");
@@ -387,8 +403,8 @@ mod tests {
                 );
                 assert!(
                     subject.contains(&source.name)
-                        || subject == "evt.acme.receiving.dev.>"
-                        || subject == "tap.acme.receiving.dev.>"
+                        || subject == "evt.example.fixture.dev.>"
+                        || subject == "tap.example.fixture.dev.>"
                 );
             }
             assert_eq!(manages, provisioning);
@@ -417,19 +433,19 @@ mod tests {
     fn invalid_scope_and_repeated_durables_leave_no_broker_files() {
         let root = directory();
         let (scope, mut source, advisory, consumer) = declarations();
-        source.subjects = vec!["evt.acme.*.dev.>".into()];
+        source.subjects = vec!["evt.example.*.dev.>".into()];
         assert!(
             prepare(
                 root.path(),
                 &scope,
-                "acme",
+                "example",
                 &source,
                 &advisory,
                 std::slice::from_ref(&consumer)
             )
             .is_err()
         );
-        source.subjects = vec!["evt.acme.receiving.dev.>".into()];
+        source.subjects = vec!["evt.example.fixture.dev.>".into()];
         assert!(
             prepare(
                 root.path(),
@@ -445,7 +461,7 @@ mod tests {
             prepare(
                 root.path(),
                 &scope,
-                "acme",
+                "example",
                 &source,
                 &advisory,
                 &[consumer.clone(), consumer]

@@ -3,7 +3,7 @@
     "kind": "Workload",
     "metadata": {
         "annotations": {
-            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"Workload\",\"metadata\":{\"annotations\":{},\"labels\":{\"app\":\"flow-http-cross-environment\"},\"name\":\"flow-http-cross-environment\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"components\":[{\"image\":\"172.28.0.9:5000/wamn/flow-http@sha256:e1d78585c859f4eaa6ff32a98aa858b6e48b81877c4c241cad937d330f988ec6\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"config\":{\"wamn.catalog\":\"default\",\"wamn.environment\":\"dev\",\"wamn.project\":\"receiving\",\"wamn.schema\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"}},\"name\":\"flow-http\"}],\"environment\":\"wamn-receiving-journey-denied\",\"hostInterfaces\":[{\"config\":{\"host\":\"receiving.localhost\"},\"interfaces\":[\"incoming-handler\"],\"namespace\":\"wasi\",\"package\":\"http\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"kubernetes\":{\"service\":{\"name\":\"flow-http\"}}}}\n"
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"Workload\",\"metadata\":{\"annotations\":{},\"labels\":{\"app\":\"flow-http-cross-environment\"},\"name\":\"flow-http-cross-environment\",\"namespace\":\"wamn-fixture-journey\"},\"spec\":{\"components\":[{\"image\":\"172.28.0.9:5000/wamn/flow-http@sha256:e1d78585c859f4eaa6ff32a98aa858b6e48b81877c4c241cad937d330f988ec6\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"config\":{\"wamn.catalog\":\"default\",\"wamn.environment\":\"dev\",\"wamn.project\":\"fixture\",\"wamn.schema\":\"fixture\",\"wamn.tenant\":\"fixture-route-auth\"}},\"name\":\"flow-http\"}],\"environment\":\"wamn-fixture-journey-denied\",\"hostInterfaces\":[{\"config\":{\"host\":\"fixture.localhost\"},\"interfaces\":[\"incoming-handler\"],\"namespace\":\"wasi\",\"package\":\"http\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"kubernetes\":{\"service\":{\"name\":\"flow-http\"}}}}\n"
         },
         "creationTimestamp": "2026-09-04T14:04:38Z",
         "finalizers": [
@@ -14,7 +14,7 @@
             "app": "flow-http-cross-environment"
         },
         "name": "flow-http-cross-environment",
-        "namespace": "wamn-receiving-journey",
+        "namespace": "wamn-fixture-journey",
         "resourceVersion": "1836",
         "uid": "b1d81024-5278-4e06-9783-9f17d74abb7b"
     },
@@ -27,19 +27,19 @@
                     "config": {
                         "wamn.catalog": "default",
                         "wamn.environment": "dev",
-                        "wamn.project": "receiving",
-                        "wamn.schema": "receiving",
-                        "wamn.tenant": "receiving-route-auth"
+                        "wamn.project": "fixture",
+                        "wamn.schema": "fixture",
+                        "wamn.tenant": "fixture-route-auth"
                     }
                 },
                 "name": "flow-http"
             }
         ],
-        "environment": "wamn-receiving-journey-denied",
+        "environment": "wamn-fixture-journey-denied",
         "hostInterfaces": [
             {
                 "config": {
-                    "host": "receiving.localhost"
+                    "host": "fixture.localhost"
                 },
                 "interfaces": [
                     "incoming-handler"
@@ -83,7 +83,7 @@
             },
             {
                 "lastTransitionTime": "2026-09-04T14:04:38Z",
-                "message": "workload targets Environment \"wamn-receiving-journey-denied\" but operator has allowSharedHosts=false",
+                "message": "workload targets Environment \"wamn-fixture-journey-denied\" but operator has allowSharedHosts=false",
                 "reason": "Reconcile",
                 "status": "False",
                 "type": "HostSelection"

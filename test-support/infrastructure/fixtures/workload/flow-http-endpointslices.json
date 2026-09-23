@@ -24,7 +24,7 @@
                     "wasmcloud.dev/route-manager": "true"
                 },
                 "name": "flow-http-98924a98",
-                "namespace": "wamn-receiving-journey",
+                "namespace": "wamn-fixture-journey",
                 "ownerReferences": [
                     {
                         "apiVersion": "v1",
