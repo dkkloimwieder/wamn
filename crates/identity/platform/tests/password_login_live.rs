@@ -7,7 +7,7 @@ use wamn_platform_identity::password_login::{self as login, Renewal};
 use wamn_platform_identity::{PrincipalId, create_human, disable_principal};
 
 const ISSUER: &str = "https://identity.example.invalid";
-const AUDIENCE: &str = "acme:receiving:dev:a1b2c3d4";
+const AUDIENCE: &str = "demo:widgets:dev:a1b2c3d4";
 const ACTOR: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 
 async fn connect(url: &str, role: &str) -> Client {

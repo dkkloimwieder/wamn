@@ -12,7 +12,7 @@ async fn enroll(fixture: &Fixture, email: &str, password: &str) -> Principal {
         .await
         .expect_redacted("human");
     seed_user(&fixture.environments[0].client, &person, TENANT, "receiver").await;
-    grant(&fixture.system.client, &person, "acme", "dev").await;
+    grant(&fixture.system.client, &person, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
         .principal_id()
         .to_string()
@@ -116,7 +116,7 @@ async fn claims(fixture: &Fixture, body: &Value) -> SessionClaims {
         key,
         SessionScope {
             issuer: ISSUER,
-            org: "acme",
+            org: "demo",
             audience: fixture.targets[0].audience(),
         },
         unix_seconds(),
@@ -128,7 +128,7 @@ async fn active(fixture: &Fixture, body: &Value) -> bool {
     wamn_platform_identity::session_token::session_is_active(
         &fixture.system.client,
         &claims(fixture, body).await,
-        "receiving",
+        "widgets",
         "dev",
     )
     .await
@@ -199,8 +199,8 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     revoke_project_env_membership(
         &fixture.system.client,
         person.id(),
-        "acme",
-        "receiving",
+        "demo",
+        "widgets",
         "dev",
     )
     .await
@@ -213,7 +213,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    grant(&fixture.system.client, &person, "acme", "dev").await;
+    grant(&fixture.system.client, &person, "demo", "dev").await;
     fixture.environments[0]
         .client
         .execute(
@@ -255,7 +255,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         401
     );
     fixture.environments[0].client.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'receiver')",&[&TENANT,&person.id().as_str()]).await.unwrap();
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='acme' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -264,7 +264,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='acme' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
     let active = body(
         request(&https, &fixture, "/password/renew", &active)
             .send()

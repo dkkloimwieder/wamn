@@ -1259,14 +1259,14 @@ mod tests {
     #[test]
     fn route_caller_subject_is_exactly_environment_scoped_and_validated() {
         assert_eq!(
-            route_caller_subject("acme", "receiving", "prod").unwrap(),
-            "wamn-route-caller-acme--receiving--prod"
+            route_caller_subject("demo", "widgets", "prod").unwrap(),
+            "wamn-route-caller-demo--widgets--prod"
         );
         assert_ne!(
-            route_caller_subject("acme", "receiving", "prod").unwrap(),
-            route_caller_subject("acme", "receiving", "dev").unwrap()
+            route_caller_subject("demo", "widgets", "prod").unwrap(),
+            route_caller_subject("demo", "widgets", "dev").unwrap()
         );
-        assert!(route_caller_subject("acme", "two words", "prod").is_err());
+        assert!(route_caller_subject("demo", "two words", "prod").is_err());
     }
 
     fn sample_record() -> PatRecord {

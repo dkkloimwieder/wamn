@@ -105,7 +105,7 @@ SET app.operation = 'admin:seed-authority-fixture';
 INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','person','u1@t1');
 INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('{TENANT}','admin',true),('{TENANT}','auditor',false);
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
-INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','admin','receipts:read');
+INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','admin','widgets:read');
 INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
 INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);"#
     )
@@ -321,8 +321,16 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
         )
     };
     let direct_writes = [
-        entry("users_history", None, &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#)),
-        entry("roles_history", None, &format!(r#"{{"name": "admin", "tenant_id": "{TENANT}"}}"#)),
+        entry(
+            "users_history",
+            None,
+            &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
+        ),
+        entry(
+            "roles_history",
+            None,
+            &format!(r#"{{"name": "admin", "tenant_id": "{TENANT}"}}"#),
+        ),
         entry(
             "user_roles_history",
             None,
@@ -332,10 +340,14 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
             "permissions_history",
             None,
             &format!(
-                r#"{{"role_name": "admin", "tenant_id": "{TENANT}", "permission": "receipts:read"}}"#
+                r#"{{"role_name": "admin", "tenant_id": "{TENANT}", "permission": "widgets:read"}}"#
             ),
         ),
-        entry("api_keys_history", None, &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#)),
+        entry(
+            "api_keys_history",
+            None,
+            &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
+        ),
         entry(
             "configurations_history",
             Some(-5),

@@ -50,7 +50,7 @@ async fn platform_pat_round_trip_on_postgres() {
         &transaction,
         "author@example.com",
         "author@example.com",
-        "Receiving Author",
+        "Widget Author",
     )
     .await
     .expect("create human principal");

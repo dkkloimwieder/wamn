@@ -68,16 +68,16 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     .await
     .unwrap();
     client.batch_execute("INSERT INTO registry.orgs (id, placement_kind) VALUES ('password-test', 'dedicated');
-        INSERT INTO registry.projects (org, id) VALUES ('password-test', 'receiving');
+        INSERT INTO registry.projects (org, id) VALUES ('password-test', 'widgets');
         INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
         VALUES ('password-test', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18');
         INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix)
-        VALUES ('password-test', 'receiving', 'dev', 'password-test-secret', 'a1b2c3d4')").await.unwrap();
+        VALUES ('password-test', 'widgets', 'dev', 'password-test-secret', 'a1b2c3d4')").await.unwrap();
     wamn_platform_identity::grant_project_env_membership(
         &client,
         person.id(),
         "password-test",
-        "receiving",
+        "widgets",
         "dev",
     )
     .await
@@ -384,7 +384,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     .unwrap();
     let tx = client.transaction().await.unwrap();
     let renewal =
-        password_login::create_login(&tx, person.id(), "https://reset.invalid", "receiving")
+        password_login::create_login(&tx, person.id(), "https://reset.invalid", "widgets")
             .await
             .unwrap()
             .unwrap();
@@ -466,7 +466,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     );
     let tx = client.transaction().await.unwrap();
     assert!(
-        password_login::rotate_login(&tx, "https://reset.invalid", "receiving", renewal.secret())
+        password_login::rotate_login(&tx, "https://reset.invalid", "widgets", renewal.secret())
             .await
             .unwrap()
             .is_none()

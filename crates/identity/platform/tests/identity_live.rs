@@ -44,8 +44,8 @@ async fn platform_identity_round_trip_on_postgres() {
     client
         .batch_execute(
             "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
-             VALUES ('acme', 'pooled', 'wamn-pg'); \
-             INSERT INTO registry.projects (org, id) VALUES ('acme', 'receiving');",
+             VALUES ('demo', 'pooled', 'wamn-pg'); \
+             INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');",
         )
         .await
         .expect("seed registered project");
@@ -66,7 +66,7 @@ async fn platform_identity_round_trip_on_postgres() {
         &client,
         "Author@Example.com",
         "author@example.com",
-        "Receiving Author",
+        "Widget Author",
     )
     .await
     .expect("create human principal");
@@ -97,13 +97,13 @@ async fn platform_identity_round_trip_on_postgres() {
             .is_some()
     );
 
-    assign_project_role(&client, human.id(), "acme", "receiving", "project-author")
+    assign_project_role(&client, human.id(), "demo", "widgets", "project-author")
         .await
         .expect("assign author role");
-    assign_project_role(&client, human.id(), "acme", "receiving", "project-promoter")
+    assign_project_role(&client, human.id(), "demo", "widgets", "project-promoter")
         .await
         .expect("assign promoter role");
-    let roles = project_roles(&client, human.id(), "acme", "receiving")
+    let roles = project_roles(&client, human.id(), "demo", "widgets")
         .await
         .expect("read project roles");
     assert_eq!(
@@ -205,7 +205,7 @@ async fn project_environment_membership_round_trip(
             "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
              VALUES ('other', 'pooled', 'wamn-pg'); \
              INSERT INTO registry.projects (org, id) \
-             VALUES ('acme', 'inventory'), ('other', 'receiving'); \
+             VALUES ('demo', 'inventory'), ('other', 'widgets'); \
              INSERT INTO registry.env_policies \
                (org, name, recovery_domain, promotion_rank, instances, \
                 storage, cpu, memory, image) \
@@ -239,7 +239,7 @@ async fn project_environment_membership_round_trip(
     .expect("issue the service route PAT");
     for token in [human_token.token(), service_token.token()] {
         assert!(
-            route_principal_id(&reads, client, token, "acme", "receiving", "dev")
+            route_principal_id(&reads, client, token, "demo", "widgets", "dev")
                 .await
                 .is_none(),
             "a valid PAT without its kind's authority passed"
@@ -254,14 +254,14 @@ async fn project_environment_membership_round_trip(
     .await
     .expect("create another human");
     assert!(
-        !has_project_env_membership(client, human.id(), "acme", "receiving", "dev")
+        !has_project_env_membership(client, human.id(), "demo", "widgets", "dev")
             .await
             .expect("read membership before grant"),
         "project management roles cannot imply environment membership"
     );
 
     for _ in 0..2 {
-        grant_project_env_membership(client, human.id(), "acme", "receiving", "dev")
+        grant_project_env_membership(client, human.id(), "demo", "widgets", "dev")
             .await
             .expect("grant human membership idempotently");
     }
@@ -289,7 +289,7 @@ async fn project_environment_membership_round_trip(
         "the grant stamps the bound wamn:provisioning actor"
     );
     assert!(
-        has_project_env_membership(client, human.id(), "acme", "receiving", "dev")
+        has_project_env_membership(client, human.id(), "demo", "widgets", "dev")
             .await
             .expect("unprepared query observes new grant")
     );
@@ -298,15 +298,15 @@ async fn project_environment_membership_round_trip(
             &reads,
             client,
             human_token.token(),
-            "acme",
-            "receiving",
+            "demo",
+            "widgets",
             "dev"
         )
         .await,
         Some(human.id().as_str().to_owned()),
         "human membership must not require a project management role"
     );
-    assign_project_role(client, service.id(), "acme", "receiving", "route-caller")
+    assign_project_role(client, service.id(), "demo", "widgets", "route-caller")
         .await
         .expect("assign the service route role");
     assert_eq!(
@@ -314,8 +314,8 @@ async fn project_environment_membership_round_trip(
             &reads,
             client,
             service_token.token(),
-            "acme",
-            "receiving",
+            "demo",
+            "widgets",
             "dev"
         )
         .await,
@@ -323,9 +323,9 @@ async fn project_environment_membership_round_trip(
         "a service needs its role, not a human membership"
     );
     for (org, project, env) in [
-        ("other", "receiving", "dev"),
-        ("acme", "inventory", "dev"),
-        ("acme", "receiving", "prod"),
+        ("other", "widgets", "dev"),
+        ("demo", "inventory", "dev"),
+        ("demo", "widgets", "prod"),
     ] {
         assert!(
             route_principal_id(&reads, client, human_token.token(), org, project, env)
@@ -335,10 +335,10 @@ async fn project_environment_membership_round_trip(
         );
     }
     let other_memberships = [
-        (&other_human, "acme", "receiving", "dev"),
-        (human, "other", "receiving", "dev"),
-        (human, "acme", "inventory", "dev"),
-        (human, "acme", "receiving", "prod"),
+        (&other_human, "demo", "widgets", "dev"),
+        (human, "other", "widgets", "dev"),
+        (human, "demo", "inventory", "dev"),
+        (human, "demo", "widgets", "prod"),
     ];
     for (principal, org, project, env) in other_memberships {
         assert!(
@@ -348,7 +348,7 @@ async fn project_environment_membership_round_trip(
         );
     }
     assert_eq!(
-        grant_project_env_membership(client, service.id(), "acme", "receiving", "dev")
+        grant_project_env_membership(client, service.id(), "demo", "widgets", "dev")
             .await
             .expect_err("service cannot hold a human membership")
             .kind(),
@@ -358,7 +358,7 @@ async fn project_environment_membership_round_trip(
         .execute(
             "INSERT INTO identity.project_env_memberships \
              (principal_id, principal_kind, org, project, env) \
-             VALUES ($1::text::uuid, 'service', 'acme', 'receiving', 'dev')",
+             VALUES ($1::text::uuid, 'service', 'demo', 'widgets', 'dev')",
             &[&service.id().as_str()],
         )
         .await
@@ -368,7 +368,7 @@ async fn project_environment_membership_round_trip(
         Some(&tokio_postgres::error::SqlState::CHECK_VIOLATION)
     );
     assert_eq!(
-        grant_project_env_membership(client, human.id(), "acme", "receiving", "missing")
+        grant_project_env_membership(client, human.id(), "demo", "widgets", "missing")
             .await
             .expect_err("unregistered environment cannot receive a membership")
             .kind(),
@@ -381,7 +381,7 @@ async fn project_environment_membership_round_trip(
             .expect("grant independent memberships before revocation");
     }
     assert!(
-        revoke_project_env_membership(client, human.id(), "acme", "receiving", "dev")
+        revoke_project_env_membership(client, human.id(), "demo", "widgets", "dev")
             .await
             .expect("revoke membership")
     );
@@ -390,8 +390,8 @@ async fn project_environment_membership_round_trip(
             &reads,
             client,
             human_token.token(),
-            "acme",
-            "receiving",
+            "demo",
+            "widgets",
             "dev"
         )
         .await
@@ -399,7 +399,7 @@ async fn project_environment_membership_round_trip(
         "the prepared PAT query must observe membership revocation"
     );
     assert!(
-        !revoke_project_env_membership(client, human.id(), "acme", "receiving", "dev")
+        !revoke_project_env_membership(client, human.id(), "demo", "widgets", "dev")
             .await
             .expect("repeat revocation harmlessly")
     );
@@ -411,16 +411,16 @@ async fn project_environment_membership_round_trip(
         );
     }
 
-    grant_project_env_membership(client, human.id(), "acme", "receiving", "dev")
+    grant_project_env_membership(client, human.id(), "demo", "widgets", "dev")
         .await
         .expect("grant before environment replacement");
     client
         .batch_execute(
             "DELETE FROM registry.project_envs \
-             WHERE org = 'acme' AND project = 'receiving' AND env = 'dev'; \
+             WHERE org = 'demo' AND project = 'widgets' AND env = 'dev'; \
              INSERT INTO registry.project_envs \
                (org, project, env, secret_name, instance_suffix) \
-             VALUES ('acme', 'receiving', 'dev', 'replacement-secret', 'e5f6g7h8');",
+             VALUES ('demo', 'widgets', 'dev', 'replacement-secret', 'e5f6g7h8');",
         )
         .await
         .expect("replace the provisioned environment");
@@ -429,8 +429,8 @@ async fn project_environment_membership_round_trip(
             &reads,
             client,
             human_token.token(),
-            "acme",
-            "receiving",
+            "demo",
+            "widgets",
             "dev"
         )
         .await
@@ -438,7 +438,7 @@ async fn project_environment_membership_round_trip(
         "replacement environment must not inherit the deleted grant"
     );
 
-    grant_project_env_membership(client, other_human.id(), "acme", "receiving", "dev")
+    grant_project_env_membership(client, other_human.id(), "demo", "widgets", "dev")
         .await
         .expect("grant another human before deletion");
     client
@@ -449,7 +449,7 @@ async fn project_environment_membership_round_trip(
         .await
         .expect("delete a principal with no PAT audit records");
     assert!(
-        !has_project_env_membership(client, other_human.id(), "acme", "receiving", "dev")
+        !has_project_env_membership(client, other_human.id(), "demo", "widgets", "dev")
             .await
             .expect("principal deletion removes its membership")
     );
@@ -582,11 +582,11 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
             .to_owned(),
         format!(
             "INSERT INTO identity.project_roles (principal_id, org, project, role) \
-             VALUES ('{PRINCIPAL}', 'acme', 'receiving', 'unbound')"
+             VALUES ('{PRINCIPAL}', 'demo', 'widgets', 'unbound')"
         ),
         format!(
             "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
-             VALUES ('{PRINCIPAL}', 'acme', 'receiving', 'dev')"
+             VALUES ('{PRINCIPAL}', 'demo', 'widgets', 'dev')"
         ),
         format!(
             "INSERT INTO identity.pats \

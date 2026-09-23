@@ -50,7 +50,7 @@ const OTHER_TENANT: &str = "session-tenant-b";
 const SUFFIX: &str = "s3ss10n2";
 /// The test principal that each environment fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
-const SCOPES: [(&str, &str); 3] = [("acme", "dev"), ("acme", "prod"), ("other", "dev")];
+const SCOPES: [(&str, &str); 3] = [("demo", "dev"), ("demo", "prod"), ("other", "dev")];
 
 // A failing fixture or mutated response must not append upstream error Debug:
 // PostgreSQL DETAIL and deserialization errors can contain secret input values.
@@ -195,16 +195,16 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     seed_user(dev, &alice, OTHER_TENANT, "tenant-outsider").await;
     seed_user(dev, &bob, TENANT, "auditor").await;
     seed_user(dev, &service, TENANT, "machine-role").await;
-    grant(system, &bob, "acme", "dev").await;
+    grant(system, &bob, "demo", "dev").await;
     let aud = fixture.targets[0].audience();
 
     // Tenant data and a management role are insufficient without an explicit
     // membership. The second principal's membership cannot admit Alice either.
-    wamn_platform_identity::assign_project_role(system, alice.id(), "acme", "receiving", "admin")
+    wamn_platform_identity::assign_project_role(system, alice.id(), "demo", "widgets", "admin")
         .await
         .expect_redacted("management-role negative control");
     refuse(https, alice_pat.token(), aud).await;
-    grant(system, &alice, "acme", "dev").await;
+    grant(system, &alice, "demo", "dev").await;
 
     let response = https
         .client
@@ -241,14 +241,9 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     )
     .await;
     assert!(
-        wamn_platform_identity::session_token::session_is_active(
-            system,
-            &first,
-            "receiving",
-            "dev"
-        )
-        .await
-        .expect_redacted("active exchanged session")
+        wamn_platform_identity::session_token::session_is_active(system, &first, "widgets", "dev")
+            .await
+            .expect_redacted("active exchanged session")
     );
     let dev_pid = only_reader_pid(system, &fixture.targets[0]).await;
     let second = success(
@@ -315,7 +310,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
             "membership refusal must not open an unused target"
         );
     }
-    grant(system, &alice, "acme", "prod").await;
+    grant(system, &alice, "demo", "prod").await;
     success(
         https,
         alice_pat.token(),
@@ -344,7 +339,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     refuse(
         https,
         alice_pat.token(),
-        "urn:wamn:project-env:acme:receiving:dev:absent00",
+        "urn:wamn:project-env:demo:widgets:dev:absent00",
     )
     .await;
     refuse(
@@ -356,12 +351,12 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     refuse(https, service_pat.token(), aud).await;
 
     assert!(
-        revoke_project_env_membership(system, alice.id(), "acme", "receiving", "dev")
+        revoke_project_env_membership(system, alice.id(), "demo", "widgets", "dev")
             .await
             .expect_redacted("revoke exact membership")
     );
     refuse(https, alice_pat.token(), aud).await;
-    grant(system, &alice, "acme", "dev").await;
+    grant(system, &alice, "demo", "dev").await;
     success(
         https,
         alice_pat.token(),
@@ -400,10 +395,10 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     seed_user(dev, &alice, TENANT, "receiver").await;
 
     // Same triple and old membership, different current physical incarnation.
-    system.batch_execute("UPDATE registry.project_envs SET instance_suffix='n3w00002' WHERE org='acme' AND project='receiving' AND env='dev'")
+    system.batch_execute("UPDATE registry.project_envs SET instance_suffix='n3w00002' WHERE org='demo' AND project='widgets' AND env='dev'")
         .await.expect_redacted("environment replacement control");
     refuse(https, alice_pat.token(), aud).await;
-    system.execute("UPDATE registry.project_envs SET instance_suffix=$1 WHERE org='acme' AND project='receiving' AND env='dev'", &[&SUFFIX])
+    system.execute("UPDATE registry.project_envs SET instance_suffix=$1 WHERE org='demo' AND project='widgets' AND env='dev'", &[&SUFFIX])
         .await.expect_redacted("restore current fixture incarnation");
 
     malformed_requests(https, alice_pat.token(), aud).await;
@@ -433,14 +428,9 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         .await
         .expect_redacted("revoke human PAT");
     assert!(
-        !wamn_platform_identity::session_token::session_is_active(
-            system,
-            &first,
-            "receiving",
-            "dev"
-        )
-        .await
-        .expect_redacted("revoked exchanged session")
+        !wamn_platform_identity::session_token::session_is_active(system, &first, "widgets", "dev")
+            .await
+            .expect_redacted("revoked exchanged session")
     );
     refuse(https, alice_pat.token(), aud).await;
     success(
@@ -1128,7 +1118,7 @@ async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &
 }
 
 async fn grant(system: &Client, principal: &Principal, org: &str, env: &str) {
-    grant_project_env_membership(system, principal.id(), org, "receiving", env)
+    grant_project_env_membership(system, principal.id(), org, "widgets", env)
         .await
         .expect_redacted("explicit environment grant");
 }
@@ -1164,15 +1154,15 @@ async fn setup(raw: &str) -> Fixture {
     for (org, env) in SCOPES {
         let triple = Triple {
             org: org.into(),
-            project: "receiving".into(),
+            project: "widgets".into(),
             env: env.into(),
         };
-        let name = project_env_database_name(org, "receiving", env, SUFFIX);
+        let name = project_env_database_name(org, "widgets", env, SUFFIX);
         let role = workload_generation_role(
             WorkloadRoleFamily::SessionRoleReader,
             WorkloadRoleScope::ProjectEnvironment {
                 org,
-                project: "receiving",
+                project: "widgets",
                 environment: env,
                 database: &name,
             },
@@ -1307,9 +1297,9 @@ async fn setup(raw: &str) -> Fixture {
             .expect_redacted("actual dedicated role-reader provisioning");
         let triple = target.triple();
         system.client.execute("INSERT INTO registry.orgs (id,placement_kind) VALUES ($1,'dedicated') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture org");
-        system.client.execute("INSERT INTO registry.projects (org,id) VALUES ($1,'receiving') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture project");
+        system.client.execute("INSERT INTO registry.projects (org,id) VALUES ($1,'widgets') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture project");
         system.client.execute("INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ($1,$2,'\"own\"',0,1,'1Gi','1','1Gi','fixture')", &[&triple.org, &triple.env.as_str()]).await.expect_redacted("fixture environment policy");
-        system.client.execute("INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix) VALUES ($1,'receiving',$2,'fixture-reference',$3)", &[&triple.org, &triple.env.as_str(), &SUFFIX]).await.expect_redacted("current environment registry entry");
+        system.client.execute("INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix) VALUES ($1,'widgets',$2,'fixture-reference',$3)", &[&triple.org, &triple.env.as_str(), &SUFFIX]).await.expect_redacted("current environment registry entry");
         environments.push(environment);
     }
     Fixture {
@@ -1499,7 +1489,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     .await
     .expect_redacted("password human");
     seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
-    grant(&fixture.system.client, &alice, "acme", "dev").await;
+    grant(&fixture.system.client, &alice, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
         .principal_id()
         .to_string()
@@ -1584,15 +1574,9 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         .unwrap();
         assert_failure(reply, 401, "{\"error\":\"unauthorized\"}").await;
     }
-    revoke_project_env_membership(
-        &fixture.system.client,
-        alice.id(),
-        "acme",
-        "receiving",
-        "dev",
-    )
-    .await
-    .unwrap();
+    revoke_project_env_membership(&fixture.system.client, alice.id(), "demo", "widgets", "dev")
+        .await
+        .unwrap();
     assert_eq!(
         post(&https, "/password/session", login.clone())
             .send()
@@ -1601,7 +1585,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
             .status(),
         401
     );
-    grant(&fixture.system.client, &alice, "acme", "dev").await;
+    grant(&fixture.system.client, &alice, "demo", "dev").await;
     fixture.environments[0]
         .client
         .execute(
@@ -1645,7 +1629,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     assert_eq!(throttled.headers()["retry-after"], "60");
     // Advance only the owned counters, without sleeping, to test recovery.
     fixture.system.client.batch_execute("UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'; UPDATE identity.principals SET status='active', disabled_at=NULL WHERE subject='password-alice'").await.unwrap();
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='acme' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_eq!(
         post(&replica, "/password/session", login.clone())
             .send()
@@ -1654,7 +1638,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
             .status(),
         401
     );
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='acme' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
     verify_response(
         post(&replica, "/password/session", login)
             .send()
@@ -1727,15 +1711,15 @@ async fn password_environment_discovery_requires_current_authority() {
     let expected = |indices: &[usize]| {
         json!({"environments": indices.iter().map(|index| {
         let target = &fixture.targets[*index];
-        json!({"aud":target.audience(), "org":target.triple().org, "project":"receiving", "env":target.triple().env.as_str()})
+        json!({"aud":target.audience(), "org":target.triple().org, "project":"widgets", "env":target.triple().env.as_str()})
     }).collect::<Vec<_>>()})
     };
 
     // A tenant role alone never supplies membership, including across organizations.
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    grant(&fixture.system.client, &alice, "acme", "dev").await;
+    grant(&fixture.system.client, &alice, "demo", "dev").await;
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
-    grant(&fixture.system.client, &alice, "acme", "prod").await;
+    grant(&fixture.system.client, &alice, "demo", "prod").await;
     assert_environments(discover().send().await.unwrap(), expected(&[0, 1])).await;
     grant(&fixture.system.client, &alice, "other", "dev").await;
     assert_environments(discover().send().await.unwrap(), expected(&[0, 1, 2])).await;
@@ -1743,7 +1727,7 @@ async fn password_environment_discovery_requires_current_authority() {
         &fixture.system.client,
         alice.id(),
         "other",
-        "receiving",
+        "widgets",
         "dev",
     )
     .await
@@ -1780,20 +1764,14 @@ async fn password_environment_discovery_requires_current_authority() {
     ).await.unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
     seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='acme' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='acme' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
     // A prior discovery cannot authorize issuance after membership changes.
-    revoke_project_env_membership(
-        &fixture.system.client,
-        alice.id(),
-        "acme",
-        "receiving",
-        "dev",
-    )
-    .await
-    .unwrap();
+    revoke_project_env_membership(&fixture.system.client, alice.id(), "demo", "widgets", "dev")
+        .await
+        .unwrap();
     assert_failure(
         https
             .client
