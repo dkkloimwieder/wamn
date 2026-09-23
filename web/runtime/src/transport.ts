@@ -33,14 +33,56 @@ export interface HttpReply {
   readonly body: string;
 }
 
-/** What one application supplies to reach its own deployment. */
-export interface TransportOptions {
+/**
+ * What one application supplies to reach its own deployment.
+ *
+ * A request carries its session one way. A bearer caller holds the token and
+ * the transport sends it in the authorization header. A cookie caller holds
+ * nothing: the browser sends the session cookie, and the transport copies the
+ * CSRF token from its readable cookie into a header. The two options cannot
+ * be given together.
+ */
+export type TransportOptions = BearerOptions | CookieOptions;
+
+/** The options that every carrier shares. */
+interface CommonOptions {
   /** Where the release is served. The generated route supplies the path. */
   readonly baseUrl: string;
-  /** The credential to send, when the application holds one. */
-  readonly credential?: string | undefined;
   /** The fetch to call. The global one is the default. */
   readonly fetch?: typeof globalThis.fetch;
+}
+
+/** A caller that holds its token, such as a page with a personal access token. */
+export interface BearerOptions extends CommonOptions {
+  /** The credential to send, when the application holds one. */
+  readonly credential?: string | undefined;
+  readonly cookie?: undefined;
+}
+
+/** A page that the identity service signed in by cookie. */
+export interface CookieOptions extends CommonOptions {
+  /** The browser carries the session in its cookie. */
+  readonly cookie: true;
+  readonly credential?: undefined;
+  /** The cookie string to read the CSRF token from. `document.cookie` is the default. */
+  readonly cookies?: () => string;
+}
+
+/** The readable cookie that holds the CSRF token of the cookie session. */
+const CSRF_COOKIE = "__Host-wamn-csrf";
+
+/** The header that carries the CSRF token back to the router. */
+const CSRF_HEADER = "x-wamn-csrf";
+
+/** The value of one cookie in a `document.cookie` string, or null. */
+function cookieValue(cookies: string, name: string): string | null {
+  for (const pair of cookies.split(";")) {
+    const at = pair.indexOf("=");
+    if (at !== -1 && pair.slice(0, at).trim() === name) {
+      return pair.slice(at + 1).trim();
+    }
+  }
+  return null;
 }
 
 /** One submitted item, as far as the transport reads it. */
@@ -378,16 +420,25 @@ export function createTransport(options: TransportOptions): Transport {
       const headers: { [name: string]: string } = {
         "content-type": "application/json",
       };
-      if (options.credential !== undefined) {
+      const init: RequestInit = {
+        method: request.method,
+        headers,
+        body: JSON.stringify(request.items),
+      };
+      if (options.cookie === true) {
+        // The CSRF cookie is read on every request, because a renewal replaces
+        // it. Without it the header stays off, and the router decides.
+        const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
+        if (csrf !== null) {
+          headers[CSRF_HEADER] = csrf;
+        }
+        init.credentials = "include";
+      } else if (options.credential !== undefined) {
         headers["authorization"] = `Bearer ${options.credential}`;
       }
       let reply: HttpReply;
       try {
-        const response = await call(`${options.baseUrl}${request.template}`, {
-          method: request.method,
-          headers,
-          body: JSON.stringify(request.items),
-        });
+        const response = await call(`${options.baseUrl}${request.template}`, init);
         reply = { status: response.status, body: await response.text() };
       } catch (error) {
         return uncertain(`the request did not complete: ${String(error)}`);

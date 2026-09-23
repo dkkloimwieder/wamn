@@ -4,7 +4,7 @@
  * It owns the wire contract, the transport that turns one reply into one
  * outcome, the three values a caller supplies without asking the operator, and
  * the helpers that a generated component calls: the page state, the draft
- * members, and the cell text.
+ * members, and the cell text. It also owns the cookie login that a page keeps.
  */
 
 export * from "./wire.js";
@@ -14,3 +14,4 @@ export * from "./page.js";
 export * from "./draft.js";
 export * from "./group.js";
 export * from "./cell.js";
+export * from "./session.js";
