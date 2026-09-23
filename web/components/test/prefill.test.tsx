@@ -9,32 +9,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
-
 import {
   WidgetCreateForm,
   type WidgetCreateFormInitial,
 } from "../fixture/components/widget.js";
 import { WidgetMakerQueryTable } from "../fixture/components/widget_maker.js";
 import { selector } from "./choose.js";
+import { MAKER, prefillStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
-
-const MAKER = "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e";
-
-function stub(): Transport {
-  return {
-    invoke: (request: WireRequest) => {
-      const reply: Outcome<JsonValue> = request.operation.includes("widget-maker")
-        ? {
-            status: "completed",
-            value: { item: [{ id: MAKER, name: "Northwind" }], nextCursor: null },
-          }
-        : { status: "completed", value: { rows: [] } };
-      return Promise.resolve(reply);
-    },
-  };
-}
 
 describe("a row that opens a form", () => {
   it("hands the declared pair to the form, which starts with it", async () => {

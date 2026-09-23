@@ -13,49 +13,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
+import type { JsonValue, Outcome } from "@wamn/web-runtime";
 
 import { WidgetQueryTable, WidgetQueryTableLabel } from "../fixture/components/widget.js";
+import { page, tableStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
-
-/** One transport that answers from a list and keeps what it was sent. */
-function stub(replies: readonly Outcome<JsonValue>[]): {
-  transport: Transport;
-  sent: WireRequest[];
-} {
-  const sent: WireRequest[] = [];
-  let next = 0;
-  return {
-    sent,
-    transport: {
-      invoke: (request: WireRequest) => {
-        sent.push(request);
-        const reply = replies[Math.min(next, replies.length - 1)];
-        next += 1;
-        return Promise.resolve(
-          reply ?? { status: "uncertain", reason: "the stub ran out", retryRefusal: null },
-        );
-      },
-    },
-  };
-}
-
-function page(ids: readonly string[], cursor: string | null): Outcome<JsonValue> {
-  return {
-    status: "completed",
-    value: {
-      item: ids.map((id) => ({
-        id,
-        code: "standard",
-        note: null,
-        edit_version: "1",
-        created_at: "2026-09-21T12:00:00.000000Z",
-      })),
-      next_cursor: cursor,
-    },
-  };
-}
 
 describe("the generated table for a page", () => {
   it("shows one row for each record the release returned", async () => {

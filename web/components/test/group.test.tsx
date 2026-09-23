@@ -9,33 +9,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
-
 import { WidgetRecordBatchForm } from "../fixture/components/widget.js";
 import { choose } from "./choose.js";
+import { groupStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
-
-const WIDGET = "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e";
-
-function stub(): { transport: Transport; sent: WireRequest[] } {
-  const sent: WireRequest[] = [];
-  return {
-    sent,
-    transport: {
-      invoke: (request: WireRequest) => {
-        sent.push(request);
-        // The maker selector reads a paged query and the line selector reads
-        // a bounded list, so each envelope answers the operation that asked.
-        const row = { id: WIDGET, code: "priority", name: "Northwind" };
-        const reply: Outcome<JsonValue> = request.operation.includes("widget-maker")
-          ? { status: "completed", value: { item: [row], nextCursor: null } }
-          : { status: "completed", value: { rows: [row] } };
-        return Promise.resolve(reply);
-      },
-    },
-  };
-}
 
 describe("a repeated group", () => {
   it("stops adding at the declared maximum", async () => {

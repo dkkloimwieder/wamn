@@ -13,34 +13,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
+import type { JsonValue } from "@wamn/web-runtime";
 
 import { WidgetCreateForm } from "../fixture/components/widget.js";
 import { choose, openSelector } from "./choose.js";
+import { MAKER, paged, selectorStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
-
-const MAKER = "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e";
-
-/** One transport that answers each operation from its own reply. */
-function stub(): { transport: Transport; sent: WireRequest[] } {
-  const sent: WireRequest[] = [];
-  return {
-    sent,
-    transport: {
-      invoke: (request: WireRequest) => {
-        sent.push(request);
-        const reply: Outcome<JsonValue> = request.operation.includes("widget-maker")
-          ? {
-              status: "completed",
-              value: { item: [{ id: MAKER, name: "Northwind" }], nextCursor: null },
-            }
-          : { status: "completed", value: { id: "written", edit_version: 1 } };
-        return Promise.resolve(reply);
-      },
-    },
-  };
-}
 
 describe("a populated input", () => {
   it("offers the rows of the list the plan chose", async () => {
@@ -63,47 +42,6 @@ describe("a populated input", () => {
     expect(submission["maker_id"]).toBe(MAKER);
   });
 });
-
-const SOUTH = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
-
-/** One transport that answers a search and a next page from the same list. */
-function paged(): { transport: Transport; sent: WireRequest[] } {
-  const sent: WireRequest[] = [];
-  return {
-    sent,
-    transport: {
-      invoke: (request: WireRequest) => {
-        sent.push(request);
-        if (!request.operation.includes("widget-maker")) {
-          return Promise.resolve<Outcome<JsonValue>>({
-            status: "completed",
-            value: { id: "written", edit_version: 1 },
-          });
-        }
-        const item = request.items[0] as {
-          filter?: { name?: string[] };
-          cursor?: string;
-        };
-        if (item.filter?.name !== undefined) {
-          return Promise.resolve<Outcome<JsonValue>>({
-            status: "completed",
-            value: { item: [{ id: SOUTH, name: "Southwind" }], nextCursor: null },
-          });
-        }
-        if (item.cursor === "page-2") {
-          return Promise.resolve<Outcome<JsonValue>>({
-            status: "completed",
-            value: { item: [{ id: SOUTH, name: "Southwind" }], nextCursor: null },
-          });
-        }
-        return Promise.resolve<Outcome<JsonValue>>({
-          status: "completed",
-          value: { item: [{ id: MAKER, name: "Northwind" }], nextCursor: "page-2" },
-        });
-      },
-    },
-  };
-}
 
 describe("a selector over a list that declares its display filter", () => {
   it("searches by the value the operator typed", async () => {

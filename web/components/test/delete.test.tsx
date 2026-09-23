@@ -12,39 +12,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
+import type { JsonValue, Outcome } from "@wamn/web-runtime";
 
 import { WidgetDeleteDelete } from "../fixture/components/widget.js";
+import { WIDGET, deleteStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
-
-const WIDGET = "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e";
-
-/** One transport that answers the read with a record and the removal with an empty result. */
-function stub(): { transport: Transport; sent: WireRequest[] } {
-  const sent: WireRequest[] = [];
-  return {
-    sent,
-    transport: {
-      invoke: (request: WireRequest) => {
-        sent.push(request);
-        const reply: Outcome<JsonValue> = request.operation.includes("/get@")
-          ? {
-              status: "completed",
-              value: {
-                id: WIDGET,
-                code: "standard",
-                note: null,
-                edit_version: "7",
-                created_at: "2026-09-21T12:00:00.000000Z",
-              },
-            }
-          : { status: "completed", value: {} };
-        return Promise.resolve(reply);
-      },
-    },
-  };
-}
 
 describe("the generated delete", () => {
   it("sends nothing when the operator cancels", async () => {

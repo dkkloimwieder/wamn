@@ -9,15 +9,8 @@
 import { cleanup, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
-
 import { Sample } from "../src/sample.js";
-
-function stub(outcome: Outcome<JsonValue>): Transport {
-  return {
-    invoke: (_request: WireRequest) => Promise.resolve(outcome),
-  };
-}
+import { sampleStub as stub } from "../stubs/index.js";
 
 // The library registers its own cleanup only when the test globals exist, and
 // this project imports what it uses instead.
