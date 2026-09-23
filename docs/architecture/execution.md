@@ -95,8 +95,10 @@ Wasmtime's pooling allocator remains enabled under its separate resource limits.
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
 All cleanup paths retain their resource bounds and return failures to their owner.
 
-The [operation module](../../crates/execution/host/src/operation.rs) runs one component export through native dispatch.
-Its private modules own admission, authority, dependency calls, workload loading, and invocation state.
+The [engine operation module](../../crates/platform/engine/src/operation.rs) runs one component export through native dispatch with `invoke_operation`.
+It owns the deadline, workload loading, and invocation state.
+It reaches the host through two traits: `ApplicationHost` gives the loaded application, and `InvocationPolicy` grants and revokes the authority of each call.
+The [host operation module](../../crates/execution/host/src/operation.rs) implements both traits and owns authority and dependency calls.
 The [driver](../../crates/execution/host/src/router_driver.rs) walks a wiring graph and calls the operation module for each node.
 The [route path](../../crates/execution/host/src/route.rs) calls it once for a route target and never enters the driver.
 A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
@@ -112,7 +114,7 @@ After initialization, the host records caller, SQL, claims, causation, and effec
 Native callbacks restore the trace context from that scope.
 Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
 Candidate execution still refuses nested calls.
-The host owns durable queue claims and settlement through the existing run-state libraries.
+The host owns durable queue claims and settlement through the `RunStore` trait of `wamn-run-state`.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases; replicas need no wake service or process-local handoff.

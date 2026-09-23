@@ -119,9 +119,16 @@ The [operations pages](../operations/README.md) own publication, deployment, and
 
 ## Runtime owners
 
+Four layers run a component, and each layer depends only on the layers below it:
+
+1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record, declared with no implementation.
+2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, and `invoke_operation`. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
+3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
+4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) and the services compose these layers.
+
 The host uses the [execution driver](execution.md) for both HTTP and queued work.
-The driver coordinates graph decisions, while private native modules own dispatch, invocation authority, and workload loading.
-The host and existing run-state libraries own durable queue claims and settlement.
+The driver coordinates graph decisions. The engine owns dispatch and workload loading, and the host owns invocation authority.
+The host owns durable queue claims and settlement through `RunStore`.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 The developer host also loads unpublished components and admitted facts from local files.
