@@ -39,7 +39,9 @@ import {
   FieldGroup,
   FieldLegend,
   FieldSet,
+  FormActions,
   RecordSelect,
+  TableScreen,
   TextField,
   announceOutcome,
   gridFeatures,
@@ -187,14 +189,16 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
   });
 
   return (
-    <section>
+    <TableScreen>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           restart();
         }}
       >
-        <Button type="submit">read</Button>
+        <FormActions>
+          <Button type="submit">read</Button>
+        </FormActions>
       </form>
       <DataGrid
         table={table}
@@ -206,12 +210,7 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
           <DataGridTable />
         </DataGridContainer>
       </DataGrid>
-      <Show when={hasNextPage(page())}>
-        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
-          next page
-        </Button>
-      </Show>
-    </section>
+    </TableScreen>
   );
 }
 
@@ -367,14 +366,16 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
   });
 
   return (
-    <section>
+    <TableScreen>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           restart();
         }}
       >
-        <Button type="submit">read</Button>
+        <FormActions>
+          <Button type="submit">read</Button>
+        </FormActions>
       </form>
       <DataGrid
         table={table}
@@ -386,12 +387,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
           <DataGridTable />
         </DataGridContainer>
       </DataGrid>
-      <Show when={hasNextPage(page())}>
-        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
-          next page
-        </Button>
-      </Show>
-    </section>
+    </TableScreen>
   );
 }
 
@@ -550,104 +546,108 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.code}</FieldError>
       </Show>
-      <form.Field name={"value.line"} mode="array">
-        {(group) => (
-          <FieldSet>
-            <FieldLegend>Receipt lines</FieldLegend>
-            <For each={group().state.value ?? []}>
-              {(_, index) => (
-                <FieldGroup>
-                  <form.Field name={`value.line[${index()}].locationId`}>
-                    {(field) => (
-                      <RecordSelect
-                        label="Location"
-                        options={locationListOptions().rows}
-                        optionValue={(row) => String(row.id)}
-                        optionLabel={(row) => String(row.locationCode)}
-                        value={field().state.value == null ? null : String(field().state.value)}
-                        onChange={(value) => field().handleChange(value ?? "")}
-                        error={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index()) ? (refusal()?.code ?? "refused") : null}
-                      />
-                    )}
-                  </form.Field>
-                  <form.Field name={`value.line[${index()}].purchaseOrderLineId`}>
-                    {(field) => (
-                      <RecordSelect
-                        label="Order line"
-                        options={receivingLoadReceiptScreenOptions().rows}
-                        optionValue={(row) => String(row.lineId)}
-                        optionLabel={(row) => String(row.itemNumber)}
-                        value={field().state.value == null ? null : String(field().state.value)}
-                        onChange={(value) => field().handleChange(value ?? "")}
-                        error={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index()) ? (refusal()?.code ?? "refused") : null}
-                      />
-                    )}
-                  </form.Field>
-                  <form.Field name={`value.line[${index()}].quantity`}>
-                    {(field) => (
-                      <TextField
-                        label="Quantity"
-                        type="text"
-                        value={String(field().state.value ?? "")}
-                        onInput={(value) => field().handleChange(value)}
-                        error={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index()) ? (refusal()?.code ?? "refused") : null}
-                      />
-                    )}
-                  </form.Field>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!canRemove(group().state.value ?? [], 1)}
-                    onClick={() => group().removeValue(index())}
-                  >
-                    remove
-                  </Button>
-                </FieldGroup>
-              )}
-            </For>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!canAdd(group().state.value ?? [], 100)}
-              onClick={() => group().pushValue({} as NonNullable<NonNullable<NonNullable<ReceivingRecordReceiptRequest>["value"]>["line"]>[number])}
-            >
-              add
-            </Button>
-          </FieldSet>
-        )}
-      </form.Field>
-      <form.Field name={`value.purchaseOrderId`}>
-        {(field) => (
-          <RecordSelect
-            label="Purchase order"
-            options={purchaseOrderQueryOptions().rows}
-            optionValue={(row) => String(row.id)}
-            optionLabel={(row) => String(row.purchaseOrderNumber)}
-            value={field().state.value == null ? null : String(field().state.value)}
-            onChange={(value) => field().handleChange(value ?? "")}
-            onSearch={(text) => {
-              setPurchaseOrderQuerySearch(text);
-              void readPurchaseOrderQueryOptions(null);
-            }}
-            hasNextPage={hasNextPage(purchaseOrderQueryOptions())}
-            onNextPage={() => void readPurchaseOrderQueryOptions(purchaseOrderQueryOptions().cursor)}
-            error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.code ?? "refused") : null}
-          />
-        )}
-      </form.Field>
-      <form.Field name={`value.receiptReference`}>
-        {(field) => (
-          <TextField
-            label="Receipt reference"
-            type="text"
-            value={String(field().state.value ?? "")}
-            onInput={(value) => field().handleChange(value)}
-            error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.code ?? "refused") : null}
-          />
-        )}
-      </form.Field>
-      <Button type="submit">submit</Button>
+      <FieldGroup>
+        <form.Field name={"value.line"} mode="array">
+          {(group) => (
+            <FieldSet>
+              <FieldLegend>Receipt lines</FieldLegend>
+              <For each={group().state.value ?? []}>
+                {(_, index) => (
+                  <FieldGroup>
+                    <form.Field name={`value.line[${index()}].locationId`}>
+                      {(field) => (
+                        <RecordSelect
+                          label="Location"
+                          options={locationListOptions().rows}
+                          optionValue={(row) => String(row.id)}
+                          optionLabel={(row) => String(row.locationCode)}
+                          value={field().state.value == null ? null : String(field().state.value)}
+                          onChange={(value) => field().handleChange(value ?? "")}
+                          error={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index()) ? (refusal()?.code ?? "refused") : null}
+                        />
+                      )}
+                    </form.Field>
+                    <form.Field name={`value.line[${index()}].purchaseOrderLineId`}>
+                      {(field) => (
+                        <RecordSelect
+                          label="Order line"
+                          options={receivingLoadReceiptScreenOptions().rows}
+                          optionValue={(row) => String(row.lineId)}
+                          optionLabel={(row) => String(row.itemNumber)}
+                          value={field().state.value == null ? null : String(field().state.value)}
+                          onChange={(value) => field().handleChange(value ?? "")}
+                          error={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index()) ? (refusal()?.code ?? "refused") : null}
+                        />
+                      )}
+                    </form.Field>
+                    <form.Field name={`value.line[${index()}].quantity`}>
+                      {(field) => (
+                        <TextField
+                          label="Quantity"
+                          type="text"
+                          value={String(field().state.value ?? "")}
+                          onInput={(value) => field().handleChange(value)}
+                          error={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index()) ? (refusal()?.code ?? "refused") : null}
+                        />
+                      )}
+                    </form.Field>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!canRemove(group().state.value ?? [], 1)}
+                      onClick={() => group().removeValue(index())}
+                    >
+                      remove
+                    </Button>
+                  </FieldGroup>
+                )}
+              </For>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!canAdd(group().state.value ?? [], 100)}
+                onClick={() => group().pushValue({} as NonNullable<NonNullable<NonNullable<ReceivingRecordReceiptRequest>["value"]>["line"]>[number])}
+              >
+                add
+              </Button>
+            </FieldSet>
+          )}
+        </form.Field>
+        <form.Field name={`value.purchaseOrderId`}>
+          {(field) => (
+            <RecordSelect
+              label="Purchase order"
+              options={purchaseOrderQueryOptions().rows}
+              optionValue={(row) => String(row.id)}
+              optionLabel={(row) => String(row.purchaseOrderNumber)}
+              value={field().state.value == null ? null : String(field().state.value)}
+              onChange={(value) => field().handleChange(value ?? "")}
+              onSearch={(text) => {
+                setPurchaseOrderQuerySearch(text);
+                void readPurchaseOrderQueryOptions(null);
+              }}
+              hasNextPage={hasNextPage(purchaseOrderQueryOptions())}
+              onNextPage={() => void readPurchaseOrderQueryOptions(purchaseOrderQueryOptions().cursor)}
+              error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.code ?? "refused") : null}
+            />
+          )}
+        </form.Field>
+        <form.Field name={`value.receiptReference`}>
+          {(field) => (
+            <TextField
+              label="Receipt reference"
+              type="text"
+              value={String(field().state.value ?? "")}
+              onInput={(value) => field().handleChange(value)}
+              error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.code ?? "refused") : null}
+            />
+          )}
+        </form.Field>
+      </FieldGroup>
+      <FormActions>
+        <Button type="submit">submit</Button>
+      </FormActions>
     </form>
   );
 }

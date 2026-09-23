@@ -202,7 +202,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         match screen.role {
             Role::Table => {
                 table = true;
-                solid.extend(["createSignal", "Show"]);
+                solid.insert("createSignal");
                 emit_table(
                     &mut body,
                     screen,
@@ -213,12 +213,12 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 )?;
             }
             Role::Detail => {
-                solid.extend(["createResource", "Show"]);
+                solid.insert("createResource");
                 emit_detail(&mut body, screen, &mut runtime, &mut ui, &mut bindings)?;
             }
             Role::Form => {
                 form = true;
-                solid.extend(["createSignal", "Show"]);
+                solid.insert("createSignal");
                 if screen
                     .inputs
                     .iter()
@@ -245,7 +245,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 )?;
             }
             Role::Delete => {
-                solid.extend(["createSignal", "Show"]);
+                solid.insert("createSignal");
                 emit_delete(
                     &mut body,
                     screen,
@@ -265,6 +265,12 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 ));
             }
         }
+    }
+
+    // A table shows a badge, a row link or a refusal only when its plan names
+    // one, so the import follows the markup the screens wrote.
+    if body.contains("<Show") {
+        solid.insert("Show");
     }
 
     let mut source = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
@@ -475,6 +481,8 @@ fn emit_table(
     })?;
     ui.extend([
         "Button",
+        "FormActions",
+        "TableScreen",
         "DataGrid",
         "DataGridContainer",
         "DataGridTable",
@@ -496,7 +504,6 @@ fn emit_table(
         "cellText",
         "emptyPage",
         "firstPage",
-        "hasNextPage",
         "newRequestId",
         "startRead",
         "type JsonValue",
@@ -504,6 +511,9 @@ fn emit_table(
         "type PageState",
         "type Transport",
     ]);
+    if cursor_input.is_some() {
+        runtime.insert("hasNextPage");
+    }
     if controls > 0 || cursor_input.is_some() {
         runtime.insert("writeMember");
     }
@@ -763,13 +773,28 @@ fn emit_table(
     source.push_str("    manualPagination: true,\n  });\n");
 
     // The markup.
-    source.push_str("\n  return (\n    <section>\n      <form\n        onSubmit={(event) => {\n          event.preventDefault();\n          restart();\n        }}\n      >\n");
-    emit_controls(source, screen, ui);
-    source.push_str("        <Button type=\"submit\">read</Button>\n      </form>\n");
+    source.push_str("\n  return (\n    <TableScreen>\n      <form\n        onSubmit={(event) => {\n          event.preventDefault();\n          restart();\n        }}\n      >\n");
+    let mut controls = String::new();
+    emit_controls(&mut controls, screen, ui);
+    if !controls.is_empty() {
+        ui.insert("FieldGroup");
+        source.push_str("        <FieldGroup>\n");
+        source.push_str(&deepen(&controls));
+        source.push_str("        </FieldGroup>\n");
+    }
+    source.push_str(
+        "        <FormActions>\n          <Button type=\"submit\">read</Button>\n        </FormActions>\n      </form>\n",
+    );
     // The skeleton stands in for rows only while the first page is read, so a
     // next page appends below the rows already shown.
     source.push_str("      <DataGrid\n        table={table}\n        recordCount={page().rows.length}\n        isLoading={page().busy && page().rows.length === 0}\n        onRowClick={(row) => props.onRowSelect?.(row)}\n      >\n        <DataGridContainer>\n          <DataGridTable />\n        </DataGridContainer>\n      </DataGrid>\n");
-    source.push_str("      <Show when={hasNextPage(page())}>\n        <Button type=\"button\" variant=\"outline\" onClick={() => void read(page().cursor)}>\n          next page\n        </Button>\n      </Show>\n    </section>\n  );\n}\n");
+    // A list that serves pages always shows its next page, disabled while the
+    // release sent no cursor, so nothing below the rows appears or disappears.
+    // A bounded list never pages, so it shows none.
+    if cursor_input.is_some() {
+        source.push_str("      <FormActions>\n        <Button\n          type=\"button\"\n          variant=\"outline\"\n          disabled={!hasNextPage(page())}\n          onClick={() => void read(page().cursor)}\n        >\n          next page\n        </Button>\n      </FormActions>\n");
+    }
+    source.push_str("    </TableScreen>\n  );\n}\n");
     Ok(())
 }
 
@@ -1386,7 +1411,7 @@ fn emit_form(
     }
 
     // The markup. A refusal that names no member reads above the controls.
-    ui.extend(["Button", "FieldError", "announceOutcome"]);
+    ui.extend(["Button", "FieldError", "FormActions", "announceOutcome"]);
     source.push_str(
         "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <FieldError>{refusal()?.code}</FieldError>\n      </Show>\n",
     );
@@ -1398,10 +1423,11 @@ fn emit_form(
     {
         runtime.extend(["canAdd", "canRemove"]);
     }
+    let mut fields = String::new();
     for input in &inputs {
         match repeated_ancestor(&input.path) {
             None => emit_field(
-                source,
+                &mut fields,
                 input,
                 &member_path(&input.path).join("."),
                 6,
@@ -1415,11 +1441,20 @@ fn emit_form(
                     continue;
                 }
                 repeated_written.push(ancestor.clone());
-                emit_repeated_group(source, screen, &inputs, &ancestor, &stem, ui);
+                emit_repeated_group(&mut fields, screen, &inputs, &ancestor, &stem, ui);
             }
         }
     }
-    source.push_str("      <Button type=\"submit\">submit</Button>\n    </form>\n  );\n}\n");
+    // The group spaces the fields, so no field states a margin.
+    if !fields.is_empty() {
+        ui.insert("FieldGroup");
+        source.push_str("      <FieldGroup>\n");
+        source.push_str(&deepen(&fields));
+        source.push_str("      </FieldGroup>\n");
+    }
+    source.push_str(
+        "      <FormActions>\n        <Button type=\"submit\">submit</Button>\n      </FormActions>\n    </form>\n  );\n}\n",
+    );
     Ok(())
 }
 
@@ -1999,6 +2034,20 @@ fn local_name(identity: &str) -> &str {
         .rsplit('/')
         .next()
         .unwrap_or(without_version)
+}
+
+/// Moves every line of `block` one level deeper, for the group that wraps it.
+fn deepen(block: &str) -> String {
+    block
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                "\n".to_owned()
+            } else {
+                format!("  {line}\n")
+            }
+        })
+        .collect()
 }
 
 /// One control for each page control the plan names.

@@ -71,6 +71,12 @@ export default defineConfig(() => {
       // copies of solid-js break context and reactivity.
       dedupe: ["solid-js", "@tanstack/solid-table"],
     },
-    server: { port: 5180, proxy },
+    server: {
+      port: 5180,
+      proxy,
+      // The web/ui stylesheet names its font files by path, and a path outside
+      // this package is refused unless it is allowed here.
+      fs: { allow: [local(".."), local("../../apps/wamn_receiving/generated/client-ts")] },
+    },
   };
 });

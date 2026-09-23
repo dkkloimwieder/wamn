@@ -10,7 +10,6 @@ import {
   cellText,
   emptyPage,
   firstPage,
-  hasNextPage,
   newRequestId,
   startRead,
   type JsonValue,
@@ -24,6 +23,8 @@ import {
   DataGrid,
   DataGridContainer,
   DataGridTable,
+  FormActions,
+  TableScreen,
   announceOutcome,
   gridFeatures,
   type GridFeatures,
@@ -136,14 +137,16 @@ export function LocationListTable(props: LocationListTableProps) {
   });
 
   return (
-    <section>
+    <TableScreen>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           restart();
         }}
       >
-        <Button type="submit">read</Button>
+        <FormActions>
+          <Button type="submit">read</Button>
+        </FormActions>
       </form>
       <DataGrid
         table={table}
@@ -155,11 +158,6 @@ export function LocationListTable(props: LocationListTableProps) {
           <DataGridTable />
         </DataGridContainer>
       </DataGrid>
-      <Show when={hasNextPage(page())}>
-        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
-          next page
-        </Button>
-      </Show>
-    </section>
+    </TableScreen>
   );
 }

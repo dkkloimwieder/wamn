@@ -36,7 +36,10 @@ import {
   DetailItem,
   DetailList,
   FieldError,
+  FieldGroup,
+  FormActions,
   RecordSelect,
+  TableScreen,
   TextField,
   announceOutcome,
   gridFeatures,
@@ -291,56 +294,60 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
   });
 
   return (
-    <section>
+    <TableScreen>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           restart();
         }}
       >
-        <TextField
-          label="Order number"
-          type="text"
-          onChange={(value) => change(["filter", "purchaseOrderNumber"], value.split(",").filter((part) => part !== ""))}
-        />
-        <TextField
-          label="Status"
-          type="text"
-          onChange={(value) => change(["filter", "status"], value.split(",").filter((part) => part !== ""))}
-        />
-        <TextField
-          label="Supplier"
-          type="text"
-          onChange={(value) => change(["filter", "supplierId"], value.split(",").filter((part) => part !== ""))}
-        />
-        <ChoiceField
-          label="field"
-          allowEmpty={true}
-          choices={[
-            { value: "created_at", text: "created at" },
-            { value: "purchase_order_number", text: "purchase order number" },
-            { value: "status", text: "status" },
-          ]}
-          onChange={(value) => change(["sort", "field"], value)}
-        />
-        <ChoiceField
-          label="direction"
-          allowEmpty={true}
-          choices={[
-            { value: "ascending", text: "ascending" },
-            { value: "descending", text: "descending" },
-          ]}
-          onChange={(value) => change(["sort", "direction"], value)}
-        />
-        <TextField
-          label="limit"
-          type="number"
-          min={1}
-          max={100}
-          value="100"
-          onChange={(value) => change(["limit"], value)}
-        />
-        <Button type="submit">read</Button>
+        <FieldGroup>
+          <TextField
+            label="Order number"
+            type="text"
+            onChange={(value) => change(["filter", "purchaseOrderNumber"], value.split(",").filter((part) => part !== ""))}
+          />
+          <TextField
+            label="Status"
+            type="text"
+            onChange={(value) => change(["filter", "status"], value.split(",").filter((part) => part !== ""))}
+          />
+          <TextField
+            label="Supplier"
+            type="text"
+            onChange={(value) => change(["filter", "supplierId"], value.split(",").filter((part) => part !== ""))}
+          />
+          <ChoiceField
+            label="field"
+            allowEmpty={true}
+            choices={[
+              { value: "created_at", text: "created at" },
+              { value: "purchase_order_number", text: "purchase order number" },
+              { value: "status", text: "status" },
+            ]}
+            onChange={(value) => change(["sort", "field"], value)}
+          />
+          <ChoiceField
+            label="direction"
+            allowEmpty={true}
+            choices={[
+              { value: "ascending", text: "ascending" },
+              { value: "descending", text: "descending" },
+            ]}
+            onChange={(value) => change(["sort", "direction"], value)}
+          />
+          <TextField
+            label="limit"
+            type="number"
+            min={1}
+            max={100}
+            value="100"
+            onChange={(value) => change(["limit"], value)}
+          />
+        </FieldGroup>
+        <FormActions>
+          <Button type="submit">read</Button>
+        </FormActions>
       </form>
       <DataGrid
         table={table}
@@ -352,12 +359,17 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
           <DataGridTable />
         </DataGridContainer>
       </DataGrid>
-      <Show when={hasNextPage(page())}>
-        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
+      <FormActions>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!hasNextPage(page())}
+          onClick={() => void read(page().cursor)}
+        >
           next page
         </Button>
-      </Show>
-    </section>
+      </FormActions>
+    </TableScreen>
   );
 }
 
@@ -471,22 +483,26 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.code}</FieldError>
       </Show>
-      <form.Field name={`change.supplierId`}>
-        {(field) => (
-          <RecordSelect
-            label="Supplier"
-            options={supplierQueryOptions().rows}
-            optionValue={(row) => String(row.id)}
-            optionLabel={(row) => String(row.name)}
-            value={field().state.value == null ? null : String(field().state.value)}
-            onChange={(value) => field().handleChange(value ?? "")}
-            hasNextPage={hasNextPage(supplierQueryOptions())}
-            onNextPage={() => void readSupplierQueryOptions(supplierQueryOptions().cursor)}
-            error={refusalMarks(refusal()?.member ?? null, "change.supplier_id") ? (refusal()?.code ?? "refused") : null}
-          />
-        )}
-      </form.Field>
-      <Button type="submit">submit</Button>
+      <FieldGroup>
+        <form.Field name={`change.supplierId`}>
+          {(field) => (
+            <RecordSelect
+              label="Supplier"
+              options={supplierQueryOptions().rows}
+              optionValue={(row) => String(row.id)}
+              optionLabel={(row) => String(row.name)}
+              value={field().state.value == null ? null : String(field().state.value)}
+              onChange={(value) => field().handleChange(value ?? "")}
+              hasNextPage={hasNextPage(supplierQueryOptions())}
+              onNextPage={() => void readSupplierQueryOptions(supplierQueryOptions().cursor)}
+              error={refusalMarks(refusal()?.member ?? null, "change.supplier_id") ? (refusal()?.code ?? "refused") : null}
+            />
+          )}
+        </form.Field>
+      </FieldGroup>
+      <FormActions>
+        <Button type="submit">submit</Button>
+      </FormActions>
     </form>
   );
 }
