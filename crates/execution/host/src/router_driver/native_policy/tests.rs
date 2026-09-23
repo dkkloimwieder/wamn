@@ -981,15 +981,44 @@ async fn run_case(case: Case) {
                 .is_cancelled()
         );
     } else {
-        let deadline = Instant::now()
-            + if matches!(case, Case::Success | Case::NestedRefusal | Case::Trap) {
-                CLEANUP
-            } else {
-                BUDGET
-            };
-        let mut request = fixture.request(deadline);
-        request.acquisition.platform = Some(PlatformComponent::Materializer);
-        let result = invoke_native(&target, request).await;
+        // A deadline case says something only once the guest spins in the
+        // loop under test: `start` records phase 0, `run` records phase 1.
+        // Instantiation runs inside the same budget, so a loaded machine can
+        // spend all of it first. That attempt has no event of the looping
+        // phase; it is not a result, and it runs again with twice the budget.
+        let looping = match case {
+            Case::StartDeadline => Some(0),
+            Case::RunDeadline => Some(1),
+            _ => None,
+        };
+        let mut budget = BUDGET;
+        let (deadline, result) = loop {
+            let deadline = Instant::now()
+                + if matches!(case, Case::Success | Case::NestedRefusal | Case::Trap) {
+                    CLEANUP
+                } else {
+                    budget
+                };
+            let mut request = fixture.request(deadline);
+            request.acquisition.platform = Some(PlatformComponent::Materializer);
+            let result = invoke_native(&target, request).await;
+            let looped = looping.is_none_or(|phase| {
+                fixture
+                    .events
+                    .lock()
+                    .expect("observations lock")
+                    .iter()
+                    .any(|event| event.phase == phase)
+            });
+            // The last budget attempt stands, and the checks below report it.
+            if looped || budget >= 64 * BUDGET {
+                break (deadline, result);
+            }
+            let error = result.expect_err("a guest that never looped cannot finish");
+            assert!(format!("{error:#}").contains("deadline"), "{error:#}");
+            fixture.assert_clean().await;
+            budget *= 2;
+        };
         match case {
             Case::Success => {
                 let emission = result
