@@ -620,6 +620,10 @@ It then runs the package's own check and tests.
 If the dependencies are absent, the command refuses and names the directory.
 The one example component test renders the fixture page table with a stub transport and reads the document.
 
+To see the components after that command, run `npm run gallery` in `web/components`.
+The gallery shows every `@wamn/ui` export and every fixture screen over the test stubs, with no network.
+Its [README](../../web/components/README.md#gallery) names the port option.
+
 ## Cleanup
 
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.

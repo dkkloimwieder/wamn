@@ -73,3 +73,4 @@ It holds `light` or `dark` and nothing else.
 ## Check it
 
 The commands are in [running tests](../../docs/operations/running-tests.md#platform-ui).
+To see every export with sample data, serve the [component gallery](../components/README.md#gallery).

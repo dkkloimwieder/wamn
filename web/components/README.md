@@ -22,3 +22,23 @@ cargo run --locked --offline -p wamn-schema-generator --example check_client_com
 
 The command writes into `fixture/`, which Git ignores, and then runs the check in this package.
 `npm run check` and `npm test` read what the command wrote, so run the command first.
+
+## Gallery
+
+The gallery is one page that shows every `@wamn/ui` export and every generated screen of the platform fixture.
+It uses sample data, needs no stack, and makes no request outside its own server.
+The page reads the same stub transports as the tests, from `stubs/index.ts`.
+It reads the platform fixture only, never an application.
+
+Write the fixture, then serve the page on a port that you choose:
+
+```bash
+cargo run --locked --offline -p wamn-schema-generator --example check_client_components
+cd web/components && npm run gallery -- --port 5191
+```
+
+If `fixture/` is absent, the command exits and names the fixture command.
+The switch at the top of the page changes between light and dark mode.
+
+The gallery leaves out no component or state.
+You see two states by using the control: the open `ConfirmAction` dialog, and a `RecordSelect` search.
