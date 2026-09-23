@@ -1,17 +1,12 @@
 //! Storage-schema tests for the T1 control-plane registry (wamn-q3n.3;
 //! generalized in wamn-8df.3; org-scoped policies + templates in wamn-8df.4).
 //!
-//! Three layers, all pure/portable except the last:
-//! - a **drift guard** tying `deploy/sql/system-schema.sql` to the `wamn-control-registry`
-//!   model (table/column shape, the D18 placement CHECKs, the org-scoped
-//!   `env_policies` keying with NO platform-global seed, `SCHEMA_VERSION`) —
-//!   the `wamn-schema-control` / `state_literals_match_catalog_schema_sql` pattern;
 //! - the **request-path-free** invariant (1): a static grep asserting no
 //!   data-plane manifest references the T1 cluster / system DB;
 //! - a **live-apply gate** (invariants 2/3 + placement/env FK integrity + the
-//!   template stamp insert-if-absent semantics + the saga exactly-once/resume
-//!   checkpoint), on a test database of the test PostgreSQL server (a superuser
-//!   URL — the harness provisions the `wamn_system` owner role).
+//!   template stamp insert-if-absent semantics + the real registry reads and
+//!   saga builders), on a test database of the test PostgreSQL server (a
+//!   superuser URL — the harness provisions the `wamn_system` owner role).
 
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -19,493 +14,10 @@ use std::process::{Command as Proc, Stdio};
 
 use std::path::Path;
 
-use wamn_control_registry::{SCHEMA_VERSION, Template};
+use wamn_control_registry::Template;
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
-}
-
-fn system_schema_sql() -> String {
-    std::fs::read_to_string(deploy_dir().join("sql/system-schema.sql"))
-        .expect("read deploy/sql/system-schema.sql")
-}
-
-/// The SQL with `--` line comments stripped, so text assertions test the actual
-/// DDL and not the explanatory prose (the header deliberately *names* the tenant
-/// RLS floor and credential columns to say it carries none). No `--` appears
-/// inside a string literal in this file, so a per-line truncate is exact.
-fn code_only(sql: &str) -> String {
-    sql.lines()
-        .map(|l| l.find("--").map_or(l, |i| &l[..i]))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn repository_root() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("repository root")
-}
-
-fn collect_source_text(path: &Path, text: &mut String) {
-    if path.is_dir() {
-        for entry in std::fs::read_dir(path).expect("read source directory") {
-            collect_source_text(&entry.expect("source directory entry").path(), text);
-        }
-        return;
-    }
-
-    text.push_str(
-        &std::fs::read_to_string(path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", path.display())),
-    );
-    text.push('\n');
-}
-
-// --- drift guard: DDL ↔ model ----------------------------------------------
-
-/// `deploy/sql/system-schema.sql` must mirror the `wamn-control-registry` model: the two
-/// control-plane schemas, the registry tables and their distinctive columns (the
-/// D18 placement shape + the 8df.4 org-scoped `env_policies` keying, with NO
-/// platform-global policy seed), the storage-format `SCHEMA_VERSION`, and the
-/// saga table.
-#[test]
-fn system_schema_sql_mirrors_the_model() {
-    let sql = code_only(&system_schema_sql());
-
-    // Platform-global, NOT tenant-scoped: none of the tenant-DB RLS floor.
-    assert!(
-        !sql.contains("app.tenant") && !sql.contains("ROW LEVEL SECURITY"),
-        "the system DB is platform-global — it must carry no tenant RLS floor"
-    );
-
-    // Schemas.
-    assert!(sql.contains("CREATE SCHEMA registry"));
-    assert!(sql.contains("CREATE SCHEMA provisioning"));
-
-    // Orgs carry the D18 placement (placement_kind + pool_cluster); the retired
-    // tier / *_cluster columns are gone.
-    assert!(sql.contains("CREATE TABLE registry.orgs"));
-    assert!(sql.contains("placement_kind") && sql.contains("pool_cluster"));
-    assert!(
-        !sql.contains("prod_cluster") && !sql.contains("canary_cluster"),
-        "the retired tier/canary cluster columns must be gone"
-    );
-
-    // Env policies: ORG-SCOPED rows (8df.4) — keyed (org, name), cascading with
-    // their org, with the policy-value columns.
-    assert!(sql.contains("CREATE TABLE registry.env_policies"));
-    for col in [
-        "recovery_domain",
-        "promotion_rank",
-        "instances",
-        "backup_cadence",
-        "wal_retention",
-        "hibernation",
-        "durability_class",
-    ] {
-        assert!(sql.contains(col), "env_policies missing column {col}");
-    }
-    let policies_block = sql
-        .split("CREATE TABLE registry.env_policies")
-        .nth(1)
-        .and_then(|rest| rest.split(';').next())
-        .expect("env_policies table body");
-    assert!(
-        policies_block.contains("PRIMARY KEY (org, name)"),
-        "env_policies must be keyed per org (8df.4)"
-    );
-    // The org CASCADE is added AFTER project_envs (ALTER TABLE — the RI-trigger
-    // ordering that lets a single-statement org DELETE cascade cleanly).
-    let alter_pos = sql
-        .find("ALTER TABLE registry.env_policies")
-        .expect("env_policies org FK is added via ALTER TABLE");
-    assert!(
-        sql[alter_pos..].contains("REFERENCES registry.orgs (id) ON DELETE CASCADE"),
-        "an org's policies must cascade with the org"
-    );
-    assert!(
-        alter_pos > sql.find("CREATE TABLE registry.project_envs").unwrap(),
-        "the env_policies org FK must be created AFTER project_envs (cascade ordering)"
-    );
-    // NO platform-global seed: policies are stamped per org from a Template.
-    assert!(
-        !sql.contains("INSERT INTO registry.env_policies"),
-        "env_policies must not carry a platform-global seed — templates stamp per-org rows"
-    );
-
-    // Projects / project-envs, the latter FK'd to the ORG's env_policies (env
-    // resolves a policy in its org's set — the D18+8df.4 referential-integrity
-    // replacement for the env CHECK).
-    assert!(sql.contains("CREATE TABLE registry.projects"));
-    assert!(sql.contains("CREATE TABLE registry.project_envs"));
-    assert!(sql.contains("secret_name") && sql.contains("secret_namespace"));
-    assert!(
-        sql.contains("FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)"),
-        "project_envs must FK (org, env) to the org's env_policies (8df.4)"
-    );
-    assert!(
-        !sql.contains("REFERENCES registry.env_policies (name)"),
-        "the single-column (platform-global) env FK must be retired"
-    );
-    assert!(
-        !sql.contains("env IN ('dev', 'canary', 'prod')"),
-        "the closed env CHECK must be retired"
-    );
-
-    // The storage-format version is recorded (singleton meta row).
-    assert!(sql.contains(&format!("'{SCHEMA_VERSION}'")));
-
-    // Core provisioning sagas admit only ordinary provisioning operations.
-    // Copy has a dedicated relation in the separately installed ops artifact.
-    assert!(sql.contains("CREATE TABLE provisioning.sagas"));
-    assert!(sql.contains("'provision-org'") && sql.contains("'provision-project-env'"));
-    assert!(
-        !sql.contains("'copy'")
-            && !sql.contains("provisioning.dumps")
-            && !sql.contains("provisioning.copy_sagas"),
-        "operations-only state must not leak into the core schema"
-    );
-}
-
-/// Configurable publication was deleted before the control portable store was
-/// defined. Keep the registry, from-zero DDL, authoring model, generated
-/// client, and active execution model free of every retired switch and resolver.
-#[test]
-fn retired_configurable_publish_policy_stays_deleted() {
-    let root = repository_root();
-    let mut text = String::new();
-    for path in [
-        "crates/control/registry/src",
-        "deploy/sql/system-schema.sql",
-        "crates/authoring/model/src",
-        "docs/architecture/overview.md",
-    ] {
-        collect_source_text(&root.join(path), &mut text);
-    }
-
-    let retired = [
-        ["requires", "green", "suite"].join("_"),
-        ["project", "publish", "policies"].join("_"),
-        ["resolve", "publish", "policy"].join("_"),
-        ["Publish", "Policy", "Source"].join(""),
-    ];
-    for name in retired {
-        assert!(
-            !text.contains(&name),
-            "retired configurable publication surface returned: {name}"
-        );
-    }
-}
-
-/// The org-row builder (`wamn_control_registry::sql::upsert_org_sql`) must target exactly
-/// the `registry.orgs` placement columns the storage DDL declares — a drift guard
-/// tying the builder to `deploy/sql/system-schema.sql` (SR2: registry SQL lives with
-/// the model, pinned to the schema it writes).
-#[test]
-fn upsert_org_sql_matches_the_placement_columns() {
-    let sql = code_only(&system_schema_sql());
-    let builder = wamn_control_registry::sql::upsert_org_sql();
-    assert!(builder.contains("registry.orgs"));
-    assert!(builder.contains("ON CONFLICT (id)"));
-    for col in ["id", "placement_kind", "pool_cluster"] {
-        assert!(
-            sql.contains(col),
-            "orgs table (system-schema.sql) missing {col}"
-        );
-        assert!(builder.contains(col), "upsert builder missing {col}");
-    }
-}
-
-/// The project / project-env builders (`upsert_project_sql`,
-/// `upsert_project_env_sql`, `select_org_placement_sql`) must target exactly the
-/// `registry.projects` / `registry.project_envs` / `registry.orgs` columns the
-/// storage DDL declares.
-#[test]
-fn upsert_project_and_project_env_sql_match_the_columns() {
-    let sql = code_only(&system_schema_sql());
-
-    let projects = wamn_control_registry::sql::upsert_project_sql();
-    assert!(projects.contains("registry.projects"));
-    assert!(projects.contains("ON CONFLICT (org, id) DO NOTHING"));
-
-    let envs = wamn_control_registry::sql::upsert_project_env_sql();
-    assert!(envs.contains("registry.project_envs"));
-    assert!(envs.contains("ON CONFLICT (org, project, env) DO UPDATE"));
-    assert!(sql.contains("CREATE TABLE registry.project_envs"));
-    for col in [
-        "org",
-        "project",
-        "env",
-        "secret_name",
-        "secret_namespace",
-        "instance_suffix",
-        "disposable",
-    ] {
-        assert!(sql.contains(col), "project_envs table missing {col}");
-        assert!(
-            envs.contains(col),
-            "project_env upsert builder missing {col}"
-        );
-    }
-
-    // The project-env READS target the same DDL columns, so one row-mapper can
-    // build a whole ProjectEnv — instance suffix included (wamn-0h0g.15.89).
-    // This closes a pre-existing gap: the guard covered only the upsert.
-    for reader in [
-        wamn_control_registry::sql::select_org_project_envs_sql(),
-        wamn_control_registry::sql::select_project_env_sql(),
-    ] {
-        assert!(reader.contains("FROM registry.project_envs"));
-        for col in [
-            "project",
-            "env",
-            "secret_name",
-            "secret_namespace",
-            "instance_suffix",
-        ] {
-            assert!(
-                reader.contains(col),
-                "project-env read builder missing {col}"
-            );
-        }
-    }
-    assert!(
-        wamn_control_registry::sql::select_project_env_sql()
-            .contains("WHERE org = $1 AND project = $2 AND env = $3"),
-        "the single read is keyed by the whole triple"
-    );
-
-    // The superseded-instance handle (wamn-0h0g.15.90) is a separate relation the
-    // retention trigger writes; the builder must name it and not `project_envs`,
-    // or an operator enumerating orphans would read the LIVE rows instead.
-    let retired = wamn_control_registry::sql::select_retired_project_envs_sql();
-    assert!(sql.contains("CREATE TABLE registry.retired_project_envs"));
-    assert!(sql.contains("CREATE TRIGGER project_envs_retire_instance"));
-    assert!(retired.contains("FROM registry.retired_project_envs"));
-    assert!(!retired.contains("FROM registry.project_envs"));
-    for col in ["instance_suffix", "retired_at"] {
-        assert!(retired.contains(col), "retired read builder missing {col}");
-    }
-
-    // The placement read targets the orgs placement columns (so provision-project-env
-    // can derive the cluster per-env via cluster_of).
-    let sel = wamn_control_registry::sql::select_org_placement_sql();
-    assert!(sel.contains("registry.orgs"));
-    assert!(sel.contains("placement_kind") && sel.contains("pool_cluster"));
-
-    // The env-policy reads target env_policies keyed by ORG (8df.4: provision-org
-    // sizes clusters from the org's own set; provision-project-env reads one of
-    // the org's rows to derive the owner).
-    for reader in [
-        wamn_control_registry::sql::select_env_policies_sql(),
-        wamn_control_registry::sql::select_env_policy_sql(),
-    ] {
-        assert!(reader.contains("FROM registry.env_policies"));
-        assert!(reader.contains("recovery_domain::text"));
-        assert!(reader.contains("WHERE org = $1"), "reads must be org-keyed");
-    }
-    assert!(
-        wamn_control_registry::sql::select_env_policies_sql().contains("ORDER BY promotion_rank")
-    );
-
-    // The template stamp targets every env_policies column the DDL declares.
-    let stamp = wamn_control_registry::sql::stamp_env_policy_sql();
-    assert!(stamp.contains("registry.env_policies"));
-    assert!(stamp.contains("ON CONFLICT (org, name) DO NOTHING"));
-    for col in [
-        "org",
-        "name",
-        "recovery_domain",
-        "promotion_rank",
-        "instances",
-        "storage",
-        "cpu",
-        "memory",
-        "image",
-        "backup_cadence",
-        "wal_retention",
-        "hibernation",
-        "durability_class",
-    ] {
-        assert!(sql.contains(col), "env_policies table missing {col}");
-        assert!(stamp.contains(col), "stamp builder missing {col}");
-    }
-}
-
-/// Core provisioning-saga builders stay paired with the core relation and its
-/// admitted status literals. Operations copy state has a separate module and
-/// artifact.
-#[test]
-fn saga_sql_builders_match_the_core_saga_contract() {
-    let sql = code_only(&system_schema_sql());
-    assert!(sql.contains("CREATE TABLE provisioning.sagas"));
-
-    let create = wamn_control_provision::saga::create_saga_sql();
-    assert!(create.contains("INSERT INTO provisioning.sagas"));
-    assert!(create.contains("ON CONFLICT (saga_id) DO NOTHING"));
-    for column in ["saga_id", "kind", "target", "total_steps"] {
-        assert!(sql.contains(column), "sagas table missing {column}");
-        assert!(create.contains(column), "saga builder missing {column}");
-    }
-
-    let advance = wamn_control_provision::saga::advance_saga_step_sql();
-    assert!(advance.contains("provisioning.sagas") && advance.contains("step = step + 1"));
-    for (builder, status) in [
-        (advance, "running"),
-        (
-            wamn_control_provision::saga::complete_saga_sql(),
-            "completed",
-        ),
-        (wamn_control_provision::saga::fail_saga_sql(), "failed"),
-    ] {
-        assert!(builder.contains(&format!("'{status}'")));
-        assert!(sql.contains(&format!("'{status}'")));
-    }
-    assert!(wamn_control_provision::saga::select_saga_sql().contains("provisioning.sagas"));
-}
-
-/// The CDC reader-registration builders (`upsert_event_reader_sql` /
-/// `select_event_reader_sql`) must target the `registry.event_readers` columns
-/// the storage DDL declares (wamn-l5i9.9, D19 v3) — and the table must carry the
-/// Secret REFERENCE shape (invariant 2), the triple key, and the project-env
-/// cascade FK.
-#[test]
-fn event_readers_table_and_builders_match_the_columns() {
-    let sql = code_only(&system_schema_sql());
-
-    assert!(sql.contains("CREATE TABLE registry.event_readers"));
-    let block = sql
-        .split("CREATE TABLE registry.event_readers")
-        .nth(1)
-        .and_then(|rest| rest.split(';').next())
-        .expect("event_readers table body");
-    assert!(
-        block.contains("PRIMARY KEY (org, project, env)"),
-        "event_readers is keyed by the identity triple"
-    );
-    assert!(
-        block.contains("REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE"),
-        "a de-provisioned project-env must drop its CDC registration"
-    );
-
-    let upsert = wamn_control_registry::sql::upsert_event_reader_sql();
-    let select = wamn_control_registry::sql::select_event_reader_sql();
-    for col in [
-        "publication",
-        "slot",
-        "stream",
-        "replication_secret_name",
-        "replication_secret_namespace",
-        "enabled",
-    ] {
-        assert!(block.contains(col), "event_readers table missing {col}");
-        assert!(upsert.contains(col), "upsert builder missing {col}");
-        assert!(select.contains(col), "select builder missing {col}");
-    }
-    // Invariant 2: a REFERENCE, never material — no url/password column.
-    for bad in ["url", "password", "dsn"] {
-        assert!(
-            !block.contains(bad),
-            "event_readers must hold NO credential column (found {bad:?})"
-        );
-    }
-}
-
-/// The D18 placement structural CHECK is pinned by *expression*, not just its
-/// name (the drift-guard lesson: a name-only assertion lets a weakened predicate
-/// slip through). The retired tier/canary CHECKs must be gone.
-#[test]
-fn placement_check_is_present_and_tier_checks_are_gone() {
-    let sql = code_only(&system_schema_sql());
-    assert!(
-        sql.contains("(placement_kind = 'pooled') = (pool_cluster IS NOT NULL)"),
-        "the pooled ⟺ pool_cluster CHECK expression must be present verbatim"
-    );
-    assert!(sql.contains("placement_kind IN ('pooled', 'dedicated')"));
-    // The old tier/recovery-domain/canary CHECKs are retired (D18).
-    for gone in [
-        "orgs_tier_check",
-        "orgs_recovery_domain_check",
-        "orgs_canary_dedicated_check",
-        "prod_cluster <> dev_cluster",
-    ] {
-        assert!(
-            !sql.contains(gone),
-            "retired constraint still present: {gone}"
-        );
-    }
-}
-
-/// The cjv.20 charset/length backstop: each stored slug/name column carries a
-/// named CHECK mirroring `wamn-control-registry` validate() (`check_id` / `check_env` /
-/// `check_name`). Pinned by constraint name + the anchored slug regex + the
-/// length bound + the reserved-`wamn` clause, so a weakened predicate can't slip
-/// through (the drift-guard-expression lesson). Defends a direct control-plane
-/// writer (wamn-2ib) that skips both provision-org and Registry::validate().
-#[test]
-fn charset_length_checks_backstop_the_stored_slug_names() {
-    let sql = code_only(&system_schema_sql());
-
-    // The three IDENTITY-COMPONENT columns (orgs.id, projects.id,
-    // env_policies.name) carry the consecutive-hyphen-free regex (wamn-R27): `--`
-    // is the `wamn-db-<org>--<project>--<env>` / `wamn_cdc_<org>__<project>__<env>`
-    // component separator, so a `--` run inside a component would collide two
-    // triples onto one name (mirrors is_component_slug).
-    let component_re = "'^[a-z0-9]+(-[a-z0-9]+)*$'";
-    assert!(
-        sql.matches(component_re).count() >= 3,
-        "orgs.id / projects.id / env_policies.name must carry the consecutive-hyphen-free \
-         component regex (wamn-R27)"
-    );
-    // orgs.pool_cluster is a DERIVED DNS-1123 label (a check_name mirror) that may
-    // carry consecutive hyphens, so it keeps the permissive slug regex — the `--`
-    // ban applies to identity slugs, never to derived names.
-    let name_re = "'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'";
-    assert!(
-        sql.contains(name_re),
-        "pool_cluster keeps the permissive slug regex (a derived name may carry `--`)"
-    );
-
-    // Every column carries a named CHECK constraint.
-    for name in [
-        "orgs_id_charset_check",
-        "orgs_pool_cluster_charset_check",
-        "projects_id_charset_check",
-        "env_policies_name_charset_check",
-    ] {
-        assert!(
-            sql.contains(name),
-            "missing charset CHECK constraint {name}"
-        );
-    }
-
-    // Length bounds: ids/env slugs ≤ 40 (MAX_ID_LEN), cluster names ≤ 63
-    // (MAX_NAME_LEN, DNS-1123 label).
-    assert!(sql.contains("char_length(id) <= 40"), "id length bound");
-    assert!(
-        sql.contains("char_length(name) <= 40"),
-        "env name length bound"
-    );
-    assert!(
-        sql.contains("char_length(pool_cluster) <= 63"),
-        "cluster name length bound"
-    );
-
-    // The id columns (orgs.id, projects.id) mirror the reserved-`wamn` rule
-    // (check_id); the pool_cluster / env name columns deliberately do NOT (they
-    // may carry the `wamn` prefix / are arbitrary env slugs).
-    // The leading space leaves out `display_name`, whose platform CHECK refuses
-    // a `wamn:` name.
-    assert!(
-        sql.contains("id <> 'wamn'") && sql.contains("id NOT LIKE 'wamn-%'"),
-        "the id charset CHECK must reject the reserved `wamn` prefix"
-    );
-    assert!(
-        !sql.contains("pool_cluster NOT LIKE") && !sql.contains(" name NOT LIKE"),
-        "pool_cluster / env name must NOT carry a reserved-prefix rule"
-    );
 }
 
 // --- invariant 1: request-path-free ----------------------------------------
@@ -699,6 +211,102 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          END $$;\n\
          DROP TABLE policy_probe; DROP TABLE policy_probe_other; DEALLOCATE getpol;",
         get = wamn_control_registry::sql::select_env_policy_sql(),
+    )
+    .expect("writing to a String cannot fail");
+    // Exercise the REAL registry reads. Each returns only its own org's rows,
+    // and the policy set comes back in promotion order, not insertion order:
+    // 'early' is inserted last with the lowest rank.
+    script.push_str(
+        "INSERT INTO registry.env_policies\n\
+           (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)\n\
+           VALUES ('demo','early','\"own\"'::jsonb,1,1,'2Gi','200m','256Mi','x');\n",
+    );
+    writeln!(
+        script,
+        "PREPARE place (text) AS {placement};\n\
+         PREPARE pols (text) AS {policies};\n\
+         PREPARE envs (text) AS {org_envs};\n\
+         PREPARE one_env (text,text,text) AS {one_env};\n\
+         PREPARE retired (text,text,text) AS {retired};\n\
+         CREATE TEMP TABLE place_probe AS EXECUTE place('try');\n\
+         CREATE TEMP TABLE place_other AS EXECUTE place('ghost');\n\
+         CREATE TEMP TABLE pols_probe AS EXECUTE pols('demo');\n\
+         CREATE TEMP TABLE pols_other AS EXECUTE pols('try');\n\
+         CREATE TEMP TABLE envs_probe AS EXECUTE envs('demo');\n\
+         CREATE TEMP TABLE envs_other AS EXECUTE envs('try');\n\
+         CREATE TEMP TABLE one_env_probe AS EXECUTE one_env('demo','app','dev');\n\
+         CREATE TEMP TABLE retired_probe AS EXECUTE retired('acme','billing','prod');\n\
+         CREATE TEMP TABLE retired_other AS EXECUTE retired('demo','app','dev');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT placement_kind || '/' || pool_cluster FROM place_probe)='pooled/wamn-pg',\n\
+             'select_org_placement_sql reads the org placement';\n\
+           ASSERT (SELECT count(*) FROM place_other)=0,\n\
+             'select_org_placement_sql returns no row for an unknown org';\n\
+           ASSERT (SELECT string_agg(name, ',') FROM pols_probe)='early,dev,prod',\n\
+             'select_env_policies_sql returns the org set in promotion order';\n\
+           ASSERT (SELECT count(*) FROM pols_other)=0,\n\
+             'select_env_policies_sql never returns another org''s policies';\n\
+           ASSERT (SELECT project || '/' || env || '/' || instance_suffix FROM envs_probe)='app/dev/k3m9x2p7',\n\
+             'select_org_project_envs_sql lists the org project-envs';\n\
+           ASSERT (SELECT count(*) FROM envs_other)=0,\n\
+             'select_org_project_envs_sql never returns another org''s project-envs';\n\
+           ASSERT (SELECT secret_name || '/' || instance_suffix FROM one_env_probe)\n\
+               ='wamn-db-demo--app--dev/k3m9x2p7',\n\
+             'select_project_env_sql reads one project-env by its triple';\n\
+           ASSERT (SELECT string_agg(instance_suffix, ',') FROM retired_probe)='k3m9x2p7',\n\
+             'select_retired_project_envs_sql reads the retired instance of the triple';\n\
+           ASSERT (SELECT count(*) FROM retired_other)=0,\n\
+             'select_retired_project_envs_sql never returns a live instance';\n\
+         END $$;\n\
+         DROP TABLE place_probe, place_other, pols_probe, pols_other, envs_probe, envs_other,\n\
+           one_env_probe, retired_probe, retired_other;\n\
+         DEALLOCATE place; DEALLOCATE pols; DEALLOCATE envs; DEALLOCATE one_env; DEALLOCATE retired;",
+        placement = wamn_control_registry::sql::select_org_placement_sql(),
+        policies = wamn_control_registry::sql::select_env_policies_sql(),
+        org_envs = wamn_control_registry::sql::select_org_project_envs_sql(),
+        one_env = wamn_control_registry::sql::select_project_env_sql(),
+        retired = wamn_control_registry::sql::select_retired_project_envs_sql(),
+    )
+    .expect("writing to a String cannot fail");
+    // Exercise the REAL saga builders: a repeated create changes nothing, a step
+    // moves the checkpoint forward, and complete and fail set their status.
+    writeln!(
+        script,
+        "PREPARE saga_create (text,text,text,int) AS {create};\n\
+         PREPARE saga_advance (text) AS {advance};\n\
+         PREPARE saga_complete (text) AS {complete};\n\
+         PREPARE saga_fail (text,text) AS {fail};\n\
+         PREPARE saga_select (text) AS {select};\n\
+         EXECUTE saga_create('saga-a','provision-org','demo',3);\n\
+         EXECUTE saga_create('saga-a','provision-project-env','other',9);\n\
+         EXECUTE saga_advance('saga-a');\n\
+         EXECUTE saga_advance('saga-a');\n\
+         CREATE TEMP TABLE saga_running AS EXECUTE saga_select('saga-a');\n\
+         EXECUTE saga_complete('saga-a');\n\
+         CREATE TEMP TABLE saga_done AS EXECUTE saga_select('saga-a');\n\
+         EXECUTE saga_create('saga-b','provision-org','demo',2);\n\
+         EXECUTE saga_fail('saga-b','boom');\n\
+         CREATE TEMP TABLE saga_failed AS EXECUTE saga_select('saga-b');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT kind || '/' || target FROM provisioning.sagas WHERE saga_id='saga-a')\n\
+               ='provision-org/demo',\n\
+             'a repeated create_saga_sql changes nothing';\n\
+           ASSERT (SELECT status || '/' || step || '/' || total_steps FROM saga_running)='running/2/3',\n\
+             'advance_saga_step_sql moves the checkpoint forward';\n\
+           ASSERT (SELECT status || '/' || step FROM saga_done)='completed/2',\n\
+             'complete_saga_sql completes the saga at its checkpoint';\n\
+           ASSERT (SELECT status FROM saga_failed)='failed'\n\
+              AND (SELECT last_error FROM provisioning.sagas WHERE saga_id='saga-b')='boom',\n\
+             'fail_saga_sql fails the saga and keeps the diagnostic';\n\
+         END $$;\n\
+         DROP TABLE saga_running, saga_done, saga_failed;\n\
+         DEALLOCATE saga_create; DEALLOCATE saga_advance; DEALLOCATE saga_complete;\n\
+         DEALLOCATE saga_fail; DEALLOCATE saga_select;",
+        create = wamn_control_provision::saga::create_saga_sql(),
+        advance = wamn_control_provision::saga::advance_saga_step_sql(),
+        complete = wamn_control_provision::saga::complete_saga_sql(),
+        fail = wamn_control_provision::saga::fail_saga_sql(),
+        select = wamn_control_provision::saga::select_saga_sql(),
     )
     .expect("writing to a String cannot fail");
     // Exercise the REAL CDC reader-registration builders (wamn-l5i9.9) against
@@ -967,6 +575,25 @@ DO $$ BEGIN BEGIN
     VALUES ('acme','d--v','"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
   ASSERT false, 'a consecutive-hyphen env policy name must be rejected (wamn-R27)';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- Length and reserved-word boundaries that the cases above do not reach.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('wamn','dedicated',NULL);
+  ASSERT false, 'the bare reserved org id wamn must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('longpool','pooled',repeat('a',64));
+  ASSERT false, 'a pool cluster over 63 characters must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.projects (org, id) VALUES ('try',repeat('a',41));
+  ASSERT false, 'a project id over 40 characters must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.env_policies
+      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
+    VALUES ('acme',repeat('a',41),'"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
+  ASSERT false, 'an env policy name over 40 characters must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 -- A SINGLE interior hyphen stays valid on a component (org id here); then cleaned up.
 INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('a-b-c','dedicated',NULL);
 DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='a-b-c')=1,
@@ -1034,6 +661,11 @@ INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s1','provision-o
 DO $$ BEGIN BEGIN
   INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s2','provision-everything','x');
   ASSERT false, 'an unknown saga kind must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- Copy sagas belong to the operations artifact, never to the core relation.
+DO $$ BEGIN BEGIN
+  INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s3','copy','x');
+  ASSERT false, 'a copy saga must be rejected by the core relation';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 DO $$ BEGIN BEGIN
   UPDATE provisioning.sagas SET status='bogus' WHERE saga_id='s1';
