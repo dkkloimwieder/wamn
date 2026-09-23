@@ -32,7 +32,7 @@ The run-state tests (`run_state_boundary.rs`, `store.rs`, `durability.rs`) belon
 The live tests get a private PostgreSQL 18 server from `wamn_test_postgres::database()`.
 They read no environment variable and do not skip themselves, so each rewritten assertion runs in the ordinary workspace sweep.
 
-Each issue names its tests and counts them in four buckets: deleted, rewritten as behavior, moved to lint, and kept.
+Each issue names its tests and counts them in these buckets: deleted, rewritten as behavior, moved to lint, and kept. Issue 9 also counts its one added lint test.
 Each issue runs the workspace build, clippy, fmt, and the tests of the files it touches.
 Issue 10 runs the full sweep once.
 
@@ -43,7 +43,7 @@ Issue 10 runs the full sweep once.
 The file goes. Deleted 1, rewritten 2.
 
 - `system_schema_has_no_plaintext_identity_credential_column`: deleted. The live digest checks in `pat_live.rs`, `password_live.rs` and `password_login_live.rs` hold the real rule.
-- `system_schema_contains_the_platform_identity_core`: rewritten in `identity_live.rs`. The `identity` schema is owned by `wamn_system`. A second `create_service` with the same subject returns a conflict. A project delete removes its `project_roles` and `project_env_memberships` rows.
+- `system_schema_contains_the_platform_identity_core`: rewritten in `identity_live.rs`. A second `create_service` with the same subject returns a conflict. A project delete removes its `project_roles` and `project_env_memberships` rows. The schema owner is a catalog fact that nothing depends on, so no assertion checks it.
 - `system_schema_stores_personal_access_tokens_as_expirable_digests`: rewritten in `pat_live.rs`. A duplicate token prefix, a malformed prefix or hash, and `expires_at = created_at` each fail with the named SQLSTATE. A principal delete with a live token fails with `foreign_key_violation`.
 
 ### 3.2 `crates/identity/project-state/tests/schema.rs`
@@ -63,7 +63,12 @@ Deleted 6, rewritten 2, moved to lint 1, kept 1. The live test `system_schema_ap
 - `no_data_plane_manifest_references_the_system_cluster`: moved to lint by issue 9, in the `repo-policy` binary of 3.9. Nothing else covers the rule that no data-plane manifest names the system cluster.
 - `upsert_project_and_project_env_sql_match_the_columns`: rewritten. The live test runs `select_org_placement_sql`, `select_env_policies_sql`, `select_retired_project_envs_sql` and `select_org_project_envs_sql`. It asserts the rows, the order, and that no row of another org returns.
 - `saga_sql_builders_match_the_core_saga_contract`: rewritten. The live test runs the `saga` builders: create twice is one row, a step moves forward, and select reads the result.
-- Uncovered rules that get a live probe: core `sagas` refuses kind `copy`. The name boundaries that the live test does not reach: env name and project id over 40, `pool_cluster` over 63, an id of exactly `wamn`.
+- Uncovered CHECK constraints get one insert each inside the existing live test, and no new test. Each insert fails when its constraint is dropped or widened:
+  - core `sagas` refuses kind `copy`
+  - an env name over 40 characters
+  - a project id over 40 characters
+  - a `pool_cluster` over 63 characters
+  - an id of exactly `wamn`
 - Rules left without a check, named in the close reason: the system database has no row security, retired `orgs` columns stay absent, retired source names stay absent, and `SCHEMA_VERSION` appears in the DDL.
 
 ### 3.4 `crates/control/provision/tests/ops_storage.rs`
@@ -94,7 +99,10 @@ Deleted 1. `the_only_pointer_write_carries_both_the_hash_and_the_enabled_flag` g
 ### 3.7 `tests/integration/src/membership_test.rs`
 
 Deleted 1. This is an integration code change, not only a test change.
-`OPERATION_GRANT` is read from the `grant` field of `apps/wamn_receiving/generated/contracts/purchase_order/get.operation.json`.
+No platform test reads a generated file of an application.
+The test drives the deployed Receiving route, so its grant names the Receiving operation.
+The code builds that grant with `canonical_operation_identity` (`crates/schema/generator/src/manifest.rs`), the function the generator uses, from the package identity and `purchase_order.get`.
+`tests/integration` already depends on `wamn-schema-generator`.
 `permission_uses_the_generated_canonical_operation_grant` goes.
 
 ### 3.8 `crates/platform/runtime/tests/production_claim_live.rs`
@@ -109,7 +117,10 @@ Deleted 1. This target waits for Epic 12.
 
 ### 3.9 `tests/conformance`
 
-Deleted 2, rewritten 1, moved to lint 8, plus the manifest lint of 3.3.
+Deleted 2, rewritten 1, moved to lint 8, added 1, plus the manifest lint of 3.3.
+
+The lint binary gets one test in its own crate: the lint fails on a fixture tree with one bad literal and passes on a clean tree.
+This test checks the behavior of the lint. It is not a mutant suite.
 
 The lints stay in Rust as one binary, `repo-policy`, in the conformance package, and `tools/repo-lint` runs it as a leg.
 Issue 9 also moves `no_data_plane_manifest_references_the_system_cluster` of 3.3 into this binary, because issue 9 makes the binary.
