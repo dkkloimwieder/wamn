@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use tokio::time::timeout;
+use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_logging::{Capture, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use wash_runtime::engine::Engine;
@@ -150,7 +151,7 @@ pub(super) async fn run(
     }).await.expect("aborted lease expires without further renewal")?;
     let reclaimed = execution
         .postgres
-        .claim_next_production(
+        .claim_next(
             QUEUE_CLAIM_SCOPE,
             &execution.scope.package_ids,
             &execution.scope.environment,
@@ -170,7 +171,7 @@ pub(super) async fn run(
     }
     let stale = execution
         .postgres
-        .complete_production(
+        .complete(
             QUEUE_CLAIM_SCOPE,
             &run,
             generation,

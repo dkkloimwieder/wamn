@@ -592,18 +592,16 @@ pub(crate) struct OperationCall<'a> {
     pub(crate) caller: Option<AuthenticatedCaller>,
 }
 
-/// The durable intent record of a command. Epic 3 defines it. Until then no
-/// caller has one, and every caller passes `None`.
-pub(crate) trait IntentStore: Send + Sync {}
-
 /// Call one export once, under the call's deadline, and return what the
 /// component returned. The caller lowers the result for its own entry.
 pub(crate) async fn invoke_operation(
     host: &OperationHost,
     call: OperationCall<'_>,
-    #[expect(unused_variables, reason = "Epic 3 writes the intent record here")] intent: Option<
-        &dyn IntentStore,
-    >,
+    #[expect(
+        unused_variables,
+        reason = "route intent logging is a later epic; every caller passes None"
+    )]
+    intent: Option<&dyn wamn_run_state::IntentStore>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
     tokio::time::timeout_at(deadline, async {

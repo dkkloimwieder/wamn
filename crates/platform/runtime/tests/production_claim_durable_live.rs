@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use wamn_run_state::queue::serialize_effect_intent_sql;
-use wamn_run_state::{FailKind, RunStatus};
+use wamn_run_state::{FailKind, RunStatus, RunStore as _};
 use wamn_runtime::plugins::wamn_postgres::{ProductionClaimResult, ProductionReapResult};
 
 mod common;
@@ -106,7 +106,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         let release_package_ids = release_package_ids.clone();
         tokio::spawn(async move {
             plugin
-                .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+                .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
                 .await
         })
     };
@@ -121,7 +121,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     );
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-race".into(),
@@ -158,7 +158,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     expire_effect_run(admin, "effect-callerless").await?;
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-callerless".into(),
@@ -174,7 +174,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     expire_effect_run(admin, "effect-winner").await?;
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-winner".into(),
@@ -199,7 +199,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "effect-pin"

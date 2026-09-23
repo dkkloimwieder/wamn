@@ -11,6 +11,7 @@ use wamn_control::enqueue_run::{EnqueueRun, enqueue};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
+use wamn_run_state::RunStore as _;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_runtime::component_artifact_source::{ComponentArtifactSource, local_component_path};
 use wamn_runtime::engine::build_engine;
@@ -431,12 +432,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     );
     assert!(
         !postgres
-            .record_production_deadline_adjustments(
-                QUEUE_CLAIM_SCOPE,
-                &trapped_run,
-                999,
-                &json!([])
-            )
+            .record_deadline_adjustments(QUEUE_CLAIM_SCOPE, &trapped_run, 999, &json!([]))
             .await?
     );
     let row = admin

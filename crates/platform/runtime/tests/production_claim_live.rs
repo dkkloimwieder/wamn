@@ -24,6 +24,7 @@ use std::collections::BTreeSet;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_run_state::{
+    RunStore as _,
     queue::select_production_claim_sql,
     schema_drift::{Need, assert_run_state_stand_in},
 };
@@ -86,7 +87,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let mut fifo = Vec::new();
     for _ in 0..3 {
         let result = plugin
-            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?;
         let ProductionClaimResult::Ready {
             run_id, package_id, ..
@@ -127,14 +128,14 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(locked.get::<_, String>(0), "double-a");
     let skipped = ready_run(
         plugin
-            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
     );
     assert_eq!(skipped, "double-b");
     first_claimer.batch_execute("ROLLBACK").await?;
     let released = ready_run(
         plugin
-            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
     );
     let claimed = BTreeSet::from([skipped, released]);
@@ -191,7 +192,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .get::<_, String>(0),
     )?;
     let pre_effect = plugin
-        .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+        .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await?;
     let (run_id, package_id, payload, lease_generation, wiring_id, wiring_version) =
         match pre_effect {
@@ -285,7 +286,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor".into()
@@ -325,7 +326,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     make_callerless(admin, "janitor-callerless").await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-callerless".into()
@@ -337,7 +338,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let janitor_winner = install_prior_caller_winner(admin, "janitor-winner").await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-winner".into()
@@ -389,7 +390,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ))
         .await?;
     let starved = plugin
-        .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+        .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await
         .expect_err("the probed grant refuses");
     assert_eq!(starved.kind(), ProductionClaimErrorKind::Storage);
@@ -411,7 +412,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "grant-refused".into()
@@ -485,14 +486,14 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Empty,
         "the default class was let into the shelved crash floor by its effect record"
     );
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "standard-effect".into()
@@ -514,7 +515,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
@@ -546,7 +547,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
@@ -558,7 +559,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // rolls back its pre-effect reset and lease update together.
     expire_effect_run(admin, "release-record").await?;
     let mismatched = plugin
-        .claim_next_production(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+        .claim_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await
         .expect_err("a different effective release cannot claim an admitted run");
     assert_eq!(mismatched.kind(), ProductionClaimErrorKind::Contract);
@@ -570,7 +571,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"

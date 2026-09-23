@@ -3,8 +3,9 @@
 //! MVP outcome: crash floor · M0 execution · flow composition.
 //!
 //! This crate owns the transactionally coupled `runs`, `run_queue`, lease,
-//! timer, and terminal lifecycle. It contains only decisions and
-//! parameterized SQL; Postgres, clocks, and
+//! timer, and terminal lifecycle. It contains decisions, parameterized SQL,
+//! and the storage traits: [`RunStore`] for the queued-run lifecycle and
+//! [`IntentStore`] for the per-call intent record. Postgres, clocks, and
 //! database calls remain adapter effects.
 //!
 //! This crate's default graph is **pure**: no DB, no wasm, no clock. The
@@ -37,6 +38,8 @@ pub mod authority_class;
 mod credential_generation;
 /// The durability class a run was admitted under, and the crash-floor gate.
 pub mod durability;
+/// The per-call intent record as a storage trait.
+pub mod intent_store;
 /// RUN-* as plain `fn check(state)` functions, for the pure decision tests to
 /// call after every step.
 pub mod invariants;
@@ -48,6 +51,8 @@ pub mod operator_action;
 pub mod queue;
 /// The JSON payload redaction policy extracted from node I/O capture.
 pub mod redaction;
+/// The queued-run lifecycle as a storage trait.
+pub mod run_store;
 /// Contract-owned helpers for checking repository stand-in schemas.
 #[cfg(feature = "test-util")]
 pub mod schema_drift;
@@ -63,6 +68,8 @@ pub mod transitions;
 pub use authority_class::AuthorityClass;
 pub use credential_generation::CredentialGeneration;
 pub use durability::{DURABLE_CLASS_SQL_PREDICATE, DurabilityClass};
+pub use intent_store::IntentStore;
+pub use run_store::RunStore;
 pub use status::{
     EffectUncertainFailure, FailKind, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,
     RunStatus,

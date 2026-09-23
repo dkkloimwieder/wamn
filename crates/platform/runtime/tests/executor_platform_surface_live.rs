@@ -32,6 +32,7 @@ use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
+use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, CANDIDATE_WIRING_SQL, ClassCredentials,
     CredentialConnectionKind, CredentialProbeErrorKind, CredentialProbePredicate,
@@ -741,9 +742,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     assert_eq!(
-        plugin
-            .renew_production_lease(COMPONENT, "absent", 1, 30_000)
-            .await?,
+        plugin.renew(COMPONENT, "absent", 1, 30_000).await?,
         ProductionLeaseRenewal::FenceLost
     );
     let snapshot = "SELECT jsonb_build_array(to_jsonb(r), to_jsonb(q)) \
@@ -762,19 +761,19 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let completion = ProductionCompletion::completed(serde_json::json!({"done": true}), None);
     for result in [
         plugin
-            .claim_next_production(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await
             .map(|_| ()),
         plugin
-            .reap_one_exhausted_production(COMPONENT, &packages, ENVIRONMENT, 0)
+            .reap_uncertain(COMPONENT, &packages, ENVIRONMENT, 0)
             .await
             .map(|_| ()),
         plugin
-            .renew_production_lease(COMPONENT, "run-1", 1, 30_000)
+            .renew(COMPONENT, "run-1", 1, 30_000)
             .await
             .map(|_| ()),
         plugin
-            .complete_production(COMPONENT, "run-1", 1, &completion)
+            .complete(COMPONENT, "run-1", 1, &completion)
             .await
             .map(|_| ()),
     ] {
@@ -801,7 +800,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, &packages, ENVIRONMENT, 0)
+            .reap_uncertain(COMPONENT, &packages, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Empty
     );
@@ -810,7 +809,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         lease_generation,
         ..
     } = plugin
-        .claim_next_production(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
         .await?
     else {
         anyhow::bail!("the restored executor must claim its unchanged run");
@@ -819,13 +818,13 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     assert_eq!(lease_generation, 1);
     assert_eq!(
         plugin
-            .renew_production_lease(COMPONENT, &run_id, lease_generation, 30_000)
+            .renew(COMPONENT, &run_id, lease_generation, 30_000)
             .await?,
         ProductionLeaseRenewal::Renewed
     );
     assert_eq!(
         plugin
-            .complete_production(COMPONENT, &run_id, lease_generation, &completion)
+            .complete(COMPONENT, &run_id, lease_generation, &completion)
             .await?,
         ProductionCompletionResult::Terminalized
     );

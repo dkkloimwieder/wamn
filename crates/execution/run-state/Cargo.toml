@@ -31,6 +31,8 @@ wamn-pg-core = { workspace = true }
 # store facts, not published package contracts.
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+# The storage traits are taken as trait objects. A macro crate: no runtime.
+async-trait = { workspace = true }
 hex = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 

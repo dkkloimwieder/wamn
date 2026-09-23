@@ -1,6 +1,5 @@
 //! Host-only composition of one production queue claim transaction.
 
-use std::fmt::{Display, Formatter};
 use std::time::SystemTime;
 
 use deadpool_postgres::Object;
@@ -15,6 +14,11 @@ use wamn_run_state::queue::{
     serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
     terminalize_exhausted_production_sql,
 };
+use wamn_run_state::run_store::RunStore;
+pub use wamn_run_state::run_store::{
+    ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorKind, ProductionCompletion,
+    ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
+};
 use wamn_run_state::transitions::{
     CallerReleaseResult, TerminalizeResult, release_caller_sql, terminalize_sql,
 };
@@ -23,63 +27,6 @@ use wamn_run_state::{
 };
 
 use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
-
-/// Stable category for a production-claim failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProductionClaimErrorKind {
-    /// Required host identity or database role authority was absent.
-    Identity,
-    /// The admitted run has no complete, valid frozen wiring identity.
-    WiringIdentity,
-    /// PostgreSQL checkout, transaction, query, or commit failed.
-    Storage,
-    /// Stored data or a typed database result violated the claim contract.
-    Contract,
-}
-
-/// Contextual failure from the host-only production claim boundary.
-#[derive(Debug)]
-pub struct ProductionClaimError {
-    kind: ProductionClaimErrorKind,
-    operation: &'static str,
-    detail: String,
-}
-
-impl ProductionClaimError {
-    fn new(
-        kind: ProductionClaimErrorKind,
-        operation: &'static str,
-        detail: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind,
-            operation,
-            detail: detail.into(),
-        }
-    }
-
-    /// Return the stable failure category.
-    pub fn kind(&self) -> ProductionClaimErrorKind {
-        self.kind
-    }
-
-    /// Return the operation that failed.
-    pub fn operation(&self) -> &'static str {
-        self.operation
-    }
-}
-
-impl Display for ProductionClaimError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "production claim {} failed: {}",
-            self.operation, self.detail
-        )
-    }
-}
-
-impl std::error::Error for ProductionClaimError {}
 
 /// Result of one host-only production queue turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,99 +60,6 @@ pub struct ProductionCandidate {
     pub effective_release_id: i32,
     pub wiring_hash: String,
     pub binding_world: CandidateBindingWorld,
-}
-
-/// Caller result stored before a queue run becomes terminal.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProductionCallerOutcome {
-    kind: &'static str,
-    body: serde_json::Value,
-    http_status: u16,
-    release_node_id: Option<String>,
-}
-
-impl ProductionCallerOutcome {
-    /// A router `respond` verdict and its exact wiring node coordinate.
-    pub fn responded(
-        body: serde_json::Value,
-        http_status: u16,
-        release_node_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind: "responded",
-            body,
-            http_status,
-            release_node_id: Some(release_node_id.into()),
-        }
-    }
-
-    /// A router failure returned to an attached caller.
-    pub fn failed(
-        body: serde_json::Value,
-        http_status: u16,
-        release_node_id: Option<String>,
-    ) -> Self {
-        Self {
-            kind: "failed",
-            body,
-            http_status,
-            release_node_id,
-        }
-    }
-}
-
-/// Storage-shaped terminal fact derived from one router outcome.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProductionCompletion {
-    status: RunStatus,
-    terminal_reason: &'static str,
-    result: serde_json::Value,
-    fail_kind: Option<FailKind>,
-    caller: Option<ProductionCallerOutcome>,
-}
-
-impl ProductionCompletion {
-    /// A completed router walk, optionally carrying a caller response.
-    pub fn completed(result: serde_json::Value, caller: Option<ProductionCallerOutcome>) -> Self {
-        Self {
-            status: RunStatus::Completed,
-            terminal_reason: "router-completed",
-            result,
-            fail_kind: None,
-            caller,
-        }
-    }
-
-    /// A failed router walk and its persisted failure class.
-    pub fn failed(
-        result: serde_json::Value,
-        fail_kind: FailKind,
-        caller: Option<ProductionCallerOutcome>,
-    ) -> Self {
-        Self {
-            status: RunStatus::Failed,
-            terminal_reason: "router-failed",
-            result,
-            fail_kind: Some(fail_kind),
-            caller,
-        }
-    }
-}
-
-/// Result of committing a router outcome under the exact queue fence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProductionCompletionResult {
-    Terminalized,
-    AlreadyTerminal(RunStatus),
-    FenceLost,
-    NotFound,
-}
-
-/// Result of one generation-fenced lease heartbeat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProductionLeaseRenewal {
-    Renewed,
-    FenceLost,
 }
 
 /// Boundary work selected from a terminal router outcome.
@@ -415,19 +269,6 @@ fn router_failure_code(kind: RouterFailureKind) -> &'static str {
     }
 }
 
-/// Result of one host-owned crash-budget janitor turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProductionReapResult {
-    /// No exhausted row was visible to this tenant.
-    Empty,
-    /// Immutable effect evidence owns this row; the ordinary claimant must
-    /// terminalize it as effect-uncertain.
-    EffectAttempt { run_id: String },
-    /// The selected pre-effect row was marked infrastructure-failure and
-    /// dequeued with exact caller compare-and-set semantics.
-    Reaped { run_id: String },
-}
-
 /// The composed outcome of one claim transaction, decided before COMMIT.
 #[derive(Debug)]
 enum ClaimTurn {
@@ -482,7 +323,10 @@ enum ExhaustedExecutionIdentity {
     },
 }
 
-impl WamnPostgres {
+#[async_trait::async_trait]
+impl RunStore for WamnPostgres {
+    type ClaimResult = ProductionClaimResult;
+
     /// Lock, classify, and lease at most one production run.
     ///
     /// Tenant, project, schema, lease owner, and the carried release identity
@@ -495,7 +339,7 @@ impl WamnPostgres {
     /// claim attempt. A component with no injected release identity records no
     /// digest. The caller passes the mounted release's exact package-id set;
     /// selection remains one ordered SQL turn across that whole set.
-    pub async fn claim_next_production(
+    async fn claim_next(
         &self,
         component_id: &str,
         package_ids: &[String],
@@ -606,7 +450,7 @@ impl WamnPostgres {
     /// never from PostgreSQL's non-canonical `jsonb::text` rendering. The
     /// mounted release's exact package-id set is filtered in the same single
     /// global-FIFO turn as ordinary claims.
-    pub async fn reap_one_exhausted_production(
+    async fn reap_uncertain(
         &self,
         component_id: &str,
         package_ids: &[String],
@@ -699,7 +543,7 @@ impl WamnPostgres {
     }
 
     /// Extend one claimed run's lease under its exact generation fence.
-    pub async fn renew_production_lease(
+    async fn renew(
         &self,
         component_id: &str,
         run_id: &str,
@@ -774,7 +618,7 @@ impl WamnPostgres {
     /// Caller release and run terminalization share one transaction. An exact
     /// caller replay is accepted; a different winner refuses without changing
     /// the run. `FenceLost` is terminal for this executor turn.
-    pub async fn complete_production(
+    async fn complete(
         &self,
         component_id: &str,
         run_id: &str,
@@ -846,7 +690,7 @@ impl WamnPostgres {
 
     /// Store deadline changes before settlement, including attempts that need replay.
     /// Returns false when the run no longer belongs to this lease.
-    pub async fn record_production_deadline_adjustments(
+    async fn record_deadline_adjustments(
         &self,
         component_id: &str,
         run_id: &str,
@@ -1019,17 +863,17 @@ async fn complete_in_transaction(
     // terminalization, because both statements run inside this one transaction
     // and the server `now()` they replace was the transaction timestamp.
     let completed_at = SystemTime::now();
-    if let Some(caller) = completion.caller.as_ref() {
-        let body_json = serde_json::to_string(&caller.body).map_err(|error| {
+    if let Some(caller) = completion.caller() {
+        let body_json = serde_json::to_string(caller.body()).map_err(|error| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Contract,
                 "serialize production caller outcome",
                 error.to_string(),
             )
         })?;
-        let hash = wamn_execution_contract::canonical_json_sha256(&caller.body);
-        let http_status = i32::from(caller.http_status);
-        let release_node_id = caller.release_node_id.as_deref();
+        let hash = wamn_execution_contract::canonical_json_sha256(caller.body());
+        let http_status = i32::from(caller.http_status());
+        let release_node_id = caller.release_node_id();
         let sql = release_caller_sql();
         let statement = connection
             .prepare_cached(&sql)
@@ -1043,7 +887,7 @@ async fn complete_in_transaction(
                     &run_id,
                     &runner,
                     &lease_generation,
-                    &caller.kind,
+                    &caller.kind(),
                     &body_json,
                     &http_status,
                     &release_node_id,
@@ -1058,9 +902,9 @@ async fn complete_in_transaction(
             CallerReleaseResult::Released => {}
             CallerReleaseResult::AlreadyReleased(stored)
                 if stored.exactly_matches(
-                    caller.kind,
-                    &caller.body,
-                    Some(caller.http_status),
+                    caller.kind(),
+                    caller.body(),
+                    Some(caller.http_status()),
                     release_node_id,
                     &hash,
                 ) => {}
@@ -1090,14 +934,14 @@ async fn complete_in_transaction(
         }
     }
 
-    let result_json = serde_json::to_string(&completion.result).map_err(|error| {
+    let result_json = serde_json::to_string(completion.result()).map_err(|error| {
         ProductionClaimError::new(
             ProductionClaimErrorKind::Contract,
             "serialize production result",
             error.to_string(),
         )
     })?;
-    let fail_kind = completion.fail_kind.map(FailKind::as_sql);
+    let fail_kind = completion.fail_kind().map(FailKind::as_sql);
     let sql = terminalize_sql();
     let statement = connection
         .prepare_cached(&sql)
@@ -1111,8 +955,8 @@ async fn complete_in_transaction(
                 &run_id,
                 &runner,
                 &lease_generation,
-                &completion.status.as_sql(),
-                &completion.terminal_reason,
+                &completion.status().as_sql(),
+                &completion.terminal_reason(),
                 &result_json,
                 &fail_kind,
                 &completed_at,
@@ -2002,9 +1846,9 @@ mod tests {
         else {
             panic!("candidate response must complete the run");
         };
-        assert_eq!(completion.status, RunStatus::Completed);
-        assert_eq!(completion.result, payload);
-        assert!(completion.caller.is_none());
+        assert_eq!(completion.status(), RunStatus::Completed);
+        assert_eq!(completion.result(), &payload);
+        assert!(completion.caller().is_none());
     }
 
     #[test]
@@ -2038,13 +1882,13 @@ mod tests {
                 panic!("durable response must complete the queue run");
             };
 
-            assert_eq!(completion.status, RunStatus::Completed);
-            assert_eq!(completion.result, payload);
-            let caller = completion.caller.expect("durable caller is released");
-            assert_eq!(caller.kind, "responded");
-            assert_eq!(caller.body, payload);
-            assert_eq!(caller.http_status, 200);
-            assert_eq!(caller.release_node_id.as_deref(), Some("wiring-terminal"));
+            assert_eq!(completion.status(), RunStatus::Completed);
+            assert_eq!(completion.result(), &payload);
+            let caller = completion.caller().expect("durable caller is released");
+            assert_eq!(caller.kind(), "responded");
+            assert_eq!(caller.body(), &payload);
+            assert_eq!(caller.http_status(), 200);
+            assert_eq!(caller.release_node_id(), Some("wiring-terminal"));
         }
     }
 
@@ -2182,13 +2026,13 @@ mod tests {
         else {
             panic!("failed walk must complete the run");
         };
-        assert_eq!(completion.status, RunStatus::Failed);
-        assert_eq!(completion.fail_kind, Some(FailKind::InvalidInput));
-        assert_eq!(completion.result["error"]["code"], "bad-order");
-        assert_eq!(completion.result["error"]["node"], "validate");
-        let caller = completion.caller.expect("attached caller gets failure");
-        assert_eq!(caller.kind, "failed");
-        assert_eq!(caller.release_node_id.as_deref(), Some("validate"));
+        assert_eq!(completion.status(), RunStatus::Failed);
+        assert_eq!(completion.fail_kind(), Some(FailKind::InvalidInput));
+        assert_eq!(completion.result()["error"]["code"], "bad-order");
+        assert_eq!(completion.result()["error"]["node"], "validate");
+        let caller = completion.caller().expect("attached caller gets failure");
+        assert_eq!(caller.kind(), "failed");
+        assert_eq!(caller.release_node_id(), Some("validate"));
     }
 
     #[test]
@@ -2205,9 +2049,9 @@ mod tests {
         else {
             panic!("discard must complete the run");
         };
-        assert_eq!(completion.status, RunStatus::Completed);
-        assert_eq!(completion.fail_kind, None);
-        assert_eq!(completion.caller, None);
+        assert_eq!(completion.status(), RunStatus::Completed);
+        assert_eq!(completion.fail_kind(), None);
+        assert_eq!(completion.caller(), None);
     }
 
     #[test]
@@ -2268,8 +2112,8 @@ mod tests {
         else {
             panic!("candidate emit must not request production publication");
         };
-        assert_eq!(completion.result, event);
-        assert!(completion.caller.is_none());
+        assert_eq!(completion.result(), &event);
+        assert!(completion.caller().is_none());
     }
 
     #[test]

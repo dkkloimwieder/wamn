@@ -9,7 +9,7 @@ use wash_runtime::host::probes::Liveness;
 
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
-use wamn_run_state::FailKind;
+use wamn_run_state::{FailKind, RunStore as _};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
@@ -251,7 +251,7 @@ async fn drain_one(
     liveness: &Liveness,
 ) -> anyhow::Result<bool> {
     match postgres
-        .reap_one_exhausted_production(
+        .reap_uncertain(
             QUEUE_CLAIM_SCOPE,
             &scope.package_ids,
             &scope.environment,
@@ -266,7 +266,7 @@ async fn drain_one(
     }
 
     match postgres
-        .claim_next_production(
+        .claim_next(
             QUEUE_CLAIM_SCOPE,
             &scope.package_ids,
             &scope.environment,
@@ -425,7 +425,7 @@ async fn drive_claim(
             delivery = &mut execute => break delivery,
             _ = heartbeat.tick() => {
                 match postgres
-                    .renew_production_lease(
+                    .renew(
                         QUEUE_CLAIM_SCOPE,
                         run_id,
                         lease_generation,
@@ -451,7 +451,7 @@ async fn drive_claim(
     };
     if !adjustments.is_empty()
         && !postgres
-            .record_production_deadline_adjustments(
+            .record_deadline_adjustments(
                 QUEUE_CLAIM_SCOPE,
                 run_id,
                 lease_generation,
@@ -590,7 +590,7 @@ async fn commit_completion(
     completion: &wamn_runtime::plugins::wamn_postgres::ProductionCompletion,
 ) -> anyhow::Result<()> {
     let result = postgres
-        .complete_production(QUEUE_CLAIM_SCOPE, run_id, lease_generation, completion)
+        .complete(QUEUE_CLAIM_SCOPE, run_id, lease_generation, completion)
         .await?;
     match result {
         ProductionCompletionResult::Terminalized
