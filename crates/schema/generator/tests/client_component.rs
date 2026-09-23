@@ -57,7 +57,7 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     // The columns are the plan's columns, in contract order, with the cell type
     // that the release declared.
     assert!(widget.contains(concat!(
-        "const LIST_COLUMNS: ColumnDef<WidgetListRow, unknown>[] = [\n",
+        "const LIST_COLUMNS: ColumnDef<typeof TABLE_FEATURES, WidgetListRow>[] = [\n",
         "  {\n",
         "    accessorKey: \"attributes\",\n",
         // The fixture authors this column's label, so the header is the
@@ -185,9 +185,34 @@ fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
         );
     }
     assert!(
-        !detail.contains("createSolidTable"),
+        !detail.contains("createTable("),
         "one record needs no table"
     );
+}
+
+/// TanStack Table 9 declares a table's features up front, and a keyset page
+/// has no index and no total for the table to page by.
+#[test]
+fn a_table_declares_its_features_and_leaves_paging_to_the_release() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    assert!(
+        widget.contains(
+            "const TABLE_FEATURES = tableFeatures({ columnVisibilityFeature, rowPaginationFeature });"
+        ),
+        "the module declares one bundle for its tables"
+    );
+    assert!(
+        widget.contains("  const table = createTable({\n    features: TABLE_FEATURES,\n"),
+        "each table is created over that bundle"
+    );
+    assert!(
+        widget.contains("    manualPagination: true,\n  });\n"),
+        "the release pages by cursor, so the table holds every row it read"
+    );
+    for retired in ["createSolidTable", "getCoreRowModel"] {
+        assert!(!widget.contains(retired), "{retired} is the version 8 name");
+    }
 }
 
 #[test]

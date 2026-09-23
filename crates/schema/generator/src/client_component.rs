@@ -266,7 +266,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     .expect("writing to a String cannot fail");
     if table {
         source.push_str(
-            "import {\n  createSolidTable,\n  flexRender,\n  getCoreRowModel,\n  type ColumnDef,\n} from \"@tanstack/solid-table\";\n",
+            "import {\n  columnVisibilityFeature,\n  createTable,\n  flexRender,\n  rowPaginationFeature,\n  tableFeatures,\n  type ColumnDef,\n} from \"@tanstack/solid-table\";\n",
         );
     }
     if form {
@@ -323,6 +323,14 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 .join("\n")
         )
         .expect("writing to a String cannot fail");
+    }
+    // Version 9 declares each table's features up front. A row reads its
+    // cells through the visibility feature, and the pagination feature takes
+    // `manualPagination`, because the release pages by cursor.
+    if table {
+        source.push_str(
+            "\n/** The table features every table of this module declares. */\nconst TABLE_FEATURES = tableFeatures({ columnVisibilityFeature, rowPaginationFeature });\n",
+        );
     }
     // The spellings this module's schemas name. Only the ones it uses are
     // written, so a module carries no rule it does not apply.
@@ -494,7 +502,7 @@ fn emit_table(
     .expect("write");
     writeln!(
         source,
-        "const {}_COLUMNS: ColumnDef<{stem}Row, unknown>[] = [",
+        "const {}_COLUMNS: ColumnDef<typeof TABLE_FEATURES, {stem}Row>[] = [",
         screen.name.to_uppercase()
     )
     .expect("write");
@@ -656,7 +664,7 @@ fn emit_table(
         source.push_str("    setControls((current) => writeMember(current, path, value));\n");
         source.push_str("    restart();\n  };\n");
     }
-    source.push_str("\n  const table = createSolidTable({\n");
+    source.push_str("\n  const table = createTable({\n    features: TABLE_FEATURES,\n");
     source.push_str("    get data() {\n      return page().rows as ");
     writeln!(source, "{stem}Row[];\n    }},").expect("write");
     writeln!(
@@ -665,7 +673,9 @@ fn emit_table(
         screen.name.to_uppercase()
     )
     .expect("write");
-    source.push_str("    getCoreRowModel: getCoreRowModel(),\n  });\n");
+    // A keyset page has no index and no total, so the table never pages the
+    // rows it holds.
+    source.push_str("    manualPagination: true,\n  });\n");
 
     // The markup.
     source.push_str("\n  return (\n    <section>\n      <form\n        onSubmit={(event) => {\n          event.preventDefault();\n          restart();\n        }}\n      >\n");
