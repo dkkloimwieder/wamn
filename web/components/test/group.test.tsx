@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
 
 import { WidgetRecordBatchForm } from "../fixture/components/widget.js";
+import { choose } from "./choose.js";
 
 afterEach(cleanup);
 
@@ -47,6 +48,23 @@ describe("a repeated group", () => {
     await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(true));
   });
 
+  it("reads no line until the maker that narrows the line list is chosen", async () => {
+    const { transport, sent } = stub();
+    render(() => <WidgetRecordBatchForm transport={transport} />);
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+    await waitFor(() =>
+      expect(sent.some((request) => request.operation.includes("widget-maker"))).toBe(true),
+    );
+    const lineReads = () =>
+      sent.filter((request) => !request.operation.includes("widget-maker")).length;
+    // The line list has no input to read until a maker is chosen.
+    expect(lineReads()).toBe(0);
+
+    await choose("Maker", "Northwind");
+    await choose("Line", "priority");
+    expect(lineReads()).toBeGreaterThan(0);
+  });
+
   it("reads the label its line bound declares", () => {
     const { transport } = stub();
     render(() => <WidgetRecordBatchForm transport={transport} />);
@@ -60,12 +78,8 @@ describe("a repeated group", () => {
     // Every other control is filled, so the quantity is the only value left
     // for the schema to refuse. Each one is chosen from its own list, and the
     // maker comes first, because the line list narrows by it.
-    const maker = screen.getByLabelText("Maker") as HTMLSelectElement;
-    await waitFor(() => expect(maker.options.length).toBeGreaterThan(1));
-    fireEvent.change(maker, { target: { value: WIDGET } });
-    const line = screen.getByLabelText("Line") as HTMLSelectElement;
-    await waitFor(() => expect(line.options.length).toBeGreaterThan(1));
-    fireEvent.change(line, { target: { value: WIDGET } });
+    await choose("Maker", "Northwind");
+    await choose("Line", "priority");
     fireEvent.input(screen.getByLabelText("Batch note"), { target: { value: "a note" } });
 
     const quantity = screen.getByLabelText("Quantity received") as HTMLInputElement;

@@ -13,7 +13,7 @@ import { defineConfig } from "vitest/config";
  * from a registry.
  *
  * `web/ui` installs its own libraries, and they import solid-js. Two copies of
- * solid-js break context and reactivity, so those libraries are inlined and
+ * solid-js break context and reactivity, so every dependency is inlined and
  * every import of solid-js and the table package resolves to this package's
  * copy.
  */
@@ -29,10 +29,8 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    server: {
-      deps: {
-        inline: [/@kobalte/, /@corvu/, /solid-sonner/, /lucide-solid/, /@tanstack\/solid-table/],
-      },
-    },
+    // Every dependency goes through the resolver, so the dedupe above reaches
+    // the helper packages of Kobalte and the rest, not only the named ones.
+    server: { deps: { inline: true } },
   },
 });

@@ -16,6 +16,7 @@ import {
   type WidgetCreateFormInitial,
 } from "../fixture/components/widget.js";
 import { WidgetMakerQueryTable } from "../fixture/components/widget_maker.js";
+import { selector } from "./choose.js";
 
 afterEach(cleanup);
 
@@ -52,11 +53,7 @@ describe("a row that opens a form", () => {
     const initial = carried as WidgetCreateFormInitial;
 
     render(() => <WidgetCreateForm transport={transport} initial={initial} />);
-    await waitFor(() => {
-      const chosen = screen
-        .getAllByRole("combobox")
-        .map((control) => (control as HTMLSelectElement).value);
-      expect(chosen).toContain(MAKER);
-    });
+    // The selector shows the row whose key the form started with.
+    await waitFor(() => expect(selector("maker id").value).toBe("Northwind"));
   });
 });
