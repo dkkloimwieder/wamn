@@ -40,8 +40,10 @@ It records no permanent result.
 
 `tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.
 It uses only the root workspace.
-The generated exclusion tests in `apps/Cargo.toml` require a separate command and PostgreSQL diagnostics.
 It adds `-- --ignored --test-threads=1` to the root workspace command, so the tests run one at a time.
+The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.
+The `exclusion_diagnostics` example of `wamn-test-infrastructure` runs the platform fixture test, and the `exclusion_diagnostics` example of `wamn-receiving-tests` runs the Receiving test.
+[Ignored tests](#ignored-tests) gives the commands.
 `--name FILTER` is valid only with `--cluster`.
 The tool passes the filter to Cargo as the test name filter, which selects the tests whose full names contain it.
 The filter matches only tests in the packages that the change set selects.
@@ -205,6 +207,15 @@ Then it runs the ignored test `error::tests::generated_update_exclusion_from_pos
 `WAMN_EXCLUSION_DIAGNOSTICS` supplies the server diagnostics to that test.
 The fixture removes its database, generated copy, diagnostics, and build output when it finishes.
 The application schemas and generated files in the checkout do not change.
+
+Run the generated exclusion test of Receiving through its own PostgreSQL fixture:
+
+```bash
+cargo run --locked --offline -p wamn-receiving-tests --example exclusion_diagnostics
+```
+
+The Receiving fixture does the same steps with the Receiving migration and a test-only exclusion constraint on `purchase_order`.
+Then it runs the ignored test `error::tests::generated_update_exclusion_from_postgres` of `wamn-receiving-data-access`.
 
 ## Capture a run
 
