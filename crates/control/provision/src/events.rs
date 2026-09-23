@@ -75,9 +75,82 @@ pub fn materializer_consumer_config(
     }
 }
 
-/// Compare every field in the declared and observed upstream stream types.
+/// Compare the fields the declaration owns in the declared and observed streams.
+///
+/// The declaration owns every field that decides what enters the stream, how
+/// long it stays, how it is stored and replicated, and how it is read. It owns
+/// these fields also where the builder leaves them at their off default, so a
+/// foreign source or a changed delivery policy still refuses.
+///
+/// The declaration does not own annotations: `metadata` (NATS 2.11 and later
+/// add their own `_nats.*` keys), `description`, `template_owner`, and
+/// `placement`. The destructure names every field, so a new upstream field
+/// needs a decision here before the crate builds.
 pub fn stream_config_matches(expected: &stream::Config, actual: &stream::Config) -> bool {
-    expected == actual
+    let stream::Config {
+        name,
+        max_bytes,
+        max_messages,
+        max_messages_per_subject,
+        discard,
+        discard_new_per_subject,
+        subjects,
+        retention,
+        max_consumers,
+        max_age,
+        max_message_size,
+        storage,
+        num_replicas,
+        no_ack,
+        duplicate_window,
+        template_owner: _,
+        sealed,
+        description: _,
+        allow_rollup,
+        deny_delete,
+        deny_purge,
+        republish,
+        allow_direct,
+        mirror_direct,
+        mirror,
+        sources,
+        metadata: _,
+        subject_transform,
+        compression,
+        consumer_limits,
+        first_sequence,
+        placement: _,
+        persist_mode,
+    } = expected;
+    *name == actual.name
+        && *max_bytes == actual.max_bytes
+        && *max_messages == actual.max_messages
+        && *max_messages_per_subject == actual.max_messages_per_subject
+        && *discard == actual.discard
+        && *discard_new_per_subject == actual.discard_new_per_subject
+        && *subjects == actual.subjects
+        && *retention == actual.retention
+        && *max_consumers == actual.max_consumers
+        && *max_age == actual.max_age
+        && *max_message_size == actual.max_message_size
+        && *storage == actual.storage
+        && *num_replicas == actual.num_replicas
+        && *no_ack == actual.no_ack
+        && *duplicate_window == actual.duplicate_window
+        && *sealed == actual.sealed
+        && *allow_rollup == actual.allow_rollup
+        && *deny_delete == actual.deny_delete
+        && *deny_purge == actual.deny_purge
+        && *republish == actual.republish
+        && *allow_direct == actual.allow_direct
+        && *mirror_direct == actual.mirror_direct
+        && *mirror == actual.mirror
+        && *sources == actual.sources
+        && *subject_transform == actual.subject_transform
+        && *compression == actual.compression
+        && *consumer_limits == actual.consumer_limits
+        && *first_sequence == actual.first_sequence
+        && *persist_mode == actual.persist_mode
 }
 
 /// Compare every field, including push delivery and additional subject filters.
@@ -89,7 +162,9 @@ pub fn consumer_config_matches(expected: &pull::Config, actual: &consumer::Confi
 mod tests {
     use super::*;
     use async_nats::jetstream::consumer::DeliverPolicy;
-    use async_nats::jetstream::stream::{DiscardPolicy, Republish, Source, SubjectTransform};
+    use async_nats::jetstream::stream::{
+        DiscardPolicy, PersistenceMode, Placement, Republish, Source, SubjectTransform,
+    };
 
     #[test]
     fn event_names_and_subjects_use_the_same_declared_triple() {
@@ -197,6 +272,96 @@ mod tests {
             stream::Config {
                 num_replicas: 1,
                 ..expected.clone()
+            },
+        ];
+        for actual in changed {
+            assert!(!stream_config_matches(&expected, &actual), "{actual:?}");
+        }
+    }
+
+    /// The config a NATS 2.12 server reports adds its own metadata keys.
+    fn server_reported(expected: &stream::Config) -> stream::Config {
+        stream::Config {
+            metadata: [
+                ("_nats.level", "3"),
+                ("_nats.req.level", "0"),
+                ("_nats.ver", "2.12.8"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect(),
+            description: Some("operator note".into()),
+            template_owner: "server".into(),
+            placement: Some(Placement {
+                cluster: Some("c1".into()),
+                tags: Vec::new(),
+            }),
+            ..expected.clone()
+        }
+    }
+
+    #[test]
+    fn stream_comparison_accepts_server_annotations() {
+        let scope = Triple::new("acme", "widgets", "dev");
+        for expected in [
+            source_stream_config(&scope, 3, Duration::from_secs(120)),
+            advisory_stream_config(&scope, 3),
+        ] {
+            assert!(stream_config_matches(
+                &expected,
+                &server_reported(&expected)
+            ));
+        }
+    }
+
+    #[test]
+    fn stream_comparison_refuses_a_changed_owned_field_beside_annotations() {
+        let expected = advisory_stream_config(&Triple::new("acme", "widgets", "dev"), 3);
+        let reported = server_reported(&expected);
+        let changed = [
+            stream::Config {
+                name: "foreign".into(),
+                ..reported.clone()
+            },
+            stream::Config {
+                num_replicas: 1,
+                ..reported.clone()
+            },
+            stream::Config {
+                storage: StorageType::Memory,
+                ..reported.clone()
+            },
+            stream::Config {
+                max_age: Duration::ZERO,
+                ..reported.clone()
+            },
+            stream::Config {
+                max_consumers: 1,
+                ..reported.clone()
+            },
+            stream::Config {
+                max_bytes: 1,
+                ..reported.clone()
+            },
+            stream::Config {
+                max_message_size: 1,
+                ..reported.clone()
+            },
+            stream::Config {
+                max_messages_per_subject: -1,
+                ..reported.clone()
+            },
+            stream::Config {
+                compression: Some(Compression::S2),
+                ..reported.clone()
+            },
+            stream::Config {
+                deny_purge: true,
+                ..reported.clone()
+            },
+            stream::Config {
+                persist_mode: Some(PersistenceMode::Async),
+                ..reported.clone()
             },
         ];
         for actual in changed {
