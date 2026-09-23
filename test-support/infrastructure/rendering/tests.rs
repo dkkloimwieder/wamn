@@ -31,8 +31,155 @@ fn host_image_digest_survives_chart_values() {
 }
 
 const BASE: &str = include_str!("../../../deploy/platform/values-host-default.yaml");
-const RECEIVING: &str = include_str!("../../../deploy/platform/values-host-receiving-pat.yaml");
-const WMS: &str = include_str!("../../../deploy/platform/values-host-wms-pat.yaml");
+const ORG: &str = "example";
+/// The project of the fixture application.
+const FIXTURE: &str = "fixture";
+/// The project of the fixture overlay, which also mounts object-store credentials.
+const OVERLAY: &str = "fixture-overlay";
+/// The one schema the fixture and its overlay live in.
+const SCHEMA: &str = "inventory";
+
+/// One application's host values overlay, in the layout of the deployed files.
+///
+/// The overlay project mounts object-store credentials and the fixture does not.
+fn host_template(project: &str) -> String {
+    let (credentials_volume, credentials_mount) = if project == OVERLAY {
+        (CREDENTIALS_VOLUME, CREDENTIALS_MOUNT)
+    } else {
+        ("", "")
+    };
+    HOST_TEMPLATE
+        .replace("__CREDENTIALS_VOLUME__\n", credentials_volume)
+        .replace("__CREDENTIALS_MOUNT__\n", credentials_mount)
+        .replace("__ORG__", ORG)
+        .replace("__PROJECT__", project)
+        .replace("__SCHEMA__", SCHEMA)
+}
+
+const CREDENTIALS_VOLUME: &str = r"        - name: connection-credentials
+          secret:
+            secretName: wamn-object-store-credentials-__ORG__--__PROJECT__--dev
+            optional: false
+            items:
+              - key: credentials.json
+                path: credentials.json
+";
+
+const CREDENTIALS_MOUNT: &str = r"        - name: connection-credentials
+          mountPath: /etc/wamn/credentials
+          readOnly: true
+";
+
+const HOST_TEMPLATE: &str = r#"runtime:
+  hostGroups:
+    - name: default
+      namespace: wamn-system
+      replicas: 3
+      service:
+        type: ClusterIP
+      http:
+        enabled: true
+        port: 80
+      env:
+        - name: WAMN_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-host-db
+              key: url
+        - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
+        - { name: WAMN_WASMTIME_CACHE_DIR, value: /tmp/wamn-wasmtime-cache }
+        - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
+        - name: WAMN_COMPONENT_ARTIFACT_BASE
+          value: registry.wamn-system.svc.cluster.local:5000/wamn/components
+        - name: WAMN_EVT_NATS_URL
+          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+        - name: WAMN_EVT_NATS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-nats
+              key: username
+              optional: false
+        - { name: WAMN_EVT_NATS_PASSWORD_FILE, value: /etc/wamn/event-nats/password }
+        - { name: WAMN_MAT_NATS_BINDING_FILE, value: /etc/wamn/materializer-nats/binding.json }
+        - { name: WAMN_EVT_ORG, value: __ORG__ }
+        - { name: WAMN_EVT_PROJECT, value: __PROJECT__ }
+        - { name: WAMN_EVT_ENV, value: dev }
+        - { name: WAMN_EVT_STREAM_REPLICAS, value: "3" }
+        - { name: WAMN_EVT_DUP_WINDOW_SECS, value: "120" }
+        - { name: WAMN_ORG, value: __ORG__ }
+        - { name: WAMN_PROJECT, value: __PROJECT__ }
+        - { name: WAMN_SCHEMA, value: __SCHEMA__ }
+        - name: WAMN_SYSTEM_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-identity-reader-__ORG__--__PROJECT__--dev
+              key: url
+              optional: false
+        - name: WAMN_EXECUTOR_PLATFORM_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-executor-platform-__ORG__--__PROJECT__--dev
+              key: url
+              optional: false
+        - name: WAMN_HTTP_ADMITTER_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-http-admitter-__ORG__--__PROJECT__--dev
+              key: url
+              optional: false
+        - name: WAMN_EVENT_MATERIALIZER_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-materializer-__ORG__--__PROJECT__--dev
+              key: url
+              optional: false
+      volumes:
+        - name: event-nats
+          secret:
+            secretName: wamn-event-nats
+            optional: false
+            items:
+              - key: password
+                path: password
+        - name: materializer-nats
+          secret:
+            secretName: wamn-materializer-nats
+            optional: false
+            items:
+              - key: binding.json
+                path: binding.json
+        - name: registry-pull
+          secret:
+            secretName: wamn-registry-pull
+            optional: false
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+__CREDENTIALS_VOLUME__
+      volumeMounts:
+        - name: event-nats
+          mountPath: /etc/wamn/event-nats
+          readOnly: true
+        - name: materializer-nats
+          mountPath: /etc/wamn/materializer-nats
+          readOnly: true
+        - name: registry-pull
+          mountPath: /etc/wamn/registry
+          readOnly: true
+__CREDENTIALS_MOUNT__
+      ociCaPaths:
+        - "/runtime-cert/ca.crt"
+      extraArgs:
+        - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
+        - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "2"
+        limits:
+          memory: "4Gi"
+          cpu: "6"
+"#;
 const HTTP: &str = include_str!("../../../deploy/platform/http-route-workload.example.yaml");
 const MATERIALIZER: &str = include_str!("../../../deploy/platform/materializer.example.yaml");
 const KIND: &str = include_str!("../../../deploy/infra/kind-config.yaml");
@@ -83,7 +230,7 @@ fn kubernetes_documents_preserve_objects_and_refuse_command_output() {
 
 fn event(project: &str) -> EventIdentity {
     EventIdentity {
-        org: "acme".into(),
+        org: ORG.into(),
         project: project.into(),
         environment: "dev".into(),
     }
@@ -115,7 +262,7 @@ fn host_input(project: &str) -> HostValuesInput {
             name: format!("test-role-{index}"),
         })
         .collect(),
-        object_store_secret_name: (project == "wms").then(|| "test-object-store".into()),
+        object_store_secret_name: (project == OVERLAY).then(|| "test-object-store".into()),
     }
 }
 
@@ -130,12 +277,13 @@ fn value<'a>(env: &'a [EnvVar], name: &str) -> &'a str {
 
 #[test]
 fn host_values_keep_both_applications_separate_and_preserve_credentials() {
-    for (project, template) in [("receiving", RECEIVING), ("wms", WMS)] {
+    for project in [FIXTURE, OVERLAY] {
+        let template = host_template(project);
         let input = host_input(project);
-        let output = render_host_values(BASE, template, &input).unwrap();
+        let output = render_host_values(BASE, &template, &input).unwrap();
         let base: HostValues = serde_yaml::from_str(&output.base).unwrap();
         let overlay: HostValues = serde_yaml::from_str(&output.overlay).unwrap();
-        let original: HostValues = serde_yaml::from_str(template).unwrap();
+        let original: HostValues = serde_yaml::from_str(&template).unwrap();
         assert_eq!(base.runtime.image.as_ref().unwrap().tag, input.host_tag);
         assert_eq!(base.runtime.host_groups[0].namespace, input.namespace);
         assert_eq!(base.runtime.host_groups[0].replicas, 3);
@@ -152,7 +300,7 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
             ("WAMN_EVT_NATS_URL", input.nats_url.as_str()),
             ("WAMN_EVT_STREAM_REPLICAS", "1"),
             ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-            ("WAMN_EVT_ORG", "acme"),
+            ("WAMN_EVT_ORG", ORG),
             ("WAMN_EVT_PROJECT", project),
             ("WAMN_EVT_ENV", "dev"),
             ("WAMN_PROJECT", project),
@@ -249,11 +397,11 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
 
 #[test]
 fn startup_host_values_change_only_replica_counts() {
-    let normal_input = host_input("receiving");
-    let normal = render_host_values(BASE, RECEIVING, &normal_input).unwrap();
+    let normal_input = host_input(FIXTURE);
+    let normal = render_host_values(BASE, &host_template(FIXTURE), &normal_input).unwrap();
     let mut startup_input = normal_input.clone();
     startup_input.replicas = 0;
-    let startup = render_host_values(BASE, RECEIVING, &startup_input).unwrap();
+    let startup = render_host_values(BASE, &host_template(FIXTURE), &startup_input).unwrap();
     for (normal, startup) in [
         (normal.base, startup.base),
         (normal.overlay, startup.overlay),
@@ -271,8 +419,8 @@ fn startup_host_values_change_only_replica_counts() {
 
 #[test]
 fn host_values_refuse_missing_and_duplicate_owned_fields() {
-    let input = host_input("receiving");
-    let original: HostValues = serde_yaml::from_str(RECEIVING).unwrap();
+    let input = host_input(FIXTURE);
+    let original: HostValues = serde_yaml::from_str(&host_template(FIXTURE)).unwrap();
     for name in [
         "WAMN_PG_URL",
         "WAMN_COMPONENT_ARTIFACT_BASE",
@@ -340,18 +488,18 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
 
 #[test]
 fn host_object_credentials_must_match_the_selected_application() {
-    let mut input = host_input("wms");
+    let mut input = host_input(OVERLAY);
     input.object_store_secret_name = None;
     assert!(
-        render_host_values(BASE, WMS, &input)
+        render_host_values(BASE, &host_template(OVERLAY), &input)
             .unwrap_err()
             .to_string()
             .contains("none were declared")
     );
-    let mut input = host_input("receiving");
+    let mut input = host_input(FIXTURE);
     input.object_store_secret_name = Some("test-object-store".into());
     assert!(
-        render_host_values(BASE, RECEIVING, &input)
+        render_host_values(BASE, &host_template(FIXTURE), &input)
             .unwrap_err()
             .to_string()
             .contains("no declared object-store")
@@ -381,7 +529,7 @@ fn http_documents(yaml: &str) -> Vec<HttpDocument> {
 
 #[test]
 fn http_workload_renders_both_namespaces_all_claims_and_one_route() {
-    for (project, catalog) in [("receiving", "default"), ("wms", "wms-catalog")] {
+    for (project, catalog) in [(FIXTURE, "default"), (OVERLAY, "overlay-catalog")] {
         let input = http_input(project, catalog);
         let rendered = render_http_workload(HTTP, &input).unwrap();
         let original = http_documents(HTTP);
@@ -422,7 +570,7 @@ fn http_workload_renders_both_namespaces_all_claims_and_one_route() {
 
 #[test]
 fn http_workload_refuses_incomplete_claims_unknown_claims_and_duplicate_fields() {
-    let input = http_input("receiving", "default");
+    let input = http_input(FIXTURE, "default");
     for field in [
         "wamn.tenant",
         "wamn.catalog",
@@ -463,7 +611,7 @@ fn http_workload_refuses_incomplete_claims_unknown_claims_and_duplicate_fields()
 
 #[test]
 fn http_workload_requires_the_service_workload_and_http_handler_once() {
-    let input = http_input("receiving", "default");
+    let input = http_input(FIXTURE, "default");
     let original = http_documents(HTTP);
     let only_service = serde_yaml::to_string(&original[0]).unwrap();
     assert!(render_http_workload(&only_service, &input).is_err());
@@ -496,12 +644,12 @@ fn http_workload_requires_the_service_workload_and_http_handler_once() {
 
 fn materializer_input() -> MaterializerInput {
     MaterializerInput {
-        workload: "receiving-materializer".into(),
+        workload: "fixture-materializer".into(),
         namespace: "warehouse-eu-3".into(),
         image: "registry.test.invalid:5000/materializer@sha256:abc123".into(),
-        tenant: "receiving-route-auth".into(),
-        event: event("receiving"),
-        event_stream: "EVT_4_acme_9_receiving_3_dev".into(),
+        tenant: "fixture-route-auth".into(),
+        event: event(FIXTURE),
+        event_stream: "EVT_7_example_7_fixture_3_dev".into(),
         fetch_ms: 500,
         sweep_ms: 500,
     }
@@ -509,7 +657,7 @@ fn materializer_input() -> MaterializerInput {
 
 #[test]
 fn materializer_renders_each_identity_and_preserves_native_binding_and_retry() {
-    let receiving = materializer_input();
+    let first = materializer_input();
     let second = MaterializerInput {
         workload: "hopper-materializer".into(),
         tenant: "quay-9-route-auth".into(),
@@ -521,10 +669,10 @@ fn materializer_renders_each_identity_and_preserves_native_binding_and_retry() {
         event_stream: "EVT_7_zamboni_5_quay9_6_stage7".into(),
         fetch_ms: 131,
         sweep_ms: 137,
-        ..receiving.clone()
+        ..first.clone()
     };
     let original: MaterializerDocument = serde_yaml::from_str(MATERIALIZER).unwrap();
-    for input in [receiving, second] {
+    for input in [first, second] {
         let rendered = render_materializer(MATERIALIZER, &input).unwrap();
         let document: MaterializerDocument = serde_yaml::from_str(&rendered).unwrap();
         assert_eq!(document.metadata.name, input.workload);
@@ -617,7 +765,7 @@ fn materializer_refuses_missing_identity_extra_subscription_fields_and_credentia
 
 #[test]
 fn yaml_serialization_keeps_caller_values_as_single_values() {
-    let mut input = http_input("receiving", "default");
+    let mut input = http_input(FIXTURE, "default");
     input.route_host = "host: quoted\nsecond-line".into();
     input.claims.catalog = "catalog: \"quoted\" # value".into();
     let documents = http_documents(&render_http_workload(HTTP, &input).unwrap());
@@ -730,8 +878,8 @@ fn workload_documents_refuse_missing_required_fields_and_wrong_types() {
     assert!(
         render_host_values(
             &serde_yaml::to_string(&document).unwrap(),
-            RECEIVING,
-            &host_input("receiving")
+            &host_template(FIXTURE),
+            &host_input(FIXTURE)
         )
         .is_err()
     );
@@ -752,7 +900,7 @@ fn http_template_cannot_carry_a_second_route_configuration() {
         .collect::<Vec<_>>()
         .join("---\n");
     assert!(
-        render_http_workload(&changed, &http_input("receiving", "default"))
+        render_http_workload(&changed, &http_input(FIXTURE, "default"))
             .unwrap_err()
             .to_string()
             .contains("already declares route")
@@ -761,40 +909,40 @@ fn http_template_cannot_carry_a_second_route_configuration() {
 
 #[test]
 fn host_identity_accepts_matching_apps_and_refuses_crossed_declarations() {
-    let receiving = HostIdentity {
-        org: "acme".into(),
-        project: "receiving".into(),
-        schema: "receiving".into(),
+    let fixture = HostIdentity {
+        org: ORG.into(),
+        project: FIXTURE.into(),
+        schema: SCHEMA.into(),
     };
-    let wms = HostIdentity {
-        org: "acme".into(),
-        project: "wms".into(),
-        schema: "wms".into(),
+    let overlay = HostIdentity {
+        org: ORG.into(),
+        project: OVERLAY.into(),
+        schema: SCHEMA.into(),
     };
-    assert_rendered_identity(RECEIVING, &receiving).unwrap();
-    assert_rendered_identity(WMS, &wms).unwrap();
+    assert_rendered_identity(&host_template(FIXTURE), &fixture).unwrap();
+    assert_rendered_identity(&host_template(OVERLAY), &overlay).unwrap();
     assert!(
-        assert_rendered_identity(RECEIVING, &wms)
+        assert_rendered_identity(&host_template(FIXTURE), &overlay)
             .unwrap_err()
             .to_string()
-            .contains("claims WAMN_PROJECT=receiving")
+            .contains(&format!("claims WAMN_PROJECT={FIXTURE}"))
     );
     assert!(
-        assert_rendered_identity(WMS, &receiving)
+        assert_rendered_identity(&host_template(OVERLAY), &fixture)
             .unwrap_err()
             .to_string()
-            .contains("claims WAMN_PROJECT=wms")
+            .contains(&format!("claims WAMN_PROJECT={OVERLAY}"))
     );
 }
 
 #[test]
 fn host_identity_reports_each_missing_repeated_or_wrong_claim() {
     let identity = HostIdentity {
-        org: "acme".into(),
-        project: "receiving".into(),
-        schema: "receiving".into(),
+        org: ORG.into(),
+        project: FIXTURE.into(),
+        schema: SCHEMA.into(),
     };
-    let original: HostValues = serde_yaml::from_str(RECEIVING).unwrap();
+    let original: HostValues = serde_yaml::from_str(&host_template(FIXTURE)).unwrap();
     for name in ["WAMN_ORG", "WAMN_PROJECT", "WAMN_SCHEMA"] {
         let mut missing = original.clone();
         missing.runtime.host_groups[0]
@@ -806,7 +954,7 @@ fn host_identity_reports_each_missing_repeated_or_wrong_claim() {
                 .to_string()
                 .contains(&format!("declares no {name}"))
         );
-        for value in ["acme", "globex"] {
+        for value in [ORG, "globex"] {
             let mut repeated = original.clone();
             let mut variable = repeated.runtime.host_groups[0]
                 .env
@@ -839,11 +987,11 @@ fn host_identity_reports_each_missing_repeated_or_wrong_claim() {
 #[test]
 fn host_identity_matches_whole_names_and_accepts_equivalent_yaml_layouts() {
     let identity = HostIdentity {
-        org: "acme".into(),
-        project: "receiving".into(),
-        schema: "receiving".into(),
+        org: ORG.into(),
+        project: FIXTURE.into(),
+        schema: SCHEMA.into(),
     };
-    let mut document: HostValues = serde_yaml::from_str(RECEIVING).unwrap();
+    let mut document: HostValues = serde_yaml::from_str(&host_template(FIXTURE)).unwrap();
     for (name, value) in [("WAMN_ORG_LEGACY", "globex"), ("WAMN_NOTE", "WAMN_ORG")] {
         document.runtime.host_groups[0].env.push(EnvVar {
             name: name.into(),
@@ -854,6 +1002,6 @@ fn host_identity_matches_whole_names_and_accepts_equivalent_yaml_layouts() {
     }
     let block_yaml = serde_yaml::to_string(&document).unwrap();
     assert_rendered_identity(&block_yaml, &identity).unwrap();
-    assert_rendered_identity(RECEIVING, &identity).unwrap();
+    assert_rendered_identity(&host_template(FIXTURE), &identity).unwrap();
     assert!(assert_rendered_identity("not YAML: [", &identity).is_err());
 }

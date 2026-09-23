@@ -4,7 +4,6 @@
 //! test process.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 
@@ -32,14 +31,6 @@ const AUTHOR_SQL_ROLES: [&str; 2] = ["wamn_app", "wamn_control_author"];
 struct PortableFingerprint {
     columns: Vec<String>,
     constraints: Vec<String>,
-}
-
-fn repository() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("ctl crate is under services/ctl")
-        .to_path_buf()
 }
 
 async fn connect(url: &str) -> Client {
@@ -146,7 +137,7 @@ async fn install_control_database(client: &Client) {
     }
 }
 
-async fn install_project_database(client: &Client, url: &str, repository: &Path) {
+async fn install_project_database(client: &Client, url: &str) {
     // Package DDL runs as the production database owner, not the administrator.
     client
         .batch_execute(sql::ensure_db_owner_role_sql())
@@ -212,12 +203,12 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
     );
 
     apply_package::apply_package(ApplyPackageRequest {
-        package: repository.join("apps/wamn_receiving"),
+        package: wamn_fixture_package::package_root(),
         database_url: url.to_string(),
         tenant: "protected-relation-audit".to_string(),
     })
     .await
-    .expect("apply the package-owned Receiving migration stream");
+    .expect("apply the package-owned fixture migration stream");
 
     // The management surface revokes and regrants across `catalog` as well as
     // the run schema, so it must follow the catalog install, not precede it.
@@ -493,7 +484,6 @@ async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
 #[tokio::test]
 async fn protected_relations_match_reconciled_postgres() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let repository = repository();
     let client = connect(&url).await;
     let version: String = client
         .query_one("SELECT current_setting('server_version_num')", &[])
@@ -520,7 +510,7 @@ async fn protected_relations_match_reconciled_postgres() {
         "control-only portable relations must exist in the control plane: {control_only_fingerprints:?}"
     );
     assert_author_sql_boundaries(&client, true).await;
-    install_project_database(&client, &url, &repository).await;
+    install_project_database(&client, &url).await;
     let project_shared_fingerprints =
         portable_fingerprints(&client, &SHARED_PORTABLE_RELATIONS).await;
     assert_eq!(

@@ -670,18 +670,18 @@ mod tests {
         assert!(text.contains("tenant-id=tenant-a"), "{text}");
         assert!(text.contains("effective-release-id=7"), "{text}");
         assert!(
-            text.contains("package-id=receiving package-version=1.0.0"),
+            text.contains("package-id=platform_fixture package-version=1.0.0"),
             "{text}"
         );
-        assert!(text.contains("token=purchase-order/get"), "{text}");
+        assert!(text.contains("token=widget/get"), "{text}");
         assert!(
             text.contains(r#""package":"inventory","version":"2.0.0""#),
             "{text}"
         );
-        assert!(text.contains("id=purchase-order-http"), "{text}");
-        assert!(text.contains("id=purchase-order-studio"), "{text}");
+        assert!(text.contains("id=widget-get-http"), "{text}");
+        assert!(text.contains("id=widget-get-studio"), "{text}");
         assert!(
-            text.contains(r#""host":"receiving.dev.localhost""#),
+            text.contains(r#""host":"platform-fixture.dev.localhost""#),
             "{text}"
         );
         assert!(text.contains(r#""kind":"http""#), "{text}");
@@ -704,7 +704,7 @@ mod tests {
             RouterTapSourceKind::Attachment,
             None,
             None,
-            json!({"purchase-order-id": "po-7"}),
+            json!({"widget-id": "widget-7"}),
         ));
         publisher.push_tap(tap(
             "tap.tenant-a.project-a.dev.wiring.settled",
@@ -740,7 +740,7 @@ mod tests {
         assert!(text.contains(r#""over-ceiling-bytes":70000"#), "{text}");
         assert!(text.contains(r#""redacted":true"#), "{text}");
         assert!(
-            text.contains(r#""payload":{"purchase-order-id":"po-7"}"#),
+            text.contains(r#""payload":{"widget-id":"widget-7"}"#),
             "{text}"
         );
     }
@@ -790,7 +790,7 @@ mod tests {
 
         publisher.set_runtime_endpoint(test_support::runtime_endpoint(
             "http://127.0.0.1:38080".to_owned(),
-            "receiving.dev.localhost",
+            "platform-fixture.dev.localhost",
             "target-one",
         ));
         let held = rendered_text(
@@ -800,11 +800,13 @@ mod tests {
             24,
         );
         assert!(
-            held.contains("base-url=http://127.0.0.1:38080 route-host=receiving.dev.localhost"),
+            held.contains(
+                "base-url=http://127.0.0.1:38080 route-host=platform-fixture.dev.localhost"
+            ),
             "{held}"
         );
         assert!(
-            held.contains("holding http://127.0.0.1:38080 host=receiving.dev.localhost"),
+            held.contains("holding http://127.0.0.1:38080 host=platform-fixture.dev.localhost"),
             "{held}"
         );
         assert!(held.contains("q tears down and exits"), "{held}");
@@ -816,7 +818,7 @@ mod tests {
         let (publisher, handle) = dev_read_channel();
         publisher.set_runtime_endpoint(test_support::runtime_endpoint(
             "http://127.0.0.1:38080".to_owned(),
-            "receiving.dev.localhost",
+            "platform-fixture.dev.localhost",
             "target-one",
         ));
         let snapshot = handle.snapshot();
@@ -830,7 +832,7 @@ mod tests {
         assert!(rows[0].starts_with("wamn dev |"), "{two_rows}");
         assert_eq!(
             rows[1],
-            "holding http://127.0.0.1:38080 host=receiving.dev.localhost \
+            "holding http://127.0.0.1:38080 host=platform-fixture.dev.localhost \
              | q tears down and exits | tab pages | up/down scrolls",
             "{two_rows}"
         );
@@ -908,7 +910,7 @@ mod tests {
 
     fn gate_outcome(wiring_id: &str, verdict: DevGateVerdict) -> DevGateOutcome {
         test_support::gate_outcome(
-            "receiving".to_owned(),
+            "platform_fixture".to_owned(),
             "1.0.0".to_owned(),
             wiring_id.to_owned(),
             1,
@@ -917,12 +919,12 @@ mod tests {
     }
 
     fn manifest() -> ServingManifest {
-        let package = PackageCoordinate::new("receiving", "1.0.0").expect("valid package");
+        let package = PackageCoordinate::new("platform_fixture", "1.0.0").expect("valid package");
         let operation = ServingComponentOperation {
             pre_commit: None,
             committed_result_schema: None,
             fresh_only: false,
-            registered_operation: Some("receiving:purchase-order/get@1.0.0".to_owned()),
+            registered_operation: Some("platform-fixture:widget/get@1.0.0".to_owned()),
             dependencies: vec![ComponentOperationDependency {
                 participant: None,
                 package: "inventory".to_owned(),
@@ -933,21 +935,17 @@ mod tests {
             statements: BTreeMap::new(),
         };
         let component = ServingComponent {
-            package_id: "receiving".to_owned(),
-            component: "receiving".to_owned(),
+            package_id: "platform_fixture".to_owned(),
+            component: "fixture".to_owned(),
             interface_version: "0.1.0".to_owned(),
             digest: ArtifactHash::parse(DIGEST).expect("valid digest"),
-            operations: BTreeMap::from([("purchase-order/get".to_owned(), operation)]),
+            operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
         };
-        let http = attachment(
-            AttachmentKind::Http,
-            "purchase-order-http",
-            "/purchase-order",
-        );
+        let http = attachment(AttachmentKind::Http, "widget-get-http", "/widget/get");
         let studio = attachment(
             AttachmentKind::Studio,
-            "purchase-order-studio",
-            "/studio/purchase-order",
+            "widget-get-studio",
+            "/studio/widget",
         );
         ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -959,14 +957,14 @@ mod tests {
             },
             components: BTreeSet::from([component]),
             wirings: BTreeSet::from([ServingWiring {
-                package_id: "receiving".to_owned(),
-                wiring_id: "purchase-order".to_owned(),
+                package_id: "platform_fixture".to_owned(),
+                wiring_id: "widget_get".to_owned(),
                 wiring_version: 1,
                 graph_hash: DefinitionHash::parse(DIGEST).expect("valid digest"),
             }]),
             attachments: BTreeMap::from([
-                ("purchase-order-http".to_owned(), http),
-                ("purchase-order-studio".to_owned(), studio),
+                ("widget-get-http".to_owned(), http),
+                ("widget-get-studio".to_owned(), studio),
             ]),
             registrations: BTreeMap::new(),
         }
@@ -983,7 +981,7 @@ mod tests {
             "id": id,
             "kind": kind_name,
             "route": {
-                "host": "receiving.dev.localhost",
+                "host": "platform-fixture.dev.localhost",
                 "method": "POST",
                 "path": path,
             },
@@ -993,13 +991,13 @@ mod tests {
                 .expect("the canonicalizer emits a valid definition hash");
         ServingAttachment {
             kind,
-            package_id: "receiving".to_owned(),
-            wiring_id: "purchase-order".to_owned(),
+            package_id: "platform_fixture".to_owned(),
+            wiring_id: "widget_get".to_owned(),
             wiring_version: 1,
             definition_hash,
             definition,
             auth_policy: json!({"modes": ["pat"]}),
-            registered_operation: Some("receiving:purchase-order/get@1.0.0".to_owned()),
+            registered_operation: Some("platform-fixture:widget/get@1.0.0".to_owned()),
         }
     }
 
@@ -1021,9 +1019,9 @@ mod tests {
                 payload,
                 phase,
                 redacted: true,
-                source_id: "purchase-order-http".into(),
+                source_id: "widget-get-http".into(),
                 source_kind,
-                wiring_id: "purchase-order".into(),
+                wiring_id: "widget_get".into(),
                 wiring_version: 1,
             },
         )

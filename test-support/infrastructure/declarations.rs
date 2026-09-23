@@ -118,11 +118,19 @@ fn placeholder(value: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    const WMS: &str = include_str!("../../apps/wamn_wms/publication/components/wms.json.in");
+    const OVERLAY: &str = include_str!(
+        "../../apps/platform_fixture_overlay/publication/components/platform_fixture_overlay.json.in"
+    );
     const LABEL: &str = include_str!("../../apps/platform/no-std/label-render/declaration.json.in");
     const BLOB: &str = include_str!("../../apps/platform/execution/blob-put/declaration.json.in");
     const WIRING: &str =
-        include_str!("../../apps/wamn_wms/publication/wirings/inventory_move_and_label.json");
+        include_str!("../../apps/platform_fixture/publication/wirings/widget_get.json");
+
+    /// The overlay template with its base digest filled, which the control
+    /// plane renders before this renderer sees it.
+    fn overlay() -> String {
+        OVERLAY.replace("__BASE_DIGEST__", &format!("sha256:{}", "7".repeat(64)))
+    }
 
     fn scope() -> ComponentPackageScope {
         ComponentPackageScope::new("quay-9-route-auth", "wamn_test", "7.7.7").unwrap()
@@ -131,11 +139,12 @@ mod tests {
     #[test]
     fn application_coordinate_stays_owned_and_shared_components_take_the_caller_coordinate() {
         let scope = scope();
-        for template in [WMS, LABEL, BLOB] {
+        let overlay = overlay();
+        for template in [overlay.as_str(), LABEL, BLOB] {
             let declaration = render_component_declaration(template, &scope, "crate-9").unwrap();
             assert_eq!(declaration.scope.tenant_id, scope.tenant_id);
-            if declaration.component == "wms" {
-                assert_eq!(declaration.scope.package_id, "wamn_wms");
+            if declaration.component == "fixture_overlay" {
+                assert_eq!(declaration.scope.package_id, "platform_fixture_overlay");
                 assert_eq!(declaration.scope.package_version, "1.0.0");
             } else {
                 assert_eq!(declaration.scope.package_id, scope.package_id);
@@ -151,8 +160,9 @@ mod tests {
 
     #[test]
     fn declaration_keeps_all_operation_facts_and_literal_connection_aliases() {
-        let rendered = render_component_declaration(WMS, &scope(), "").unwrap();
-        let original: Value = serde_json::from_str(WMS).unwrap();
+        let overlay = overlay();
+        let rendered = render_component_declaration(&overlay, &scope(), "").unwrap();
+        let original: Value = serde_json::from_str(&overlay).unwrap();
         assert_eq!(
             serde_json::to_value(&rendered).unwrap()["operations"],
             original["operations"]
@@ -231,7 +241,7 @@ mod tests {
     fn invalid_scope_and_json_are_refused_and_values_are_not_text_substitutions() {
         let mut invalid = scope();
         invalid.tenant_id.clear();
-        assert!(render_component_declaration(WMS, &invalid, "").is_err());
+        assert!(render_component_declaration(&overlay(), &invalid, "").is_err());
         assert!(render_component_declaration("not JSON", &scope(), "").is_err());
         let mut scope = scope();
         scope.tenant_id = "tenant/with&characters".into();
@@ -243,10 +253,10 @@ mod tests {
 
     fn gate_input() -> GateInput {
         GateInput {
-            command_id: "gate-wamn_wms-inventory_move_and_label".into(),
-            package: PackageCoordinate::new("wamn_wms", "1.0.0").unwrap(),
+            command_id: "gate-platform_fixture-widget_get".into(),
+            package: PackageCoordinate::new("platform_fixture", "1.0.0").unwrap(),
             scope: AuthoringScope {
-                project_id: "wms".into(),
+                project_id: "fixture".into(),
                 environment: "dev".into(),
             },
         }
@@ -268,7 +278,7 @@ mod tests {
             panic!("gate")
         };
         assert_eq!(gate.scope, input.scope);
-        assert_eq!(gate.package_id, "wamn_wms");
+        assert_eq!(gate.package_id, "platform_fixture");
         assert_eq!(gate.package_version, "1.0.0");
         assert_eq!(
             gate.document,

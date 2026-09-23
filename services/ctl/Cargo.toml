@@ -84,6 +84,7 @@ async-nats = { workspace = true, features = ["jetstream"] }
 rustix = { workspace = true }
 wamn-authoring-model = { workspace = true }
 wamn-execution-contract = { workspace = true }
+wamn-fixture-package = { workspace = true }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 wamn-pg-core = { workspace = true }
 wamn-control = { workspace = true, features = ["test-util"] }

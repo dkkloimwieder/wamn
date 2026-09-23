@@ -299,14 +299,14 @@ mod tests {
             "--config",
             "dev.json",
             "--overlay-root",
-            "apps/client_acme_receiving",
+            "apps/platform_fixture_overlay",
             "--watch",
         ])
         .expect("parse complete command inputs");
         assert_eq!(parsed.args.config, PathBuf::from("dev.json"));
         assert_eq!(
             parsed.args.overlay_root,
-            PathBuf::from("apps/client_acme_receiving")
+            PathBuf::from("apps/platform_fixture_overlay")
         );
         assert!(parsed.args.watch);
         assert!(parsed.args.tui.is_none());
@@ -317,7 +317,7 @@ mod tests {
             "--config",
             "dev.json",
             "--overlay-root",
-            "apps/client_acme_receiving",
+            "apps/platform_fixture_overlay",
         ])
         .expect("parse the default one-shot command");
         assert!(!one_shot.args.watch);
@@ -329,7 +329,7 @@ mod tests {
             "--config",
             "dev.json",
             "--overlay-root",
-            "apps/client_acme_receiving",
+            "apps/platform_fixture_overlay",
             "--tui",
         ])
         .expect("parse the interactive terminal client");
@@ -358,7 +358,7 @@ mod tests {
                 "--config",
                 "dev.json",
                 "--overlay-root",
-                "apps/client_acme_receiving",
+                "apps/platform_fixture_overlay",
             ];
             argv.extend_from_slice(extra);
             TestCli::try_parse_from(argv).map(|parsed| parsed.args)
@@ -377,9 +377,9 @@ mod tests {
         assert!(with_tui.hold);
         assert!(with_tui.tui());
 
-        let operator = parse(&["--watch", "--tui", "receiving"])
+        let operator = parse(&["--watch", "--tui", "fixture"])
             .expect("parse generated operator session without hold");
-        assert_eq!(operator.operator_component(), Some("receiving"));
+        assert_eq!(operator.operator_component(), Some("fixture"));
         assert!(!operator.tui());
         assert!(!operator.hold());
         assert!(operator.watch);
