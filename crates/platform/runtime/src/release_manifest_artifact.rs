@@ -11,7 +11,7 @@ use std::fmt;
 use oci_client::client::{Config, ImageLayer};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 
-use crate::component_artifact::{
+use wamn_engine::component_artifact::{
     ComponentArtifactReference, ComponentArtifactReferenceError, component_artifact_reference,
 };
 
@@ -150,7 +150,7 @@ pub fn verify_release_manifest_artifact_layout<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::component_artifact::ComponentArtifactReferenceErrorKind;
+    use wamn_engine::component_artifact::ComponentArtifactReferenceErrorKind;
 
     use super::*;
 

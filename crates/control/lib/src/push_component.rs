@@ -24,8 +24,8 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts, component_sql_digest,
 };
-use wamn_runtime::component_admission::validate_component_admission;
-use wamn_runtime::component_artifact::{
+use wamn_engine::component_admission::validate_component_admission;
+use wamn_engine::component_artifact::{
     component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
 };
 use wamn_runtime::component_artifact_source::{
@@ -413,7 +413,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let facts = validate_component_admission(
         &engine,
         &component_bytes,
-        wamn_runtime::component_admission::ComponentAdmissionRequest {
+        wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages: args
                 .admitted_platform_packages
@@ -772,7 +772,7 @@ fn load_component_statement_facts(
 /// identity and posture are governed on the same push: its imports pass the
 /// tenant allowlist and the capability registry's posture
 /// (`wamn_component_policy::analyze_tenant`), and its declared exports are
-/// checked against the component bytes (`wamn_runtime::component_admission`)
+/// checked against the component bytes (`wamn_engine::component_admission`)
 /// before this function runs. This branch only
 /// declines to look for manifest operations that, by construction, it does
 /// not serve; it is not a bypass of admission.
@@ -2554,7 +2554,7 @@ mod tests {
         let component_bytes = b"verification-project-component".to_vec();
         let mut component = projection_component();
         component.component_digest =
-            wamn_runtime::component_admission::component_digest(&component_bytes);
+            wamn_engine::component_admission::component_digest(&component_bytes);
         let requirements = vec![ComponentConnectionRequirement::new(
             &component.component_digest,
             "warehouse",
@@ -2896,8 +2896,7 @@ mod tests {
         let admitted = |marker: u8| {
             let bytes = vec![marker; 32];
             let mut component = projection_component();
-            component.component_digest =
-                wamn_runtime::component_admission::component_digest(&bytes);
+            component.component_digest = wamn_engine::component_admission::component_digest(&bytes);
             let requirements = vec![ComponentConnectionRequirement::new(
                 &component.component_digest,
                 "warehouse",
@@ -3124,7 +3123,7 @@ mod tests {
         let config_bytes = b"config-bytes";
         let expected = component_artifact_layout(component_bytes, config_bytes);
         let (layer, config, manifest) = artifact_layout(component_bytes, config_bytes);
-        let digest = wamn_runtime::component_admission::component_digest(component_bytes);
+        let digest = wamn_engine::component_admission::component_digest(component_bytes);
         let reference = component_artifact_reference("registry.example/wamn/components", &digest)
             .expect("shared digest reference derives");
 
@@ -3152,7 +3151,7 @@ mod tests {
         assert_eq!(manifest.layers[0].media_type, expected.layer_media_type());
         assert_eq!(
             manifest.layers[0].digest,
-            wamn_runtime::component_admission::component_digest(component_bytes)
+            wamn_engine::component_admission::component_digest(component_bytes)
         );
         assert_eq!(
             manifest.layers[0].size,
@@ -3161,7 +3160,7 @@ mod tests {
         assert_eq!(manifest.config.media_type, expected.config_media_type());
         assert_eq!(
             manifest.config.digest,
-            wamn_runtime::component_admission::component_digest(config_bytes)
+            wamn_engine::component_admission::component_digest(config_bytes)
         );
         assert_eq!(
             manifest.config.size,
@@ -3215,7 +3214,7 @@ mod tests {
         let component = validate_component_admission(
             &engine,
             &component_bytes,
-            wamn_runtime::component_admission::ComponentAdmissionRequest {
+            wamn_engine::component_admission::ComponentAdmissionRequest {
                 declaration: ComponentDeclaration {
                     scope: ComponentPackageScope {
                         tenant_id: "tenant-a".to_owned(),

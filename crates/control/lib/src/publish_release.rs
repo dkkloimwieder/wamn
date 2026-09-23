@@ -3093,7 +3093,7 @@ mod tests {
     /// effect-free and admission keeps the effect-free case path. The
     /// admission half of that test is
     /// `a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path`
-    /// in `wamn_runtime::component_admission`.
+    /// in `wamn_engine::component_admission`.
     #[test]
     fn a_dependency_admitted_with_no_effects_keeps_the_effect_free_case_path() {
         let (declaration, dependency) = fixture_overlay_dependency();

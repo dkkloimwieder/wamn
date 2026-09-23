@@ -16,7 +16,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::OutgoingRequestConfig;
 
 use crate::plugins::flow_http_routing::expected_http_hostnames;
-use crate::release_manifest::LoadedRelease;
+use wamn_engine::release_manifest::LoadedRelease;
 
 /// A native router whose unbound release hostnames report temporary unavailability.
 pub struct ExpectedHostRouter {

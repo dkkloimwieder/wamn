@@ -166,7 +166,7 @@ pub struct WamnPostgres {
 
 /// The release a pod carries — the `(effective release id, manifest digest)` pair
 /// derived from the verified content of its mounted serving manifest
-/// ([`LoadedRelease`](crate::release_manifest::LoadedRelease)).
+/// ([`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease)).
 ///
 /// Admission pins the effective release. The production claim verifies that
 /// pin and records the claiming pod's manifest digest. Both values are
@@ -1084,7 +1084,7 @@ impl WamnPostgres {
     /// claim verifies its effective release against every run it leases and
     /// records the manifest digest write-once. The bench harness and live tests
     /// call this directly; the host path feeds it from the loaded
-    /// [`LoadedRelease`](crate::release_manifest::LoadedRelease),
+    /// [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease),
     /// whose pair is derived from verified manifest content. Absent leaves the
     /// claim recording nothing.
     ///

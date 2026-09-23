@@ -74,7 +74,7 @@ mod tests {
         component_bytes: &[u8],
         label: &str,
     ) -> anyhow::Result<BTreeSet<String>> {
-        let imports = wamn_runtime::component_imports(engine, component_bytes, label)?;
+        let imports = wamn_engine::component_imports(engine, component_bytes, label)?;
         Ok(imports
             .iter()
             .map(wamn_component_policy::import_pkg)
@@ -385,7 +385,7 @@ mod tests {
         println!(
             "receiving-component-bytes={} digest={}",
             bytes.len(),
-            wamn_runtime::component_admission::component_digest(&bytes)
+            wamn_engine::component_admission::component_digest(&bytes)
         );
         Ok(())
     }

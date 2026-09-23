@@ -138,21 +138,21 @@ pub struct ComponentArtifactReference {
 
 /// Parsed artifact base shared internally by the publisher contract and puller.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ComponentArtifactBase {
+pub struct ComponentArtifactBase {
     registry: Box<str>,
     repository: Box<str>,
 }
 
 impl ComponentArtifactBase {
-    pub(crate) fn registry(&self) -> &str {
+    pub fn registry(&self) -> &str {
         &self.registry
     }
 
-    pub(crate) fn repository(&self) -> &str {
+    pub fn repository(&self) -> &str {
         &self.repository
     }
 
-    pub(crate) fn reference(
+    pub fn reference(
         &self,
         component_digest: &str,
     ) -> Result<ComponentArtifactReference, ComponentArtifactReferenceError> {
@@ -205,7 +205,7 @@ pub fn component_artifact_reference(
     parse_component_artifact_base(artifact_base)?.reference(component_digest)
 }
 
-pub(crate) fn parse_component_artifact_base(
+pub fn parse_component_artifact_base(
     artifact_base: &str,
 ) -> Result<ComponentArtifactBase, ComponentArtifactReferenceError> {
     let invalid_base = |reason| {
@@ -254,7 +254,7 @@ pub(crate) fn parse_component_artifact_base(
     })
 }
 
-pub(crate) fn component_digest_tag(
+pub fn component_digest_tag(
     component_digest: &str,
 ) -> Result<&str, ComponentArtifactReferenceError> {
     component_digest

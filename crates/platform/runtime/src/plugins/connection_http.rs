@@ -31,7 +31,7 @@ use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
     HTTP_EFFECT_DURATION_MS, effect_span, record_effect_ms, record_wiring,
 };
-use crate::release_manifest::LoadedRelease;
+use wamn_engine::release_manifest::LoadedRelease;
 
 use super::wamn_credentials::WamnCredentials;
 use super::wamn_postgres::{
@@ -1103,7 +1103,7 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace

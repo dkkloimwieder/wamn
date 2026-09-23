@@ -526,7 +526,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
             .join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
     )
     .map_err(stage_error)?;
-    if Some(wamn_runtime::component_admission::component_digest(&admission).as_str())
+    if Some(wamn_engine::component_admission::component_digest(&admission).as_str())
         != request.local_admission_digest
     {
         return Err(DevActivationError::new(
@@ -558,7 +558,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
             NativeBackendError::from(source),
         )
     })?;
-    let digest = wamn_runtime::component_admission::component_digest(&component_bytes);
+    let digest = wamn_engine::component_admission::component_digest(&component_bytes);
     let path =
         wamn_runtime::component_artifact_source::local_component_path(&local.directory, &digest)
             .expect("a computed component digest is valid");
@@ -1789,7 +1789,7 @@ mod tests {
         std::fs::write(&source, &component_bytes).unwrap();
         std::fs::create_dir(&directory).unwrap();
         let admission = b"local-admission-fixture";
-        let admission_digest = wamn_runtime::component_admission::component_digest(admission);
+        let admission_digest = wamn_engine::component_admission::component_digest(admission);
         std::fs::write(
             directory.join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
             admission,
@@ -1813,7 +1813,7 @@ mod tests {
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
         let component_path = wamn_runtime::component_artifact_source::local_component_path(
             &directory,
-            &wamn_runtime::component_admission::component_digest(&component_bytes),
+            &wamn_engine::component_admission::component_digest(&component_bytes),
         )
         .unwrap();
         std::fs::remove_file(&source).unwrap();

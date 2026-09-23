@@ -13,8 +13,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wamn_runtime::component_admission::component_digest;
-use wamn_runtime::release_manifest::LoadedRelease;
+use wamn_engine::component_admission::component_digest;
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_MEDIA_TYPE, release_manifest_artifact_layout,
     verify_release_manifest_artifact_layout,

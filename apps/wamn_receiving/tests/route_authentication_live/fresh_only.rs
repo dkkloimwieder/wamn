@@ -17,8 +17,8 @@ use wamn_control::provision_project_env::secret_value;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
-use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_verifier::SessionVerifier;
 
@@ -169,7 +169,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             fixture_path.display()
         )
     })?;
-    let parent_digest = wamn_runtime::component_admission::component_digest(&bytes);
+    let parent_digest = wamn_engine::component_admission::component_digest(&bytes);
     let component_path = root.join("parent.wasm");
     std::fs::write(&component_path, bytes)?;
     push_component::push_component(
@@ -856,10 +856,10 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
             "input-ports": [{"name": "input", "schema": {"type": "array"}}],
             "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}}
     }))?;
-    let admitted = wamn_runtime::component_admission::validate_component_admission(
+    let admitted = wamn_engine::component_admission::validate_component_admission(
         &engine,
         &parent_component()?,
-        wamn_runtime::component_admission::ComponentAdmissionRequest {
+        wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages: ["wamn:node".to_owned(), "wamn:postgres".to_owned()].into(),
             effect_free_operation_dependencies: std::collections::BTreeSet::default(),

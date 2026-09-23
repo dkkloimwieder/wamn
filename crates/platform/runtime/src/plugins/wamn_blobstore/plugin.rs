@@ -33,7 +33,7 @@ use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::plugins::wamn_postgres::{
     CandidateConnectionBinding, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
 };
-use crate::release_manifest::LoadedRelease;
+use wamn_engine::release_manifest::LoadedRelease;
 
 /// Plugin id, as the host registry knows it.
 pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";

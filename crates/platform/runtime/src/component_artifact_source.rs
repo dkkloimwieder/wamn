@@ -17,15 +17,15 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::AdmittedComponent;
 
-use crate::component_admission::component_digest;
-use crate::component_artifact::{
-    ComponentArtifactBase, ComponentArtifactReferenceError, component_artifact_config_bytes,
-    component_artifact_layout, component_digest_tag, parse_component_artifact_base,
-};
 use crate::registry_credentials::{
     RegistryCredentials, RegistryCredentialsError, read_registry_credentials,
 };
 use crate::registry_transport::transport_is_mismatched;
+use wamn_engine::component_admission::component_digest;
+use wamn_engine::component_artifact::{
+    ComponentArtifactBase, ComponentArtifactReferenceError, component_artifact_config_bytes,
+    component_artifact_layout, component_digest_tag, parse_component_artifact_base,
+};
 
 /// Explicit, validated configuration for one component artifact repository.
 #[derive(Clone, PartialEq, Eq)]

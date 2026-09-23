@@ -19,6 +19,7 @@ use wamn_control_provision::{
     system_reader_generation_role, workload_generation_role,
 };
 use wamn_engine::engine::build_engine;
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
     RouterDeliveryBridge, RouterDriver, RouterDriverConfig, RouterReadinessProbe,
     RouterReadinessStatus, WiringCacheCapacity,
@@ -38,7 +39,6 @@ use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 use wamn_runtime::plugins::{WamnCredentials, WamnLogging};
-use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::wasmtime::component::Component;
 
 use super::{LocalApplicationConfig, LocalApplicationRuntime, PreparedLocalApplication};
@@ -419,7 +419,7 @@ fn render_declaration(
                     .component_directory
                     .join(format!("{}.wasm", base.component)),
             )?;
-            *digest = wamn_runtime::component_admission::component_digest(&bytes).into_boxed_str();
+            *digest = wamn_engine::component_admission::component_digest(&bytes).into_boxed_str();
         }
     }
     let value = wamn_control::component_declaration::render_declaration_document(

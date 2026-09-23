@@ -21,6 +21,7 @@ use wamn_catalog::{
     ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_router::{
@@ -41,7 +42,6 @@ use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     CandidateBindingWorld, CandidateWiringResolution, ResolvedActiveWiring, WamnPostgres,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 

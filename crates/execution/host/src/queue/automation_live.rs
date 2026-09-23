@@ -11,9 +11,10 @@ use wamn_control::enqueue_run::{EnqueueRun, enqueue};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
+use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_run_state::RunStore as _;
-use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_runtime::component_artifact_source::{ComponentArtifactSource, local_component_path};
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
@@ -23,7 +24,6 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ReleaseIdentity, SessionClaims, WamnPostgres,
     WamnPostgresConfig,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 

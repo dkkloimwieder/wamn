@@ -1113,7 +1113,7 @@ impl ProductionDevStageRunner {
             let bytes = fs::read(&artifact.path).map_err(|source| {
                 ProductionDevStageError::owner("read local component", source.into())
             })?;
-            if wamn_runtime::component_admission::component_digest(&bytes)
+            if wamn_engine::component_admission::component_digest(&bytes)
                 != artifact.digest.as_ref()
             {
                 return Err(ProductionDevStageError::invalid(
@@ -1144,8 +1144,7 @@ impl ProductionDevStageRunner {
         let admission_bytes = serde_json::to_vec(&local_facts).map_err(|source| {
             ProductionDevStageError::owner("encode local admissions", source.into())
         })?;
-        let admission_digest =
-            wamn_runtime::component_admission::component_digest(&admission_bytes);
+        let admission_digest = wamn_engine::component_admission::component_digest(&admission_bytes);
         fs::write(
             local
                 .directory
@@ -1546,7 +1545,7 @@ fn file_digest(path: &Path) -> Result<String, ProductionDevStageError> {
     let bytes = fs::read(path).map_err(|source| {
         ProductionDevStageError::owner("read development input", source.into())
     })?;
-    Ok(wamn_runtime::component_admission::component_digest(&bytes))
+    Ok(wamn_engine::component_admission::component_digest(&bytes))
 }
 
 fn schema_inputs_digest(
@@ -1589,7 +1588,7 @@ fn package_schema_inputs(
         .map(|migration| {
             (
                 &migration.relative_path,
-                wamn_runtime::component_admission::component_digest(&migration.bytes),
+                wamn_engine::component_admission::component_digest(&migration.bytes),
             )
         })
         .collect::<Vec<_>>();
@@ -2232,7 +2231,7 @@ fn select_component_artifacts(
             package_version: package.manifest.package.version.clone().into_boxed_str(),
             component: component.clone().into_boxed_str(),
             path: artifact.output.clone(),
-            digest: wamn_runtime::component_admission::component_digest(&bytes).into_boxed_str(),
+            digest: wamn_engine::component_admission::component_digest(&bytes).into_boxed_str(),
         });
     }
     Ok(selected)

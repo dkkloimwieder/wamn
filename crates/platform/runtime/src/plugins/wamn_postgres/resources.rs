@@ -534,7 +534,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
             Ok::<_, wash_runtime::wasmtime::Error>((
                 independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -566,7 +566,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
             Ok::<_, wash_runtime::wasmtime::Error>((
                 independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -598,7 +598,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
             Ok::<_, wash_runtime::wasmtime::Error>((
                 independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -641,7 +641,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
             Ok::<_, wash_runtime::wasmtime::Error>((
                 independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -674,7 +674,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
             Ok::<_, wash_runtime::wasmtime::Error>((
                 independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -707,7 +707,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
             Ok::<_, wash_runtime::wasmtime::Error>((
                 independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -744,7 +744,7 @@ async fn txn_query<T: 'static>(
             Ok::<_, wash_runtime::wasmtime::Error>((
                 independent_plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
                 Arc::clone(&txn.state),
                 Arc::clone(&txn.destroyed),
                 txn.row_limit,
@@ -782,7 +782,7 @@ async fn txn_execute<T: 'static>(
         Ok::<_, wash_runtime::wasmtime::Error>((
             independent_plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&txn.state),
             Arc::clone(&txn.destroyed),
         ))
@@ -817,7 +817,7 @@ async fn txn_open_cursor<T: 'static>(
         let ctx = access.get();
         let plugin = independent_plugin_of(&ctx)?;
         let component_id = ctx.component_id.to_string();
-        let trace = crate::plugins::invocation_trace::invocation_trace(&ctx);
+        let trace = wamn_engine::invocation_trace::invocation_trace(&ctx);
         let txn = ctx.table.get_mut(&rep)?;
         txn.cursor_seq += 1;
         Ok::<_, wash_runtime::wasmtime::Error>((
@@ -885,7 +885,7 @@ async fn txn_finish<T: 'static>(
         Ok::<_, wash_runtime::wasmtime::Error>((
             independent_plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&txn.state),
             Arc::clone(&txn.destroyed),
         ))
@@ -928,7 +928,7 @@ async fn cursor_fetch<T: 'static>(
         Ok::<_, wash_runtime::wasmtime::Error>((
             independent_plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&cursor.state),
             Arc::clone(&cursor.destroyed),
             cursor.name.clone(),
@@ -1235,7 +1235,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -1268,7 +1268,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -1331,7 +1331,7 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
                 Ok::<_, wash_runtime::wasmtime::Error>((
                     plugin_of(&ctx)?,
                     ctx.component_id.to_string(),
-                    crate::plugins::invocation_trace::invocation_trace(&ctx),
+                    wamn_engine::invocation_trace::invocation_trace(&ctx),
                     Arc::clone(&transaction.transaction.state),
                     Arc::clone(&transaction.transaction.destroyed),
                     transaction.transaction.row_limit,
@@ -1446,7 +1446,7 @@ async fn statement_txn_finish<T: 'static>(
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&transaction.transaction.state),
             Arc::clone(&transaction.transaction.destroyed),
         ))

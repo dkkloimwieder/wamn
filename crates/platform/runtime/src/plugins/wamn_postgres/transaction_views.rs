@@ -578,7 +578,7 @@ pub(super) async fn run<T: 'static>(
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            crate::plugins::invocation_trace::invocation_trace(&ctx),
+            wamn_engine::invocation_trace::invocation_trace(&ctx),
             ctx.table.get(&resource)?.clone(),
         ))
     })?;

@@ -693,34 +693,8 @@ mod tests {
     }
 
     #[test]
-    fn exact_bytes_mint_digest_and_normalized_fact_without_io() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
-        let bytes = component_bytes("");
-
-        let admitted = validate_component_admission(&engine, &bytes, request())
-            .expect("empty-import component admits")
-            .component;
-
-        assert_eq!(admitted.component_digest, component_digest(&bytes));
-        assert_eq!(admitted.imports, [NODE_TYPES_IMPORT]);
-        let operation = admitted.operation(OPERATION).expect("operation admits");
-        assert_eq!(operation.input_ports[0].name, "input");
-        assert!(operation.parameters[0].required);
-
-        let projected = crate::wiring_lowering::project_component_operations(&admitted);
-        let projected = projected.first().expect("one operation projects");
-        assert_eq!(projected.component, admitted.component);
-        assert_eq!(projected.interface_version, admitted.interface_version);
-        assert_eq!(projected.operation, OPERATION);
-        assert_eq!(projected.component_digest, admitted.component_digest);
-        assert_eq!(projected.input_ports, BTreeSet::from(["input".to_string()]));
-        assert_eq!(projected.output_ports, BTreeSet::from(["main".to_string()]));
-        assert!(projected.parameters["mapping"].required);
-    }
-
-    #[test]
     fn declaration_and_byte_handler_export_sets_must_match_exactly() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let missing = wat::parse_str("(component)").expect("empty component encodes");
         let error = validate_component_admission(&engine, &missing, request())
             .expect_err("missing declared handler export refuses");
@@ -750,7 +724,7 @@ mod tests {
 
     #[test]
     fn operation_export_must_have_the_live_handler_signature() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let wrong = wat::parse_str(format!(
             r#"(component
                 (instance $wrong)
@@ -770,7 +744,7 @@ mod tests {
 
     #[test]
     fn malformed_component_bytes_refuse_before_facts_are_minted() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let error = validate_component_admission(&engine, b"not-wasm", request())
             .expect_err("malformed bytes must refuse");
         assert_eq!(
@@ -784,7 +758,7 @@ mod tests {
     /// the same one handler.run passes.
     #[test]
     fn an_async_lifted_run_on_async_handler_is_admitted() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes_exporting(
             ASYNC_HANDLER_OPERATION,
             "",
@@ -827,7 +801,7 @@ mod tests {
     #[test]
     fn typed_async_operation_requires_owned_values() {
         const TYPED_OPERATION: &str = "platform-fixture:widget/record-batch@1.0.0";
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         for (input, output, expected, imported) in [
             ("list<item>", "list<item>", true, false),
             ("item", "item", true, false),
@@ -916,7 +890,7 @@ mod tests {
 
     #[test]
     fn actual_unadmitted_component_import_refuses() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes("import wasi:sockets/tcp@0.2.3;");
 
         let error = validate_component_admission(&engine, &bytes, request())
@@ -935,7 +909,7 @@ mod tests {
 
     #[test]
     fn exact_operation_dependency_is_byte_verified_and_admitted() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(&format!("import {DEPENDENCY_OPERATION};"));
         let mut request = request();
         request
@@ -971,7 +945,7 @@ mod tests {
     #[cfg(feature = "wasm_component_model_implements")]
     #[test]
     fn multi_export_admission_checks_global_union_and_preserves_attachment() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes_with_exports(
             &format!("import {DEPENDENCY_OPERATION};"),
             "export second: wamn:node/handler@0.1.0;",
@@ -1002,7 +976,7 @@ mod tests {
 
     #[test]
     fn operation_dependencies_refuse_missing_extra_and_mismatch() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
 
         let mut missing_request = request();
         missing_request
@@ -1054,7 +1028,7 @@ mod tests {
 
     #[test]
     fn operation_dependency_import_must_have_the_handler_signature() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let mut request = request();
         request
             .declaration
@@ -1083,7 +1057,7 @@ mod tests {
     /// last two are recorded, grouped by package with their exact interfaces.
     #[test]
     fn effects_record_only_the_imports_that_leave_the_host() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(
             "import wasi:clocks/monotonic-clock@0.2.12; \
              import wamn:node/types@0.1.0; \
@@ -1132,7 +1106,7 @@ mod tests {
     /// projection is what denies that path.
     #[test]
     fn a_wrapper_reaching_an_effect_through_a_declared_dependency_is_not_effect_free() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(&format!("import {DEPENDENCY_OPERATION};"));
         let mut request = request();
         request
@@ -1171,7 +1145,7 @@ mod tests {
     /// nothing, so the wrapper keeps the effect-free case path.
     #[test]
     fn a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(&format!(
             "import wasi:clocks/monotonic-clock@0.2.12; import {DEPENDENCY_OPERATION};"
         ));
@@ -1200,7 +1174,7 @@ mod tests {
     /// admission, not discovered when a delivery reaches the effect.
     #[test]
     fn connection_authority_without_a_declared_alias_refuses() {
-        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes("import wamn:connection/http@0.1.0;");
         let mut request = request();
         request.admitted_platform_packages = BTreeSet::from(["wamn:connection".to_string()]);

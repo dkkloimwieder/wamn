@@ -40,13 +40,14 @@ use wamn_control::push_component::admitted_projection_hash;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
-use wamn_engine::engine::build_engine;
-use wamn_execution_host::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
-use wamn_run_state::AuthorityClass;
-use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
-use wamn_runtime::component_artifact::{
+use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
+use wamn_engine::component_artifact::{
     component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
 };
+use wamn_engine::engine::build_engine;
+use wamn_engine::release_manifest::LoadedRelease;
+use wamn_execution_host::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -54,7 +55,6 @@ use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
-use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 
 /// The one tenant every seeded row and every claim is scoped to.
@@ -927,16 +927,17 @@ mod tests {
     use wamn_control_provision::{
         CredentialGeneration, SystemReader, WorkloadRoleFamily, system_reader_generation_role,
     };
+    use wamn_engine::component_admission::{
+        ComponentAdmissionRequest, validate_component_admission,
+    };
     use wamn_engine::engine::build_engine;
+    use wamn_engine::release_manifest::LoadedRelease;
     use wamn_execution_host::{
         CandidateCaseRequest, CandidateWiringTarget, RouterDelivery, RouterDriver,
         RouterDriverConfig, RouterDriverRequest, WiringCacheCapacity,
     };
     use wamn_platform_identity::{
         assign_project_role, create_service, issue_pat, route_caller_subject,
-    };
-    use wamn_runtime::component_admission::{
-        ComponentAdmissionRequest, validate_component_admission,
     };
     use wamn_runtime::component_artifact_source::{
         ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -950,7 +951,6 @@ mod tests {
     use wamn_runtime::plugins::wamn_postgres::{
         CANDIDATE_WIRING_SQL, CandidateBindingWorld, WamnPostgres, WamnPostgresConfig,
     };
-    use wamn_runtime::release_manifest::LoadedRelease;
     use wasm_encoder::reencode::{Reencode, ReencodeComponent};
 
     use super::{

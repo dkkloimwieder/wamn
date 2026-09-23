@@ -398,3 +398,122 @@ fn lower_terminal(terminal: &CatalogTerminal) -> Terminal {
         CatalogTerminal::Emit { entity, operation } => Terminal::emit(entity, *operation),
     }
 }
+
+// Moved from wamn-engine's admission tests: it projects an admitted component
+// through this module, which the engine cannot link.
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use wamn_catalog::{
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
+        ComponentParameterDeclaration, ComponentPortDeclaration,
+    };
+    use wamn_engine::component_admission::{
+        ComponentAdmissionRequest, component_digest, validate_component_admission,
+    };
+    use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
+    use wit_parser::{ManglingAndAbi, Resolve};
+
+    use super::*;
+
+    const OPERATION: &str = "wamn:node/handler@0.1.0";
+
+    // Every node component imports this: the handler signature is written in
+    // terms of the ABI's own types.
+    const NODE_TYPES_IMPORT: &str = "wamn:node/types@0.1.0";
+
+    /// A node component exporting [`OPERATION`] with the given imports.
+    fn component_bytes(imports: &str) -> Vec<u8> {
+        let mut resolve = Resolve::new();
+        resolve
+            .push_str(
+                "wamn-node.wit",
+                include_str!("../../../execution/router/wit/package.wit"),
+            )
+            .expect("the live node WIT parses");
+        let fixture = format!(
+            "package test:component@1.0.0; world fixture {{ {imports} export {OPERATION}; }}"
+        );
+        let package = resolve
+            .push_str("fixture.wit", &fixture)
+            .expect("fixture world parses");
+        let world = resolve
+            .select_world(&[package], Some("fixture"))
+            .expect("fixture world resolves");
+        let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+        embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
+            .expect("fixture component metadata embeds");
+        ComponentEncoder::default()
+            .module(&module)
+            .expect("fixture core module is accepted")
+            .validate(true)
+            .encode()
+            .expect("fixture component encodes")
+    }
+
+    fn request() -> ComponentAdmissionRequest {
+        ComponentAdmissionRequest {
+            declaration: ComponentDeclaration {
+                scope: ComponentPackageScope {
+                    tenant_id: "tenant-a".to_string(),
+                    package_id: "orders".to_string(),
+                    package_version: "1.0.0".to_string(),
+                },
+                component: "transform".to_string(),
+                interface_version: "0.1.0".to_string(),
+                operations: BTreeMap::from([(
+                    OPERATION.to_string(),
+                    ComponentOperationDeclaration {
+                        pre_commit: None,
+                        committed_result_schema: None,
+                        fresh_only: false,
+                        registered_operation: None,
+                        dependencies: Vec::new(),
+                        input_ports: vec![ComponentPortDeclaration {
+                            name: "input".to_string(),
+                            schema: json!({"type": "object"}),
+                        }],
+                        output_ports: vec![ComponentPortDeclaration {
+                            name: "main".to_string(),
+                            schema: json!({"type": "object"}),
+                        }],
+                        parameters: vec![ComponentParameterDeclaration {
+                            name: "mapping".to_string(),
+                            schema: json!({"type": "object"}),
+                            required: true,
+                        }],
+                    },
+                )]),
+                connections: Vec::new(),
+            },
+            admitted_platform_packages: BTreeSet::new(),
+            effect_free_operation_dependencies: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn exact_bytes_mint_digest_and_normalized_fact_without_io() {
+        let engine = wamn_engine::build_engine(&[]).expect("engine builds");
+        let bytes = component_bytes("");
+
+        let admitted = validate_component_admission(&engine, &bytes, request())
+            .expect("empty-import component admits")
+            .component;
+
+        assert_eq!(admitted.component_digest, component_digest(&bytes));
+        assert_eq!(admitted.imports, [NODE_TYPES_IMPORT]);
+        let operation = admitted.operation(OPERATION).expect("operation admits");
+        assert_eq!(operation.input_ports[0].name, "input");
+        assert!(operation.parameters[0].required);
+
+        let projected = crate::wiring_lowering::project_component_operations(&admitted);
+        let projected = projected.first().expect("one operation projects");
+        assert_eq!(projected.component, admitted.component);
+        assert_eq!(projected.interface_version, admitted.interface_version);
+        assert_eq!(projected.operation, OPERATION);
+        assert_eq!(projected.component_digest, admitted.component_digest);
+        assert_eq!(projected.input_ports, BTreeSet::from(["input".to_string()]));
+        assert_eq!(projected.output_ports, BTreeSet::from(["main".to_string()]));
+        assert!(projected.parameters["mapping"].required);
+    }
+}

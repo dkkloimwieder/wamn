@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_run_state::{FailKind, RunStore as _};
@@ -16,7 +17,6 @@ use wamn_runtime::plugins::wamn_postgres::{
     ProductionReapResult, ProductionRouterAction, ReleaseIdentity, SessionClaims, WamnPostgres,
     production_router_action, production_router_result_action,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 
 use crate::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,

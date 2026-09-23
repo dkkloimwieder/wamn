@@ -406,8 +406,8 @@ where
     T: 'static,
     F: std::future::Future<Output = Result<R, StoreError>>,
 {
-    let trace = accessor
-        .with(|mut access| crate::plugins::invocation_trace::invocation_trace(&access.get()));
+    let trace =
+        accessor.with(|mut access| wamn_engine::invocation_trace::invocation_trace(&access.get()));
     trace
         .run(async move {
             use tracing::Instrument as _;

@@ -5,11 +5,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
+
 [dependencies]
 # No `oci` feature here: the registry source lives in wamn-runtime.
 wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-component-policy = { workspace = true }
+wamn-execution-contract = { workspace = true }
 anyhow = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 
@@ -18,8 +28,11 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"
 # The engine tests encode their guests from WAT in-process. Same exact pins as
 # wamn-runtime.
 wat = "=1.252.0"
-wit-component = "=0.252.0"
+wit-component = { version = "=0.252.0", features = ["dummy-module"] }
 wit-parser = "=0.252.0"
+# The release-manifest tests build manifests from parts, which wamn-catalog
+# gates behind `test-util`. Never add this feature to the normal dependency.
+wamn-catalog = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

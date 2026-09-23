@@ -338,7 +338,7 @@ pub fn load_local_facts(
     let bytes =
         std::fs::read(directory.join(LOCAL_FACTS_FILE)).context("read local admission facts")?;
     anyhow::ensure!(
-        crate::component_admission::component_digest(&bytes) == admission_digest,
+        wamn_engine::component_admission::component_digest(&bytes) == admission_digest,
         "local admission bytes changed after validation"
     );
     let facts: LocalApplicationFacts =
@@ -825,7 +825,7 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         let path = directory.join(super::LOCAL_FACTS_FILE);
         let bytes = serde_json::to_vec(&facts).unwrap();
-        let digest = crate::component_admission::component_digest(&bytes);
+        let digest = wamn_engine::component_admission::component_digest(&bytes);
         std::fs::write(&path, &bytes).unwrap();
         super::load_local_facts(&directory, &manifest, &digest).unwrap();
         let mut changed = serde_json::to_value(&facts).unwrap();

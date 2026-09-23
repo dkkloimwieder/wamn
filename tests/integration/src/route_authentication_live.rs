@@ -12,6 +12,7 @@ use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::authorize_attachment_for_test;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_platform_identity::{
@@ -24,7 +25,6 @@ use wamn_runtime::plugins::flow_http_routing::{
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 
 use wamn_control::dev::environment::{
     ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route,

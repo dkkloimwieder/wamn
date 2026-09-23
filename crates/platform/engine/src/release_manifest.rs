@@ -2,7 +2,7 @@
 //!
 //! A pod carries exactly one release, delivered by one of two carriers: the
 //! digest-addressed OCI release artifact its pod template names, pulled by
-//! [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource),
+//! `ReleaseManifestSource`,
 //! or an immutable digest-named ConfigMap projected at
 //! [`RELEASE_MANIFEST_MOUNT_PATH`]. Either way the bytes are the *sole* carrier
 //! of release identity. Loading derives the `(effective release id, manifest digest)`
@@ -30,7 +30,7 @@
 //! certificate.
 //!
 //! The pod template carries the OCI digest, and the registry supplies the bytes.
-//! [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource)
+//! `ReleaseManifestSource`
 //! refuses a digest mismatch before loading. The loaded release derives identity
 //! from content alone. It asserts nothing about the source of that content.
 //!
@@ -116,7 +116,7 @@ impl std::error::Error for ReleaseLoadError {}
 ///
 /// This is the `(effective release id, manifest digest)` pair the production
 /// claim uses to verify the run's admission pin and record the digest write-once
-/// ([`ReleaseIdentity`](crate::plugins::wamn_postgres::ReleaseIdentity)). It is
+/// (`ReleaseIdentity`). It is
 /// host-injected identity, never guest-supplied — and, since it comes out of the
 /// same bytes the readers resolve against, the two cannot disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,7 +168,7 @@ impl LoadedRelease {
     ///
     /// `origin` names that carrier in refusals — a mount path, or the OCI
     /// reference a
-    /// [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource)
+    /// `ReleaseManifestSource`
     /// checked the bytes against. It takes no part in verification: identity
     /// still comes only out of the bytes.
     pub fn load_canonical_bytes(bytes: &[u8], origin: &str) -> Result<Self, ReleaseLoadError> {

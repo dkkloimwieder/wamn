@@ -28,6 +28,7 @@ use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
 };
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
     DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, ROUTER_DELIVERY_ID,
     RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV,
@@ -45,7 +46,6 @@ use wamn_runtime::plugins::flow_http_routing::{
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
-use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_runtime::session_verifier::SessionVerifier;
@@ -1891,7 +1891,7 @@ mod tests {
             std::env::temp_dir().join(format!("wamn-host-local-workload-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let bytes = b"local component transport fixture";
-        let digest = wamn_runtime::component_admission::component_digest(bytes);
+        let digest = wamn_engine::component_admission::component_digest(bytes);
         let path =
             wamn_runtime::component_artifact_source::local_component_path(&directory, &digest)
                 .unwrap();

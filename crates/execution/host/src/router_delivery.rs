@@ -10,6 +10,7 @@ use opentelemetry::metrics::{Counter, Meter};
 use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentTarget, ServingManifest, parse_attachment_auth_policy,
 };
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
@@ -17,7 +18,6 @@ pub use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_jetstream::{
     DerivedPublishRequest, RouterTapPhase, RouterTapPreview, WamnJetstream,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -709,7 +709,7 @@ fn resolve_authorized_target(
 /// Exercise the exact production attachment resolver and authorization gate.
 #[cfg(feature = "test-util")]
 pub(crate) fn authorize_attachment_for_test(
-    release: &wamn_runtime::release_manifest::LoadedRelease,
+    release: &wamn_engine::release_manifest::LoadedRelease,
     attachment_id: &str,
     caller: Option<&AuthenticatedCaller>,
 ) -> Result<(), Box<str>> {

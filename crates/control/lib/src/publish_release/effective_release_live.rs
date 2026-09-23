@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{AdmittedComponent, ComponentDeclaration, OperationKind, PackageCoordinate};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
-use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
+use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
     DependencyDigestRule, MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest,

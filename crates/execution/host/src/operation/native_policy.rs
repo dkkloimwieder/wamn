@@ -7,11 +7,12 @@ use anyhow::Context as _;
 use tokio::time::Instant;
 use tracing::Instrument as _;
 use wamn_catalog::{AdmittedComponent, ComponentOperationDependency};
-use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_runtime::plugins::flow_http_routing::{AuthenticatedCaller, CredentialKind};
-use wamn_runtime::plugins::invocation_trace::{
+use wamn_engine::invocation_trace::{
     INVOCATION_TRACES_ID, InvocationTrace, InvocationTraces, invocation_trace,
 };
+use wamn_engine::release_manifest::LoadedRelease;
+use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
+use wamn_runtime::plugins::flow_http_routing::{AuthenticatedCaller, CredentialKind};
 use wamn_runtime::plugins::wamn_blobstore::plugin::{
     self as blobstore, WAMN_BLOBSTORE_ID, WamnBlobstore,
 };
@@ -19,7 +20,6 @@ use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID, WamnPostgres,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::extract_active_ctx;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};

@@ -12,14 +12,14 @@
 //! A projected ConfigMap carries no usable binding between the bytes and the
 //! name the template asked for — the name inside the container is placed by the
 //! same template that mounts the bytes, so comparing them tests the template
-//! against itself (see [`crate::release_manifest`]). A registry is a third
+//! against itself (see [`wamn_engine::release_manifest`]). A registry is a third
 //! party: the digest travels in the pod template, the bytes come from the
 //! registry, and this module refuses unless they agree. Nothing about the
 //! release's identity is derived here. This module only checks it.
 //!
 //! This module owns artifact transfer alone. Document admission — canonicality,
 //! format version, the release pair — stays with
-//! [`LoadedRelease`](crate::release_manifest::LoadedRelease).
+//! [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -30,11 +30,11 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::MAX_SERVING_MANIFEST_BYTES;
 
-use crate::component_admission::component_digest;
-use crate::component_artifact::{ComponentArtifactBase, parse_component_artifact_base};
 use crate::registry_credentials::read_registry_credentials;
 use crate::registry_transport::transport_is_mismatched;
 use crate::release_manifest_artifact::verify_release_manifest_artifact_layout;
+use wamn_engine::component_admission::component_digest;
+use wamn_engine::component_artifact::{ComponentArtifactBase, parse_component_artifact_base};
 
 /// Bound each registry connect/read phase without adding a deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);

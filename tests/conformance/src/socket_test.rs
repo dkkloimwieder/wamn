@@ -88,7 +88,7 @@ fn screen(
     label: &str,
 ) -> anyhow::Result<Result<(), EgressGuardError>> {
     let bytes = synth_component(imports);
-    let imports = wamn_runtime::component_imports(engine, &bytes, label)?;
+    let imports = wamn_engine::component_imports(engine, &bytes, label)?;
     Ok(analyze(&imports, PolicyProfile::FirstParty, label).map(|_| ()))
 }
 

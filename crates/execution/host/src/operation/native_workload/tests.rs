@@ -60,7 +60,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
                     statements: BTreeMap::new(),
                 },
             )]),
-            component_digest: wamn_runtime::component_admission::component_digest(&bytes),
+            component_digest: wamn_engine::component_admission::component_digest(&bytes),
             imports,
             imports_fingerprint,
             effects: Vec::new(),
@@ -207,7 +207,7 @@ async fn native_mixed_workload_preserves_fresh_shared_store_units() {
         ))
         .expect("counter fixture");
         input.fact.component_digest =
-            wamn_runtime::component_admission::component_digest(&input.bytes);
+            wamn_engine::component_admission::component_digest(&input.bytes);
         input
     }
 

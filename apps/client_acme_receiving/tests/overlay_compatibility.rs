@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use wamn_control::apply_package::{
     self, ApplyPackageError, ApplyPackageErrorKind, ApplyPackageRequest,
 };
+use wamn_engine::component_admission::component_digest;
 use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase};
-use wamn_runtime::component_admission::component_digest;
 use wamn_schema_introspection::ir::{
     Constraint, ForeignKeyAction, ForeignKeyColumn, postgres_type,
 };

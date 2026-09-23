@@ -108,7 +108,7 @@ fn capability_registry_wasi_rows_match_the_pinned_adapter() {
         .collect();
     println!(
         "production-profile-adapter={} imports={imports:?}",
-        wamn_runtime::component_admission::component_digest(&adapter.adapter)
+        wamn_engine::component_admission::component_digest(&adapter.adapter)
     );
     for package in ["wasi:io", "wasi:clocks"] {
         assert_registry_version(package, &imports);
@@ -135,7 +135,7 @@ fn capability_registry_wasi_rows_match_the_pinned_adapter() {
         .collect();
     println!(
         "random-refusal-adapter={} exports={exports:?}",
-        wamn_runtime::component_admission::component_digest(&adapter.adapter)
+        wamn_engine::component_admission::component_digest(&adapter.adapter)
     );
     assert_eq!(
         exports.len(),

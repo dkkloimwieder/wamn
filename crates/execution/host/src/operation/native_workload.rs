@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
-use wamn_runtime::component_admission::component_digest;
+use wamn_engine::component_admission::component_digest;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::workload::ResolvedWorkload;
 use wash_runtime::host::http::NullServer;

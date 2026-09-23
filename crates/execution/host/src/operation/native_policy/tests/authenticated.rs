@@ -12,6 +12,7 @@ use tracing::{Instrument as _, instrument::WithSubscriber as _};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::plugins::flow_http_routing::{
     AuthenticatedCaller, CredentialKind, FlowHttpRouting, RouteInFlightLimit,
     SessionRouteAuthentication,
@@ -19,7 +20,6 @@ use wamn_runtime::plugins::flow_http_routing::{
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::session_verifier::SessionVerifier;
 
 use super::trace::TraceCapture;

@@ -45,7 +45,7 @@ use crate::plugins::effect_span::{
     record_effect_ms, record_wiring,
 };
 use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, PROJECT_CONFIG_KEY, TENANT_CONFIG_KEY};
-use crate::release_manifest::LoadedRelease;
+use wamn_engine::release_manifest::LoadedRelease;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({

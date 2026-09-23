@@ -7,7 +7,10 @@ license.workspace = true
 
 [features]
 test-util = []
-wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
+wasm_component_model_implements = [
+    "wash-runtime/wasm_component_model_implements",
+    "wamn-engine/wasm_component_model_implements",
+]
 
 [dependencies]
 # Activation compares the native broker declarations from this library.
@@ -19,7 +22,6 @@ object_store = { workspace = true }
 wash-runtime = { workspace = true, features = ["oci"] }
 wamn-engine = { workspace = true }
 wasmtime = { workspace = true }
-wamn-component-policy = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }

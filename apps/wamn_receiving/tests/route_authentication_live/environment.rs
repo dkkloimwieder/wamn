@@ -186,8 +186,8 @@ pub(super) fn render_component_declarations(
                     let artifact = component_directory.join(format!("{}.wasm", base.component));
                     let bytes = std::fs::read(&artifact)
                         .with_context(|| format!("read built base {}", artifact.display()))?;
-                    *digest = wamn_runtime::component_admission::component_digest(&bytes)
-                        .into_boxed_str();
+                    *digest =
+                        wamn_engine::component_admission::component_digest(&bytes).into_boxed_str();
                 }
             }
             let declaration = wamn_control::component_declaration::render_declaration_document(
@@ -240,7 +240,7 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
             serde_json::json!([{
                 "package": BASE_PACKAGE_ID,
                 "version": BASE_PACKAGE_VERSION,
-                "digest": wamn_runtime::component_admission::component_digest(bytes),
+                "digest": wamn_engine::component_admission::component_digest(bytes),
                 "operation": BASE_RECORD_RECEIPT,
                 "participant": "client-acme-receiving:receiving/record-receipt-participant@3.0.0",
             }]),

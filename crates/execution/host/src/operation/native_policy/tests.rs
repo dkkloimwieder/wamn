@@ -16,8 +16,9 @@ use wamn_catalog::{
     EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
     ServingComponentOperation, ServingManifest, ServingRelease,
 };
+use wamn_engine::component_admission::component_digest;
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_project_state::PlatformComponent;
-use wamn_runtime::component_admission::component_digest;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
@@ -28,7 +29,6 @@ use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     ReleaseIdentity, SessionClaims, StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres,
 };
-use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
@@ -421,7 +421,7 @@ impl HostPlugin for Observe {
             move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
                   (phase,): (u32,)| {
                 let active = extract_active_ctx(store.data_mut());
-                let trace = wamn_runtime::plugins::invocation_trace::invocation_trace(&active);
+                let trace = wamn_engine::invocation_trace::invocation_trace(&active);
                 trace.in_scope(|| {
                     let scope = active.ctx.component_id.to_string();
                     let native_identity = policy

@@ -1,7 +1,7 @@
 //! Host plugin for `wamn:flow-http-routing@0.1.0`.
 //!
 //! Reader 3 of the four the loaded release manifest enumerates
-//! ([`crate::release_manifest`]): it answers `routes` out of
+//! ([`wamn_engine::release_manifest`]): it answers `routes` out of
 //! [`ServingManifest::attachments`] with no database read. Authentication
 //! re-derives the selected attachment's policy from that same loaded release, verifies the
 //! PAT through the system identity reader, and loads the role's exact permission
@@ -42,8 +42,8 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::release_manifest::LoadedRelease;
 use crate::session_verifier::SessionVerifier;
+use wamn_engine::release_manifest::LoadedRelease;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -1231,7 +1231,7 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
-                crate::plugins::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
