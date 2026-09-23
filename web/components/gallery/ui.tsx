@@ -6,18 +6,13 @@
  * binding, so it searches and pages exactly as a generated form does.
  */
 
-import { createSignal, For, onMount, type JSX, type ParentProps } from "solid-js";
+import { createSignal, For, onMount, type JSX } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 
 import {
   announceOutcome,
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   CheckField,
   ChoiceField,
   ConfirmAction,
@@ -39,31 +34,7 @@ import type { Outcome } from "@wamn/web-runtime";
 
 import { query, type WidgetMakerQueryRow } from "../fixture/widget_maker.js";
 import { paged, WIDGET } from "../stubs/index.js";
-
-/** One gallery section: the export it shows, and its states. */
-function Section(props: ParentProps<{ title: string; name: string }>): JSX.Element {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h2>{props.title}</h2>
-        </CardTitle>
-        <CardDescription class="font-mono">{props.name}</CardDescription>
-      </CardHeader>
-      <CardContent>{props.children}</CardContent>
-    </Card>
-  );
-}
-
-/** One state of a component, under the name of that state. */
-function State(props: ParentProps<{ name: string }>): JSX.Element {
-  return (
-    <div class="flex min-w-0 flex-col gap-2">
-      <p class="text-xs text-muted-foreground">{props.name}</p>
-      {props.children}
-    </div>
-  );
-}
+import { Section, State } from "./section.js";
 
 const BUTTON_VARIANTS = [
   "default",

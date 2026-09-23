@@ -12,6 +12,7 @@ import { render } from "solid-js/web";
 
 import { Button, ColorModeProvider, getClientColorMode, Toaster, useColorMode } from "@wamn/ui";
 
+import { ScreenSections } from "./screens.js";
 import { UiSections } from "./ui.js";
 
 function Gallery() {
@@ -27,7 +28,10 @@ function Gallery() {
         </div>
       </header>
       <main class="mx-auto flex max-w-screen-2xl flex-col gap-6 px-6 py-6">
+        <p class="text-sm font-semibold uppercase">web/ui components</p>
         <UiSections />
+        <p class="text-sm font-semibold uppercase">Generated screens of the platform fixture</p>
+        <ScreenSections />
       </main>
     </div>
   );

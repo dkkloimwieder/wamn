@@ -8,6 +8,7 @@
  * package to this package's copy. Two copies break context and reactivity.
  */
 
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import tailwindcss from "@tailwindcss/vite";
@@ -17,6 +18,13 @@ import { defineConfig } from "vite";
 /** One path relative to this directory, as an absolute path. */
 function local(path: string): string {
   return fileURLToPath(new URL(path, import.meta.url));
+}
+
+// The page renders the fixture's generated screens, which Git ignores.
+if (!existsSync(local("../fixture/components/index.ts"))) {
+  throw new Error(
+    "web/components/fixture/ is absent. Write it first with: cargo run --locked --offline -p wamn-schema-generator --example check_client_components",
+  );
 }
 
 export default defineConfig({
