@@ -126,7 +126,7 @@ fn authored_sql_access_must_match_declared_reads_and_row_locks() {
         let message = error.to_string();
         assert!(message.contains("privilege declaration does not match verified SQL"));
         assert!(message.contains("\"lock\":true"));
-        assert!(message.contains("\"select_fields\":[\"edit_version\",\"id\"]"));
+        assert!(message.contains("\"select_fields\":[\"edit_version\",\"id\",\"note\"]"));
     }
 }
 
@@ -509,27 +509,29 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
             .as_array()
             .unwrap()
             .len(),
-        2
+        3
     );
     assert_eq!(
         source_map["wamn_rows"][0]["fields"]
             .as_array()
             .unwrap()
             .len(),
-        2
+        3
     );
     assert_eq!(
         source_map["native_rows"][0]["fields"],
         json!([
             {"name": "id", "type": "uuid::Uuid"},
-            {"name": "edit_version", "type": "i64"}
+            {"name": "edit_version", "type": "i64"},
+            {"name": "note", "type": "Option<String>"}
         ])
     );
     assert_eq!(
         source_map["wamn_rows"][0]["fields"],
         json!([
             {"name": "id", "type": "wamn_postgres_statements::Uuid"},
-            {"name": "edit_version", "type": "i64"}
+            {"name": "edit_version", "type": "i64"},
+            {"name": "note", "type": "Option<String>"}
         ])
     );
     assert_eq!(contract_statement["path"], statement["path"]);
