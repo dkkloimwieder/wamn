@@ -1,10 +1,11 @@
 //! Environment-bound HTTP for ordinary `wamn:node` components.
 //!
-//! The host binds the exact wiring, node position, occurrence and component
-//! digest before invoking a pooled component. The guest names only a store
-//! alias; the database must resolve that alias at the component grain and the
-//! mounted format-1 manifest must contain both the exact wiring version/hash and
-//! component tuple. No run, plan, frame or effect record participates.
+//! The host binds the exact entry (a route, or a wiring node position and
+//! occurrence) and the component digest before invoking a pooled component. The
+//! guest names only a store alias; the database must resolve that alias at the
+//! component grain and the mounted manifest must contain the exact route or
+//! wiring version/hash and the component tuple. No run, plan, frame or effect
+//! record participates.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -34,7 +35,8 @@ use crate::release_manifest::LoadedRelease;
 
 use super::wamn_credentials::WamnCredentials;
 use super::wamn_postgres::{
-    CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
+    CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, ConnectionEntryLookup,
+    WamnPostgres, WiringLookup,
 };
 
 mod network_policy;
@@ -78,13 +80,11 @@ const RESPONSE_BODY_LOST: &str = "connection-response-lost";
 /// function ran, not which node operation raised it (`wamn-b2m6.7`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInvocation {
-    /// The initial wiring owner and root component, unchanged by nested calls.
+    /// The root component, unchanged by nested calls.
     pub origin: ConnectionOrigin,
+    /// Where the invocation entered the release, unchanged by nested calls.
+    pub entry: InvocationEntry,
     pub package_id: String,
-    pub wiring_id: String,
-    pub wiring_version: u32,
-    pub node_id: String,
-    pub occurrence: u32,
     pub component_digest: String,
     pub component: String,
     pub operation: String,
@@ -93,11 +93,65 @@ pub struct ConnectionInvocation {
     pub effects: Option<EffectEvidence>,
 }
 
+impl ConnectionInvocation {
+    /// The span coordinates of this invocation. A route has no wiring
+    /// position, so it records the wiring keys empty.
+    pub(crate) fn effect_wiring(&self) -> EffectWiring<'_> {
+        let (wiring_id, wiring_version, node_id, occurrence) = match self.entry.wiring() {
+            None => ("", 0, "", 0),
+            Some(position) => (
+                position.wiring_id.as_str(),
+                position.wiring_version,
+                position.node_id.as_str(),
+                position.occurrence,
+            ),
+        };
+        EffectWiring {
+            package_id: &self.package_id,
+            wiring_id,
+            wiring_version,
+            node_id,
+            occurrence,
+            component_digest: &self.component_digest,
+            component_name: &self.component,
+            operation: &self.operation,
+        }
+    }
+}
+
+/// Where one invocation entered the release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvocationEntry {
+    /// A route called the origin export once. The origin names the route.
+    Route,
+    /// One node occurrence of an exact wiring version.
+    Wiring(WiringPosition),
+}
+
+impl InvocationEntry {
+    /// The wiring position, or `None` for a route.
+    pub fn wiring(&self) -> Option<&WiringPosition> {
+        match self {
+            Self::Route => None,
+            Self::Wiring(position) => Some(position),
+        }
+    }
+}
+
+/// One node occurrence of an exact wiring version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WiringPosition {
+    /// The wiring can belong to a package that imports the root component.
+    pub package_id: String,
+    pub wiring_id: String,
+    pub wiring_version: u32,
+    pub node_id: String,
+    pub occurrence: u32,
+}
+
 /// Host-attested root identity for an effect's exact dependency path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionOrigin {
-    /// The wiring can belong to a package that imports the root component.
-    pub wiring_package_id: String,
     pub package_id: String,
     pub component_digest: String,
     pub component: String,
@@ -189,12 +243,22 @@ impl ConnectionHttp {
             .component_digest
             .strip_prefix("sha256:")
             .unwrap_or_default();
+        let entry_valid = match &invocation.entry {
+            InvocationEntry::Route => !matches!(
+                invocation.closure,
+                ConnectionExecutionClosure::Candidate { .. }
+            ),
+            InvocationEntry::Wiring(position) => {
+                !position.package_id.is_empty()
+                    && !position.wiring_id.is_empty()
+                    && position.wiring_version > 0
+                    && !position.node_id.is_empty()
+            }
+        };
         anyhow::ensure!(
             !component_id.is_empty()
                 && !invocation.package_id.is_empty()
-                && !invocation.wiring_id.is_empty()
-                && invocation.wiring_version > 0
-                && !invocation.node_id.is_empty()
+                && entry_valid
                 && digest.len() == 64
                 && digest
                     .bytes()
@@ -313,8 +377,7 @@ impl ConnectionHttp {
                 ),
                 _ => return Err(ConnectionError::AttestationInvalid),
             };
-        let wiring_version = i32::try_from(invocation.wiring_version)
-            .map_err(|_| ConnectionError::AttestationInvalid)?;
+        let entry = entry_lookup(&invocation)?;
         let snapshot = self
             .postgres
             .connection_effect_snapshot(
@@ -323,7 +386,7 @@ impl ConnectionHttp {
                 &self.tenant,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
-                    wiring_package_id: &invocation.origin.wiring_package_id,
+                    entry,
                     origin_package_id: &invocation.origin.package_id,
                     origin_component_digest: &invocation.origin.component_digest,
                     origin_component: &invocation.origin.component,
@@ -332,9 +395,6 @@ impl ConnectionHttp {
                     operation: &invocation.operation,
                     effective_release_id,
                     environment,
-                    wiring_id: &invocation.wiring_id,
-                    wiring_version,
-                    node_id: &invocation.node_id,
                     component_digest: &invocation.component_digest,
                     store_alias: &request.requirement,
                     candidate_binding,
@@ -483,6 +543,30 @@ fn require_direct_transport(
 /// Shared with the blobstore capability rather than reimplemented there: two
 /// spellings of "does this component belong to this release" could disagree,
 /// and the one that was wrong would authorize an effect.
+/// The snapshot entry for one bound invocation: its route, or its wiring node.
+///
+/// Shared with the blobstore capability for the reason
+/// [`authorize_release_closure`] gives.
+pub(crate) fn entry_lookup(
+    invocation: &ConnectionInvocation,
+) -> Result<ConnectionEntryLookup<'_>, ConnectionError> {
+    Ok(match &invocation.entry {
+        InvocationEntry::Route => ConnectionEntryLookup {
+            package_id: &invocation.origin.package_id,
+            wiring: None,
+        },
+        InvocationEntry::Wiring(position) => ConnectionEntryLookup {
+            package_id: &position.package_id,
+            wiring: Some(WiringLookup {
+                wiring_id: &position.wiring_id,
+                wiring_version: i32::try_from(position.wiring_version)
+                    .map_err(|_| ConnectionError::AttestationInvalid)?,
+                node_id: &position.node_id,
+            }),
+        },
+    })
+}
+
 pub(crate) fn authorize_release_closure(
     manifest: &ServingManifest,
     invocation: &ConnectionInvocation,
@@ -510,14 +594,32 @@ pub(crate) fn authorize_release_closure(
     let operation_admitted = component
         .and_then(|component| component.operations.get(operation))
         .is_some_and(|operation| operation.registered_operation == snapshot.registered_operation);
-    let wiring = ServingWiring {
-        package_id: invocation.origin.wiring_package_id.clone(),
-        wiring_id: invocation.wiring_id.clone(),
-        wiring_version: invocation.wiring_version,
-        graph_hash: DefinitionHash::parse(snapshot.wiring_hash.clone())
-            .map_err(|_| ConnectionError::AttestationInvalid)?,
-    };
     let origin = &invocation.origin;
+    let entry_released = match &invocation.entry {
+        InvocationEntry::Route => {
+            snapshot.wiring_hash.is_none()
+                && manifest.routes.iter().any(|route| {
+                    route.package_id == origin.package_id
+                        && route.component == origin.component
+                        && route.operation == origin.operation
+                })
+        }
+        InvocationEntry::Wiring(position) => {
+            let wiring = ServingWiring {
+                package_id: position.package_id.clone(),
+                wiring_id: position.wiring_id.clone(),
+                wiring_version: position.wiring_version,
+                graph_hash: DefinitionHash::parse(
+                    snapshot
+                        .wiring_hash
+                        .clone()
+                        .ok_or(ConnectionError::AttestationInvalid)?,
+                )
+                .map_err(|_| ConnectionError::AttestationInvalid)?,
+            };
+            manifest.wirings.contains(&wiring)
+        }
+    };
     let root = manifest.components.iter().find(|component| {
         component.package_id == origin.package_id
             && component.component == origin.component
@@ -525,7 +627,7 @@ pub(crate) fn authorize_release_closure(
             && component.digest.as_str() == origin.component_digest
     });
     if !operation_admitted
-        || !manifest.wirings.contains(&wiring)
+        || !entry_released
         || !root.is_some_and(|root| {
             released_operation_reachable(manifest, root, &origin.operation, invocation)
         })
@@ -608,7 +710,7 @@ pub(crate) fn authorize_candidate_closure(
         || invocation.component != invocation.origin.component
         || invocation.operation != invocation.origin.operation
         || snapshot.operation.as_deref() != Some(invocation.operation.as_str())
-        || snapshot.wiring_hash != *wiring_hash
+        || snapshot.wiring_hash.as_ref() != Some(wiring_hash)
         || snapshot.component.as_deref() != Some(component.as_str())
         || snapshot.interface_version.as_deref() != Some(interface_version.as_str())
         || !binding.matches_snapshot(snapshot)
@@ -940,16 +1042,7 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
     let invocation = plugin.invocation(component_id);
     record_wiring(
         &span,
-        invocation.as_ref().map(|invocation| EffectWiring {
-            package_id: &invocation.package_id,
-            wiring_id: &invocation.wiring_id,
-            wiring_version: invocation.wiring_version,
-            node_id: &invocation.node_id,
-            occurrence: invocation.occurrence,
-            component_digest: &invocation.component_digest,
-            component_name: &invocation.component,
-            operation: &invocation.operation,
-        }),
+        invocation.as_ref().map(ConnectionInvocation::effect_wiring),
     );
     span
 }
@@ -1035,13 +1128,14 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
                 observed.settle(outcome, result.is_err());
                 if let Err(error) = &result {
                     let invocation = plugin.invocation(&component_id);
+                    let wiring = invocation.as_ref().map(ConnectionInvocation::effect_wiring);
                     tracing::warn!(
                         error = ?error,
                         effect.outcome = outcome.label(),
-                        wiring_id = invocation.as_ref().map(|value| value.wiring_id.as_str()),
-                        wiring_version = invocation.as_ref().map(|value| value.wiring_version),
-                        node_id = invocation.as_ref().map(|value| value.node_id.as_str()),
-                        occurrence = invocation.as_ref().map(|value| value.occurrence),
+                        wiring_id = wiring.map(|value| value.wiring_id),
+                        wiring_version = wiring.map(|value| value.wiring_version),
+                        node_id = wiring.map(|value| value.node_id),
+                        occurrence = wiring.map(|value| value.occurrence),
                         store_alias = request.requirement,
                         "trusted HTTP effect failed"
                     );
@@ -1057,8 +1151,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponentOperation, ServingRelease,
+        EffectiveReleaseId, OperationKind, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        ServingComponentOperation, ServingRelease, ServingRoute,
     };
 
     use super::*;
@@ -1072,18 +1166,22 @@ mod tests {
     fn invocation() -> ConnectionInvocation {
         ConnectionInvocation {
             origin: ConnectionOrigin {
-                wiring_package_id: "package_a".to_string(),
                 package_id: "package_a".to_string(),
                 component_digest: digest('a'),
                 component: "notifier".to_string(),
                 interface_version: "0.1".to_string(),
                 operation: "orders:notify/dispatch@1.0.0".to_string(),
             },
+            entry: crate::plugins::connection_http::InvocationEntry::Wiring(
+                crate::plugins::connection_http::WiringPosition {
+                    package_id: "package_a".to_string(),
+                    wiring_id: "orders".to_string(),
+                    wiring_version: 3,
+                    node_id: "notify".to_string(),
+                    occurrence: 2,
+                },
+            ),
             package_id: "package_a".to_string(),
-            wiring_id: "orders".to_string(),
-            wiring_version: 3,
-            node_id: "notify".to_string(),
-            occurrence: 2,
             component_digest: digest('a'),
             component: "notifier".to_string(),
             operation: "orders:notify/dispatch@1.0.0".to_string(),
@@ -1143,7 +1241,7 @@ mod tests {
 
     fn snapshot() -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
-            wiring_hash: digest('b'),
+            wiring_hash: Some(digest('b')),
             component: Some("notifier".to_string()),
             interface_version: Some("0.1".to_string()),
             operation: Some("orders:notify/dispatch@1.0.0".to_string()),
@@ -1175,8 +1273,16 @@ mod tests {
         }
     }
 
+    fn position(invocation: &mut ConnectionInvocation) -> &mut WiringPosition {
+        let InvocationEntry::Wiring(position) = &mut invocation.entry else {
+            panic!("the fixture invocation enters through a wiring");
+        };
+        position
+    }
+
     fn manifest() -> ServingManifest {
-        let invocation = invocation();
+        let mut invocation = invocation();
+        let position = position(&mut invocation).clone();
         let snapshot = snapshot();
         ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -1206,10 +1312,10 @@ mod tests {
             }]),
             routes: BTreeSet::new(),
             wirings: BTreeSet::from([ServingWiring {
-                package_id: invocation.package_id,
-                wiring_id: invocation.wiring_id,
-                wiring_version: invocation.wiring_version,
-                graph_hash: DefinitionHash::parse(snapshot.wiring_hash)
+                package_id: position.package_id,
+                wiring_id: position.wiring_id,
+                wiring_version: position.wiring_version,
+                graph_hash: DefinitionHash::parse(snapshot.wiring_hash.expect("wiring hash"))
                     .expect("fixture definition hash is canonical"),
             }]),
             attachments: BTreeMap::new(),
@@ -1233,11 +1339,73 @@ mod tests {
         ));
 
         let mut wrong_wiring_hash = snapshot;
-        wrong_wiring_hash.wiring_hash = digest('e');
+        wrong_wiring_hash.wiring_hash = Some(digest('e'));
         assert!(matches!(
             authorize_release_closure(&manifest, &invocation, &wrong_wiring_hash),
             Err(ConnectionError::AttestationInvalid)
         ));
+    }
+
+    #[test]
+    fn a_route_entry_is_authorized_only_by_a_released_route() {
+        let mut manifest = manifest();
+        let mut invocation = invocation();
+        invocation.entry = InvocationEntry::Route;
+        let mut snapshot = snapshot();
+        snapshot.wiring_hash = None;
+        assert!(
+            matches!(
+                authorize_release_closure(&manifest, &invocation, &snapshot),
+                Err(ConnectionError::AttestationInvalid)
+            ),
+            "a release with no route for the origin refuses"
+        );
+
+        manifest.routes.insert(ServingRoute {
+            package_id: invocation.origin.package_id.clone(),
+            component: invocation.origin.component.clone(),
+            operation: invocation.origin.operation.clone(),
+            kind: OperationKind::Command,
+        });
+        authorize_release_closure(&manifest, &invocation, &snapshot)
+            .expect("a released route authorizes its origin export");
+
+        let mut with_wiring = snapshot;
+        with_wiring.wiring_hash = Some(digest('b'));
+        assert!(
+            matches!(
+                authorize_release_closure(&manifest, &invocation, &with_wiring),
+                Err(ConnectionError::AttestationInvalid)
+            ),
+            "a route entry never resolves a wiring row"
+        );
+    }
+
+    #[test]
+    fn a_route_entry_binds_released_only_and_looks_up_no_wiring() {
+        let plugin = offline_plugin();
+        let mut route = invocation();
+        route.entry = InvocationEntry::Route;
+        let lookup = entry_lookup(&route).expect("a route has a lookup entry");
+        assert_eq!(lookup.package_id, route.origin.package_id);
+        assert!(lookup.wiring.is_none());
+        plugin
+            .bind_invocation("released-route", route.clone())
+            .expect("a released route binds");
+
+        route.closure = ConnectionExecutionClosure::Candidate {
+            effective_release_id: 4,
+            environment: "prod".to_string(),
+            wiring_hash: digest('b'),
+            component: "notifier".to_string(),
+            interface_version: "0.1".to_string(),
+            binding_world: Arc::new(
+                CandidateBindingWorld::from_json(serde_json::json!([])).expect("empty world"),
+            ),
+        };
+        plugin
+            .bind_invocation("candidate-route", route)
+            .expect_err("a candidate closure is a wiring admission, never a route");
     }
 
     #[test]
@@ -1279,7 +1447,7 @@ mod tests {
         let mut wiring = manifest.wirings.pop_first().expect("wiring");
         wiring.package_id = "wiring_owner".to_string();
         manifest.wirings.insert(wiring);
-        invocation.origin.wiring_package_id = "wiring_owner".to_string();
+        position(&mut invocation).package_id = "wiring_owner".to_string();
         invocation.package_id.clone_from(&grandchild.package_id);
         invocation.component.clone_from(&grandchild.component);
         invocation.component_digest = grandchild.digest.to_string();
@@ -1541,11 +1709,12 @@ mod tests {
     /// another occurrence. A wiring id is package-scoped, so this is a different
     /// wiring wearing the same name.
     fn second_package_invocation() -> ConnectionInvocation {
-        ConnectionInvocation {
+        let mut invocation = ConnectionInvocation {
             package_id: "package_b".to_string(),
-            occurrence: 5,
             ..invocation()
-        }
+        };
+        position(&mut invocation).occurrence = 5;
+        invocation
     }
 
     /// THE TEST THAT WOULD HAVE CAUGHT THE DEFECT. One pooled instance serves

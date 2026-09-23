@@ -550,18 +550,22 @@ fn set_and_clear_current_run_is_per_component() {
 fn invocation(node_id: &str) -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
-            wiring_package_id: "package_a".to_string(),
             package_id: "package_a".to_string(),
             component_digest: format!("sha256:{}", "a".repeat(64)),
             component: "receiver".to_string(),
             interface_version: "0.1.0".to_string(),
             operation: "platform-fixture:widget/update@1.0.0".to_string(),
         },
+        entry: crate::plugins::connection_http::InvocationEntry::Wiring(
+            crate::plugins::connection_http::WiringPosition {
+                package_id: "package_a".to_string(),
+                wiring_id: "orders".to_string(),
+                wiring_version: 3,
+                node_id: node_id.to_string(),
+                occurrence: 1,
+            },
+        ),
         package_id: "package_a".to_string(),
-        wiring_id: "orders".to_string(),
-        wiring_version: 3,
-        node_id: node_id.to_string(),
-        occurrence: 1,
         component_digest: format!("sha256:{}", "a".repeat(64)),
         component: "receiver".to_string(),
         operation: "platform-fixture:widget/update@1.0.0".to_string(),
@@ -579,10 +583,26 @@ fn bind_and_revoke_invocation_is_per_component() {
     assert!(pg.invocation("c1").is_none());
     pg.bind_invocation("c1", invocation("receive"))
         .expect("a fresh component accepts its invocation");
-    assert_eq!(pg.invocation("c1").unwrap().node_id, "receive");
+    assert_eq!(
+        pg.invocation("c1")
+            .unwrap()
+            .entry
+            .wiring()
+            .expect("wiring entry")
+            .node_id,
+        "receive"
+    );
     // A still-bound owner refuses rather than inheriting the next node's position.
     assert!(pg.bind_invocation("c1", invocation("ship")).is_err());
-    assert_eq!(pg.invocation("c1").unwrap().node_id, "receive");
+    assert_eq!(
+        pg.invocation("c1")
+            .unwrap()
+            .entry
+            .wiring()
+            .expect("wiring entry")
+            .node_id,
+        "receive"
+    );
     // A second component is independent.
     assert!(pg.invocation("c2").is_none());
     pg.bind_invocation("c2", invocation("ship"))
@@ -591,7 +611,15 @@ fn bind_and_revoke_invocation_is_per_component() {
     assert!(pg.bind_invocation("", invocation("receive")).is_err());
     pg.revoke_invocation("c1");
     assert!(pg.invocation("c1").is_none());
-    assert_eq!(pg.invocation("c2").unwrap().node_id, "ship");
+    assert_eq!(
+        pg.invocation("c2")
+            .unwrap()
+            .entry
+            .wiring()
+            .expect("wiring entry")
+            .node_id,
+        "ship"
+    );
     // Revoke is idempotent; rebinding a released scope succeeds.
     pg.revoke_invocation("c1");
     pg.bind_invocation("c1", invocation("ship"))
@@ -684,7 +712,12 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     );
     assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
     assert_eq!(
-        pg.invocation("wl-b-component-0").unwrap().node_id,
+        pg.invocation("wl-b-component-0")
+            .unwrap()
+            .entry
+            .wiring()
+            .expect("wiring entry")
+            .node_id,
         "receive"
     );
 }
@@ -1371,7 +1404,14 @@ async fn effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim() 
     .expect("the acquiring tenant binds");
 
     let lookup = ConnectionEffectLookup {
-        wiring_package_id: "catalog",
+        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
+            package_id: "catalog",
+            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {
+                wiring_id: "wiring",
+                wiring_version: 1,
+                node_id: "node",
+            }),
+        },
         origin_package_id: "catalog",
         origin_component_digest: "digest",
         origin_component: "component",
@@ -1381,9 +1421,6 @@ async fn effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim() 
         operation: "operation",
         effective_release_id: 1,
         environment: "dev",
-        wiring_id: "wiring",
-        wiring_version: 1,
-        node_id: "node",
         component_digest: "digest",
         store_alias: "manager",
         candidate_binding: None,
@@ -1447,7 +1484,14 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_tenant() {
     );
 
     let lookup = ConnectionEffectLookup {
-        wiring_package_id: "catalog",
+        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
+            package_id: "catalog",
+            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {
+                wiring_id: "wiring",
+                wiring_version: 1,
+                node_id: "node",
+            }),
+        },
         origin_package_id: "catalog",
         origin_component_digest: "digest",
         origin_component: "component",
@@ -1457,9 +1501,6 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_tenant() {
         operation: "operation",
         effective_release_id: 1,
         environment: "dev",
-        wiring_id: "wiring",
-        wiring_version: 1,
-        node_id: "node",
         component_digest: "digest",
         store_alias: "manager",
         candidate_binding: None,
@@ -1570,7 +1611,14 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     .expect("the acquiring tenant binds");
 
     let lookup = ConnectionEffectLookup {
-        wiring_package_id: "catalog",
+        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
+            package_id: "catalog",
+            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {
+                wiring_id: "wiring",
+                wiring_version: 1,
+                node_id: "node",
+            }),
+        },
         origin_package_id: "catalog",
         origin_component_digest: "digest",
         origin_component: "component",
@@ -1580,9 +1628,6 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
         operation: "operation",
         effective_release_id: 1,
         environment: "dev",
-        wiring_id: "wiring",
-        wiring_version: 1,
-        node_id: "node",
         component_digest: "digest",
         store_alias: "manager",
         candidate_binding: None,

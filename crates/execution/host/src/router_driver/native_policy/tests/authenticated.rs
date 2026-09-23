@@ -513,9 +513,10 @@ async fn assert_case(
             fixture.request(deadline).acquisition.invocation.origin,
             "nested execution preserves its distinct wiring owner and original root component"
         );
-        assert_eq!(invocation.wiring_id, "trusted-wiring");
-        assert_eq!(invocation.wiring_version, 1);
-        assert_eq!(invocation.node_id, "trusted-node");
+        let position = invocation.entry.wiring().expect("a wiring entry");
+        assert_eq!(position.wiring_id, "trusted-wiring");
+        assert_eq!(position.wiring_version, 1);
+        assert_eq!(position.node_id, "trusted-node");
         let fact = fixture
             .workload
             .facts_by_component_id

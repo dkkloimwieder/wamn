@@ -849,18 +849,22 @@ impl Fixture {
                 },
                 invocation: ConnectionInvocation {
                     origin: ConnectionOrigin {
-                        wiring_package_id: "workflow".into(),
                         package_id: "root".into(),
                         component_digest: self.root.component_digest.clone(),
                         component: "node".into(),
                         interface_version: self.root.interface_version.clone(),
                         operation: ROOT.into(),
                     },
+                    entry: wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(
+                        wamn_runtime::plugins::connection_http::WiringPosition {
+                            package_id: "workflow".into(),
+                            wiring_id: "trusted-wiring".into(),
+                            wiring_version: 1,
+                            node_id: "trusted-node".into(),
+                            occurrence: 0,
+                        },
+                    ),
                     package_id: "root".into(),
-                    wiring_id: "trusted-wiring".into(),
-                    wiring_version: 1,
-                    node_id: "trusted-node".into(),
-                    occurrence: 0,
                     component_digest: self.root.component_digest.clone(),
                     component: "node".into(),
                     operation: ROOT.into(),
@@ -1100,8 +1104,9 @@ async fn run_case(case: Case) {
                 .invocation
                 .as_ref()
                 .expect("execution has host authority");
-            assert_eq!(invocation.wiring_id, "trusted-wiring");
-            assert_eq!(invocation.node_id, "trusted-node");
+            let position = invocation.entry.wiring().expect("a wiring entry");
+            assert_eq!(position.wiring_id, "trusted-wiring");
+            assert_eq!(position.node_id, "trusted-node");
             // The postgres surface reaches the SAME node and wiring
             // coordinates, from its own registry, for the whole invocation.
             assert_eq!(

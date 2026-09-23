@@ -269,10 +269,27 @@ impl std::fmt::Display for UnprovisionedPrincipal {
 
 impl std::error::Error for UnprovisionedPrincipal {}
 
+/// The route or wiring position one effect snapshot resolves under.
+#[derive(Debug, Clone, Copy)]
+pub struct ConnectionEntryLookup<'a> {
+    /// The package that owns the route or the wiring.
+    pub package_id: &'a str,
+    /// `None` for a route, which has no wiring position.
+    pub wiring: Option<WiringLookup<'a>>,
+}
+
+/// One node of an exact wiring version.
+#[derive(Debug, Clone, Copy)]
+pub struct WiringLookup<'a> {
+    pub wiring_id: &'a str,
+    pub wiring_version: i32,
+    pub node_id: &'a str,
+}
+
 /// Host-only identity used to load one HTTP effect authorization snapshot.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
-    pub wiring_package_id: &'a str,
+    pub entry: ConnectionEntryLookup<'a>,
     pub origin_package_id: &'a str,
     pub origin_component_digest: &'a str,
     pub origin_component: &'a str,
@@ -282,9 +299,6 @@ pub struct ConnectionEffectLookup<'a> {
     pub operation: &'a str,
     pub effective_release_id: i32,
     pub environment: &'a str,
-    pub wiring_id: &'a str,
-    pub wiring_version: i32,
-    pub node_id: &'a str,
     pub component_digest: &'a str,
     pub store_alias: &'a str,
     pub candidate_binding: Option<&'a CandidateConnectionBinding>,
@@ -388,7 +402,8 @@ impl CandidateBindingWorld {
               of the row is what makes the authorization auditable"
 )]
 pub struct ConnectionEffectSnapshot {
-    pub wiring_hash: String,
+    /// `None` for a route, which has no wiring.
+    pub wiring_hash: Option<String>,
     pub component: Option<String>,
     pub interface_version: Option<String>,
     pub operation: Option<String>,
@@ -413,10 +428,13 @@ pub struct ConnectionEffectSnapshot {
     pub credential_handle: Option<String>,
 }
 
-/// Resolve the original wiring node and the executing component's connection.
+/// Resolve the original route or wiring node and the executing component's
+/// connection.
 ///
-/// No run, plan, frame, or effect row participates. The selected wiring
-/// version is immutable and stays valid for the lifetime of the delivery even
+/// A route passes no wiring (`$5`, `$6` and `$7` are NULL). Its entry is
+/// permitted when the origin component exports the origin operation, and the
+/// mounted release proves the route. No run, plan, frame, or effect row
+/// participates. The selected wiring version is immutable and stays valid for the lifetime of the delivery even
 /// if the environment's hot pointer flips concurrently. The mounted release is
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
@@ -435,7 +453,8 @@ WITH member AS MATERIALIZED ( \
         ON wiring.tenant_id = member.tenant_id \
        AND wiring.package_id = member.package_id \
        AND wiring.package_version = member.package_version \
-     WHERE wiring.wiring_id = $5 \
+     WHERE $5::text IS NOT NULL \
+       AND wiring.wiring_id = $5 \
        AND wiring.version = $6 \
        AND wiring.graph_json ->> 'wiring-id' = $5 \
        AND wiring.graph_json ->> 'version' = $6::text \
@@ -445,12 +464,17 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
        component.operations #>> ARRAY[$18, 'registered-operation'], \
        requirement.requirement_json::text, requirement.requirement_hash, \
        COALESCE( \
-           node.value IS NOT NULL \
-           AND node.value ->> 'component' = origin_component.component \
-           AND node.value ->> 'interface-version' = origin_component.interface_version \
-           AND node.value ->> 'operation' = $17 \
-           AND origin_component.operations ? $17 \
-           AND component.operations ? $18, \
+           CASE WHEN $5::text IS NULL THEN \
+               origin_component.operations ? $17 \
+               AND component.operations ? $18 \
+           ELSE \
+               node.value IS NOT NULL \
+               AND node.value ->> 'component' = origin_component.component \
+               AND node.value ->> 'interface-version' = origin_component.interface_version \
+               AND node.value ->> 'operation' = $17 \
+               AND origin_component.operations ? $17 \
+               AND component.operations ? $18 \
+           END, \
            false \
        ), \
        binding.binding_status = 'active', binding.validation_status = 'valid', \
@@ -459,9 +483,10 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
        instance.lifecycle_status = 'enabled', instance.active_generation, instance.revision, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
        generation.credential_set_handle \
-  FROM selected_wiring AS wiring \
+  FROM member \
+  LEFT JOIN selected_wiring AS wiring ON true \
   LEFT JOIN catalog.effective_release_packages AS origin_member \
-    ON origin_member.tenant_id = wiring.tenant_id \
+    ON origin_member.tenant_id = member.tenant_id \
    AND origin_member.effective_release_id = $3 \
    AND origin_member.package_id = $13 \
   LEFT JOIN catalog.component_library AS origin_component \
@@ -472,7 +497,7 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
    AND origin_component.component = $15 \
    AND origin_component.interface_version = $16 \
   LEFT JOIN catalog.effective_release_packages AS executing_member \
-    ON executing_member.tenant_id = wiring.tenant_id \
+    ON executing_member.tenant_id = member.tenant_id \
    AND executing_member.effective_release_id = $3 \
    AND executing_member.package_id = $2 \
   LEFT JOIN catalog.component_library AS component \
@@ -502,7 +527,8 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
     ON generation.tenant_id = instance.tenant_id \
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
-   AND generation.generation = COALESCE($11::bigint, instance.active_generation)";
+   AND generation.generation = COALESCE($11::bigint, instance.active_generation) \
+ WHERE $5::text IS NULL OR wiring.wiring_hash IS NOT NULL";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
@@ -1590,19 +1616,22 @@ impl WamnPostgres {
                 .candidate_binding
                 .map(|binding| binding.instance_id.as_str());
             let candidate_generation = lookup.candidate_binding.map(|binding| binding.generation);
+            let wiring_id = lookup.entry.wiring.map(|wiring| wiring.wiring_id);
+            let wiring_version = lookup.entry.wiring.map(|wiring| wiring.wiring_version);
+            let node_id = lookup.entry.wiring.map(|wiring| wiring.node_id);
             let params: [&(dyn ToSql + Sync); 18] = [
                 &tenant,
                 &lookup.package_id,
                 &lookup.effective_release_id,
                 &lookup.environment,
-                &lookup.wiring_id,
-                &lookup.wiring_version,
-                &lookup.node_id,
+                &wiring_id,
+                &wiring_version,
+                &node_id,
                 &lookup.component_digest,
                 &lookup.store_alias,
                 &candidate_instance,
                 &candidate_generation,
-                &lookup.wiring_package_id,
+                &lookup.entry.package_id,
                 &lookup.origin_package_id,
                 &lookup.origin_component_digest,
                 &lookup.origin_component,

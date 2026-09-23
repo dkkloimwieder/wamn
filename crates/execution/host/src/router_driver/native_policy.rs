@@ -591,15 +591,16 @@ impl NativePolicy {
             )
             .unwrap_or(u64::MAX),
         );
+        let position = bound.acquisition.invocation.entry.wiring();
         let span = tracing::info_span!(
             "wamn.component.invoke",
             wamn.tenant = %target.scope.tenant_id,
             wamn.project = %self.resources.project,
             wamn.environment = %self.resources.release.manifest().release.environment,
-            wamn.wiring_id = %bound.acquisition.invocation.wiring_id,
-            wamn.wiring_version = bound.acquisition.invocation.wiring_version,
+            wamn.wiring_id = position.map_or("", |position| position.wiring_id.as_str()),
+            wamn.wiring_version = position.map_or(0, |position| position.wiring_version),
             wamn.component_digest = %target.component_digest,
-            wamn.node_id = %bound.acquisition.invocation.node_id,
+            wamn.node_id = position.map_or("", |position| position.node_id.as_str()),
             wamn.operation = %dependency.operation,
             wamn.caller_principal_id = tracing::field::Empty,
             wamn.caller_credential_kind = tracing::field::Empty,

@@ -391,7 +391,10 @@ async fn assert_nested_effect_snapshot(
     // This shows the SQL snapshot only. The mounted-release helper owns the
     // separate test that the origin declares a dependency on this executor.
     let nested = ConnectionEffectLookup {
-        wiring_package_id: WIRING_PACKAGE,
+        entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
+            package_id: WIRING_PACKAGE,
+            ..direct.entry
+        },
         origin_package_id: ORIGIN_PACKAGE,
         origin_component_digest: ORIGIN_DIGEST,
         origin_component: "nested-origin",
@@ -413,7 +416,10 @@ async fn assert_nested_effect_snapshot(
         (
             "wiring package",
             ConnectionEffectLookup {
-                wiring_package_id: ORIGIN_PACKAGE,
+                entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
+                    package_id: ORIGIN_PACKAGE,
+                    ..nested.entry
+                },
                 ..nested
             },
         ),
@@ -455,7 +461,15 @@ async fn assert_nested_effect_snapshot(
         (
             "origin node",
             ConnectionEffectLookup {
-                node_id: "missing-node",
+                entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
+                    wiring: nested.entry.wiring.map(|wiring| {
+                        wamn_runtime::plugins::wamn_postgres::WiringLookup {
+                            node_id: "missing-node",
+                            ..wiring
+                        }
+                    }),
+                    ..nested.entry
+                },
                 ..nested
             },
         ),
@@ -523,7 +537,14 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .set_tenant(COMPONENT_ID, TENANT)
         .expect("register the component's tenant");
     let lookup = ConnectionEffectLookup {
-        wiring_package_id: PACKAGE,
+        entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
+            package_id: PACKAGE,
+            wiring: Some(wamn_runtime::plugins::wamn_postgres::WiringLookup {
+                wiring_id: "store_label",
+                wiring_version: 1,
+                node_id: "store",
+            }),
+        },
         origin_package_id: PACKAGE,
         origin_component_digest: BLOB_PUT,
         origin_component: "blob-put",
@@ -533,9 +554,6 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         operation: "wamn:node/handler@0.1.0",
         effective_release_id: RELEASE_ID,
         environment: ENVIRONMENT,
-        wiring_id: "store_label",
-        wiring_version: 1,
-        node_id: "store",
         component_digest: BLOB_PUT,
         store_alias: "labels",
         candidate_binding: None,
@@ -619,6 +637,55 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(
         after.definition_hash.as_deref(),
         Some(bound.definition_hash.as_str())
+    );
+
+    // A ROUTE ENTRY: no wiring row participates. The same origin export
+    // resolves the same bound connection, and the snapshot names no wiring.
+    let route = ConnectionEffectLookup {
+        entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
+            package_id: PACKAGE,
+            wiring: None,
+        },
+        ..lookup
+    };
+    let route_snapshot = |lookup: ConnectionEffectLookup<'static>| {
+        let postgres = Arc::clone(&postgres);
+        async move {
+            postgres
+                .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, TENANT, &lookup)
+                .await
+                .expect("the plugin loads a route snapshot")
+        }
+    };
+    let routed = route_snapshot(route)
+        .await
+        .expect("a route entry has a snapshot");
+    assert_eq!(routed.wiring_hash, None);
+    assert!(
+        routed.node_permitted,
+        "the origin exports the route operation"
+    );
+    assert_eq!(routed.definition_hash, after.definition_hash);
+    let unexported = route_snapshot(ConnectionEffectLookup {
+        origin_operation: "wamn:node/absent@0.1.0",
+        ..route
+    })
+    .await;
+    assert!(
+        unexported.is_none_or(|snapshot| !snapshot.node_permitted),
+        "a route whose origin does not export its operation must not authorize"
+    );
+    let foreign = route_snapshot(ConnectionEffectLookup {
+        entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
+            package_id: "absent_package",
+            wiring: None,
+        },
+        ..route
+    })
+    .await;
+    assert!(
+        foreign.is_none(),
+        "a route in a package outside the release has no snapshot"
     );
     assert_eq!(
         after.validation_hash.as_deref(),

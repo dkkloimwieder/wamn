@@ -35,6 +35,7 @@ use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
+    InvocationEntry, WiringPosition,
 };
 use wamn_runtime::plugins::flow_http_routing::{AuthenticatedCaller, CredentialKind};
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
@@ -1392,18 +1393,20 @@ impl RouterDriver {
             },
             invocation: ConnectionInvocation {
                 origin: ConnectionOrigin {
-                    wiring_package_id: request.package_id.clone(),
                     package_id: component.scope.package_id.clone(),
                     component_digest: component.component_digest.clone(),
                     component: component.component.clone(),
                     interface_version: component.interface_version.clone(),
                     operation: call.operation.clone(),
                 },
+                entry: InvocationEntry::Wiring(WiringPosition {
+                    package_id: request.package_id.clone(),
+                    wiring_id: request.wiring_id.clone(),
+                    wiring_version: active.version,
+                    node_id: call.node.clone(),
+                    occurrence: call.occurrence,
+                }),
                 package_id: component.scope.package_id.clone(),
-                wiring_id: request.wiring_id.clone(),
-                wiring_version: active.version,
-                node_id: call.node.clone(),
-                occurrence: call.occurrence,
                 component_digest: component.component_digest.clone(),
                 // The admitted component name, read off the catalog fact this
                 // node resolved to. The per-request pooled scope is an instance
@@ -2118,18 +2121,20 @@ mod tests {
             },
             invocation: ConnectionInvocation {
                 origin: ConnectionOrigin {
-                    wiring_package_id: "org_workflow".to_owned(),
                     package_id: "platform_fixture_overlay".to_owned(),
                     component_digest: "sha256:overlay".to_owned(),
                     component: "overlay".to_owned(),
                     interface_version: "1.0.0".to_owned(),
                     operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
                 },
+                entry: InvocationEntry::Wiring(WiringPosition {
+                    package_id: "org_workflow".to_owned(),
+                    wiring_id: "record-batch".to_owned(),
+                    wiring_version: 1,
+                    node_id: "base-command".to_owned(),
+                    occurrence: 0,
+                }),
                 package_id: "platform_fixture_overlay".to_owned(),
-                wiring_id: "record-batch".to_owned(),
-                wiring_version: 1,
-                node_id: "base-command".to_owned(),
-                occurrence: 0,
                 component_digest: "sha256:overlay".to_owned(),
                 component: "overlay".to_owned(),
                 operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
@@ -2182,7 +2187,15 @@ mod tests {
         assert_eq!(child.causation.as_ref(), Some(&causation));
         assert_eq!(child.invocation.package_id, "platform_fixture");
         assert_eq!(child.invocation.component_digest, "sha256:base");
-        assert_eq!(child.invocation.wiring_id, "record-batch");
+        assert_eq!(
+            child
+                .invocation
+                .entry
+                .wiring()
+                .expect("a wiring entry")
+                .wiring_id,
+            "record-batch"
+        );
         // The child raises its effects under ITS OWN component and operation.
         // The overlay's pair belongs to the caller (`wamn-b2m6.7`).
         assert_eq!(child.invocation.component, "fixture");

@@ -140,7 +140,7 @@ mod tests {
     fn authorized_snapshot() -> ConnectionEffectSnapshot {
         let descriptor = ConnectionTypeDescriptor::blobstore_v1();
         ConnectionEffectSnapshot {
-            wiring_hash: "hash".to_owned(),
+            wiring_hash: Some("hash".to_owned()),
             component: Some("label-writer".to_owned()),
             interface_version: Some("0.1.0".to_owned()),
             operation: Some("wamn:node/handler@0.1.0".to_owned()),

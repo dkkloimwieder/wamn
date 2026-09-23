@@ -138,11 +138,8 @@ impl LocalApplication {
                     == self.manifest.release.effective_release_id.get(),
             "local connection release scope mismatch"
         );
-        let Some(wiring) = self.facts.wirings.iter().find(|wiring| {
-            wiring.scope.package_id == lookup.wiring_package_id
-                && wiring.document.wiring_id == lookup.wiring_id
-                && i32::try_from(wiring.document.version).ok() == Some(lookup.wiring_version)
-        }) else {
+        let Some((wiring_hash, entry_permitted)) = entry_facts(&self.manifest, &self.facts, lookup)
+        else {
             return Ok(None);
         };
         let Some(component) = self.facts.components.iter().find(|component| {
@@ -166,29 +163,14 @@ impl LocalApplication {
             Some(&binding.selection),
         )
         .await?;
-        let node_permitted = wiring
-            .node_components
-            .get(lookup.node_id)
-            .is_some_and(|origin| {
-                origin.scope.package_id == lookup.origin_package_id
-                    && origin.component_digest == lookup.origin_component_digest
-                    && origin.component == lookup.origin_component
-                    && origin.interface_version == lookup.origin_interface_version
-                    && origin.operations.contains_key(lookup.origin_operation)
-            })
-            && wiring
-                .document
-                .nodes
-                .get(lookup.node_id)
-                .is_some_and(|node| node.operation == lookup.origin_operation)
-            && component.operations.contains_key(lookup.operation);
+        let node_permitted = entry_permitted && component.operations.contains_key(lookup.operation);
         let valid = current == binding.selection
             && lookup
                 .candidate_binding
                 .is_none_or(|candidate| candidate == &current);
         Ok(Some(
             crate::plugins::wamn_postgres::ConnectionEffectSnapshot {
-                wiring_hash: wiring.document.wiring_hash().as_str().to_owned(),
+                wiring_hash,
                 component: Some(component.component.clone()),
                 interface_version: Some(component.interface_version.clone()),
                 operation: Some(lookup.operation.to_owned()),
@@ -216,6 +198,58 @@ impl LocalApplication {
             },
         ))
     }
+}
+
+/// The entry half of a local effect snapshot: the wiring hash, and whether the
+/// origin may enter here. `None` when the entry is not in this application.
+///
+/// The same entry rule as the Postgres snapshot: a route needs only its origin
+/// export, and a wiring node must name the origin component.
+fn entry_facts(
+    manifest: &ServingManifest,
+    facts: &LocalApplicationFacts,
+    lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
+) -> Option<(Option<String>, bool)> {
+    let origin_exports = |origin: &AdmittedComponent| {
+        origin.scope.package_id == lookup.origin_package_id
+            && origin.component_digest == lookup.origin_component_digest
+            && origin.component == lookup.origin_component
+            && origin.interface_version == lookup.origin_interface_version
+            && origin.operations.contains_key(lookup.origin_operation)
+    };
+    Some(match lookup.entry.wiring {
+        None => {
+            if !manifest
+                .release
+                .packages
+                .iter()
+                .any(|package| package.package_id() == lookup.entry.package_id)
+            {
+                return None;
+            }
+            (None, facts.components.iter().any(origin_exports))
+        }
+        Some(position) => {
+            let wiring = facts.wirings.iter().find(|wiring| {
+                wiring.scope.package_id == lookup.entry.package_id
+                    && wiring.document.wiring_id == position.wiring_id
+                    && i32::try_from(wiring.document.version).ok() == Some(position.wiring_version)
+            })?;
+            let permitted = wiring
+                .node_components
+                .get(position.node_id)
+                .is_some_and(origin_exports)
+                && wiring
+                    .document
+                    .nodes
+                    .get(position.node_id)
+                    .is_some_and(|node| node.operation == lookup.origin_operation);
+            (
+                Some(wiring.document.wiring_hash().as_str().to_owned()),
+                permitted,
+            )
+        }
+    })
 }
 
 /// Resolve an explicit local selection through the live instance and generation.
@@ -658,6 +692,69 @@ mod tests {
             bindings: Vec::new(),
         };
         (facts, manifest)
+    }
+
+    #[test]
+    fn a_route_entry_needs_only_its_origin_export_and_a_release_package() {
+        use crate::plugins::wamn_postgres::{
+            ConnectionEffectLookup, ConnectionEntryLookup, WiringLookup,
+        };
+        let (facts, manifest) = fixture();
+        let digest = facts.components[0].component_digest.clone();
+        let hash = facts.wirings[0].document.wiring_hash();
+        let route = ConnectionEffectLookup {
+            entry: ConnectionEntryLookup {
+                package_id: "orders",
+                wiring: None,
+            },
+            origin_package_id: "orders",
+            origin_component_digest: &digest,
+            origin_component: "transform",
+            origin_interface_version: "0.1.0",
+            origin_operation: "run",
+            package_id: "orders",
+            operation: "run",
+            effective_release_id: 7,
+            environment: "dev",
+            component_digest: &digest,
+            store_alias: "store",
+            candidate_binding: None,
+        };
+        assert_eq!(
+            super::entry_facts(&manifest, &facts, &route),
+            Some((None, true))
+        );
+        let unexported = ConnectionEffectLookup {
+            origin_operation: "absent",
+            ..route
+        };
+        assert_eq!(
+            super::entry_facts(&manifest, &facts, &unexported),
+            Some((None, false))
+        );
+        let foreign = ConnectionEffectLookup {
+            entry: ConnectionEntryLookup {
+                package_id: "absent",
+                wiring: None,
+            },
+            ..route
+        };
+        assert_eq!(super::entry_facts(&manifest, &facts, &foreign), None);
+        let wiring = ConnectionEffectLookup {
+            entry: ConnectionEntryLookup {
+                package_id: "orders",
+                wiring: Some(WiringLookup {
+                    wiring_id: "run",
+                    wiring_version: 1,
+                    node_id: "node",
+                }),
+            },
+            ..route
+        };
+        assert_eq!(
+            super::entry_facts(&manifest, &facts, &wiring),
+            Some((Some(hash.as_str().to_owned()), true))
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
 use crate::plugins::effect_span::{
-    EffectIdentity, EffectRun, EffectWiring, effect_span, record_effect_ms, record_wiring,
+    EffectIdentity, EffectRun, effect_span, record_effect_ms, record_wiring,
 };
 
 use super::claims::{OneShotResult, refuse_unattributed_statement, reject_claim_mutation};
@@ -418,16 +418,9 @@ pub(super) fn db_span_for_project(
     let invocation = plugin.invocation(component_id);
     record_wiring(
         &span,
-        invocation.as_ref().map(|invocation| EffectWiring {
-            package_id: &invocation.package_id,
-            wiring_id: &invocation.wiring_id,
-            wiring_version: invocation.wiring_version,
-            node_id: &invocation.node_id,
-            occurrence: invocation.occurrence,
-            component_digest: &invocation.component_digest,
-            component_name: &invocation.component,
-            operation: &invocation.operation,
-        }),
+        invocation
+            .as_ref()
+            .map(crate::plugins::connection_http::ConnectionInvocation::effect_wiring),
     );
     span
 }
@@ -1692,18 +1685,22 @@ mod tests {
     fn invocation() -> ConnectionInvocation {
         ConnectionInvocation {
             origin: ConnectionOrigin {
-                wiring_package_id: "package_a".to_string(),
                 package_id: "package_a".to_string(),
                 component_digest: COMPONENT_DIGEST.to_string(),
                 component: "orders".to_string(),
                 interface_version: "1.0.0".to_string(),
                 operation: "orders:notify/dispatch@1.0.0".to_string(),
             },
+            entry: crate::plugins::connection_http::InvocationEntry::Wiring(
+                crate::plugins::connection_http::WiringPosition {
+                    package_id: "package_a".to_string(),
+                    wiring_id: "orders".to_string(),
+                    wiring_version: 3,
+                    node_id: "record".to_string(),
+                    occurrence: 2,
+                },
+            ),
             package_id: "package_a".to_string(),
-            wiring_id: "orders".to_string(),
-            wiring_version: 3,
-            node_id: "record".to_string(),
-            occurrence: 2,
             component_digest: COMPONENT_DIGEST.to_string(),
             component: "recorder".to_string(),
             operation: "orders:notify/dispatch@1.0.0".to_string(),

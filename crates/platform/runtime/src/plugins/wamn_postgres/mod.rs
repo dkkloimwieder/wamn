@@ -73,7 +73,8 @@ pub use wiring_resolution::{
 
 pub use claims::{
     CandidateBindingWorld, CandidateConnectionBinding, ConnectionEffectLookup,
-    ConnectionEffectSnapshot, ReleaseIdentity, SessionClaims, UnprovisionedPrincipal, WamnPostgres,
+    ConnectionEffectSnapshot, ConnectionEntryLookup, ReleaseIdentity, SessionClaims,
+    UnprovisionedPrincipal, WamnPostgres, WiringLookup,
 };
 pub use credential_exactness::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionKind,

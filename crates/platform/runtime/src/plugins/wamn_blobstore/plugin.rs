@@ -19,7 +19,7 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::plugins::effect_span::{EffectIdentity, EffectWiring, effect_span, record_wiring};
+use crate::plugins::effect_span::{EffectIdentity, effect_span, record_wiring};
 
 use super::binding::{self, BindingError};
 use super::store::BoundContainer;
@@ -27,7 +27,7 @@ use wamn_catalog::ServingManifest;
 
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, authorize_candidate_closure,
-    authorize_release_closure,
+    authorize_release_closure, entry_lookup,
 };
 use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::plugins::wamn_postgres::{
@@ -241,7 +241,7 @@ impl WamnBlobstore {
         let invocation = self
             .invocation(component_id)
             .ok_or_else(|| refused("no invocation is registered for the component"))?;
-        let wiring_version = i32::try_from(invocation.wiring_version)
+        let entry = entry_lookup(&invocation)
             .map_err(|_| refused("wiring version does not fit the authority's column"))?;
         let released_manifest = match &invocation.closure {
             ConnectionExecutionClosure::Released => Some(
@@ -283,7 +283,7 @@ impl WamnBlobstore {
                 &self.tenant,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
-                    wiring_package_id: &invocation.origin.wiring_package_id,
+                    entry,
                     origin_package_id: &invocation.origin.package_id,
                     origin_component_digest: &invocation.origin.component_digest,
                     origin_component: &invocation.origin.component,
@@ -292,9 +292,6 @@ impl WamnBlobstore {
                     operation: &invocation.operation,
                     effective_release_id,
                     environment: &environment,
-                    wiring_id: &invocation.wiring_id,
-                    wiring_version,
-                    node_id: &invocation.node_id,
                     component_digest: &invocation.component_digest,
                     store_alias,
                     candidate_binding,
@@ -306,15 +303,16 @@ impl WamnBlobstore {
                 BindingError::Unauthorized
             })?
             .ok_or_else(|| {
+                let wiring = invocation.effect_wiring();
                 tracing::warn!(
                     store_alias,
                     component_id,
                     package_id = %invocation.package_id,
                     effective_release_id,
                     environment = %environment,
-                    wiring_id = %invocation.wiring_id,
-                    wiring_version,
-                    node_id = %invocation.node_id,
+                    wiring_id = wiring.wiring_id,
+                    wiring_version = wiring.wiring_version,
+                    node_id = wiring.node_id,
                     component_digest = %invocation.component_digest,
                     "blobstore binding refused: the connection authority holds no binding for this closure"
                 );
@@ -409,16 +407,9 @@ pub(super) fn blobstore_span(
     let invocation = plugin.invocation(component_id);
     record_wiring(
         &span,
-        invocation.as_ref().map(|invocation| EffectWiring {
-            package_id: &invocation.package_id,
-            wiring_id: &invocation.wiring_id,
-            wiring_version: invocation.wiring_version,
-            node_id: &invocation.node_id,
-            occurrence: invocation.occurrence,
-            component_digest: &invocation.component_digest,
-            component_name: &invocation.component,
-            operation: &invocation.operation,
-        }),
+        invocation
+            .as_ref()
+            .map(crate::plugins::connection_http::ConnectionInvocation::effect_wiring),
     );
     span
 }
@@ -474,18 +465,22 @@ mod tests {
     fn released() -> ConnectionInvocation {
         ConnectionInvocation {
             origin: ConnectionOrigin {
-                wiring_package_id: "package_a".to_string(),
                 package_id: "package_a".to_string(),
                 component_digest: format!("sha256:{}", "a".repeat(64)),
                 component: "archiver".to_string(),
                 interface_version: "0.1.0".to_string(),
                 operation: "orders:archive/store@1.0.0".to_string(),
             },
+            entry: crate::plugins::connection_http::InvocationEntry::Wiring(
+                crate::plugins::connection_http::WiringPosition {
+                    package_id: "package_a".to_string(),
+                    wiring_id: "orders".to_string(),
+                    wiring_version: 3,
+                    node_id: "archive".to_string(),
+                    occurrence: 1,
+                },
+            ),
             package_id: "package_a".to_string(),
-            wiring_id: "orders".to_string(),
-            wiring_version: 3,
-            node_id: "archive".to_string(),
-            occurrence: 1,
             component_digest: format!("sha256:{}", "a".repeat(64)),
             component: "archiver".to_string(),
             operation: "orders:archive/store@1.0.0".to_string(),
@@ -638,7 +633,7 @@ mod tests {
     /// the frozen row in every field the frozen row names.
     fn matching_snapshot(binding: &CandidateConnectionBinding) -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
-            wiring_hash: format!("sha256:{}", "b".repeat(64)),
+            wiring_hash: Some(format!("sha256:{}", "b".repeat(64))),
             component: Some("archiver".to_string()),
             interface_version: Some("0.1.0".to_string()),
             operation: Some("orders:archive/store@1.0.0".to_string()),
@@ -695,12 +690,21 @@ mod tests {
                 },
             )]),
         }]);
+        let position = invocation
+            .entry
+            .wiring()
+            .expect("the fixture invocation enters through a wiring");
         manifest.wirings = BTreeSet::from([ServingWiring {
-            package_id: invocation.package_id,
-            wiring_id: invocation.wiring_id,
-            wiring_version: invocation.wiring_version,
-            graph_hash: DefinitionHash::parse(snapshot.wiring_hash.clone())
-                .expect("the fixture wiring hash is canonical"),
+            package_id: position.package_id.clone(),
+            wiring_id: position.wiring_id.clone(),
+            wiring_version: position.wiring_version,
+            graph_hash: DefinitionHash::parse(
+                snapshot
+                    .wiring_hash
+                    .clone()
+                    .expect("the fixture names a wiring hash"),
+            )
+            .expect("the fixture wiring hash is canonical"),
         }]);
         manifest
     }
@@ -735,7 +739,7 @@ mod tests {
         let binding = frozen_binding(&world);
         let invocation = candidate_with(Arc::clone(&world));
         let mut snapshot = matching_snapshot(binding);
-        snapshot.wiring_hash = format!("sha256:{}", "f".repeat(64));
+        snapshot.wiring_hash = Some(format!("sha256:{}", "f".repeat(64)));
 
         assert_eq!(
             authorize_closure(&invocation, None, Some(binding), &snapshot),
@@ -852,6 +856,34 @@ mod tests {
         assert_eq!(
             authorize_closure(&invocation, None, Some(binding), &snapshot),
             Err("the candidate closure disagrees with the frozen wiring or binding"),
+        );
+    }
+
+    /// A route entry resolves no wiring. The released rule then requires the
+    /// manifest to carry the route of the origin export.
+    #[test]
+    fn a_released_route_entry_is_admitted_only_when_the_manifest_carries_the_route() {
+        let world = frozen_world();
+        let mut snapshot = matching_snapshot(frozen_binding(&world));
+        let mut manifest = carrying_manifest(&snapshot);
+        manifest.wirings.clear();
+        snapshot.wiring_hash = None;
+        let mut route = released();
+        route.entry = crate::plugins::connection_http::InvocationEntry::Route;
+
+        assert_eq!(
+            authorize_closure(&route, Some(&manifest), None, &snapshot),
+            Err("the release closure does not carry this component and wiring"),
+        );
+        manifest.routes.insert(wamn_catalog::ServingRoute {
+            package_id: route.origin.package_id.clone(),
+            component: route.origin.component.clone(),
+            operation: route.origin.operation.clone(),
+            kind: wamn_catalog::OperationKind::Command,
+        });
+        assert_eq!(
+            authorize_closure(&route, Some(&manifest), None, &snapshot),
+            Ok(())
         );
     }
 

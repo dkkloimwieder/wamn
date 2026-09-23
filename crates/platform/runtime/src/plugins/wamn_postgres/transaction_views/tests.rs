@@ -47,18 +47,22 @@ const TENANT: &str = "transactionview";
 fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
-            wiring_package_id: "overlay".into(),
             package_id: "overlay".into(),
             component_digest: format!("sha256:{}", "a".repeat(64)),
             component: "overlay".into(),
             interface_version: "0.1.0".into(),
             operation: OWNER_OPERATION.into(),
         },
+        entry: crate::plugins::connection_http::InvocationEntry::Wiring(
+            crate::plugins::connection_http::WiringPosition {
+                package_id: "overlay".into(),
+                wiring_id: "widget".into(),
+                wiring_version: 1,
+                node_id: "record".into(),
+                occurrence: 0,
+            },
+        ),
         package_id: package_id.into(),
-        wiring_id: "widget".into(),
-        wiring_version: 1,
-        node_id: "record".into(),
-        occurrence: 0,
         component_digest: format!("sha256:{}", "b".repeat(64)),
         component: package_id.into(),
         operation: operation.into(),
