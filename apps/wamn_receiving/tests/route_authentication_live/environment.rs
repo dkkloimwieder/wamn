@@ -761,8 +761,11 @@ pub(super) fn released_component_digests(
         anyhow::ensure!(
             attachment.kind == AttachmentKind::Http
                 && attachment.package_id == expected.package_id
-                && attachment.wiring_id == expected.wiring_id
-                && attachment.wiring_version == 1
+                && attachment.target
+                    == wamn_catalog::AttachmentTarget::Wiring {
+                        wiring_id: expected.wiring_id.into(),
+                        wiring_version: 1,
+                    }
                 && attachment.registered_operation.as_deref() == Some(expected.operation)
                 && attachment.definition["route"]["method"] == "POST"
                 && attachment.definition["route"]["path"] == expected.path

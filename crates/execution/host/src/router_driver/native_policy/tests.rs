@@ -702,6 +702,7 @@ impl Fixture {
                         .collect(),
                 })
                 .collect(),
+            routes: BTreeSet::new(),
             wirings: BTreeSet::new(),
             attachments: BTreeMap::new(),
             registrations: BTreeMap::new(),

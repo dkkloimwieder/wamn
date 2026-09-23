@@ -816,8 +816,10 @@ mod tests {
         let attachment = ServingAttachment {
             kind: AttachmentKind::Http,
             package_id: "platform_fixture".to_owned(),
-            wiring_id: "widget/get".to_owned(),
-            wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: "widget/get".to_owned(),
+                wiring_version: 1,
+            },
             definition_hash: DefinitionHash::parse(DIGEST).expect("valid digest"),
             definition: json!({
                 "route": {"method": "POST", "path": "/widgets/get"}
@@ -834,6 +836,7 @@ mod tests {
                 packages: BTreeSet::from([package]),
             },
             components: BTreeSet::from([component]),
+            routes: BTreeSet::new(),
             wirings: BTreeSet::new(),
             attachments: BTreeMap::from([
                 ("widget/get".to_owned(), attachment.clone()),

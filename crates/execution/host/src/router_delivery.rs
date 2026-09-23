@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
-use wamn_catalog::{AttachmentAuthPolicy, ServingManifest, parse_attachment_auth_policy};
+use wamn_catalog::{
+    AttachmentAuthPolicy, AttachmentTarget, ServingManifest, parse_attachment_auth_policy,
+};
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
@@ -575,20 +577,26 @@ struct ResolvedTarget {
 fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<ResolvedTarget> {
     match source {
         SourceRef::Attachment(id) => {
-            manifest
-                .attachments
-                .get(id)
-                .map(|attachment| ResolvedTarget {
-                    package_id: attachment.package_id.clone(),
-                    wiring_id: attachment.wiring_id.clone(),
-                    wiring_version: attachment.wiring_version,
-                    caller_attached: true,
-                    anonymous_caller_permitted: Some(
-                        parse_attachment_auth_policy(&attachment.auth_policy)
-                            == Some(AttachmentAuthPolicy::None),
-                    ),
-                    registered_operation: attachment.registered_operation.clone(),
-                })
+            let attachment = manifest.attachments.get(id)?;
+            // A route target has no wiring to walk; the route path owns it.
+            let AttachmentTarget::Wiring {
+                wiring_id,
+                wiring_version,
+            } = &attachment.target
+            else {
+                return None;
+            };
+            Some(ResolvedTarget {
+                package_id: attachment.package_id.clone(),
+                wiring_id: wiring_id.clone(),
+                wiring_version: *wiring_version,
+                caller_attached: true,
+                anonymous_caller_permitted: Some(
+                    parse_attachment_auth_policy(&attachment.auth_policy)
+                        == Some(AttachmentAuthPolicy::None),
+                ),
+                registered_operation: attachment.registered_operation.clone(),
+            })
         }
         SourceRef::Registration(id) => {
             manifest
@@ -934,7 +942,7 @@ mod tests {
 
     use super::*;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":1,"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":2,"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"routes":[],"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)

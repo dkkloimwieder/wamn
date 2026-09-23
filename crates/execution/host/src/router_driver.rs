@@ -16,9 +16,9 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, AttachmentKind, ComponentOperationDependency,
-    ComponentSqlField, ComponentSqlValueType, DefinitionHash, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingWiring,
+    AdmittedComponent, ArtifactHash, AttachmentKind, AttachmentTarget,
+    ComponentOperationDependency, ComponentSqlField, ComponentSqlValueType, DefinitionHash,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_event_wire::Causation;
@@ -1524,12 +1524,16 @@ fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, S
         .attachments
         .values()
         .filter(|attachment| synchronous_request_kind(attachment.kind))
-        .map(|attachment| {
-            (
+        .filter_map(|attachment| match &attachment.target {
+            AttachmentTarget::Wiring {
+                wiring_id,
+                wiring_version,
+            } => Some((
                 attachment.package_id.clone(),
-                attachment.wiring_id.clone(),
-                attachment.wiring_version,
-            )
+                wiring_id.clone(),
+                *wiring_version,
+            )),
+            AttachmentTarget::Route { .. } => None,
         })
         .collect()
 }
@@ -1948,8 +1952,10 @@ mod tests {
         ServingAttachment {
             kind,
             package_id: "orders".to_owned(),
-            wiring_id: wiring_id.to_owned(),
-            wiring_version: 3,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: wiring_id.to_owned(),
+                wiring_version: 3,
+            },
             definition_hash: DefinitionHash::parse(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             )
@@ -2517,6 +2523,7 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
             },
             components: BTreeSet::new(),
+            routes: BTreeSet::new(),
             wirings: BTreeSet::new(),
             attachments: BTreeMap::from([
                 (

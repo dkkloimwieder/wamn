@@ -1204,6 +1204,7 @@ mod tests {
                     },
                 )]),
             }]),
+            routes: BTreeSet::new(),
             wirings: BTreeSet::from([ServingWiring {
                 package_id: invocation.package_id,
                 wiring_id: invocation.wiring_id,

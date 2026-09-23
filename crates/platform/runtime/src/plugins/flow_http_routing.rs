@@ -1379,8 +1379,10 @@ mod tests {
         ServingAttachment {
             kind,
             package_id: "cat".into(),
-            wiring_id: "orders".into(),
-            wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: "orders".into(),
+                wiring_version: 1,
+            },
             definition_hash: DefinitionHash::parse(DEFINITION_HASH)
                 .expect("fixture definition hash is canonical"),
             definition,
@@ -1414,6 +1416,7 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             components(),
+            BTreeSet::new(),
             wirings(),
             attachments,
             BTreeMap::new(),

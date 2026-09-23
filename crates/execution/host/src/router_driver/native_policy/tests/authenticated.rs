@@ -237,6 +237,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
                 ROOT: {"registered-operation": ROOT}
             }}],
+        "routes": [],
         "wirings": [{"package-id": "root", "wiring-id": "trusted-wiring", "wiring-version": 1,
             "graph-hash": format!("sha256:{}", "b".repeat(64))}],
         "attachments": {ATTACHMENT: {"kind": "http", "package-id": "root", "wiring-id": "trusted-wiring",

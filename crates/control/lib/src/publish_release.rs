@@ -557,6 +557,7 @@ pub async fn mint_local(
             packages: packages.clone(),
         },
         components,
+        routes: BTreeSet::new(),
         wirings,
         attachments: attachments.clone(),
         registrations: derive_serving_registrations(&package_manifests, &entry_targets)?,
@@ -1231,6 +1232,7 @@ async fn mint_release_manifest_from_sources(
             packages: request.packages.clone(),
         },
         components,
+        routes: BTreeSet::new(),
         wirings,
         attachments: request.attachments.clone(),
         registrations,
@@ -1944,8 +1946,10 @@ mod tests {
         ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
             package_id: package_id.to_owned(),
-            wiring_id: wiring_id.to_owned(),
-            wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: wiring_id.to_owned(),
+                wiring_version: 1,
+            },
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
@@ -2097,8 +2101,10 @@ mod tests {
         let attachment = ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
             package_id: "source_fixture".to_owned(),
-            wiring_id: "widget_get".to_owned(),
-            wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: "widget_get".to_owned(),
+                wiring_version: 1,
+            },
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
@@ -2130,8 +2136,10 @@ mod tests {
         let attachment = ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
             package_id: "source_fixture".to_owned(),
-            wiring_id: "widget_get".to_owned(),
-            wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: "widget_get".to_owned(),
+                wiring_version: 1,
+            },
             definition_hash: wamn_catalog::DefinitionHash::parse(authored_hash.clone())
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
@@ -2324,8 +2332,10 @@ mod tests {
         ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
             package_id: "base".to_owned(),
-            wiring_id: "stock".to_owned(),
-            wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: "stock".to_owned(),
+                wiring_version: 1,
+            },
             definition_hash: wamn_catalog::DefinitionHash::parse(DIGEST)
                 .expect("fixture definition hash is canonical"),
             definition: serde_json::json!({"route": {}}),

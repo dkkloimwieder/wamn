@@ -635,6 +635,7 @@ mod tests {
                     },
                 )]),
             }]),
+            BTreeSet::new(),
             BTreeSet::from([ServingWiring {
                 package_id: "orders".to_owned(),
                 wiring_id: document.wiring_id.clone(),

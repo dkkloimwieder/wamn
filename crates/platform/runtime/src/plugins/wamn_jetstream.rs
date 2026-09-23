@@ -1725,6 +1725,7 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::new(),
+            BTreeSet::new(),
             BTreeSet::from([ServingWiring {
                 package_id: "cat".into(),
                 wiring_id: "event-handler".into(),

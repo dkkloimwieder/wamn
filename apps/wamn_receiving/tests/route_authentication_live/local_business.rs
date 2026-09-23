@@ -76,7 +76,7 @@ async fn command_histories() -> anyhow::Result<()> {
         serde_json::from_slice(&fs::read(receiving.join("publication/attachments.json"))?)?;
     attachments.retain(|_, attachment| {
         matches!(
-            attachment.wiring_id.as_str(),
+            wiring_id(attachment),
             "purchase_order_query"
                 | "purchase_order_update"
                 | "receipt_get"
@@ -90,7 +90,7 @@ async fn command_histories() -> anyhow::Result<()> {
         serde_json::from_slice(&fs::read(acme.join("publication/attachments.json"))?)?;
     for (name, attachment) in overlay_attachments {
         if matches!(
-            attachment.wiring_id.as_str(),
+            wiring_id(&attachment),
             "receiving_record_receipt" | "quality_load_purchase_order_detail"
         ) {
             attachments.insert(name, attachment);
@@ -478,4 +478,11 @@ async fn histories(
         "Receiving command history results are absent or incomplete"
     );
     Ok(())
+}
+
+fn wiring_id(attachment: &wamn_catalog::ServingAttachment) -> &str {
+    match &attachment.target {
+        wamn_catalog::AttachmentTarget::Wiring { wiring_id, .. } => wiring_id,
+        wamn_catalog::AttachmentTarget::Route { .. } => "",
+    }
 }

@@ -185,8 +185,13 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
             .expect("the exact operation attachment exists");
         assert_eq!(attachment.kind, AttachmentKind::Http);
         assert_eq!(attachment.package_id, PACKAGE_ID);
-        assert_eq!(attachment.wiring_id, operation.wiring);
-        assert_eq!(attachment.wiring_version, 1);
+        assert_eq!(
+            attachment.target,
+            wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: operation.wiring.into(),
+                wiring_version: 1,
+            }
+        );
         assert_eq!(
             attachment.registered_operation.as_deref(),
             Some(operation.token)

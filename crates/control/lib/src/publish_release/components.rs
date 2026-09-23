@@ -410,8 +410,11 @@ pub(super) fn validate_anonymous_wiring_closure(
 ) -> Result<(), MintManifestError> {
     let anonymous_attachments = attachments.iter().filter(|(_, attachment)| {
         attachment.package_id == target.package_id
-            && attachment.wiring_id == target.wiring_id
-            && attachment.wiring_version == target.wiring_version
+            && attachment.target
+                == wamn_catalog::AttachmentTarget::Wiring {
+                    wiring_id: target.wiring_id.clone(),
+                    wiring_version: target.wiring_version,
+                }
             && wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
                 == Some(wamn_catalog::AttachmentAuthPolicy::None)
     });

@@ -140,6 +140,7 @@ mod tests {
                 ]),
             },
             BTreeSet::new(),
+            BTreeSet::new(),
             BTreeSet::from([wamn_catalog::ServingWiring {
                 package_id: "app".into(),
                 wiring_id: "route".into(),
@@ -151,8 +152,10 @@ mod tests {
                 wamn_catalog::ServingAttachment {
                     kind: wamn_catalog::AttachmentKind::Http,
                     package_id: "app".into(),
-                    wiring_id: "route".into(),
-                    wiring_version: 1,
+                    target: wamn_catalog::AttachmentTarget::Wiring {
+                        wiring_id: "route".into(),
+                        wiring_version: 1,
+                    },
                     definition_hash: hash,
                     definition: json!({"route": {"host": HOST, "path": "/", "method": "GET"}}),
                     auth_policy: json!({"modes": ["none"]}),

@@ -39,11 +39,12 @@ pub use connection::{
 };
 pub use package::{EffectiveReleaseId, PackageCoordinate};
 pub use serving_manifest::{
-    AttachmentAuthPolicy, INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES,
-    NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
-    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION,
-    SESSION_AUTHENTICATION_MODE, ServingAttachment, ServingComponent, ServingComponentOperation,
-    ServingManifest, ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
+    AttachmentAuthPolicy, AttachmentTarget, INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL,
+    MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE, OperationKind, PAT_AUTHENTICATION_MODE,
+    RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH,
+    SERVING_MANIFEST_FORMAT_VERSION, SESSION_AUTHENTICATION_MODE, ServingAttachment,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
+    ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring,
     UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, parse_attachment_auth_policy,
     release_manifest_configmap_name,
 };
@@ -139,6 +140,11 @@ pub enum CatalogIdentityError {
         wiring_id: String,
         wiring_version: u32,
     },
+    UnresolvableManifestRoute {
+        package_id: String,
+        component: String,
+        operation: String,
+    },
     ManifestTooLarge {
         bytes: usize,
         limit: usize,
@@ -227,6 +233,16 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "wiring {package_id:?}/{wiring_id:?} version {wiring_version} is absent from the serving manifest"
+                )
+            }
+            Self::UnresolvableManifestRoute {
+                package_id,
+                component,
+                operation,
+            } => {
+                write!(
+                    formatter,
+                    "route {package_id:?}/{component:?} operation {operation:?} is absent from the serving manifest"
                 )
             }
             Self::ManifestTooLarge { bytes, limit } => {

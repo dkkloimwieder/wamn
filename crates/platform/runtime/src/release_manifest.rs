@@ -255,6 +255,7 @@ mod tests {
                     },
                 )]),
             }]),
+            BTreeSet::new(),
             BTreeSet::from([ServingWiring {
                 package_id: "cat".into(),
                 wiring_id: "orders".into(),

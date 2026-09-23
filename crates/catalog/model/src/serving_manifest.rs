@@ -1,11 +1,13 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 1 closes over exact package membership, component digests, wiring
-//! definitions, exact component-operation dependencies and SQL statements,
-//! attachments, and registrations. It contains no flow or execution-plan
-//! identity. Producers must source every member from current catalog records;
-//! this model intentionally provides no legacy-plan conversion. Attachment
-//! authentication uses a closed modes list, without a scalar-mode fallback.
+//! Format 2 closes over exact package membership, component digests, routes,
+//! wiring definitions, exact component-operation dependencies and SQL
+//! statements, attachments, and registrations. A route calls one component
+//! export; a wiring is a graph the router walks. It contains no flow or
+//! execution-plan identity. Producers must source every member from current
+//! catalog records; this model intentionally provides no legacy-plan
+//! conversion. Attachment authentication uses a closed modes list, without a
+//! scalar-mode fallback.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
 //! maps make each collection's order deterministic, while
@@ -25,7 +27,7 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 1;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 2;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -60,7 +62,7 @@ impl AttachmentAuthPolicy {
     }
 }
 
-/// Parse the exact format-1 attachment authentication policy.
+/// Parse the exact attachment authentication policy.
 ///
 /// The only shapes are `{"modes":["none"]}`, `{"modes":["pat"]}`,
 /// `{"modes":["session"]}`, and `{"modes":["pat","session"]}`. Unknown
@@ -182,22 +184,150 @@ pub struct ServingWiring {
     pub graph_hash: DefinitionHash,
 }
 
-/// One release attachment targeting an exact wiring identity and version.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The contract kind of one application operation.
+///
+/// The values are the `kind` literals of the generated contract
+/// `operation.json`, which is the only source of this fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationKind {
+    Get,
+    Query,
+    Create,
+    Update,
+    Delete,
+    Command,
+    Projection,
+    EventHandler,
+}
+
+/// One component export that a route calls once, with no graph walk.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ServingRoute {
+    pub package_id: String,
+    pub component: String,
+    pub operation: String,
+    pub kind: OperationKind,
+}
+
+/// What one release attachment invokes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachmentTarget {
+    /// One component export of the attachment's package, through a route.
+    Route {
+        component: String,
+        operation: String,
+    },
+    /// One exact wiring identity and version, walked by the router.
+    Wiring {
+        wiring_id: String,
+        wiring_version: u32,
+    },
+}
+
+/// One release attachment targeting a route or an exact wiring version.
+///
+/// On the wire the target is flat: `component` and `operation`, or
+/// `wiring-id` and `wiring-version`, never both.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "AttachmentWire", into = "AttachmentWire")]
 pub struct ServingAttachment {
     pub kind: AttachmentKind,
     pub package_id: String,
-    pub wiring_id: String,
-    pub wiring_version: u32,
+    pub target: AttachmentTarget,
     pub definition_hash: DefinitionHash,
     pub definition: Value,
     pub auth_policy: Value,
     /// Exact operation authority selected by this attachment. Attachments that
     /// do not invoke a package operation carry no token; callers never infer one
     /// from route, wiring, or component syntax.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct AttachmentWire {
+    kind: AttachmentKind,
+    package_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    component: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    operation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wiring_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wiring_version: Option<u32>,
+    definition_hash: DefinitionHash,
+    definition: Value,
+    auth_policy: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    registered_operation: Option<String>,
+}
+
+impl TryFrom<AttachmentWire> for ServingAttachment {
+    type Error = String;
+
+    fn try_from(wire: AttachmentWire) -> Result<Self, Self::Error> {
+        let target = match (
+            wire.component,
+            wire.operation,
+            wire.wiring_id,
+            wire.wiring_version,
+        ) {
+            (Some(component), Some(operation), None, None) => AttachmentTarget::Route {
+                component,
+                operation,
+            },
+            (None, None, Some(wiring_id), Some(wiring_version)) => AttachmentTarget::Wiring {
+                wiring_id,
+                wiring_version,
+            },
+            _ => {
+                return Err(
+                    "an attachment names exactly one target: component and operation, \
+                     or wiring-id and wiring-version"
+                        .to_owned(),
+                );
+            }
+        };
+        Ok(Self {
+            kind: wire.kind,
+            package_id: wire.package_id,
+            target,
+            definition_hash: wire.definition_hash,
+            definition: wire.definition,
+            auth_policy: wire.auth_policy,
+            registered_operation: wire.registered_operation,
+        })
+    }
+}
+
+impl From<ServingAttachment> for AttachmentWire {
+    fn from(attachment: ServingAttachment) -> Self {
+        let (component, operation, wiring_id, wiring_version) = match attachment.target {
+            AttachmentTarget::Route {
+                component,
+                operation,
+            } => (Some(component), Some(operation), None, None),
+            AttachmentTarget::Wiring {
+                wiring_id,
+                wiring_version,
+            } => (None, None, Some(wiring_id), Some(wiring_version)),
+        };
+        Self {
+            kind: attachment.kind,
+            package_id: attachment.package_id,
+            component,
+            operation,
+            wiring_id,
+            wiring_version,
+            definition_hash: attachment.definition_hash,
+            definition: attachment.definition,
+            auth_policy: attachment.auth_policy,
+            registered_operation: attachment.registered_operation,
+        }
+    }
 }
 
 /// The delivery grain frozen for one release registration.
@@ -238,6 +368,7 @@ pub struct ServingManifest {
     pub format_version: u32,
     pub release: ServingRelease,
     pub components: BTreeSet<ServingComponent>,
+    pub routes: BTreeSet<ServingRoute>,
     pub wirings: BTreeSet<ServingWiring>,
     pub attachments: BTreeMap<String, ServingAttachment>,
     pub registrations: BTreeMap<String, ServingRegistration>,
@@ -252,6 +383,7 @@ impl ServingManifest {
     pub fn new(
         release: ServingRelease,
         components: BTreeSet<ServingComponent>,
+        routes: BTreeSet<ServingRoute>,
         wirings: BTreeSet<ServingWiring>,
         attachments: BTreeMap<String, ServingAttachment>,
         registrations: BTreeMap<String, ServingRegistration>,
@@ -260,6 +392,7 @@ impl ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release,
             components,
+            routes,
             wirings,
             attachments,
             registrations,
@@ -282,9 +415,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-1 bytes.
+    /// Parse, validate, and admit only canonical format-2 bytes.
     ///
-    /// The version is classified before the format-1 schema is decoded. This is
+    /// The version is classified before the format-2 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -437,6 +570,44 @@ impl ServingManifest {
         }
         validate_component_dependency_closure(&package_versions, &self.components)?;
 
+        let mut routes = BTreeSet::new();
+        for route in &self.routes {
+            validate_package_member(&package_versions, &route.package_id)?;
+            validate_text(&route.component, "component")?;
+            validate_text(&route.operation, "operation")?;
+            if route.kind == OperationKind::EventHandler {
+                return invalid(format!(
+                    "route {}::{} operation {:?} is an event handler, and an event handler is not a route",
+                    route.package_id, route.component, route.operation
+                ));
+            }
+            let providers = self
+                .components
+                .iter()
+                .filter(|component| {
+                    component.package_id == route.package_id
+                        && component.component == route.component
+                        && component.operations.contains_key(&route.operation)
+                })
+                .count();
+            if providers != 1 {
+                return invalid(format!(
+                    "route {}::{} operation {:?} resolves to {providers} release components",
+                    route.package_id, route.component, route.operation
+                ));
+            }
+            if !routes.insert((
+                route.package_id.as_str(),
+                route.component.as_str(),
+                route.operation.as_str(),
+            )) {
+                return invalid(format!(
+                    "route {}::{} operation {:?} occurs more than once",
+                    route.package_id, route.component, route.operation
+                ));
+            }
+        }
+
         let mut targets = BTreeSet::new();
         for wiring in &self.wirings {
             validate_package_member(&package_versions, &wiring.package_id)?;
@@ -458,12 +629,29 @@ impl ServingManifest {
         for (attachment_id, attachment) in &self.attachments {
             validate_text(attachment_id, "attachment-id")?;
             validate_package_member(&package_versions, &attachment.package_id)?;
-            validate_wiring_target(
-                &targets,
-                &attachment.package_id,
-                &attachment.wiring_id,
-                attachment.wiring_version,
-            )?;
+            match &attachment.target {
+                AttachmentTarget::Route {
+                    component,
+                    operation,
+                } => {
+                    validate_route_target(
+                        &routes,
+                        attachment_id,
+                        attachment,
+                        component,
+                        operation,
+                    )?;
+                }
+                AttachmentTarget::Wiring {
+                    wiring_id,
+                    wiring_version,
+                } => validate_wiring_target(
+                    &targets,
+                    &attachment.package_id,
+                    wiring_id,
+                    *wiring_version,
+                )?,
+            }
             if !attachment.definition.is_object() {
                 return invalid("attachment definition must be a JSON object");
             }
@@ -681,6 +869,40 @@ fn validate_format_version(document: &Value) -> Result<(), CatalogIdentityError>
     Err(CatalogIdentityError::UnsupportedServingManifestVersion { requested })
 }
 
+fn validate_route_target(
+    routes: &BTreeSet<(&str, &str, &str)>,
+    attachment_id: &str,
+    attachment: &ServingAttachment,
+    component: &str,
+    operation: &str,
+) -> Result<(), CatalogIdentityError> {
+    validate_text(component, "component")?;
+    validate_text(operation, "operation")?;
+    if attachment.kind == AttachmentKind::Cron {
+        return invalid(format!(
+            "cron attachment {attachment_id:?} cannot target a route"
+        ));
+    }
+    if !routes.contains(&(attachment.package_id.as_str(), component, operation)) {
+        return Err(CatalogIdentityError::UnresolvableManifestRoute {
+            package_id: attachment.package_id.clone(),
+            component: component.to_owned(),
+            operation: operation.to_owned(),
+        });
+    }
+    if attachment
+        .registered_operation
+        .as_deref()
+        .is_some_and(|registered| registered != operation)
+    {
+        return invalid(format!(
+            "attachment {attachment_id:?} registered operation {:?} differs from its route operation {operation:?}",
+            attachment.registered_operation
+        ));
+    }
+    Ok(())
+}
+
 fn validate_wiring_target(
     targets: &BTreeSet<(&str, &str, u32)>,
     package_id: &str,
@@ -861,12 +1083,33 @@ mod tests {
         ])
     }
 
+    fn routes() -> BTreeSet<ServingRoute> {
+        BTreeSet::from([ServingRoute {
+            package_id: "base".into(),
+            component: "http-request".into(),
+            operation: "base:widget/get@1.0.0".into(),
+            kind: OperationKind::Get,
+        }])
+    }
+
+    fn route_attachment() -> ServingAttachment {
+        ServingAttachment {
+            target: AttachmentTarget::Route {
+                component: "http-request".into(),
+                operation: "base:widget/get@1.0.0".into(),
+            },
+            ..attachment()
+        }
+    }
+
     fn attachment() -> ServingAttachment {
         ServingAttachment {
             kind: AttachmentKind::Http,
             package_id: "base".into(),
-            wiring_id: "orders".into(),
-            wiring_version: 3,
+            target: AttachmentTarget::Wiring {
+                wiring_id: "orders".into(),
+                wiring_version: 3,
+            },
             definition_hash: definition_hash(DEFINITION),
             definition: serde_json::json!({
                 "id": "orders",
@@ -894,8 +1137,12 @@ mod tests {
         ServingManifest::new(
             release(),
             components(),
+            routes(),
             wirings(),
-            BTreeMap::from([("orders".to_string(), attachment())]),
+            BTreeMap::from([
+                ("orders".to_string(), attachment()),
+                ("widget-get".to_string(), route_attachment()),
+            ]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("fixture manifest is valid")
@@ -951,8 +1198,12 @@ mod tests {
         let reversed = ServingManifest::new(
             release(),
             components().into_iter().rev().collect(),
+            routes().into_iter().rev().collect(),
             wirings().into_iter().rev().collect(),
-            BTreeMap::from([("orders".to_string(), attachment())]),
+            BTreeMap::from([
+                ("widget-get".to_string(), route_attachment()),
+                ("orders".to_string(), attachment()),
+            ]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("reordered fixture is valid");
@@ -977,6 +1228,7 @@ mod tests {
         let error = ServingManifest::new(
             release(),
             missing.into_iter().collect(),
+            routes(),
             wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
@@ -1006,6 +1258,7 @@ mod tests {
         let error = ServingManifest::new(
             release(),
             cyclic.into_iter().collect(),
+            routes(),
             wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
@@ -1015,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn only_canonical_format_one_bytes_are_admitted() {
+    fn only_canonical_format_two_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -1065,6 +1318,7 @@ mod tests {
         let manifest = ServingManifest::new(
             release(),
             components.clone(),
+            routes(),
             wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
@@ -1108,6 +1362,7 @@ mod tests {
         let error = ServingManifest::new(
             release(),
             broken,
+            routes(),
             wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
@@ -1118,14 +1373,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 2, 3, 4] {
+        for version in [0, 1, 3, 4] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format one may enter the decoder");
+                .expect_err("only format two may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {
@@ -1147,6 +1402,7 @@ mod tests {
         let error = ServingManifest::new(
             release(),
             components(),
+            routes(),
             wirings(),
             BTreeMap::from([("orders".to_string(), malformed)]),
             BTreeMap::new(),
@@ -1167,6 +1423,7 @@ mod tests {
             let error = ServingManifest::new(
                 release(),
                 components(),
+                routes(),
                 wirings(),
                 BTreeMap::from([("orders".to_string(), mismatched)]),
                 BTreeMap::new(),
@@ -1189,6 +1446,7 @@ mod tests {
         let error = ServingManifest::new(
             release(),
             mismatched_components,
+            routes(),
             wirings(),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -1219,6 +1477,7 @@ mod tests {
                 ServingManifest::new(
                     release(),
                     components(),
+                    routes(),
                     wirings(),
                     BTreeMap::from([("orders".to_string(), malformed)]),
                     BTreeMap::new(),
@@ -1239,6 +1498,7 @@ mod tests {
             ServingManifest::new(
                 release(),
                 components(),
+                routes(),
                 wirings(),
                 BTreeMap::from([("orders".to_string(), authenticated)]),
                 BTreeMap::new(),
@@ -1252,6 +1512,7 @@ mod tests {
             ServingManifest::new(
                 release(),
                 components(),
+                routes(),
                 wirings(),
                 BTreeMap::from([("orders".to_string(), anonymous)]),
                 BTreeMap::new(),
@@ -1271,6 +1532,7 @@ mod tests {
         let error = ServingManifest::new(
             duplicate,
             components(),
+            routes(),
             wirings(),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -1288,11 +1550,15 @@ mod tests {
     #[test]
     fn attachment_and_registration_targets_are_exact() {
         let mut wrong_version = attachment();
-        wrong_version.wiring_version = 2;
+        wrong_version.target = AttachmentTarget::Wiring {
+            wiring_id: "orders".into(),
+            wiring_version: 2,
+        };
         assert_eq!(
             ServingManifest::new(
                 release(),
                 components(),
+                routes(),
                 wirings(),
                 BTreeMap::from([("orders".to_string(), wrong_version)]),
                 BTreeMap::new(),
@@ -1310,6 +1576,7 @@ mod tests {
             ServingManifest::new(
                 release(),
                 components(),
+                routes(),
                 wirings(),
                 BTreeMap::new(),
                 BTreeMap::from([("overlay::orders-changed".to_string(), missing)]),
@@ -1327,6 +1594,7 @@ mod tests {
             ServingManifest::new(
                 release(),
                 components(),
+                routes(),
                 wirings(),
                 BTreeMap::from([("orders".to_string(), wrong_package)]),
                 BTreeMap::new(),
@@ -1359,6 +1627,7 @@ mod tests {
         ServingManifest::new(
             release(),
             components(),
+            routes(),
             wirings(),
             BTreeMap::new(),
             registrations.clone(),
@@ -1372,6 +1641,7 @@ mod tests {
         let error = ServingManifest::new(
             release(),
             components(),
+            routes(),
             wirings(),
             BTreeMap::new(),
             registrations,
@@ -1390,6 +1660,7 @@ mod tests {
             let error = ServingManifest::new(
                 release(),
                 components(),
+                routes(),
                 wirings(),
                 BTreeMap::new(),
                 BTreeMap::from([(key.to_owned(), registration())]),
@@ -1416,6 +1687,142 @@ mod tests {
                 limit: MAX_SERVING_MANIFEST_BYTES,
             })
         );
+    }
+
+    #[test]
+    fn an_attachment_target_is_flat_on_the_wire_and_names_exactly_one_target() {
+        let route = serde_json::to_value(route_attachment()).expect("attachment serializes");
+        assert_eq!(route["component"], "http-request");
+        assert_eq!(route["operation"], "base:widget/get@1.0.0");
+        assert!(route.get("wiring-id").is_none() && route.get("wiring-version").is_none());
+        assert_eq!(
+            serde_json::from_value::<ServingAttachment>(route.clone()).unwrap(),
+            route_attachment()
+        );
+
+        let wiring = serde_json::to_value(attachment()).expect("attachment serializes");
+        let mut both = route.clone();
+        both["wiring-id"] = wiring["wiring-id"].clone();
+        both["wiring-version"] = wiring["wiring-version"].clone();
+        let mut neither = route.clone();
+        neither.as_object_mut().unwrap().remove("component");
+        neither.as_object_mut().unwrap().remove("operation");
+        let mut half = route;
+        half.as_object_mut().unwrap().remove("operation");
+        for document in [both, neither, half] {
+            let error = serde_json::from_value::<ServingAttachment>(document)
+                .expect_err("an attachment must name exactly one target");
+            assert!(error.to_string().contains("exactly one target"), "{error}");
+        }
+    }
+
+    #[test]
+    fn route_attachment_targets_are_exact() {
+        let mut absent = route_attachment();
+        absent.target = AttachmentTarget::Route {
+            component: "http-request".into(),
+            operation: "base:widget/list@1.0.0".into(),
+        };
+        absent.registered_operation = None;
+        assert_eq!(
+            ServingManifest::new(
+                release(),
+                components(),
+                routes(),
+                wirings(),
+                BTreeMap::from([("widget-get".to_string(), absent)]),
+                BTreeMap::new(),
+            ),
+            Err(CatalogIdentityError::UnresolvableManifestRoute {
+                package_id: "base".into(),
+                component: "http-request".into(),
+                operation: "base:widget/list@1.0.0".into(),
+            })
+        );
+
+        let mut other_package = route_attachment();
+        other_package.package_id = "overlay".into();
+        other_package.registered_operation = None;
+        assert!(matches!(
+            ServingManifest::new(
+                release(),
+                components(),
+                routes(),
+                wirings(),
+                BTreeMap::from([("widget-get".to_string(), other_package)]),
+                BTreeMap::new(),
+            ),
+            Err(CatalogIdentityError::UnresolvableManifestRoute { .. })
+        ));
+
+        let mut mismatched = route_attachment();
+        mismatched.registered_operation = Some("base:widget/list@1.0.0".into());
+        let error = ServingManifest::new(
+            release(),
+            components(),
+            routes(),
+            wirings(),
+            BTreeMap::from([("widget-get".to_string(), mismatched)]),
+            BTreeMap::new(),
+        )
+        .expect_err("a route attachment cannot grant another operation");
+        assert!(
+            error
+                .to_string()
+                .contains("differs from its route operation")
+        );
+
+        let mut cron = route_attachment();
+        cron.kind = AttachmentKind::Cron;
+        let error = ServingManifest::new(
+            release(),
+            components(),
+            routes(),
+            wirings(),
+            BTreeMap::from([("widget-get".to_string(), cron)]),
+            BTreeMap::new(),
+        )
+        .expect_err("a cron attachment cannot target a route");
+        assert!(error.to_string().contains("cannot target a route"));
+    }
+
+    #[test]
+    fn a_route_resolves_to_one_release_component_export() {
+        let route = routes().pop_first().expect("fixture has a route");
+        let unexported = ServingRoute {
+            operation: "base:widget/list@1.0.0".into(),
+            ..route.clone()
+        };
+        let handler = ServingRoute {
+            kind: OperationKind::EventHandler,
+            ..route.clone()
+        };
+        let duplicate = BTreeSet::from([
+            route.clone(),
+            ServingRoute {
+                kind: OperationKind::Query,
+                ..route
+            },
+        ]);
+        for (routes, refusal) in [
+            (
+                BTreeSet::from([unexported]),
+                "resolves to 0 release components",
+            ),
+            (BTreeSet::from([handler]), "an event handler is not a route"),
+            (duplicate, "occurs more than once"),
+        ] {
+            let error = ServingManifest::new(
+                release(),
+                components(),
+                routes,
+                wirings(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+            )
+            .expect_err("an inexact route must refuse");
+            assert!(error.to_string().contains(refusal), "{error}");
+        }
     }
 
     #[test]

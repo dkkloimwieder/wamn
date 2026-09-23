@@ -215,6 +215,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
                 (OPERATION): {"registered-operation": OPERATION}
             }
         }],
+        "routes": [],
         "wirings": [{
             "package-id": FIXTURE_PACKAGE_ID,
             "wiring-id": "item-get",

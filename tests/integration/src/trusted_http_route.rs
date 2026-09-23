@@ -352,6 +352,7 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
             "digest": component.component_digest,
             "operations": operations,
         }],
+        "routes": [],
         "wirings": [{
             "package-id": PACKAGE,
             "wiring-id": WIRING_ID,

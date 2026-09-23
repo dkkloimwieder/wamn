@@ -527,6 +527,7 @@ mod tests {
                 ]),
             },
             components: BTreeSet::new(),
+            routes: BTreeSet::new(),
             wirings: BTreeSet::new(),
             attachments: BTreeMap::new(),
             registrations: BTreeMap::new(),

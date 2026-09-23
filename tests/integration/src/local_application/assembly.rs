@@ -507,7 +507,7 @@ fn serving_manifest(
         .collect::<Vec<_>>();
     let wirings=wirings.iter().map(|(id,w)|json!({"package-id":id,"wiring-id":w.wiring_id,"wiring-version":w.version,"graph-hash":w.wiring_hash().as_str()})).collect::<Vec<_>>();
     Ok(serde_json::from_value(
-        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"wirings":wirings,"attachments":attachments,"registrations":{}}),
+        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"routes":[],"wirings":wirings,"attachments":attachments,"registrations":{}}),
     )?)
 }
 
@@ -521,7 +521,9 @@ fn selected_attachments(
         .collect::<BTreeSet<_>>();
     let mut result = BTreeMap::new();
     for (id, attachment) in input.attachments {
-        if selected.contains(attachment.wiring_id.as_str()) {
+        if let wamn_catalog::AttachmentTarget::Wiring { wiring_id, .. } = &attachment.target
+            && selected.contains(wiring_id.as_str())
+        {
             let mut attachment = attachment.clone();
             attachment.definition["route"]["host"] = Value::String(input.route_host.into());
             attachment.definition_hash = wamn_catalog::DefinitionHash::parse(

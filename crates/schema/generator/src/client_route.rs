@@ -76,20 +76,26 @@ fn selected_wiring(
     publication: &Path,
     attachment: &ServingAttachment,
 ) -> Result<Option<WiringDocument>, ClientIrError> {
+    let wamn_catalog::AttachmentTarget::Wiring {
+        wiring_id,
+        wiring_version,
+    } = &attachment.target
+    else {
+        return Ok(None);
+    };
     let mut selected = None;
     for path in declaration_paths(&publication.join("wirings"), false)? {
         let document = read_json(&path)?;
         let wiring = WiringDocument::parse(&document)
             .map_err(|error| malformed(&path, format!("invalid wiring: {error}")))?;
-        if wiring.wiring_id != attachment.wiring_id || wiring.version != attachment.wiring_version {
+        if wiring.wiring_id != *wiring_id || wiring.version != *wiring_version {
             continue;
         }
         if selected.is_some() {
             return Err(malformed(
                 &path,
                 format!(
-                    "more than one publication declares wiring {:?} version {}",
-                    attachment.wiring_id, attachment.wiring_version
+                    "more than one publication declares wiring {wiring_id:?} version {wiring_version}"
                 ),
             ));
         }
@@ -245,7 +251,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use serde_json::{Value, json};
-    use wamn_catalog::{ServingAttachment, WiringDocument};
+    use wamn_catalog::{AttachmentTarget, ServingAttachment, WiringDocument};
 
     use super::{evidence, response_node};
     use crate::client_ir::ClientIrErrorKind;
@@ -300,11 +306,22 @@ mod tests {
         .expect("valid platform attachment")
     }
 
+    fn wiring_target(attachment: &ServingAttachment) -> (&str, u32) {
+        let AttachmentTarget::Wiring {
+            wiring_id,
+            wiring_version,
+        } = &attachment.target
+        else {
+            panic!("the fixture attachment targets a wiring");
+        };
+        (wiring_id, *wiring_version)
+    }
+
     fn direct_wiring(attachment: &ServingAttachment) -> Value {
         json!({
             "format-version": "0.1",
-            "wiring-id": attachment.wiring_id,
-            "version": attachment.wiring_version,
+            "wiring-id": wiring_target(attachment).0,
+            "version": wiring_target(attachment).1,
             "entry": "operation",
             "nodes": {"operation": {
                 "component": "fixture",
@@ -358,8 +375,8 @@ mod tests {
             "wirings/widget-store.json",
             &json!({
                 "format-version": "0.1",
-                "wiring-id": attachment.wiring_id,
-                "version": attachment.wiring_version,
+                "wiring-id": wiring_target(&attachment).0,
+                "version": wiring_target(&attachment).1,
                 "entry": "operation",
                 "nodes": {
                     "operation": {
@@ -438,7 +455,7 @@ mod tests {
         );
         let fixture = Publication::new();
         let mut unrelated = direct_wiring(&attachment);
-        unrelated["version"] = json!(attachment.wiring_version + 1);
+        unrelated["version"] = json!(wiring_target(&attachment).1 + 1);
         fixture.write("wirings/widget_archive_other_version.json", &unrelated);
         fixture.write(
             "wirings/unrelated-file-name.json",
@@ -541,8 +558,8 @@ mod tests {
         );
         let operation = attachment.registered_operation.as_deref().unwrap();
         let wiring = json!({
-            "format-version": "0.1", "wiring-id": attachment.wiring_id,
-            "version": attachment.wiring_version, "entry": "operation",
+            "format-version": "0.1", "wiring-id": wiring_target(&attachment).0,
+            "version": wiring_target(&attachment).1, "entry": "operation",
             "nodes": {
                 "operation": {"component": "fixture", "interface-version": "1.0.0",
                     "operation": attachment.registered_operation},

@@ -33,7 +33,10 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     attachments
         .get_mut("inventory-move-http")
         .context("WMS declares the move route")?
-        .wiring_id = "inventory_move".into();
+        .target = wamn_catalog::AttachmentTarget::Wiring {
+        wiring_id: "inventory_move".into(),
+        wiring_version: 1,
+    };
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
     let application = LocalApplication::start(LocalApplicationConfig {

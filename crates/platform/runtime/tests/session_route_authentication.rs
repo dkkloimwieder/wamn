@@ -169,6 +169,7 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
                 READ: {"registered-operation": READ}, WRITE: {"registered-operation": WRITE}
             }}],
+        "routes": [],
         "wirings": [{"package-id": "session_test", "wiring-id": "purchase", "wiring-version": 1,
             "graph-hash": format!("sha256:{}", "b".repeat(64))}],
         "attachments": {ATTACHMENT: {"kind": "http", "package-id": "session_test", "wiring-id": "purchase",

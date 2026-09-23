@@ -956,6 +956,7 @@ mod tests {
                 packages: BTreeSet::from([package]),
             },
             components: BTreeSet::from([component]),
+            routes: BTreeSet::new(),
             wirings: BTreeSet::from([ServingWiring {
                 package_id: "platform_fixture".to_owned(),
                 wiring_id: "widget_get".to_owned(),
@@ -992,8 +993,10 @@ mod tests {
         ServingAttachment {
             kind,
             package_id: "platform_fixture".to_owned(),
-            wiring_id: "widget_get".to_owned(),
-            wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Wiring {
+                wiring_id: "widget_get".to_owned(),
+                wiring_version: 1,
+            },
             definition_hash,
             definition,
             auth_policy: json!({"modes": ["pat"]}),

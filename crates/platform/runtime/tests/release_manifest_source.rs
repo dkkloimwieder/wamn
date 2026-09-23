@@ -106,7 +106,7 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 
 #[test]
 fn pulled_bytes_load_the_release_naming_their_carrier() {
-    let canonical = br#"{"attachments":{},"components":[],"format-version":1,"registrations":{},"release":{"effective-release-id":7,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#;
+    let canonical = br#"{"attachments":{},"components":[],"format-version":2,"registrations":{},"release":{"effective-release-id":7,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"routes":[],"wirings":[]}"#;
 
     let loaded_release = LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE)
         .expect("verified canonical bytes load without a mount");

@@ -298,6 +298,7 @@ fn exact_child_manifest() -> ServingManifest {
         },
         components,
         BTreeSet::new(),
+        BTreeSet::new(),
         BTreeMap::new(),
         BTreeMap::new(),
     )

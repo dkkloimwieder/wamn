@@ -1,14 +1,14 @@
-//! Digest and closed-shape tests for serving-manifest format 1.
+//! Digest and closed-shape tests for serving-manifest format 2.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
-    ArtifactHash, AttachmentAuthPolicy, AttachmentKind, CatalogIdentityError,
-    ComponentOperationDependency, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
-    ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
-    ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
-    parse_attachment_auth_policy,
+    ArtifactHash, AttachmentAuthPolicy, AttachmentKind, AttachmentTarget, CatalogIdentityError,
+    ComponentOperationDependency, DefinitionHash, EffectiveReleaseId, OperationKind,
+    PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
+    ServingManifest, ServingRegistration, ServingRegistrationInput, ServingRelease, ServingRoute,
+    ServingWiring, parse_attachment_auth_policy,
 };
 
 mod mint_vector {
@@ -97,28 +97,61 @@ fn wirings() -> BTreeSet<ServingWiring> {
     ])
 }
 
+fn routes() -> BTreeSet<ServingRoute> {
+    BTreeSet::from([ServingRoute {
+        package_id: "platform_fixture_overlay".into(),
+        component: "http-request".into(),
+        operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
+        kind: OperationKind::Get,
+    }])
+}
+
 fn manifest() -> ServingManifest {
     ServingManifest::new(
         release(),
         components(),
+        routes(),
         wirings(),
-        BTreeMap::from([(
-            "orders-http".into(),
-            ServingAttachment {
-                kind: AttachmentKind::Http,
-                package_id: "platform_fixture_overlay".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 1,
-                definition_hash: definition_hash(DEFINITION),
-                definition: json!({
-                    "id": "orders-http",
-                    "kind": "http",
-                    "run-deadline-ms": 30000
-                }),
-                auth_policy: json!({"modes": ["pat"]}),
-                registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
-            },
-        )]),
+        BTreeMap::from([
+            (
+                "widget-get-http".into(),
+                ServingAttachment {
+                    kind: AttachmentKind::Http,
+                    package_id: "platform_fixture_overlay".into(),
+                    target: AttachmentTarget::Route {
+                        component: "http-request".into(),
+                        operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
+                    },
+                    definition_hash: definition_hash(DEFINITION),
+                    definition: json!({
+                        "id": "widget-get-http",
+                        "kind": "http",
+                        "run-deadline-ms": 30000
+                    }),
+                    auth_policy: json!({"modes": ["pat"]}),
+                    registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
+                },
+            ),
+            (
+                "orders-http".into(),
+                ServingAttachment {
+                    kind: AttachmentKind::Http,
+                    package_id: "platform_fixture_overlay".into(),
+                    target: AttachmentTarget::Wiring {
+                        wiring_id: "orders".into(),
+                        wiring_version: 1,
+                    },
+                    definition_hash: definition_hash(DEFINITION),
+                    definition: json!({
+                        "id": "orders-http",
+                        "kind": "http",
+                        "run-deadline-ms": 30000
+                    }),
+                    auth_policy: json!({"modes": ["pat"]}),
+                    registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
+                },
+            ),
+        ]),
         BTreeMap::from([(
             "platform_fixture::orders-changed".into(),
             ServingRegistration {
@@ -132,7 +165,7 @@ fn manifest() -> ServingManifest {
             },
         )]),
     )
-    .expect("the format-one fixture is valid")
+    .expect("the format-two fixture is valid")
 }
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -147,13 +180,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_one_preimage_and_digest_are_pinned() {
+fn the_format_two_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), mint_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), mint_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(mint_vector::CANONICAL_BYTES)
-        .expect("the v1 vector is admitted by the reader");
+        .expect("the format-two vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), mint_vector::DIGEST);
 
@@ -167,7 +200,7 @@ fn the_format_one_preimage_and_digest_are_pinned() {
 }
 
 #[test]
-fn fresh_only_is_digest_bound_without_changing_format_one_default_bytes() {
+fn fresh_only_is_digest_bound_without_changing_format_two_default_bytes() {
     let baseline = manifest();
     let mut fresh = baseline.clone();
     fresh.components = fresh
@@ -183,9 +216,9 @@ fn fresh_only_is_digest_bound_without_changing_format_one_default_bytes() {
         })
         .collect();
     let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
-        .expect("format-one reader admits registered fresh-only operations");
+        .expect("format-two reader admits registered fresh-only operations");
     assert_eq!(admitted, fresh);
-    assert_eq!(admitted.format_version, 1);
+    assert_eq!(admitted.format_version, 2);
     assert_ne!(digest, baseline.digest());
     assert_eq!(baseline.canonical_bytes(), mint_vector::CANONICAL_BYTES);
 }
@@ -373,6 +406,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
             },
         ]),
         BTreeSet::new(),
+        BTreeSet::new(),
         BTreeMap::new(),
         BTreeMap::new(),
     )
@@ -555,11 +589,12 @@ fn every_manifest_hash_validates_during_deserialization() {
 }
 
 #[test]
-fn all_four_collections_have_canonical_order() {
+fn all_five_collections_have_canonical_order() {
     let baseline = manifest();
     let permuted = ServingManifest::new(
         release(),
         components().into_iter().rev().collect(),
+        routes().into_iter().rev().collect(),
         wirings().into_iter().rev().collect(),
         baseline
             .attachments
@@ -591,7 +626,25 @@ fn every_manifest_field_is_pinned() {
             "format-version",
             "registrations",
             "release",
+            "routes",
             "wirings"
+        ]
+    );
+    assert_eq!(
+        sorted_keys(&document["routes"][0]),
+        ["component", "kind", "operation", "package-id"]
+    );
+    assert_eq!(
+        sorted_keys(&document["attachments"]["widget-get-http"]),
+        [
+            "auth-policy",
+            "component",
+            "definition",
+            "definition-hash",
+            "kind",
+            "operation",
+            "package-id",
+            "registered-operation"
         ]
     );
     assert_eq!(
@@ -646,7 +699,7 @@ fn every_manifest_field_is_pinned() {
     ] {
         assert!(
             !text.contains(retired),
-            "retired key {retired} re-entered v1"
+            "retired key {retired} re-entered format 2"
         );
     }
 }
