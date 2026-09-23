@@ -94,10 +94,13 @@ describe("the generated table for a page", () => {
   it("asks for the next page with the cursor the last reply returned", async () => {
     const { transport, sent } = stub([page(["a"], "c1"), page(["b"], null)]);
     render(() => <WidgetQueryTable transport={transport} />);
+    const next = screen.getByRole("button", { name: "next page" }) as HTMLButtonElement;
+    // The control stays in place and waits for a cursor.
+    expect(next.disabled).toBe(true);
     fireEvent.click(screen.getByText("read"));
-    await waitFor(() => expect(screen.getByText("next page")).toBeDefined());
+    await waitFor(() => expect(next.disabled).toBe(false));
 
-    fireEvent.click(screen.getByText("next page"));
+    fireEvent.click(next);
     await waitFor(() => expect(sent).toHaveLength(2));
     const second = sent[1]?.items[0] as { [key: string]: JsonValue };
     expect(second["cursor"]).toBe("c1");
@@ -105,6 +108,8 @@ describe("the generated table for a page", () => {
     await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));
     expect(screen.getByText("a")).toBeDefined();
     expect(screen.getByText("b")).toBeDefined();
+    // The last page sent no cursor, so the control is disabled again.
+    expect(next.disabled).toBe(true);
   });
 
   it("clears the rows and reads again when a control changes", async () => {

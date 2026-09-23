@@ -27,6 +27,8 @@ const Toaster: Component<ToasterProps> = (props) => {
           "--border-radius": "var(--radius)",
         } as JSX.CSSProperties
       }
+      // Every toast carries the style class, so the style states its look.
+      toastOptions={{ class: "z-toast" }}
       {...props}
     />
   );

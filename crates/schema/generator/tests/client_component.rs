@@ -87,17 +87,22 @@ fn a_page_table_renders_every_control_the_plan_names() {
     );
     assert!(
         widget.contains(concat!(
-            "        <ChoiceField\n",
-            "          label=\"field\"\n",
-            "          allowEmpty={true}\n",
-            "          choices={[\n",
-            "            { value: \"created_at\", text: \"created at\" },\n",
-            "          ]}\n",
-            "          onChange={(value) => change([\"sort\", \"field\"], value)}\n",
+            "          <ChoiceField\n",
+            "            label=\"field\"\n",
+            "            allowEmpty={true}\n",
+            "            choices={[\n",
+            "              { value: \"created_at\", text: \"created at\" },\n",
+            "            ]}\n",
+            "            onChange={(value) => change([\"sort\", \"field\"], value)}\n",
         )),
         "the sort field is a choice of exactly what the contract permits"
     );
-    assert!(widget.contains("            { value: \"ascending\", text: \"ascending\" },"));
+    assert!(widget.contains("              { value: \"ascending\", text: \"ascending\" },"));
+    assert!(
+        query.contains("      >\n        <FieldGroup>\n          <TextField\n")
+            && query.contains("        </FieldGroup>\n        <FormActions>\n"),
+        "the controls of a table sit in one field group, which spaces them"
+    );
     assert!(
         widget.contains("onChange={(value) => change([\"limit\"], value)}"),
         "the limit is a control, not an operator field"
@@ -145,6 +150,10 @@ fn a_bounded_list_has_no_control_and_asks_for_no_next_page() {
     assert!(
         list.contains("firstPage(rows, null)"),
         "a bounded list has no cursor"
+    );
+    assert!(
+        !list.contains("next page"),
+        "a bounded list never pages, so it shows no next page"
     );
 }
 
@@ -249,11 +258,31 @@ fn a_table_renders_through_the_data_grid_and_states_no_class() {
     );
     assert!(
         widget.contains(concat!(
-            "      <Show when={hasNextPage(page())}>\n",
-            "        <Button type=\"button\" variant=\"outline\" onClick={() => void read(page().cursor)}>\n",
+            "      <FormActions>\n",
+            "        <Button\n",
+            "          type=\"button\"\n",
+            "          variant=\"outline\"\n",
+            "          disabled={!hasNextPage(page())}\n",
+            "          onClick={() => void read(page().cursor)}\n",
+            "        >\n",
             "          next page\n",
         )),
-        "the next page is a button, because a keyset page has no index"
+        "the next page is a button in the actions row, because a keyset page has no index, \
+         and it stays in place, disabled while the release sent no cursor"
+    );
+    assert!(
+        widget.contains(concat!(
+            "        <FormActions>\n",
+            "          <Button type=\"submit\">read</Button>\n",
+            "        </FormActions>\n",
+            "      </form>\n",
+        )),
+        "the read button closes the filter form in the actions row"
+    );
+    assert!(
+        widget.contains("    <TableScreen>\n      <form\n")
+            && widget.contains("      </FormActions>\n    </TableScreen>\n"),
+        "the filter form, the rows and the next page stack in one table screen"
     );
     let query = widget
         .split("export function WidgetQueryTable")
@@ -383,12 +412,20 @@ fn a_form_renders_through_the_ui_fields_and_states_no_class() {
         "a repeated group is one field set, with one group for each line"
     );
     assert!(
-        batch.contains("                  <Button\n                    type=\"button\"\n")
-            && batch.contains(">\n                    remove\n                  </Button>")
-            && batch.contains(">\n              add\n            </Button>"),
+        batch.contains("                    <Button\n                      type=\"button\"\n")
+            && batch.contains(">\n                      remove\n                    </Button>")
+            && batch.contains(">\n                add\n              </Button>"),
         "adding and removing a line are buttons"
     );
-    assert!(batch.contains("<Button type=\"submit\">submit</Button>"));
+    assert!(
+        batch.contains(concat!(
+            "      <FormActions>\n",
+            "        <Button type=\"submit\">submit</Button>\n",
+            "      </FormActions>\n",
+            "    </form>\n",
+        )),
+        "the submit button closes the form in the actions row"
+    );
     assert!(
         batch.contains(concat!(
             "      props.onSubmitted?.(outcome);\n",
@@ -766,14 +803,14 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         "a control inside a repeated group reads its own authored label"
     );
     assert!(
-        widget.contains("            <FieldLegend>Batch lines</FieldLegend>"),
+        widget.contains("              <FieldLegend>Batch lines</FieldLegend>"),
         "a repeated group reads the label its line bound declares"
     );
 
     // A page control that names a model column.
     assert!(
         widget.contains(
-            "        <TextField\n          label=\"Widget code\"\n          type=\"text\""
+            "          <TextField\n            label=\"Widget code\"\n            type=\"text\""
         ),
         "a filter control reads the column's authored label"
     );
@@ -883,11 +920,16 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
         .expect("the form ends");
     assert!(
         create.contains(concat!(
-            "          <TextField\n",
-            "            label=\"Widget code\"\n",
-            "            type=\"text\"\n",
+            "            <TextField\n",
+            "              label=\"Widget code\"\n",
+            "              type=\"text\"\n",
         )),
         "an input that names no record stays a text control"
+    );
+    assert!(
+        create.contains("      </Show>\n      <FieldGroup>\n")
+            && create.contains("      </FieldGroup>\n      <FormActions>\n"),
+        "the fields of a form sit in one field group, which spaces them"
     );
 }
 
@@ -1020,13 +1062,13 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
     );
     assert!(
         create.contains(concat!(
-            "          <RecordSelect\n",
-            "            label=\"maker id\"\n",
+            "            <RecordSelect\n",
+            "              label=\"maker id\"\n",
         )) && create.contains(concat!(
-            "            onSearch={(text) => {\n",
-            "              setWidgetMakerQuerySearch(text);\n",
-            "              void readWidgetMakerQueryOptions(null);\n",
-            "            }}\n",
+            "              onSearch={(text) => {\n",
+            "                setWidgetMakerQuerySearch(text);\n",
+            "                void readWidgetMakerQueryOptions(null);\n",
+            "              }}\n",
         )),
         "the selector hands its search to the list it reads"
     );
@@ -1053,8 +1095,8 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
     );
     assert!(
         create.contains(concat!(
-            "            hasNextPage={hasNextPage(widgetMakerQueryOptions())}\n",
-            "            onNextPage={() => void readWidgetMakerQueryOptions(widgetMakerQueryOptions().cursor)}\n",
+            "              hasNextPage={hasNextPage(widgetMakerQueryOptions())}\n",
+            "              onNextPage={() => void readWidgetMakerQueryOptions(widgetMakerQueryOptions().cursor)}\n",
         )),
         "the next page control reads the cursor the selector holds"
     );

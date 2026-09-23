@@ -325,7 +325,8 @@ const dataGridDefaultTableLayout = {
   rowBorder: true,
   rowRounded: false,
   stripped: false,
-  headerSticky: false,
+  // The container scrolls, so the header stays in view above the rows.
+  headerSticky: true,
   headerBackground: false,
   footerBackground: false,
   headerBorder: true,
@@ -484,7 +485,10 @@ function DataGridContainer(props: {
   border?: boolean;
 }) {
   return (
-    <div data-slot="data-grid" class={cn("w-full overflow-hidden", props.class)}>
+    // The box has one fixed height whether it holds no rows or a full page, so
+    // a read never moves the page. The rows scroll inside it, across as well
+    // as down.
+    <div data-slot="data-grid" class={cn("h-[32rem] w-full overflow-auto", props.class)}>
       {props.children}
     </div>
   );
