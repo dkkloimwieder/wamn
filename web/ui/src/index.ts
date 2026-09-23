@@ -17,6 +17,7 @@ export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 export { Skeleton } from "./components/ui/skeleton";
 export { Toaster } from "./components/ui/toast";
 export { ColorModeProvider, getClientColorMode, useColorMode } from "./components/color-mode";
+export { ConfirmAction, type ConfirmActionProps } from "./confirm";
 export { DetailItem, DetailList, type DetailItemProps, type DetailListProps } from "./detail";
 export {
   CheckField,

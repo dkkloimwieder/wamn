@@ -40,6 +40,7 @@ Add an item only when an emitter target needs it.
 | `announceOutcome` | Shows one runtime outcome as a toast |
 | `TextField`, `ChoiceField`, `CheckField` | One labeled control and the refusal that marks it |
 | `DetailList`, `DetailItem` | The fields of one record, with a skeleton while it is read |
+| `ConfirmAction` | One action the operator confirms first, in an alert dialog |
 
 `RecordSelect` filters nothing itself, so its options are exactly the rows the release sent.
 A search matches a value in full, because a declared filter compares with `IN`.
