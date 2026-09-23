@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH target AS MATERIALIZED (\n    SELECT id, edit_version\n    FROM widget_tag\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE widget_tag AS model\n    SET\n        label = CASE WHEN $3::boolean THEN $4::text ELSE model.label END,\n        edit_version = CASE\n            WHEN ($3::boolean AND $4::text::text IS DISTINCT FROM model.label::text)\n            THEN model.edit_version + 1\n            ELSE model.edit_version\n        END\n    FROM target\n    WHERE model.id = target.id\n      AND target.edit_version = $2::int8\n    RETURNING\n    model.edit_version,\n    model.id,\n    model.label\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    (SELECT target.edit_version FROM target) AS observed_edit_version,\n    updated.edit_version,\n    updated.id,\n    updated.label\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "observed_edit_version",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "edit_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "widget_tag",
+            "name": "edit_version"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget_tag",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "label",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "widget_tag",
+            "name": "label"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "002f42391ef131902bcb20cbb5dffa67b8fc6f5fd62bed0bdd91725e2b9ffa2e"
+}

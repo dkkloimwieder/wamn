@@ -122,7 +122,7 @@ fn private_operations_are_excluded_but_malformed_public_operations_refuse() {
     );
     assert_eq!(
         ir.models.iter().flat_map(|model| &model.operations).count(),
-        9,
+        10,
         "excluding one private operation must retain its public siblings"
     );
 

@@ -174,6 +174,30 @@
         "created_at"
       ],
       "table": "widget_maker"
+    },
+    "widget_tag": {
+      "audit_log": {
+        "columns": [],
+        "retention": "P30D"
+      },
+      "enum_fields": {},
+      "operations": {
+        "update": {
+          "permission": "widget_tag.update",
+          "result": "one",
+          "revision_field": "edit_version",
+          "writable_fields": [
+            "label"
+          ]
+        }
+      },
+      "owner": "platform_fixture",
+      "schema": "inventory",
+      "server_owned_fields": [
+        "id",
+        "edit_version"
+      ],
+      "table": "widget_tag"
     }
   },
   "internal_relations": {

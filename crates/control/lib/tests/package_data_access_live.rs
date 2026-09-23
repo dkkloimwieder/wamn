@@ -694,9 +694,9 @@ fn stage_logged_fixture() -> PathBuf {
         serde_json::from_slice(&std::fs::read(root.join("wamn.json")).expect("read manifest"))
             .expect("parse manifest");
     assert_eq!(
-        manifest["models"]["widget"]["audit_log"],
-        serde_json::json!({"columns": ["created_at"], "retention": "P30D"}),
-        "the relation logs and stamps its one reserved column"
+        manifest["models"]["widget_tag"]["audit_log"],
+        serde_json::json!({"columns": [], "retention": "P30D"}),
+        "the relation logs and carries no stamp columns"
     );
     root
 }
@@ -750,7 +750,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
                      FROM pg_catalog.pg_attribute AS attribute \
                      CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) \
                           AS privilege \
-                    WHERE attribute.attrelid = 'inventory.widget_history'::regclass \
+                    WHERE attribute.attrelid = 'inventory.widget_tag_history'::regclass \
                       AND attribute.attnum > 0 AND NOT attribute.attisdropped \
                       AND pg_catalog.has_column_privilege( \
                             'wamn_app', attribute.attrelid, attribute.attnum, privilege) \
@@ -780,11 +780,8 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
             "BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
-             INSERT INTO inventory.widget_maker (id, name) \
-               VALUES ('00000000-0000-4000-8000-00000000b004', 'history-maker'); \
-             INSERT INTO inventory.widget (id, code, maker_id) \
-               VALUES ('00000000-0000-4000-8000-00000000b003', 'priority', \
-                       '00000000-0000-4000-8000-00000000b004'); \
+             INSERT INTO inventory.widget_tag (id, label) \
+               VALUES ('00000000-0000-4000-8000-00000000b003', 'history-tag'); \
              COMMIT;",
         )
         .await
@@ -795,8 +792,8 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .batch_execute(
             "BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true), \
-                    set_config('app.operation', 'platform-fixture:widget/update@1.0.0', true); \
-             UPDATE inventory.widget SET note = 'logged' \
+                    set_config('app.operation', 'platform-fixture:widget-tag/update@1.0.0', true); \
+             UPDATE inventory.widget_tag SET label = 'logged' \
               WHERE id = '00000000-0000-4000-8000-00000000b003'; \
              COMMIT;",
         )
@@ -805,7 +802,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     let entries = admin
         .query(
             "SELECT kind, operation, changed_by::text, row_key::text, before::text, after::text \
-               FROM inventory.widget_history ORDER BY position",
+               FROM inventory.widget_tag_history ORDER BY position",
             &[],
         )
         .await
@@ -839,17 +836,17 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         entries[1],
         (
             "update".to_owned(),
-            "platform-fixture:widget/update@1.0.0".to_owned(),
+            "platform-fixture:widget-tag/update@1.0.0".to_owned(),
             "00000000-0000-4000-8000-0000000000f2".to_owned(),
             r#"{"id": "00000000-0000-4000-8000-00000000b003"}"#.to_owned(),
-            r#"{"note": null}"#.to_owned(),
-            r#"{"note": "logged"}"#.to_owned(),
+            r#"{"label": "history-tag"}"#.to_owned(),
+            r#"{"label": "logged"}"#.to_owned(),
         )
     );
     let stamps = admin
         .query_one(
             "SELECT count(*) FROM pg_catalog.pg_attribute \
-              WHERE attrelid = 'inventory.widget'::regclass \
+              WHERE attrelid = 'inventory.widget_tag'::regclass \
                 AND attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
                 AND NOT attisdropped",
             &[],
@@ -857,15 +854,12 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .await
         .expect("read stamp columns")
         .get::<_, i64>(0);
-    assert_eq!(
-        stamps, 1,
-        "the logged relation carries the one stamp column its audit_log declares"
-    );
+    assert_eq!(stamps, 0, "the logged relation carries no stamp column");
 
     for statement in [
-        "SELECT kind FROM inventory.widget_history",
-        "UPDATE inventory.widget_history SET kind = kind",
-        "DELETE FROM inventory.widget_history",
+        "SELECT kind FROM inventory.widget_tag_history",
+        "UPDATE inventory.widget_tag_history SET kind = kind",
+        "DELETE FROM inventory.widget_tag_history",
     ] {
         let denied = guest
             .execute(statement, &[])

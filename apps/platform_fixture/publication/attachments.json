@@ -375,6 +375,65 @@
     },
     "registered-operation": "platform-fixture:widget/record-batch@1.0.0"
   },
+  "widget-tag-update-http": {
+    "kind": "http",
+    "package-id": "platform_fixture",
+    "wiring-id": "widget_tag_update",
+    "wiring-version": 1,
+    "definition-hash": "sha256:7d49b71f6434a1ff47390b3cb6b3ff4b490bd85b88b25f277537bd4dc36d7d1f",
+    "definition": {
+      "id": "widget-tag-update-http",
+      "kind": "http",
+      "route": {
+        "path": "/widget_tag/update",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "expected_edit_version",
+            "request_id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_edit_version": {
+              "type": "string"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "change": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-wamn-explicit-null": "invalid_input"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "pat"
+      ]
+    },
+    "registered-operation": "platform-fixture:widget-tag/update@1.0.0"
+  },
   "widget-update-http": {
     "kind": "http",
     "package-id": "platform_fixture",

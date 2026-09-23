@@ -2568,6 +2568,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
              CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.widget\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');\n\
              SELECT wamn_history.create_history_table('inventory', 'widget', false);\n\
+             SELECT wamn_history.create_history_table('inventory', 'widget_tag', false);\n\
              CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
                  ON inventory.widget\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');\n\

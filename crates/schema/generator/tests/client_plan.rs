@@ -39,7 +39,7 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
 
     let plan = ClientPlan::from_ir(&ir);
     assert_eq!(plan.package, "platform_fixture");
-    assert_eq!(plan.models.len(), 2, "a private operation keeps its model");
+    assert_eq!(plan.models.len(), 3, "a private operation keeps its model");
     assert_eq!(plan.models[widget].model.name, "widget");
     assert_eq!(
         plan.models[widget]
@@ -61,7 +61,7 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
     );
     assert!(
         plan.screens()
-            .all(|screen| screen.model == "widget" || screen.model == "widget_maker"),
+            .all(|screen| ["widget", "widget_maker", "widget_tag"].contains(&screen.model)),
         "every screen states the model that owns it"
     );
 }
@@ -302,8 +302,8 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         plan.screens()
             .filter(|screen| screen.role.is_supported())
             .count(),
-        8,
-        "the other screens keep their role, and the second model lists"
+        9,
+        "the other screens keep their role, the second model lists, and the third updates"
     );
 }
 

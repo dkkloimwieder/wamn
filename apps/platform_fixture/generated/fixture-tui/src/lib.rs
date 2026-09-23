@@ -11,6 +11,9 @@ pub mod widget;
 #[path = "../../client/widget_maker.rs"]
 pub mod widget_maker;
 
+#[path = "../../client/widget_tag.rs"]
+pub mod widget_tag;
+
 #[must_use]
 pub fn screens(binding: SessionBinding) -> Vec<Screen> {
     vec![
@@ -23,6 +26,7 @@ pub fn screens(binding: SessionBinding) -> Vec<Screen> {
         screens::widget::record_batch(binding.clone()),
         screens::widget::update(binding.clone()),
         screens::widget_maker::list(binding.clone()),
-        screens::widget_maker::query(binding),
+        screens::widget_maker::query(binding.clone()),
+        screens::widget_tag::update(binding),
     ]
 }

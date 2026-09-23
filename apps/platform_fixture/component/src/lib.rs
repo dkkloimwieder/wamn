@@ -7,6 +7,7 @@
 
 mod widget;
 mod widget_maker;
+mod widget_tag;
 
 use wamn_platform_fixture_data_access::AccessError;
 
@@ -28,6 +29,7 @@ wit_bindgen::generate!({
           export platform-fixture:widget/update@1.0.0;
           export platform-fixture:widget-maker/%list@1.0.0;
           export platform-fixture:widget-maker/query@1.0.0;
+          export platform-fixture:widget-tag/update@1.0.0;
         }
     "#,
     path: [
@@ -35,6 +37,7 @@ wit_bindgen::generate!({
         "../../../crates/platform/runtime/wit/deps/wamn-postgres",
         "../generated/wit/deps/platform-fixture-widget",
         "../generated/wit/deps/platform-fixture-widget-maker",
+        "../generated/wit/deps/platform-fixture-widget-tag",
     ],
     generate_all,
     async: true,

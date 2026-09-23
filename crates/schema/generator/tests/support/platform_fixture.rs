@@ -326,7 +326,32 @@ pub(crate) fn catalog() -> CatalogIr {
         ],
         Vec::new(),
     );
-    CatalogIr::new(vec![widget, widget_maker, command])
+    // The third model logs its changes and carries no stamp column. Its one
+    // operation, an update, gives the App role a write that history records.
+    let widget_tag = Table::new(
+        "inventory",
+        "widget_tag",
+        vec![
+            Column::new(
+                "id",
+                ColumnType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("label", ColumnType::Text, false, None, None),
+            Column::new(
+                "edit_version",
+                ColumnType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+        ],
+        vec![Constraint::primary_key("widget_tag_id_pkey", ["id"]).expect("valid primary key")],
+        Vec::new(),
+    );
+    CatalogIr::new(vec![widget, widget_maker, widget_tag, command])
 }
 
 /// The fixture manifest, as the fixture application authors it.

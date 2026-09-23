@@ -23,3 +23,9 @@ CREATE TABLE inventory.widget_command (
     widget_id uuid NOT NULL DEFAULT gen_random_uuid()
         CONSTRAINT widget_command_widget_id_key UNIQUE
 );
+
+CREATE TABLE inventory.widget_tag (
+    id uuid CONSTRAINT widget_tag_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    label text NOT NULL,
+    edit_version int8 NOT NULL DEFAULT 1
+);

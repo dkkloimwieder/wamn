@@ -1,0 +1,256 @@
+// @generated from operation declarations; do not edit.
+
+include!("operation_codec.rs");
+type Item = contract::UpdateItem;
+const MINIMUM: usize = 1;
+const MAXIMUM: usize = 100;
+const COUNT_ERROR: &str = "operation input item count must be 1..=100";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonRequest {
+    id: String,
+    expected_edit_version: String,
+    change: JsonUpdateChange,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonUpdateChange {
+    #[serde(default)]
+    label: JsonChange<String>,
+}
+
+pub(crate) fn decode(input: &str) -> Result<Vec<contract::UpdateItem>, CodecError> {
+    decode_envelope(input)?
+        .into_iter()
+        .map(|(request_id, body)| {
+            let input = match serde_json::from_value::<JsonRequest>(body) {
+                Ok(request) => match request.expected_edit_version.parse::<i64>() {
+                    Ok(expected_edit_version) => {
+                        let request = contract::UpdateRequest {
+                            id: request.id,
+                            expected_edit_version,
+                            change: contract::UpdateChange {
+                                label: change(request.change.label),
+                            },
+                        };
+                        Ok(request)
+                    }
+                    Err(_) => Err(invalid("expected_edit_version")),
+                },
+                Err(_) => Err(invalid("input")),
+            };
+            Ok(contract::UpdateItem { request_id, input })
+        })
+        .collect()
+}
+
+fn invalid(field: &str) -> contract::InvalidInputDetail {
+    contract::InvalidInputDetail {
+        field: field.to_owned(),
+    }
+}
+
+pub(crate) fn encode(output: &[contract::UpdateOutcome]) -> String {
+    let values = output
+        .iter()
+        .map(|item| match &item.outcome {
+            Ok(value) => json!({
+                "request_id": item.request_id,
+                "value": {
+                    "edit_version": value.edit_version.to_string(),
+                    "id": value.id,
+                    "label": value.label,
+                }
+            }),
+            Err(error) => json!({
+                "request_id": item.request_id,
+                "error": error_value(error),
+            }),
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&values).expect("typed update outcomes always serialize")
+}
+
+fn error_value(error: &contract::UpdateError) -> Value {
+    let (code, detail) = match error {
+        contract::UpdateError::InvalidInput(value) => {
+            let mut detail = Map::new();
+            detail.insert("field".to_owned(), json!(value.field));
+            ("invalid_input", detail)
+        }
+        contract::UpdateError::NotFound(value) => {
+            let mut detail = Map::new();
+            detail.insert("field".to_owned(), json!(value.field));
+            detail.insert("id".to_owned(), json!(value.id));
+            ("not_found", detail)
+        }
+        contract::UpdateError::ConcurrencyConflict(value) => {
+            let mut detail = Map::new();
+            detail.insert(
+                "expected_row_version".to_owned(),
+                json!(JsonInt64(value.expected_row_version)),
+            );
+            detail.insert(
+                "observed_row_version".to_owned(),
+                json!(JsonInt64(value.observed_row_version)),
+            );
+            ("concurrency_conflict", detail)
+        }
+        contract::UpdateError::Retry => ("retry", Map::new()),
+        contract::UpdateError::Timeout => ("timeout", Map::new()),
+        contract::UpdateError::PermissionDenied(value) => {
+            let mut detail = Map::new();
+            detail.insert("operation".to_owned(), json!(value.operation));
+            ("permission_denied", detail)
+        }
+        contract::UpdateError::InternalError => ("internal_error", Map::new()),
+    };
+    json!({"code": code, "detail": detail})
+}
+#[allow(clippy::unnecessary_wraps)]
+fn normalize(request: &mut contract::UpdateRequest) -> Result<(), contract::InvalidInputDetail> {
+    if !canonical_uuid(&mut request.id) {
+        return Err(invalid("id"));
+    }
+    if matches!(request.change.label, Some(None)) {
+        return Err(invalid("change.label"));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub(crate) async fn run<S, F>(
+    input: Vec<contract::UpdateItem>,
+    state: &mut S,
+    mut handler: F,
+) -> Vec<contract::UpdateOutcome>
+where
+    F: AsyncFnMut(
+        &mut S,
+        contract::UpdateRequest,
+    ) -> Result<contract::UpdateResult, contract::UpdateError>,
+{
+    let mut output = Vec::with_capacity(input.len());
+    for item in input {
+        let outcome = match item.input {
+            Ok(mut request) => match normalize(&mut request) {
+                Ok(()) => handler(state, request).await,
+                Err(error) => Err(contract::UpdateError::InvalidInput(error)),
+            },
+            Err(error) => Err(contract::UpdateError::InvalidInput(error)),
+        };
+        output.push(contract::UpdateOutcome {
+            request_id: item.request_id,
+            outcome,
+        });
+    }
+    output
+}
+
+#[allow(unused_macros)]
+macro_rules! row {
+    ($row:expr, $target:path) => {{
+        let row = $row;
+        $target {
+            edit_version: row.edit_version,
+            id: row.id.0,
+            label: row.label,
+        }
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use row;
+
+#[allow(dead_code)]
+pub(crate) fn map_error(
+    code: &str,
+    mut detail: impl FnMut(&str) -> Option<String>,
+) -> contract::UpdateError {
+    match code {
+        "invalid_input" => {
+            let Some(field) = detail("field") else {
+                return contract::UpdateError::InternalError;
+            };
+            contract::UpdateError::InvalidInput(contract::InvalidInputDetail { field })
+        }
+        "not_found" => {
+            let Some(field) = detail("field") else {
+                return contract::UpdateError::InternalError;
+            };
+            let Some(id) = detail("id") else {
+                return contract::UpdateError::InternalError;
+            };
+            contract::UpdateError::NotFound(contract::NotFoundDetail { field, id })
+        }
+        "concurrency_conflict" => {
+            let Some(expected_row_version) =
+                detail("expected_row_version").and_then(|value| value.parse::<i64>().ok())
+            else {
+                return contract::UpdateError::InternalError;
+            };
+            let Some(observed_row_version) =
+                detail("observed_row_version").and_then(|value| value.parse::<i64>().ok())
+            else {
+                return contract::UpdateError::InternalError;
+            };
+            contract::UpdateError::ConcurrencyConflict(contract::ConcurrencyConflictDetail {
+                expected_row_version,
+                observed_row_version,
+            })
+        }
+        "retry" => contract::UpdateError::Retry,
+        "timeout" => contract::UpdateError::Timeout,
+        "permission_denied" => {
+            let Some(operation) = detail("operation") else {
+                return contract::UpdateError::InternalError;
+            };
+            contract::UpdateError::PermissionDenied(contract::PermissionDeniedDetail { operation })
+        }
+        _ => contract::UpdateError::InternalError,
+    }
+}
+
+#[allow(unused_macros)]
+macro_rules! export_operation {
+    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {
+        const _: () = {
+            use $codec as __codec;
+            use $contract as __contract;
+            use $node as __node;
+
+            fn invalid(error: __codec::CodecError) -> __node::NodeError {
+                __node::NodeError::InvalidInput(__node::ErrorDetail {
+                    message: error.context().to_owned(),
+                    code: Some("invalid_input".to_owned()),
+                })
+            }
+
+            impl __contract::Guest for $component {
+                async fn run(
+                    _context: __node::NodeContext,
+                    input: Vec<__contract::UpdateItem>,
+                ) -> Result<Vec<__contract::UpdateOutcome>, __node::NodeError> {
+                    let mut state = $state;
+                    __codec::validate(&input).map_err(invalid)?;
+                    Ok(__codec::run(input, &mut state, $handler).await)
+                }
+
+                async fn run_json(
+                    context: __node::NodeContext,
+                    input: String,
+                ) -> Result<__node::Emission, __node::NodeError> {
+                    let input = __codec::decode(&input).map_err(invalid)?;
+                    let output = <Self as __contract::Guest>::run(context, input).await?;
+                    Ok(__node::Emission {
+                        payload: __codec::encode(&output),
+                        port: None,
+                    })
+                }
+            }
+        };
+    };
+}
+#[allow(unused_imports)]
+pub(crate) use export_operation;

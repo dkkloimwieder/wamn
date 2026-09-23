@@ -321,12 +321,13 @@ mod tests {
     }
 
     #[test]
-    fn fixture_manifest_yields_the_ten_canonical_operation_grants() {
+    fn fixture_manifest_yields_the_eleven_canonical_operation_grants() {
         assert_eq!(
             operation_grant_tokens(&fixture_manifest()).expect("parse strict fixture manifest"),
             [
                 "platform-fixture:widget-maker/list@1.0.0",
                 "platform-fixture:widget-maker/query@1.0.0",
+                "platform-fixture:widget-tag/update@1.0.0",
                 "platform-fixture:widget/archive@1.0.0",
                 "platform-fixture:widget/create@1.0.0",
                 "platform-fixture:widget/delete@1.0.0",
@@ -368,7 +369,7 @@ mod tests {
                 .iter()
                 .any(|grant| grant == "platform-fixture:widget/record-batch@1.0.0")
         );
-        assert_eq!(grants.len(), 9);
+        assert_eq!(grants.len(), 10);
     }
 
     #[test]

@@ -43,6 +43,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "generated/client-ts/index.ts",
             "generated/client-ts/widget.ts",
             "generated/client-ts/widget_maker.ts",
+            "generated/client-ts/widget_tag.ts",
         ]
     );
     let widget = widget(&files);
@@ -90,6 +91,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             " depends on.\n\n",
             "export * as widget from \"./widget.js\";\n",
             "export * as widgetMaker from \"./widget_maker.js\";\n",
+            "export * as widgetTag from \"./widget_tag.js\";\n",
         )
     );
 }

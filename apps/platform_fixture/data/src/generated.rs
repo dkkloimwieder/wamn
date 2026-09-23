@@ -57,4 +57,13 @@ pub(crate) mod wamn {
             "/../generated/wamn/widget_maker_list.rs"
         ));
     }
+
+    /// Generated `widget_tag` model accessors.
+    #[expect(dead_code, reason = "update maps no exclusion constraint")]
+    pub(crate) mod widget_tag {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wamn/widget_tag.rs"
+        ));
+    }
 }

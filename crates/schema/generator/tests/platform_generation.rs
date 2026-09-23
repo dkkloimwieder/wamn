@@ -601,10 +601,12 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
 fn inherited_composition_is_exact_and_carries_its_contract() {
     let mut manifest = fixture::manifest();
     manifest["package"]["id"] = json!("decorator_fixture");
-    // An overlay owns no relation of the base package, so neither model
-    // declares a record history here.
+    // An overlay owns no relation of the base package, so no model declares
+    // a record history here.
     let maker = manifest["models"]["widget_maker"].as_object_mut().unwrap();
     maker.remove("audit_log");
+    let tag = manifest["models"]["widget_tag"].as_object_mut().unwrap();
+    tag.remove("audit_log");
     let model = manifest["models"]["widget"].as_object_mut().unwrap();
     model.remove("audit_log");
     model.remove("delete_mode");
