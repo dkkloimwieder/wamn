@@ -1,6 +1,7 @@
 //! HTTPS lifecycle checks share the exchange suite's owned database and TLS fixtures.
 
 use super::*;
+use sha2::{Digest as _, Sha256};
 use wamn_platform_identity::password::{
     Password, enroll_password, issue_invitation, password_work,
 };
@@ -466,6 +467,277 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     )
     .await;
     assert_eq!(fixture.system.client.query_one("SELECT count(*) FROM identity.password_logins WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&person.id().as_str()]).await.unwrap().get::<_,i64>(0),0);
+    drop(https);
+    cleanup(fixture).await;
+}
+
+const COOKIES: [(&str, &str, &str); 3] = [
+    ("__Host-wamn-session", "/", "; HttpOnly"),
+    ("__Host-wamn-csrf", "/", ""),
+    ("__Secure-wamn-renewal", "/password", "; HttpOnly"),
+];
+
+fn set_cookies(response: &reqwest::Response) -> Vec<String> {
+    response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().expect_redacted("ASCII cookie").to_owned())
+        .collect()
+}
+
+/// Checks the exact reply of a cookie session and returns the session, CSRF and renewal values.
+async fn cookie_body(response: reqwest::Response, started: i64) -> (Value, [String; 3]) {
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let lines = set_cookies(&response);
+    let bytes = response.bytes().await.expect_redacted("response bytes");
+    let returned = unix_seconds();
+    let result: Value = serde_json::from_slice(&bytes).expect_redacted("response JSON");
+    assert_fields(&result, &["expires_at", "login_expires_at"]);
+    let deadlines = [
+        result["expires_at"].as_i64().unwrap(),
+        result["expires_at"].as_i64().unwrap(),
+        result["login_expires_at"].as_i64().unwrap(),
+    ];
+    assert_eq!(lines.len(), 3);
+    let mut values = [String::new(), String::new(), String::new()];
+    for (index, line) in lines.iter().enumerate() {
+        let (name, path, http_only) = COOKIES[index];
+        let (pair, attributes) = line.split_once("; ").expect_redacted("cookie attributes");
+        let value = pair
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('='))
+            .expect_redacted("cookie name");
+        let age: i64 = attributes
+            .strip_prefix(&format!("Path={path}; Max-Age="))
+            .and_then(|rest| rest.split(';').next())
+            .and_then(|age| age.parse().ok())
+            .expect_redacted("cookie Max-Age");
+        assert_eq!(
+            attributes,
+            format!("Path={path}; Max-Age={age}{http_only}; Secure; SameSite=Strict")
+        );
+        assert!(age > 0 && deadlines[index] - returned <= age && age <= deadlines[index] - started);
+        // No token or CSRF value ever appears in a cookie-mode body.
+        assert!(!value.is_empty() && !String::from_utf8_lossy(&bytes).contains(value));
+        value.clone_into(&mut values[index]);
+    }
+    assert!(values[2].starts_with("wamn_renew_"));
+    (result, values)
+}
+
+fn assert_cleared(response: &reqwest::Response) {
+    assert_eq!(response.status(), 204);
+    let expected: Vec<String> = COOKIES
+        .iter()
+        .map(|(name, path, http_only)| {
+            format!("{name}=; Path={path}; Max-Age=0{http_only}; Secure; SameSite=Strict")
+        })
+        .collect();
+    assert_eq!(set_cookies(response), expected);
+}
+
+/// The session cookie verifies and its csrf claim is the SHA-256 hex of the CSRF cookie.
+async fn cookie_claims(fixture: &Fixture, values: &[String; 3]) -> SessionClaims {
+    let verified = claims(fixture, &json!({"access_token": values[0]})).await;
+    #[expect(
+        clippy::manual_assert_eq,
+        reason = "never print CSRF values on failure"
+    )]
+    {
+        assert!(verified.csrf == Some(hex::encode(Sha256::digest(values[1].as_bytes()))));
+    }
+    verified
+}
+
+fn by_cookie(
+    https: &Https,
+    fixture: &Fixture,
+    path: &str,
+    cookie: Option<String>,
+) -> reqwest::RequestBuilder {
+    let request = post(
+        https,
+        path,
+        &json!({"aud":fixture.targets[0].audience(),"carrier":"cookie"}),
+    );
+    match cookie {
+        Some(cookie) => request.header("cookie", cookie),
+        None => request,
+    }
+}
+
+fn renewal(values: &[String; 3]) -> String {
+    format!("theme=dark; __Secure-wamn-renewal={}", values[2])
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
+    let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
+    let db = postgres
+        .create_database("wamn_system")
+        .expect_redacted("owned system database");
+    let fixture = setup(db.url()).await;
+    enroll(&fixture, EMAIL, PASSWORD).await;
+    let https = server(&fixture).await;
+    let cookie_login = || {
+        post(
+            &https,
+            "/password/session",
+            &json!({"email":EMAIL,"password":PASSWORD,"aud":fixture.targets[0].audience(),"carrier":"cookie"}),
+        )
+        .send()
+    };
+
+    // The bearer carrier, default or explicit, keeps its frozen reply and sets no cookie.
+    discovery_window(&fixture).await;
+    let explicit = post(
+        &https,
+        "/password/session",
+        &json!({"email":EMAIL,"password":PASSWORD,"aud":fixture.targets[0].audience(),"carrier":"bearer"}),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert!(set_cookies(&explicit).is_empty());
+    let bearer = body(explicit).await;
+    assert!(claims(&fixture, &bearer).await.csrf.is_none());
+    let default = post(
+        &https,
+        "/password/session",
+        &json!({"email":EMAIL,"password":PASSWORD,"aud":fixture.targets[0].audience()}),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert!(set_cookies(&default).is_empty());
+    body(default).await;
+    let renewed = request(&https, &fixture, "/password/renew", &bearer)
+        .send()
+        .await
+        .unwrap();
+    assert!(set_cookies(&renewed).is_empty());
+    body(renewed).await;
+
+    let started = unix_seconds();
+    let (first_body, first) = cookie_body(cookie_login().await.unwrap(), started).await;
+    let first_claims = cookie_claims(&fixture, &first).await;
+    assert_eq!(first_body["expires_at"], first_claims.exp);
+
+    // The carrier decides where the renewal token may travel.
+    for (path, body) in [
+        (
+            "/password/renew",
+            json!({"aud":fixture.targets[0].audience(),"carrier":"cookie","renewal_token":first[2]}),
+        ),
+        (
+            "/password/renew",
+            json!({"aud":fixture.targets[0].audience()}),
+        ),
+        (
+            "/password/logout-all",
+            json!({"aud":fixture.targets[0].audience(),"carrier":"cookie"}),
+        ),
+    ] {
+        assert_failure(
+            post(&https, path, &body)
+                .header("cookie", renewal(&first))
+                .send()
+                .await
+                .unwrap(),
+            400,
+            "{\"error\":\"password request refused\"}",
+        )
+        .await;
+    }
+    // A missing or duplicated renewal cookie refuses and consumes nothing.
+    let duplicated = Some(format!(
+        "{}; __Secure-wamn-renewal={}",
+        renewal(&first),
+        first[2]
+    ));
+    for cookie in [None, duplicated] {
+        assert_failure(
+            by_cookie(&https, &fixture, "/password/renew", cookie)
+                .send()
+                .await
+                .unwrap(),
+            401,
+            "{\"error\":\"unauthorized\"}",
+        )
+        .await;
+    }
+
+    let started = unix_seconds();
+    let (second_body, second) = cookie_body(
+        by_cookie(&https, &fixture, "/password/renew", Some(renewal(&first)))
+            .send()
+            .await
+            .unwrap(),
+        started,
+    )
+    .await;
+    assert_eq!(
+        first_body["login_expires_at"],
+        second_body["login_expires_at"]
+    );
+    for index in 0..3 {
+        assert!(first[index] != second[index], "every cookie rotates");
+    }
+    let second_claims = cookie_claims(&fixture, &second).await;
+    assert_eq!(second_claims.authority, first_claims.authority);
+
+    // A replayed renewal cookie refuses and revokes its family.
+    assert_failure(
+        by_cookie(&https, &fixture, "/password/renew", Some(renewal(&first)))
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "{\"error\":\"unauthorized\"}",
+    )
+    .await;
+    assert_failure(
+        by_cookie(&https, &fixture, "/password/renew", Some(renewal(&second)))
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "{\"error\":\"unauthorized\"}",
+    )
+    .await;
+    assert!(!active(&fixture, &json!({"access_token": second[0]})).await);
+
+    // Logout by cookie revokes the login and clears all three cookies.
+    discovery_window(&fixture).await;
+    let (_, third) = cookie_body(cookie_login().await.unwrap(), unix_seconds()).await;
+    assert!(active(&fixture, &json!({"access_token": third[0]})).await);
+    assert_cleared(
+        &by_cookie(&https, &fixture, "/password/logout", Some(renewal(&third)))
+            .send()
+            .await
+            .unwrap(),
+    );
+    assert!(!active(&fixture, &json!({"access_token": third[0]})).await);
+    // A replayed or missing renewal cookie answers as bearer logout does and still clears.
+    for cookie in [Some(renewal(&third)), None] {
+        assert_cleared(
+            &by_cookie(&https, &fixture, "/password/logout", cookie)
+                .send()
+                .await
+                .unwrap(),
+        );
+    }
+    assert_failure(
+        by_cookie(&https, &fixture, "/password/renew", Some(renewal(&third)))
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "{\"error\":\"unauthorized\"}",
+    )
+    .await;
     drop(https);
     cleanup(fixture).await;
 }
