@@ -11,11 +11,11 @@ use wamn_control::enqueue_run::{EnqueueRun, enqueue};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
+use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_run_state::RunStore as _;
-use wamn_runtime::component_artifact_source::{ComponentArtifactSource, local_component_path};
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
@@ -284,7 +284,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         Arc::clone(&logging),
         Arc::from([]),
         Arc::clone(&release),
-        ComponentArtifactSource::local(scratch.path().to_owned()),
+        Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
         RouterDriverConfig {
             warm_reuse: crate::warm_reuse::WarmReuse::default(),
             owner_prefix: "automation-live".to_owned(),

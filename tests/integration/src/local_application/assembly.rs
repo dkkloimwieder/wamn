@@ -18,6 +18,7 @@ use wamn_control_provision::{
     CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleScope,
     system_reader_generation_role, workload_generation_role,
 };
+use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
@@ -28,7 +29,6 @@ use wamn_platform_identity::{
     assign_project_role, create_service, issue_pat, route_caller_subject,
 };
 use wamn_run_state::AuthorityClass;
-use wamn_runtime::component_artifact_source::{ComponentArtifactSource, local_component_path};
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::flow_http_routing::{
     FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,
@@ -303,7 +303,7 @@ pub(super) async fn assemble(
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
         Arc::from([]),
         Arc::clone(&release),
-        ComponentArtifactSource::local(input.scratch.to_owned()),
+        Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
         RouterDriverConfig {
             warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
             owner_prefix: "local-application".into(),

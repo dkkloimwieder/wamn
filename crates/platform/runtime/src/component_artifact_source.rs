@@ -4,12 +4,15 @@
 //! component fact and explicit registry configuration; the source derives the
 //! immutable reference, verifies the manifest and both blobs, and returns only
 //! component bytes checked against that fact. It owns no catalog read, cache,
-//! instance pool, router behavior, or retry policy.
+//! instance pool, router behavior, or retry policy. The source implements
+//! [`ArtifactSource`] from `wamn-engine`, which holds the digest checks and the
+//! local file source.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::errors::OciDistributionError;
 use oci_client::manifest::{OciDescriptor, OciImageManifest};
@@ -21,10 +24,13 @@ use crate::registry_credentials::{
     RegistryCredentials, RegistryCredentialsError, read_registry_credentials,
 };
 use crate::registry_transport::transport_is_mismatched;
+use wamn_engine::artifact_source::{
+    ArtifactSource, ComponentArtifactFetchError, verify_component_body, verify_config_body,
+};
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::component_artifact::{
     ComponentArtifactBase, ComponentArtifactReferenceError, component_artifact_config_bytes,
-    component_artifact_layout, component_digest_tag, parse_component_artifact_base,
+    component_artifact_layout, parse_component_artifact_base,
 };
 
 /// Explicit, validated configuration for one component artifact repository.
@@ -71,7 +77,7 @@ impl ComponentArtifactSourceConfig {
     /// surface, `oci::{pull_component, push_component}`, is fixed to
     /// `WASM_LAYER_MEDIA_TYPE` + `WasmConfig` and cannot carry this artifact's
     /// platform-owned layer and config blob — the config blob being the very
-    /// admission fact [`ComponentArtifactSource::pull_verified`] checks again. See
+    /// admission fact [`ArtifactSource::pull_verified`] checks again. See
     /// `docs/architecture/native-alignment.md#retained-wamn-implementations`
     /// (`wamn-kdhw`) for the exit condition; do not "fix" this by routing the
     /// pull through `pull_component`.
@@ -176,124 +182,23 @@ impl std::error::Error for ComponentArtifactCaError {
     }
 }
 
-/// Stable classification of a refused component artifact pull.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentArtifactFetchErrorKind {
-    /// The supplied admitted digest cannot name an immutable artifact.
-    InvalidReference,
-    /// `oci-client` rejected the transport configuration, so no client exists.
-    RegistryClient,
-    /// The registry or named artifact is not currently available.
-    Unavailable,
-    /// The registry answered with bytes or metadata that contradict admission.
-    Mismatched,
-}
-
-/// Contextual refusal from the component artifact transfer boundary.
-pub struct ComponentArtifactFetchError {
-    kind: ComponentArtifactFetchErrorKind,
-    reference: Option<Box<str>>,
-    refusal: &'static str,
-}
-
-impl ComponentArtifactFetchError {
-    /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentArtifactFetchErrorKind {
-        self.kind
-    }
-
-    /// Stable literal naming the exact refused invariant or transfer phase.
-    pub fn refusal(&self) -> &'static str {
-        self.refusal
-    }
-
-    fn invalid_reference() -> Self {
-        Self {
-            kind: ComponentArtifactFetchErrorKind::InvalidReference,
-            reference: None,
-            refusal: "component-artifact-digest-invalid",
-        }
-    }
-
-    /// The bundles were readable but at least one is not usable as a trust root.
-    fn registry_client() -> Self {
-        Self {
-            kind: ComponentArtifactFetchErrorKind::RegistryClient,
-            reference: None,
-            refusal: "component-artifact-registry-client-unusable",
-        }
-    }
-
-    fn mismatched(reference: &str, refusal: &'static str) -> Self {
-        Self {
-            kind: ComponentArtifactFetchErrorKind::Mismatched,
-            reference: Some(reference.into()),
-            refusal,
-        }
-    }
-
-    fn from_transport(
-        reference: &str,
-        unavailable: &'static str,
-        mismatched: &'static str,
-        source: &OciDistributionError,
-    ) -> Self {
-        let (kind, refusal) = if transport_is_mismatched(source) {
-            (ComponentArtifactFetchErrorKind::Mismatched, mismatched)
-        } else {
-            (ComponentArtifactFetchErrorKind::Unavailable, unavailable)
-        };
-        Self {
-            kind,
-            reference: Some(reference.into()),
-            refusal,
-        }
+/// Classify a registry transport failure as a mismatch or as absence.
+fn transport_error(
+    reference: &str,
+    unavailable: &'static str,
+    mismatched: &'static str,
+    source: &OciDistributionError,
+) -> ComponentArtifactFetchError {
+    if transport_is_mismatched(source) {
+        ComponentArtifactFetchError::mismatched(reference, mismatched)
+    } else {
+        ComponentArtifactFetchError::unavailable(reference, unavailable)
     }
 }
 
-impl fmt::Debug for ComponentArtifactFetchError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The upstream registry error is deliberately omitted: this type is
-        // safe to log without emitting response bodies or future auth context.
-        formatter
-            .debug_struct("ComponentArtifactFetchError")
-            .field("kind", &self.kind)
-            .field("reference", &self.reference)
-            .field("refusal", &self.refusal)
-            .finish_non_exhaustive()
-    }
-}
-
-impl fmt::Display for ComponentArtifactFetchError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(reference) = &self.reference {
-            write!(
-                formatter,
-                "component artifact {reference}: {}",
-                self.refusal
-            )
-        } else {
-            write!(formatter, "component artifact: {}", self.refusal)
-        }
-    }
-}
-
-impl std::error::Error for ComponentArtifactFetchError {}
-
-/// Local or OCI source that returns only verified component bytes.
+/// OCI registry source that returns only verified component bytes.
 #[derive(Clone)]
 pub struct ComponentArtifactSource {
-    source: ArtifactSource,
-}
-
-#[derive(Clone)]
-enum ArtifactSource {
-    Registry(RegistrySource),
-    Local(PathBuf),
-}
-
-#[derive(Clone)]
-struct RegistrySource {
     client: OciClient,
     base: ComponentArtifactBase,
     auth: RegistryAuth,
@@ -328,57 +233,27 @@ impl ComponentArtifactSource {
         })
         .map_err(|_| ComponentArtifactFetchError::registry_client())?;
         Ok(Self {
-            source: ArtifactSource::Registry(RegistrySource {
-                client,
-                base: config.base,
-                auth: config
-                    .credentials
-                    .map_or(RegistryAuth::Anonymous, |credentials| {
-                        RegistryAuth::Basic(
-                            credentials.username().to_owned(),
-                            credentials.password().to_owned(),
-                        )
-                    }),
-            }),
+            client,
+            base: config.base,
+            auth: config
+                .credentials
+                .map_or(RegistryAuth::Anonymous, |credentials| {
+                    RegistryAuth::Basic(
+                        credentials.username().to_owned(),
+                        credentials.password().to_owned(),
+                    )
+                }),
         })
     }
+}
 
-    /// Read digest-addressed local files through the same component validation.
-    pub fn local(directory: PathBuf) -> Self {
-        Self {
-            source: ArtifactSource::Local(directory),
-        }
-    }
-
-    /// Pull and verify the exact bytes named by one admitted component fact.
-    pub async fn pull_verified(
+#[async_trait]
+impl ArtifactSource for ComponentArtifactSource {
+    async fn pull_verified(
         &self,
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError> {
-        let source = match &self.source {
-            ArtifactSource::Registry(source) => source,
-            ArtifactSource::Local(directory) => {
-                let path = local_component_path(directory, &component.component_digest)?;
-                let named = path.display().to_string();
-                let loaded = wash_runtime::component_source::ComponentSource::File(path)
-                    .load(wash_runtime::oci::OciConfig::default())
-                    .await
-                    .map_err(|_| ComponentArtifactFetchError {
-                        kind: ComponentArtifactFetchErrorKind::Unavailable,
-                        reference: Some(named.clone().into()),
-                        refusal: "component-artifact-body-unavailable",
-                    })?;
-                verify_component_body(
-                    &loaded.bytes,
-                    i64::try_from(loaded.bytes.len())
-                        .expect("an admitted component body fits a signed length"),
-                    &component.component_digest,
-                    &named,
-                )?;
-                return Ok(loaded.bytes.to_vec());
-            }
-        };
-        let artifact = source
+        let artifact = self
             .base
             .reference(&component.component_digest)
             .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
@@ -391,12 +266,12 @@ impl ComponentArtifactSource {
         let expected_config = component_artifact_config_bytes(component);
         let expected_config_digest = component_digest(&expected_config);
 
-        let (manifest, _) = source
+        let (manifest, _) = self
             .client
-            .pull_image_manifest(&reference, &source.auth)
+            .pull_image_manifest(&reference, &self.auth)
             .await
             .map_err(|source| {
-                ComponentArtifactFetchError::from_transport(
+                transport_error(
                     &named,
                     "component-artifact-manifest-unavailable",
                     "component-artifact-manifest-invalid",
@@ -412,12 +287,11 @@ impl ComponentArtifactSource {
         )?;
 
         let mut component_bytes = Vec::new();
-        source
-            .client
+        self.client
             .pull_blob(&reference, descriptors.component, &mut component_bytes)
             .await
             .map_err(|source| {
-                ComponentArtifactFetchError::from_transport(
+                transport_error(
                     &named,
                     "component-artifact-body-unavailable",
                     "component-artifact-body-transfer-mismatch",
@@ -432,12 +306,11 @@ impl ComponentArtifactSource {
         )?;
 
         let mut config_bytes = Vec::new();
-        source
-            .client
+        self.client
             .pull_blob(&reference, descriptors.config, &mut config_bytes)
             .await
             .map_err(|source| {
-                ComponentArtifactFetchError::from_transport(
+                transport_error(
                     &named,
                     "component-artifact-config-unavailable",
                     "component-artifact-config-transfer-mismatch",
@@ -458,17 +331,11 @@ impl ComponentArtifactSource {
 
 impl fmt::Debug for ComponentArtifactSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.source {
-            ArtifactSource::Registry(source) => formatter
-                .debug_struct("ComponentArtifactSource")
-                .field("registry", &source.base.registry())
-                .field("repository", &source.base.repository())
-                .finish_non_exhaustive(),
-            ArtifactSource::Local(directory) => formatter
-                .debug_struct("LocalComponentSource")
-                .field("directory", directory)
-                .finish(),
-        }
+        formatter
+            .debug_struct("ComponentArtifactSource")
+            .field("registry", &self.base.registry())
+            .field("repository", &self.base.repository())
+            .finish_non_exhaustive()
     }
 }
 
@@ -517,59 +384,6 @@ fn verify_manifest<'a>(
     Ok(VerifiedManifest { component, config })
 }
 
-fn verify_component_body(
-    bytes: &[u8],
-    descriptor_size: i64,
-    expected_digest: &str,
-    reference: &str,
-) -> Result<(), ComponentArtifactFetchError> {
-    if i64::try_from(bytes.len()).unwrap_or(i64::MAX) != descriptor_size {
-        return Err(ComponentArtifactFetchError::mismatched(
-            reference,
-            "component-artifact-body-size-mismatch",
-        ));
-    }
-    if component_digest(bytes) != expected_digest {
-        return Err(ComponentArtifactFetchError::mismatched(
-            reference,
-            "component-artifact-body-digest-mismatch",
-        ));
-    }
-    Ok(())
-}
-
-fn verify_config_body(
-    bytes: &[u8],
-    descriptor_size: i64,
-    expected_digest: &str,
-    expected_bytes: &[u8],
-    reference: &str,
-) -> Result<(), ComponentArtifactFetchError> {
-    if i64::try_from(bytes.len()).unwrap_or(i64::MAX) != descriptor_size {
-        return Err(ComponentArtifactFetchError::mismatched(
-            reference,
-            "component-artifact-config-body-size-mismatch",
-        ));
-    }
-    if component_digest(bytes) != expected_digest || bytes != expected_bytes {
-        return Err(ComponentArtifactFetchError::mismatched(
-            reference,
-            "component-artifact-config-body-mismatch",
-        ));
-    }
-    Ok(())
-}
-
-/// Exact local filename for an admitted digest, without path interpretation.
-pub fn local_component_path(
-    directory: &Path,
-    digest: &str,
-) -> Result<PathBuf, ComponentArtifactFetchError> {
-    let tag = component_digest_tag(digest)
-        .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
-    Ok(directory.join(format!("{tag}.wasm")))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -582,6 +396,7 @@ mod tests {
     };
 
     use super::*;
+    use wamn_engine::artifact_source::ComponentArtifactFetchErrorKind;
 
     fn admitted(bytes: &[u8]) -> AdmittedComponent {
         normalize_component_fact(
@@ -645,35 +460,6 @@ mod tests {
             )],
             ..OciImageManifest::default()
         }
-    }
-
-    #[tokio::test]
-    async fn local_source_accepts_exact_bytes_and_refuses_changed_missing_or_invalid_artifacts() {
-        let root = std::env::temp_dir().join(format!("wamn-local-artifact-{}", std::process::id()));
-        std::fs::create_dir(&root).expect("create owned local artifact fixture");
-        let bytes = b"admitted-local-component";
-        let component = admitted(bytes);
-        let path = local_component_path(&root, &component.component_digest).unwrap();
-        std::fs::write(&path, bytes).unwrap();
-        let source = ComponentArtifactSource::local(root.clone());
-        assert_eq!(source.pull_verified(&component).await.unwrap(), bytes);
-        std::fs::write(&path, b"changed-local-component").unwrap();
-        assert_eq!(
-            source.pull_verified(&component).await.unwrap_err().kind(),
-            ComponentArtifactFetchErrorKind::Mismatched
-        );
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(
-            source.pull_verified(&component).await.unwrap_err().kind(),
-            ComponentArtifactFetchErrorKind::Unavailable
-        );
-        let mut invalid = component;
-        invalid.component_digest = "sha256:../../outside".to_owned();
-        assert_eq!(
-            source.pull_verified(&invalid).await.unwrap_err().kind(),
-            ComponentArtifactFetchErrorKind::InvalidReference
-        );
-        std::fs::remove_dir(root).unwrap();
     }
 
     #[test]
@@ -790,56 +576,6 @@ mod tests {
     }
 
     #[test]
-    fn bodies_are_independently_verified_before_component_bytes_return() {
-        let bytes = b"component-bytes";
-        let component = admitted(bytes);
-        verify_component_body(
-            bytes,
-            i64::try_from(bytes.len()).unwrap(),
-            &component.component_digest,
-            "reference",
-        )
-        .expect("exact body verifies");
-
-        let wrong_size = verify_component_body(
-            bytes,
-            i64::try_from(bytes.len() + 1).unwrap(),
-            &component.component_digest,
-            "reference",
-        )
-        .expect_err("descriptor size drift refuses");
-        assert_eq!(
-            wrong_size.refusal(),
-            "component-artifact-body-size-mismatch"
-        );
-
-        let wrong_digest =
-            verify_component_body(b"other", 5, &component.component_digest, "reference")
-                .expect_err("body digest drift refuses");
-        assert_eq!(
-            wrong_digest.refusal(),
-            "component-artifact-body-digest-mismatch"
-        );
-
-        let config = component_artifact_config_bytes(&component);
-        verify_config_body(
-            &config,
-            i64::try_from(config.len()).unwrap(),
-            &component_digest(&config),
-            &config,
-            "reference",
-        )
-        .expect("exact config verifies");
-        let wrong_config =
-            verify_config_body(b"{}", 2, &component_digest(b"{}"), &config, "reference")
-                .expect_err("different config facts refuse");
-        assert_eq!(
-            wrong_config.refusal(),
-            "component-artifact-config-body-mismatch"
-        );
-    }
-
-    #[test]
     fn transport_integrity_errors_are_not_classified_as_unavailable() {
         let digest_error = OciDistributionError::DigestError(DigestError::VerificationError {
             expected: component_digest(b"expected"),
@@ -850,7 +586,7 @@ mod tests {
             &OciDistributionError::ImageManifestNotFoundError("missing".to_owned())
         ));
 
-        let error = ComponentArtifactFetchError::from_transport(
+        let error = transport_error(
             "registry.example/wamn/components:tag",
             "component-artifact-manifest-unavailable",
             "component-artifact-manifest-invalid",

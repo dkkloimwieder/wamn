@@ -24,6 +24,7 @@ use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_n
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
 use wamn_control_registry::Triple;
+use wamn_engine::artifact_source::{ArtifactSource, LocalComponentSource};
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
@@ -824,29 +825,32 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let router_driver = match release.as_ref() {
         Some(release) => {
-            let source = if let Some(directory) = args.local_application.as_ref() {
-                ComponentArtifactSource::local(directory.clone())
-            } else {
-                let artifact_base = args
-                    .component_artifact_base
-                    .as_deref()
-                    .context("a serving host requires --component-artifact-base")?;
-                let registry_auth_file = args
-                    .registry_auth_file
-                    .as_deref()
-                    .context("a serving host requires --registry-auth-file")?;
-                let source_config = ComponentArtifactSourceConfig::new(
-                    artifact_base,
-                    args.allow_insecure_registries,
-                    Duration::from_secs(30),
-                )?
-                .with_registry_auth_file(registry_auth_file)
-                .context("load component registry pull credential")?
-                .with_ca_paths(&args.oci_ca_paths)
-                .context("trust the configured OCI CA bundles for component pulls")?;
-                ComponentArtifactSource::new(source_config)
-                    .context("configure the component artifact registry client")?
-            };
+            let source: Arc<dyn ArtifactSource> =
+                if let Some(directory) = args.local_application.as_ref() {
+                    Arc::new(LocalComponentSource::new(directory.clone()))
+                } else {
+                    let artifact_base = args
+                        .component_artifact_base
+                        .as_deref()
+                        .context("a serving host requires --component-artifact-base")?;
+                    let registry_auth_file = args
+                        .registry_auth_file
+                        .as_deref()
+                        .context("a serving host requires --registry-auth-file")?;
+                    let source_config = ComponentArtifactSourceConfig::new(
+                        artifact_base,
+                        args.allow_insecure_registries,
+                        Duration::from_secs(30),
+                    )?
+                    .with_registry_auth_file(registry_auth_file)
+                    .context("load component registry pull credential")?
+                    .with_ca_paths(&args.oci_ca_paths)
+                    .context("trust the configured OCI CA bundles for component pulls")?;
+                    Arc::new(
+                        ComponentArtifactSource::new(source_config)
+                            .context("configure the component artifact registry client")?,
+                    )
+                };
             let credentials = Arc::new(match &args.credentials_file {
                 Some(path) => WamnCredentials::from_file(path)?,
                 None => WamnCredentials::empty(),
@@ -1304,8 +1308,7 @@ async fn load_local_workload(
             && component.image_pull_policy == v2::ImagePullPolicy::Never as i32,
         "local flow-http must use explicit local bytes without registry credentials"
     );
-    let path =
-        wamn_runtime::component_artifact_source::local_component_path(directory, &component.image)?;
+    let path = wamn_engine::artifact_source::local_component_path(directory, &component.image)?;
     let loaded = ComponentSource::File(path)
         .load(wash_runtime::oci::OciConfig::default())
         .await?;
@@ -1892,9 +1895,7 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let bytes = b"local component transport fixture";
         let digest = wamn_engine::component_admission::component_digest(bytes);
-        let path =
-            wamn_runtime::component_artifact_source::local_component_path(&directory, &digest)
-                .unwrap();
+        let path = wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap();
         let request = v2::WorkloadStartRequest {
             workload_id: "wamn-dev-flow-http".to_owned(),
             workload: Some(v2::Workload {

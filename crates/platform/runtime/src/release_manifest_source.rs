@@ -362,7 +362,7 @@ fn manifest_byte_ceiling() -> i64 {
 /// Refuse a transferred body the layer descriptor or the named digest contradicts.
 ///
 /// The same shape as
-/// [`verify_component_body`](crate::component_artifact_source) next door, and
+/// [`verify_component_body`](wamn_engine::artifact_source::verify_component_body), and
 /// for the same reason: these are the arms that catch a registry or proxy which
 /// lies about what it served, so they must be provable without one.
 ///

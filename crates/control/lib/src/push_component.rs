@@ -24,6 +24,7 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts, component_sql_digest,
 };
+use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_engine::component_admission::validate_component_admission;
 use wamn_engine::component_artifact::{
     component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,

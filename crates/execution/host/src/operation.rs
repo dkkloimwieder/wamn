@@ -21,11 +21,11 @@ use wamn_catalog::{
     AdmittedComponent, ArtifactHash, ComponentOperationDependency, ComponentSqlField,
     ComponentSqlValueType, ServingComponent, ServingComponentOperation,
 };
+use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
-use wamn_runtime::component_artifact_source::ComponentArtifactSource;
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -308,7 +308,7 @@ pub(crate) struct OperationHost {
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub(crate) release: Arc<LoadedRelease>,
-    pub(crate) source: ComponentArtifactSource,
+    pub(crate) source: Arc<dyn ArtifactSource>,
     pub(crate) project: String,
     schema: Option<String>,
     owner_prefix: String,
@@ -340,7 +340,7 @@ impl OperationHost {
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<LoadedRelease>,
-        source: ComponentArtifactSource,
+        source: Arc<dyn ArtifactSource>,
         scope: OperationScope,
     ) -> Self {
         Self {

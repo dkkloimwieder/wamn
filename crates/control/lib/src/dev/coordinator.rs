@@ -1121,7 +1121,7 @@ impl ProductionDevStageRunner {
                     "admitted component bytes changed",
                 ));
             }
-            let path = wamn_runtime::component_artifact_source::local_component_path(
+            let path = wamn_engine::artifact_source::local_component_path(
                 &local.directory,
                 &artifact.digest,
             )

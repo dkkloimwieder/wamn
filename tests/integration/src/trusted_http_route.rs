@@ -226,7 +226,7 @@ async fn build_with_credentials(
             // ceiling is Kubernetes' job, not this fixture's.
             Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
             Arc::clone(&release),
-            source,
+            Arc::new(source),
             RouterDriverConfig {
                 warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
                 owner_prefix: "trusted-http-route".to_owned(),
@@ -1242,11 +1242,13 @@ mod tests {
             Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
             Arc::from(vec!["*".parse()?]),
             Arc::clone(&release),
-            ComponentArtifactSource::new(ComponentArtifactSourceConfig::new(
-                &options.artifact_base,
-                true,
-                REGISTRY_IO_TIMEOUT,
-            )?)?,
+            Arc::new(ComponentArtifactSource::new(
+                ComponentArtifactSourceConfig::new(
+                    &options.artifact_base,
+                    true,
+                    REGISTRY_IO_TIMEOUT,
+                )?,
+            )?),
             RouterDriverConfig {
                 warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
                 owner_prefix: "nested-http-authority".to_owned(),

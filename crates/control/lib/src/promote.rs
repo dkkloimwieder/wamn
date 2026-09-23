@@ -16,6 +16,7 @@ use wamn_catalog::{
     WiringActivationFacts, WiringDocument, activation_facts, validate_wiring_activation,
     validate_wiring_compatibility,
 };
+use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };

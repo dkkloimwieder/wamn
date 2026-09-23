@@ -21,15 +21,13 @@ use wamn_catalog::{
     ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
+use wamn_engine::artifact_source::{ArtifactSource, ComponentArtifactFetchErrorKind};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_router::{
     ActiveWiring, CacheInsert, Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome,
     RateLimitDetail, Step, VersionKey, WiringCache, WiringCacheSnapshot,
-};
-use wamn_runtime::component_artifact_source::{
-    ComponentArtifactFetchErrorKind, ComponentArtifactSource,
 };
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
@@ -371,7 +369,7 @@ impl RouterDriver {
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<LoadedRelease>,
-        source: ComponentArtifactSource,
+        source: Arc<dyn ArtifactSource>,
         config: RouterDriverConfig,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(

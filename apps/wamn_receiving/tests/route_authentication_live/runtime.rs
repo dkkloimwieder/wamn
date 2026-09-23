@@ -411,7 +411,7 @@ pub(super) async fn build_journey_runtime(
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
         Arc::from(Vec::<AllowedHost>::new()),
         Arc::clone(&release),
-        source,
+        Arc::new(source),
         RouterDriverConfig {
             warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
             owner_prefix: "receiving-route-live".to_owned(),

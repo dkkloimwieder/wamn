@@ -559,9 +559,8 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
         )
     })?;
     let digest = wamn_engine::component_admission::component_digest(&component_bytes);
-    let path =
-        wamn_runtime::component_artifact_source::local_component_path(&local.directory, &digest)
-            .expect("a computed component digest is valid");
+    let path = wamn_engine::artifact_source::local_component_path(&local.directory, &digest)
+        .expect("a computed component digest is valid");
     std::fs::write(path, component_bytes).map_err(stage_error)?;
     let mut workload = flow_http_request(request);
     let component = &mut workload
@@ -1811,7 +1810,7 @@ mod tests {
         };
         prepare_local(&request).expect("Release stages validated workload bytes");
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
-        let component_path = wamn_runtime::component_artifact_source::local_component_path(
+        let component_path = wamn_engine::artifact_source::local_component_path(
             &directory,
             &wamn_engine::component_admission::component_digest(&component_bytes),
         )

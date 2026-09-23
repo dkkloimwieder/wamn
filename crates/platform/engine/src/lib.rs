@@ -10,6 +10,9 @@
 //! - [`component_admission`]: pure byte admission for tenant components.
 //! - [`component_artifact`]: the wire contract for digest-addressed component
 //!   artifacts.
+//! - [`artifact_source`]: the [`ArtifactSource`](artifact_source::ArtifactSource)
+//!   trait that supplies verified component bytes, its digest checks, and the
+//!   local file source. The OCI registry source lives in `wamn-runtime`.
 //! - [`release_manifest`]: a release manifest loaded once for the process.
 //! - [`invocation_trace`]: restores host-captured tracing context when native
 //!   dispatch polls host callbacks.
@@ -32,6 +35,7 @@
 //! off. The owner accepted that list (finding `wamn-qt1t`), so the dependency
 //! test ignores what is reached only through wash-runtime and pins that list.
 
+pub mod artifact_source;
 pub mod component_admission;
 pub mod component_artifact;
 pub mod engine;
