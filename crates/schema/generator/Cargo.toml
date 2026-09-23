@@ -24,6 +24,7 @@ wamn-event-wire = { workspace = true }
 wamn-record-history = { workspace = true }
 
 [dev-dependencies]
+wamn-fixture-package = { workspace = true }
 proptest.workspace = true
 wamn-test-postgres = { workspace = true }
 

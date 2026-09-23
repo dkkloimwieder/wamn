@@ -467,6 +467,14 @@ Pass `--history-manifest apps/client_acme_receiving/wamn.json`, and use `apps/cl
 For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
 Pass `--history-manifest apps/wamn_wms/wamn.json`, and use `apps/wamn_wms` as the input.
 
+The platform fixture is an application too, and it generates the same way.
+The platform owns it, and a platform test takes it instead of an application.
+For the fixture, pass `--schema inventory` and `--migration-dir apps/platform_fixture/migrations`.
+Pass `--history-manifest apps/platform_fixture/wamn.json`, and use `apps/platform_fixture` as the input.
+For the fixture overlay, pass `--schema inventory`, then the fixture migrations, then `--migration-dir apps/platform_fixture_overlay/migrations`.
+Pass `--history-manifest apps/platform_fixture_overlay/wamn.json`, and use `apps/platform_fixture_overlay` as the input.
+The crate `wamn-fixture-package` states these paths, so a test reads them without a literal of its own.
+
 The platform verifier discovers queries and Rust types from generated source maps.
 It compiles the exact SQL through SQLx macros.
 The `compile` mode uses committed `tests/.sqlx/` metadata and needs no database.

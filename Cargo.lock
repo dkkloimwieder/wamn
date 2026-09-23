@@ -5937,6 +5937,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-fixture-package"
+version = "0.1.0"
+dependencies = [
+ "tokio-postgres",
+]
+
+[[package]]
 name = "wamn-gate-harness"
 version = "0.1.0"
 dependencies = [
@@ -5967,6 +5974,34 @@ dependencies = [
 
 [[package]]
 name = "wamn-generated-client-acme-receiving-tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-client",
+ "wamn-client-terminal",
+ "wamn-client-tui",
+]
+
+[[package]]
+name = "wamn-generated-fixture-overlay-tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-client",
+ "wamn-client-terminal",
+ "wamn-client-tui",
+]
+
+[[package]]
+name = "wamn-generated-fixture-tui"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -6386,6 +6421,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-fixture-package",
  "wamn-record-history",
  "wamn-schema-introspection",
  "wamn-test-postgres",

@@ -24,7 +24,7 @@ pub(super) fn manifest() -> Value {
             "select_fields": ["canonical_command", "idempotency_key", "widget_id"],
             "insert_fields": ["canonical_command", "idempotency_key"],
             "update_fields": [], "lock": false,
-            "constraints": ["widget_command_pkey", "widget_command_widget_id_key"]}],
+            "constraints": ["widget_command_idempotency_key_pkey", "widget_command_widget_id_key"]}],
         "statements": {
             "claim": {"path": "command/widget/claim.sql", "fetch": "optional_one",
                 "parameters": [

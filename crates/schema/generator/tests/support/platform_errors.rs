@@ -48,7 +48,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
         );
     }
     let mut repeated = baseline.clone();
-    repeated["custom_operations"]["widget.archive"]["constraint_errors"]["widget_pkey"] =
+    repeated["custom_operations"]["widget.archive"]["constraint_errors"]["widget_id_pkey"] =
         json!("code_conflict");
     assert_eq!(
         validate_operation_vocabulary(&parsed(&repeated))

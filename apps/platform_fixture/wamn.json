@@ -1,0 +1,681 @@
+{
+  "package": {
+    "id": "platform_fixture",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "platform_fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "widget": {
+      "audit_log": {
+        "columns": [
+          "created_at"
+        ],
+        "retention": "none"
+      },
+      "delete_mode": "hard",
+      "enum_fields": {
+        "code": [
+          "priority",
+          "standard"
+        ]
+      },
+      "field_text": {
+        "code": {
+          "description": "The code an operator types to find one widget.",
+          "label": "Widget code"
+        },
+        "note": {
+          "label": "Operator note"
+        }
+      },
+      "operations": {
+        "create": {
+          "claim": {
+            "identities": {
+              "id": "widget_id"
+            },
+            "table": "widget_command"
+          },
+          "permission": "widget.create",
+          "result": "one",
+          "writable_fields": [
+            "code",
+            "maker_id",
+            "note"
+          ]
+        },
+        "delete": {
+          "permission": "widget.delete",
+          "result": "one",
+          "revision_field": "edit_version"
+        },
+        "get": {
+          "permission": "widget.get",
+          "result": "one"
+        },
+        "query": {
+          "authored_sql": {
+            "default": "query/widget.sql",
+            "variants": [
+              {
+                "direction": "ascending",
+                "field": "created_at",
+                "path": "query/widget.sql"
+              },
+              {
+                "direction": "descending",
+                "field": "created_at",
+                "path": "query/widget_by_created_at_descending.sql"
+              }
+            ]
+          },
+          "filters": [
+            {
+              "field": "code"
+            }
+          ],
+          "label": "Find widgets",
+          "limit": {
+            "default": 100,
+            "maximum": 100,
+            "minimum": 1
+          },
+          "pagination": {
+            "default_sort": {
+              "direction": "ascending",
+              "field": "created_at"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "permission": "widget.query",
+          "result": "page",
+          "sort": {
+            "directions": [
+              "ascending",
+              "descending"
+            ],
+            "fields": [
+              "created_at"
+            ]
+          }
+        },
+        "update": {
+          "permission": "widget.update",
+          "result": "one",
+          "revision_field": "edit_version",
+          "writable_fields": [
+            "code",
+            "maker_id",
+            "note"
+          ]
+        }
+      },
+      "owner": "platform_fixture",
+      "schema": "inventory",
+      "server_owned_fields": [
+        "id",
+        "edit_version",
+        "created_at"
+      ],
+      "table": "widget"
+    },
+    "widget_maker": {
+      "audit_log": {
+        "columns": [
+          "created_at"
+        ],
+        "retention": "none"
+      },
+      "enum_fields": {},
+      "operations": {
+        "query": {
+          "filters": [
+            {
+              "field": "name"
+            }
+          ],
+          "limit": {
+            "default": 100,
+            "maximum": 100,
+            "minimum": 1
+          },
+          "pagination": {
+            "default_sort": {
+              "direction": "ascending",
+              "field": "created_at"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "permission": "widget_maker.query",
+          "result": "page",
+          "sort": {
+            "directions": [
+              "ascending",
+              "descending"
+            ],
+            "fields": [
+              "created_at"
+            ]
+          }
+        }
+      },
+      "owner": "platform_fixture",
+      "schema": "inventory",
+      "server_owned_fields": [
+        "id",
+        "created_at"
+      ],
+      "table": "widget_maker"
+    }
+  },
+  "internal_relations": {
+    "widget_command": {
+      "cdc": "excluded",
+      "schema": "inventory",
+      "table": "widget_command"
+    }
+  },
+  "custom_operations": {
+    "widget.archive": {
+      "automatic_retry": false,
+      "connection": "postgres",
+      "constraint_errors": {},
+      "error_details": {
+        "already_archived": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "errors": [
+        "invalid_input",
+        "already_archived",
+        "concurrency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "idempotent_by": {
+        "state": {
+          "guards": {
+            "widget": "expected_edit_version"
+          }
+        }
+      },
+      "input": {
+        "fields": [
+          {
+            "nullable": false,
+            "path": "id",
+            "type": "uuid"
+          },
+          {
+            "nullable": false,
+            "path": "expected_edit_version",
+            "revision": true,
+            "type": "int64"
+          }
+        ]
+      },
+      "kind": "command",
+      "permission": "widget.archive",
+      "relations": [
+        {
+          "constraints": [],
+          "insert_fields": [],
+          "lock": true,
+          "schema": "inventory",
+          "select_fields": [
+            "id",
+            "edit_version"
+          ],
+          "table": "widget",
+          "update_fields": []
+        }
+      ],
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "nullable": false,
+            "path": "id",
+            "type": "uuid"
+          },
+          {
+            "nullable": false,
+            "path": "edit_version",
+            "revision": true,
+            "type": "int64"
+          },
+          {
+            "nullable": true,
+            "path": "note",
+            "type": "text"
+          }
+        ]
+      },
+      "statements": {
+        "archive": {
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "id",
+              "nullable": false,
+              "type": "uuid"
+            }
+          ],
+          "path": "command/widget/archive.sql",
+          "row": [
+            {
+              "name": "id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "name": "edit_version",
+              "nullable": false,
+              "type": "int64"
+            }
+          ]
+        }
+      },
+      "transaction": "explicit_per_input",
+      "visibility": "public"
+    },
+    "widget.list": {
+      "connection": "postgres",
+      "constraint_errors": {},
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "input": {
+        "fields": [
+          {
+            "nullable": false,
+            "path": "request_id",
+            "type": "text"
+          },
+          {
+            "nullable": false,
+            "path": "selector",
+            "type": "json"
+          },
+          {
+            "nullable": true,
+            "path": "maker_id",
+            "references": {
+              "model": "widget_maker"
+            },
+            "type": "uuid"
+          }
+        ]
+      },
+      "kind": "projection",
+      "lists": {
+        "display_field": "code",
+        "key_field": "id",
+        "model": "widget"
+      },
+      "permission": "widget.list",
+      "relations": [
+        {
+          "constraints": [],
+          "insert_fields": [],
+          "lock": false,
+          "schema": "inventory",
+          "select_fields": [
+            "code",
+            "id",
+            "edit_version"
+          ],
+          "table": "widget",
+          "update_fields": []
+        }
+      ],
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "nullable": false,
+            "path": "id",
+            "type": "uuid"
+          },
+          {
+            "nullable": false,
+            "path": "code",
+            "type": "text"
+          },
+          {
+            "nullable": false,
+            "path": "edit_version",
+            "type": "int64"
+          },
+          {
+            "description": "Every key the widget carries, as the release stored it.",
+            "label": "Attributes",
+            "nullable": false,
+            "path": "attributes",
+            "type": "json"
+          }
+        ]
+      },
+      "statements": {
+        "list": {
+          "fetch": "bounded_list",
+          "parameters": [],
+          "path": "query/widget_list.sql",
+          "row": [
+            {
+              "name": "id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "name": "code",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "name": "edit_version",
+              "nullable": false,
+              "type": "int64"
+            }
+          ]
+        }
+      },
+      "visibility": "public"
+    },
+    "widget.record_batch": {
+      "automatic_retry": false,
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ],
+        "line_order": {
+          "ascending_by": "widget_id",
+          "positive_member": "amount"
+        }
+      },
+      "claim": {
+        "claim": "claim_batch",
+        "finalize": "finalize_batch",
+        "identities": {
+          "widget_id": "widget_id"
+        },
+        "replay": "find_batch",
+        "table": "widget_command"
+      },
+      "connection": "postgres",
+      "constraint_errors": {},
+      "description": "One submission that records several lines at once.",
+      "error_details": {
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "errors": [
+        "invalid_input",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "idempotent_by": "claim",
+      "input": {
+        "envelope": {
+          "maximum": 100,
+          "minimum": 1
+        },
+        "fields": [
+          {
+            "nullable": false,
+            "path": "request_id",
+            "type": "text"
+          },
+          {
+            "nullable": false,
+            "path": "value.idempotency_key",
+            "type": "text"
+          },
+          {
+            "description": "What the operator recorded about this batch.",
+            "label": "Batch note",
+            "nullable": true,
+            "path": "value.note",
+            "type": "text"
+          },
+          {
+            "label": "Maker",
+            "nullable": true,
+            "path": "value.maker_id",
+            "references": {
+              "model": "widget_maker"
+            },
+            "type": "uuid"
+          },
+          {
+            "label": "Line",
+            "nullable": false,
+            "path": "value.line[].widget_id",
+            "references": {
+              "model": "widget",
+              "narrowed_by": "value.maker_id"
+            },
+            "type": "uuid"
+          },
+          {
+            "label": "Quantity received",
+            "nullable": false,
+            "path": "value.line[].amount",
+            "type": "numeric"
+          }
+        ],
+        "line": {
+          "description": "One line for each widget this batch records.",
+          "label": "Batch lines",
+          "maximum": 10,
+          "minimum": 1
+        },
+        "raw_body_maximum": 1048576
+      },
+      "kind": "command",
+      "label": "Record a batch",
+      "permission": "widget.record_batch",
+      "relations": [
+        {
+          "constraints": [
+            "widget_command_idempotency_key_pkey"
+          ],
+          "insert_fields": [
+            "canonical_command",
+            "idempotency_key"
+          ],
+          "lock": false,
+          "schema": "inventory",
+          "select_fields": [
+            "canonical_command",
+            "idempotency_key",
+            "widget_id"
+          ],
+          "table": "widget_command",
+          "update_fields": []
+        }
+      ],
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "nullable": false,
+            "path": "widget_id",
+            "type": "uuid"
+          }
+        ]
+      },
+      "statements": {
+        "claim_batch": {
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "canonical_command",
+              "nullable": false,
+              "type": "bytes"
+            },
+            {
+              "name": "idempotency_key",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "path": "command/widget/claim.sql",
+          "row": [
+            {
+              "name": "widget_id",
+              "nullable": false,
+              "type": "uuid"
+            }
+          ]
+        },
+        "finalize_batch": {
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "path": "command/widget/finalize.sql",
+          "row": [
+            {
+              "name": "widget_id",
+              "nullable": false,
+              "type": "uuid"
+            }
+          ]
+        },
+        "find_batch": {
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "path": "command/widget/replay.sql",
+          "row": [
+            {
+              "name": "canonical_command",
+              "nullable": false,
+              "type": "bytes"
+            },
+            {
+              "name": "widget_id",
+              "nullable": false,
+              "type": "uuid"
+            }
+          ]
+        }
+      },
+      "transaction": "explicit_per_input",
+      "visibility": "public"
+    },
+    "widget_maker.list": {
+      "connection": "postgres",
+      "constraint_errors": {},
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "input": {
+        "fields": [
+          {
+            "nullable": false,
+            "path": "request_id",
+            "type": "text"
+          }
+        ]
+      },
+      "kind": "projection",
+      "permission": "widget_maker.list",
+      "relations": [
+        {
+          "constraints": [],
+          "insert_fields": [],
+          "lock": false,
+          "schema": "inventory",
+          "select_fields": [
+            "id",
+            "name"
+          ],
+          "table": "widget_maker",
+          "update_fields": []
+        }
+      ],
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "nullable": false,
+            "path": "id",
+            "type": "uuid"
+          },
+          {
+            "nullable": false,
+            "path": "name",
+            "type": "text"
+          }
+        ]
+      },
+      "statements": {
+        "list": {
+          "fetch": "bounded_list",
+          "parameters": [],
+          "path": "query/widget_maker_list.sql",
+          "row": [
+            {
+              "name": "id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "name": "name",
+              "nullable": false,
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "visibility": "public"
+    }
+  },
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "fixture": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

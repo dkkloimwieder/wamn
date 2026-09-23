@@ -1,0 +1,100 @@
+package platform-fixture:widget-maker@1.0.0;
+
+interface query {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record query-request {
+    name: option<list<string>>,
+    sort-field: option<string>,
+    sort-direction: option<string>,
+    cursor: option<string>,
+    limit: option<s64>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<s64>,
+    maximum: option<s64>,
+    observed: option<s64>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant query-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record query-item {
+    request-id: string,
+    input: result<query-request, invalid-input-detail>,
+  }
+
+  record query-row {
+    created-at: string,
+    id: string,
+    name: string,
+  }
+
+  record query-result {
+    value: list<query-row>,
+    next-cursor: option<string>,
+  }
+
+  record query-outcome {
+    request-id: string,
+    outcome: result<query-result, query-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<query-item>) -> result<list<query-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface %list {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  enum %list-request { request }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant %list-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record %list-item {
+    request-id: string,
+    input: result<%list-request, invalid-input-detail>,
+  }
+
+  record %list-row {
+    id: string,
+    name: string,
+  }
+
+  record %list-result {
+    rows: list<%list-row>,
+  }
+
+  record %list-outcome {
+    request-id: string,
+    outcome: result<%list-result, %list-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<%list-item>) -> result<list<%list-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

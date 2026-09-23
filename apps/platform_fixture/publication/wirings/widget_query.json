@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "widget_query",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "fixture",
+      "interface-version": "0.1.0",
+      "operation": "platform-fixture:widget/query@1.0.0",
+      "terminal": "respond"
+    }
+  }
+}

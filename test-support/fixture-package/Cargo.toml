@@ -1,0 +1,12 @@
+[package]
+name = "wamn-fixture-package"
+version.workspace = true
+edition.workspace = true
+description = "The platform-owned fixture application every platform test takes"
+license = "Apache-2.0"
+
+[dependencies]
+tokio-postgres.workspace = true
+
+[lints]
+workspace = true

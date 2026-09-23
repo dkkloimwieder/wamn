@@ -1,0 +1,1 @@
+{"fields":[{"nullable":false,"path":"id","type":"uuid","values":[]},{"nullable":false,"path":"expected_edit_version","revision":true,"type":"int64","values":[]}]}

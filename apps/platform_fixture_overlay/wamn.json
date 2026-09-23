@@ -1,0 +1,57 @@
+{
+  "package": {
+    "id": "platform_fixture_overlay",
+    "version": "1.0.0"
+  },
+  "base_dependencies": {
+    "base_fixture": {
+      "package": "platform_fixture",
+      "version": "1.0.0",
+      "digest": "sha256:068394bae196c62b37da80932354575b376c6fdd084989370afaaea8a380386b",
+      "operations": [
+        "widget.archive"
+      ]
+    }
+  },
+  "required_platform_policy_contract": {
+    "id": "platform_fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "widget": {
+      "schema": "inventory",
+      "table": "widget",
+      "owner": "platform_fixture",
+      "field_owners": {
+        "overlay_note": "platform_fixture_overlay"
+      },
+      "server_owned_fields": [
+        "id",
+        "edit_version",
+        "created_at"
+      ],
+      "enum_fields": {
+        "code": [
+          "priority",
+          "standard"
+        ]
+      },
+      "operations": {
+        "get": {
+          "permission": "widget.get",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "fixture_overlay": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

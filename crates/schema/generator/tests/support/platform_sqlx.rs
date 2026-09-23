@@ -57,22 +57,7 @@ fn materialize_fixture(root: &std::path::Path) {
         serde_json::to_vec(&fixture::manifest()).expect("serialize platform fixture manifest"),
     )
     .expect("write platform fixture manifest");
-    for (path, bytes) in [
-        ("query/widget.sql", fixture::QUERY_SQL),
-        (
-            "query/widget_by_created_at_descending.sql",
-            fixture::QUERY_DESCENDING_SQL,
-        ),
-        ("query/widget_list.sql", fixture::LIST_SQL),
-        (
-            "query/widget_maker_list.sql",
-            fixture::WIDGET_MAKER_LIST_SQL,
-        ),
-        ("command/widget/archive.sql", fixture::ARCHIVE_SQL),
-        ("command/widget/claim.sql", fixture::CLAIM_SQL),
-        ("command/widget/replay.sql", fixture::REPLAY_SQL),
-        ("command/widget/finalize.sql", fixture::FINALIZE_SQL),
-    ] {
+    for (path, bytes) in fixture::authored_sql() {
         let destination = root.join(path);
         std::fs::create_dir_all(destination.parent().expect("fixture SQL parent"))
             .expect("create fixture SQL parent");

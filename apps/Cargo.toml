@@ -38,6 +38,8 @@ exclude = [
     "wamn_wms/tests",
     "wamn_receiving/generated/receiving-tui",
     "wamn_wms/generated/wms-tui",
+    "platform_fixture/generated/fixture-tui",
+    "platform_fixture_overlay/generated/fixture_overlay-tui",
     "client_acme_receiving/generated/client_acme_receiving-tui",
 ]
 
