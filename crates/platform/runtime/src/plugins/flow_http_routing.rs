@@ -27,6 +27,7 @@ use std::sync::Arc;
 use boon::{Compiler, Draft, ErrorKind, SchemaIndex, Schemas, ValidationError};
 use opentelemetry::KeyValue;
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use tracing::Instrument as _;
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
@@ -698,16 +699,37 @@ impl FlowHttpRouting {
         if policy == AttachmentAuthPolicy::None {
             return Ok(None);
         }
+        let cookie = session_cookie(headers)?;
+        let has_authorization = headers
+            .iter()
+            .any(|header| header.name.eq_ignore_ascii_case("authorization"));
+        if has_authorization && cookie.is_some() {
+            return Err(unauthorized());
+        }
+        if let Some(token) = cookie.filter(|_| policy.allows_session()) {
+            return self
+                .authenticate_session(
+                    attachment_id,
+                    token,
+                    Some(headers),
+                    &manifest.release.tenant_id,
+                    &manifest.release.environment,
+                )
+                .await
+                .map(Some);
+        }
         // The wire shape selects one mechanism; failed authentication never
         // falls back to another credential or repeats an executed operation.
         let session = policy.allows_session()
             && (!policy.allows_pat()
                 || bearer_token(headers).is_some_and(|token| !token.starts_with(PAT_TOKEN_PREFIX)));
         if session {
+            let token = required_bearer_token(headers)?;
             return self
                 .authenticate_session(
                     attachment_id,
-                    headers,
+                    token,
+                    None,
                     &manifest.release.tenant_id,
                     &manifest.release.environment,
                 )
@@ -786,14 +808,16 @@ impl FlowHttpRouting {
         .await
     }
 
+    /// `cookie_headers` is `Some` only when `token` arrived by the session
+    /// cookie; those requests then pass the CSRF check.
     async fn authenticate_session(
         &self,
         attachment_id: &str,
-        headers: &[Header],
+        token: &str,
+        cookie_headers: Option<&[Header]>,
         tenant: &str,
         environment: &str,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
-        let token = required_bearer_token(headers)?;
         let authentication = self
             .session_authentication
             .as_ref()
@@ -803,6 +827,10 @@ impl FlowHttpRouting {
             .verify(token)
             .await
             .map_err(|_| unauthorized())?;
+        if let Some(headers) = cookie_headers {
+            // wamn-glgg: once ServingRoute.kind is on main, pass `kind != read`.
+            check_csrf(true, session.claims().csrf.as_deref(), headers)?;
+        }
         let principal = session.claims().sub.parse().map_err(|_| unauthorized())?;
         let permissions = authentication
             .postgres
@@ -1046,6 +1074,63 @@ fn bearer_token(headers: &[Header]) -> Option<&str> {
 
 fn required_bearer_token(headers: &[Header]) -> Result<&str, AuthRejection> {
     bearer_token(headers).ok_or_else(unauthorized)
+}
+
+/// The session cookie the identity service sets for the cookie carrier.
+const SESSION_COOKIE: &str = "__Host-wamn-session";
+/// The request header that repeats the readable CSRF cookie.
+const CSRF_HEADER: &str = "x-wamn-csrf";
+
+/// Find the one session cookie across every `cookie` header; a duplicate refuses.
+fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
+    let mut found = None;
+    let pairs = headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("cookie"))
+        .flat_map(|header| header.value.split(';'));
+    for pair in pairs {
+        let Some((name, value)) = pair.split_once('=') else {
+            continue;
+        };
+        if name.trim() == SESSION_COOKIE && found.replace(value.trim()).is_some() {
+            return Err(unauthorized());
+        }
+    }
+    Ok(found)
+}
+
+/// Check the signed double-submit of a cookie session.
+///
+/// A cookie token must carry the `csrf` claim. When the route requires it, one
+/// `x-wamn-csrf` header must hash to that claim.
+fn check_csrf(
+    requires_csrf: bool,
+    claims_csrf: Option<&str>,
+    headers: &[Header],
+) -> Result<(), AuthRejection> {
+    let claim = claims_csrf.ok_or_else(unauthorized)?;
+    if !requires_csrf {
+        return Ok(());
+    }
+    let mut values = headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case(CSRF_HEADER));
+    let value = values.next().ok_or_else(unauthorized)?;
+    if values.next().is_some() {
+        return Err(unauthorized());
+    }
+    let digest = hex::encode(Sha256::digest(value.value.as_bytes()));
+    // Constant time over the equal-length case; the claim is always 64 hex.
+    let difference = digest
+        .bytes()
+        .zip(claim.bytes())
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        });
+    if digest.len() != claim.len() || difference != 0 {
+        return Err(unauthorized());
+    }
+    Ok(())
 }
 
 fn unauthorized() -> AuthRejection {
@@ -1902,6 +1987,105 @@ mod tests {
             assert_eq!(rejection.status, UNAUTHORIZED_STATUS);
             assert_eq!(rejection.code, UNAUTHORIZED_CODE);
         }
+    }
+
+    fn header(name: &str, value: &str) -> Header {
+        Header {
+            name: name.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    fn assert_unauthorized(rejection: &AuthRejection) {
+        assert_eq!(rejection.status, UNAUTHORIZED_STATUS);
+        assert_eq!(rejection.code, UNAUTHORIZED_CODE);
+    }
+
+    #[test]
+    fn the_session_cookie_is_found_among_others_once_or_refused() {
+        assert_eq!(
+            session_cookie(&[
+                header("accept", "text/plain"),
+                header("Cookie", "theme=dark; __Host-wamn-csrf=c"),
+                header("cookie", " __Host-wamn-session = token.sig ;lang"),
+            ])
+            .expect("one session cookie is found"),
+            Some("token.sig")
+        );
+        assert_eq!(session_cookie(&[]).expect("no cookie header"), None);
+        assert_eq!(
+            session_cookie(&[header("cookie", "__Host-wamn-csrf=c; other=1")])
+                .expect("no session cookie"),
+            None
+        );
+        for duplicated in [
+            vec![header(
+                "cookie",
+                "__Host-wamn-session=a; __Host-wamn-session=b",
+            )],
+            vec![
+                header("cookie", "__Host-wamn-session=a"),
+                header("Cookie", "__Host-wamn-session=a"),
+            ],
+        ] {
+            assert_unauthorized(
+                &session_cookie(&duplicated).expect_err("a duplicate session cookie refuses"),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_bearer_and_a_session_cookie_together_refuse() {
+        let mut protected = attachment(AttachmentKind::Http, orders_definition());
+        protected.auth_policy = json!({"modes": ["pat", "session"]});
+        let manifest = release_manifest(BTreeMap::from([("orders".to_string(), protected)]));
+        let mount = Mount::holding(&manifest, "both-credentials");
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+
+        for authorization in ["Bearer session.token", "Bearer wamn_pat_x", "Basic x"] {
+            let rejection = plugin
+                .authenticate(
+                    "orders",
+                    &[
+                        header("authorization", authorization),
+                        header("cookie", "__Host-wamn-session=session.token"),
+                    ],
+                )
+                .await
+                .expect_err("two credentials refuse");
+            assert_unauthorized(&rejection);
+        }
+    }
+
+    #[test]
+    fn csrf_requires_the_claim_and_one_header_that_hashes_to_it() {
+        let token = "csrf-token-value";
+        let claim = hex::encode(Sha256::digest(token.as_bytes()));
+        check_csrf(true, Some(&claim), &[header("X-Wamn-Csrf", token)])
+            .expect("a matching header passes");
+        for (claims_csrf, headers) in [
+            (Some(claim.as_str()), vec![]),
+            (Some(claim.as_str()), vec![header("x-wamn-csrf", "wrong")]),
+            (
+                Some(claim.as_str()),
+                vec![header("x-wamn-csrf", token), header("x-wamn-csrf", token)],
+            ),
+            (None, vec![header("x-wamn-csrf", token)]),
+        ] {
+            assert_unauthorized(
+                &check_csrf(true, claims_csrf, &headers).expect_err("the CSRF check refuses"),
+            );
+        }
+    }
+
+    #[test]
+    fn csrf_not_required_skips_the_header_but_still_needs_the_claim() {
+        let claim = hex::encode(Sha256::digest(b"csrf-token-value"));
+        check_csrf(false, Some(&claim), &[]).expect("no header is needed");
+        assert_unauthorized(
+            &check_csrf(false, None, &[]).expect_err("a cookie token without the claim refuses"),
+        );
     }
 
     #[test]
