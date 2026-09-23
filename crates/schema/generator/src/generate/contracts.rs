@@ -252,7 +252,7 @@ fn emit_custom_operation_contracts(
                     }),
                 )
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
     let mut operation_contract = serde_json::Map::from_iter([
         ("operation".to_owned(), json!(operation_id)),
         ("kind".to_owned(), json!(operation.kind())),
@@ -379,6 +379,8 @@ fn emit_custom_operation_contracts(
     Ok(())
 }
 
+/// The contract of one statement, refusing a statement that takes a different
+/// number of parameters than its generated accessor binds.
 fn statement_contract(
     name: &str,
     path: &str,
@@ -386,18 +388,30 @@ fn statement_contract(
     transactional: &StatementTransactionality,
     binds: impl IntoIterator<Item = StatementValueContract>,
     columns: impl IntoIterator<Item = StatementValueContract>,
-) -> StatementContract {
+) -> Result<StatementContract, GenerateError> {
     let bytes = sql_corpus
         .get(path)
         .expect("statement path was emitted or supplied by the validated corpus");
-    StatementContract {
+    let binds = binds.into_iter().collect::<Vec<_>>();
+    let parameters = crate::sql_lex::parameter_count(bytes);
+    if usize::try_from(parameters).ok() != Some(binds.len()) {
+        return Err(GenerateError::for_path(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{path} takes {parameters} parameters, but its generated accessor {name} binds {}",
+                binds.len()
+            ),
+            path,
+        ));
+    }
+    Ok(StatementContract {
         name: name.to_owned(),
         path: path.to_owned(),
         digest: sha256(bytes),
-        binds: binds.into_iter().collect(),
+        binds,
         columns: columns.into_iter().collect(),
         transactional: transactional.needs_transaction(path),
-    }
+    })
 }
 
 fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueContract> {
@@ -758,7 +772,7 @@ fn emit_operation_contracts(
                 statement_columns,
             )
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     let mut record = serde_json::Map::from_iter([
         (
             "relation".to_owned(),

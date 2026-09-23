@@ -1009,7 +1009,7 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
         if source.path() == "query/open_gadget.sql" {
             AuthoredSql::new(
                 source.path(),
-                b"-- inventory.gadget\nSELECT 'inventory.gadget', $$\"inventory\".\"gadget\"$$ /* inventory.gadget */;\n",
+                b"-- inventory.gadget\nSELECT 'inventory.gadget', $$\"inventory\".\"gadget\"$$, $1, $2, $3, $4, $5 /* inventory.gadget */;\n",
             )
         } else {
             source
@@ -2182,7 +2182,7 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
     sources.pop();
     sources.push(AuthoredSql::new(
         "query/quality_gadget_part.sql",
-        b"WITH removed AS (DELETE FROM gadget) SELECT $1::uuid AS id;",
+        b"WITH removed AS (DELETE FROM gadget) SELECT $1::uuid AS id WHERE $2::int8 IS NOT NULL;",
     ));
     run(&catalog(false), &delete_only, &sources).expect("delete alone is nonempty relation access");
 }

@@ -32,8 +32,17 @@ pub(crate) fn try_generate_with(
     catalog: &CatalogIr,
     value: &Value,
 ) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+    try_generate_with_sql(catalog, value, &authored_sql())
+}
+
+/// Generate the fixture from authored SQL that a test supplies.
+#[allow(dead_code, reason = "not every test module replaces authored SQL")]
+pub(crate) fn try_generate_with_sql(
+    catalog: &CatalogIr,
+    value: &Value,
+    authored: &[(String, Vec<u8>)],
+) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
     let manifest = serde_json::to_vec(value).expect("serialize platform fixture manifest");
-    let authored = authored_sql();
     let sources = authored
         .iter()
         .map(|(path, bytes)| AuthoredSql::new(path, bytes))

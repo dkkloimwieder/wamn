@@ -368,8 +368,11 @@
           "schema": "inventory",
           "select_fields": [
             "code",
+            "created_at",
+            "edit_version",
             "id",
-            "edit_version"
+            "maker_id",
+            "note"
           ],
           "table": "widget",
           "update_fields": []

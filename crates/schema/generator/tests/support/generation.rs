@@ -11,27 +11,27 @@ use wamn_schema_introspection::ir::{
 pub(super) const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
     AuthoredSql::new(
         "query/open_gadget_by_part_code_ascending.sql",
-        b"SELECT 1 /* part_code ascending */;\n",
+        b"SELECT $1, $2, $3, $4, $5 /* part_code ascending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_part_code_descending.sql",
-        b"SELECT 1 /* part_code descending */;\n",
+        b"SELECT $1, $2, $3, $4, $5 /* part_code descending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_status_ascending.sql",
-        b"SELECT 1 /* status ascending */;\n",
+        b"SELECT $1, $2, $3, $4, $5 /* status ascending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_status_descending.sql",
-        b"SELECT 1 /* status descending */;\n",
+        b"SELECT $1, $2, $3, $4, $5 /* status descending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget.sql",
-        b"SELECT 1 /* created_at ascending */;\n",
+        b"SELECT $1, $2, $3, $4, $5 /* created_at ascending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_created_at_descending.sql",
-        b"SELECT 1 /* created_at descending */;\n",
+        b"SELECT $1, $2, $3, $4, $5 /* created_at descending */;\n",
     ),
 ];
 

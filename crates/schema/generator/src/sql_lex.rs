@@ -27,6 +27,8 @@ enum Token {
     Comma,
     Equals,
     Star,
+    /// A positional bind parameter, `$n`.
+    Parameter(u32),
     Other,
 }
 
@@ -38,6 +40,22 @@ pub(crate) fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> b
             [Token::Identifier(left), Token::Dot, Token::Identifier(_)] if left.as_ref() == schema
         )
     })
+}
+
+/// The number of bind parameters one statement takes.
+///
+/// PostgreSQL numbers the parameters of a statement up to the highest `$n` it
+/// references. A `$n` inside a comment, a string, or a quoted identifier is
+/// inert text and does not count.
+pub(crate) fn parameter_count(sql: &[u8]) -> u32 {
+    tokens(sql)
+        .iter()
+        .filter_map(|token| match token {
+            Token::Parameter(index) => Some(*index),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// Derive relation/column privileges from one authored command SQL artifact.
@@ -120,21 +138,11 @@ pub(crate) fn relation_access(
         }
     }
 
-    // `wamn_history.row_image(<relation>)` renders the whole row, so it reads
-    // every column of the relation that the argument names.
-    for window in tokens.windows(6) {
-        if let [
-            Token::Identifier(schema),
-            Token::Dot,
-            Token::Identifier(function),
-            Token::LeftParen,
-            Token::Identifier(argument),
-            Token::RightParen,
-        ] = window
-            && schema.as_ref() == "wamn_history"
-            && function.as_ref() == "row_image"
-            && let Some(relation) = aliases.get(argument.as_ref())
-        {
+    // A relation named alone as a function argument, such as
+    // `to_jsonb(widget)` or `wamn_history.row_image(item)`, is a whole-row
+    // reference. It reads every column of that relation.
+    for index in 0..tokens.len() {
+        if let Some(relation) = whole_row_reference(&tokens, &depths, index, relations, &aliases) {
             access
                 .get_mut(relation)
                 .expect("known relation has an access row")
@@ -159,6 +167,44 @@ pub(crate) fn relation_access(
 
     access.retain(|_, privileges| privileges != &RelationAccess::default());
     Ok(access)
+}
+
+/// The relation that the token at `index` names as a whole-row function
+/// argument, if it names one.
+///
+/// The token must be an unqualified relation or alias that stands alone
+/// between the delimiters of a call's argument list. A parenthesized column
+/// list, a `USING` list, and a subquery are not calls.
+fn whole_row_reference<'a>(
+    tokens: &[Token],
+    depths: &[usize],
+    index: usize,
+    relations: &BTreeMap<String, BTreeSet<String>>,
+    aliases: &'a BTreeMap<String, String>,
+) -> Option<&'a String> {
+    let relation = aliases.get(identifier(&tokens[index])?)?;
+    let before = tokens.get(index.checked_sub(1)?)?;
+    let after = tokens.get(index + 1)?;
+    if is_qualified(tokens, index)
+        || !matches!(before, Token::LeftParen | Token::Comma)
+        || !matches!(after, Token::RightParen | Token::Comma)
+    {
+        return None;
+    }
+    let open = (0..index).rev().find(|candidate| {
+        tokens[*candidate] == Token::LeftParen && depths[*candidate] + 1 == depths[index]
+    })?;
+    let function = identifier(tokens.get(open.checked_sub(1)?)?)?;
+    let subquery = matches!(
+        tokens.get(open + 1).and_then(identifier),
+        Some("select" | "with")
+    );
+    (!subquery
+        && function != "using"
+        && !is_keyword(function)
+        && !relations.contains_key(function)
+        && !aliases.contains_key(function))
+    .then_some(relation)
 }
 
 /// Report every relation one authored SQL artifact deletes rows from.
@@ -705,6 +751,19 @@ fn tokens(sql: &[u8]) -> Vec<Token> {
             b'/' if sql.get(cursor + 1) == Some(&b'*') => skip_block_comment(sql, &mut cursor),
             b'\'' => skip_quoted(sql, &mut cursor, b'\''),
             b'"' => tokens.push(Token::Identifier(quoted_identifier(sql, &mut cursor))),
+            // A dollar-quote tag cannot start with a digit, so `$n` is a parameter.
+            b'$' if sql.get(cursor + 1).is_some_and(u8::is_ascii_digit) => {
+                let start = cursor + 1;
+                cursor = start;
+                while sql.get(cursor).is_some_and(u8::is_ascii_digit) {
+                    cursor += 1;
+                }
+                let index = std::str::from_utf8(&sql[start..cursor])
+                    .expect("ASCII digits are UTF-8")
+                    .parse()
+                    .unwrap_or(u32::MAX);
+                tokens.push(Token::Parameter(index));
+            }
             b'$' if dollar_quote_end(sql, cursor).is_some() => skip_dollar_quote(sql, &mut cursor),
             b'.' => {
                 tokens.push(Token::Dot);
@@ -1092,6 +1151,45 @@ mod tests {
                 every_column
             );
         }
+    }
+
+    #[test]
+    fn a_whole_row_function_argument_reads_every_column() {
+        let every_column = RelationAccess {
+            select_fields: ["id".to_owned(), "status".to_owned()].into_iter().collect(),
+            ..RelationAccess::default()
+        };
+        for sql in [
+            b"SELECT item.id, to_jsonb(item) AS image FROM item".as_slice(),
+            b"SELECT jsonb_build_object('item', i) FROM item AS i".as_slice(),
+        ] {
+            assert_eq!(
+                relation_access(sql, &relations()).unwrap()["item"],
+                every_column
+            );
+        }
+        // A column list, a USING list, and a subquery name no whole row.
+        for sql in [
+            b"INSERT INTO item (id) VALUES ($1)".as_slice(),
+            b"SELECT 1 WHERE EXISTS (SELECT 1 FROM other, item)".as_slice(),
+        ] {
+            let access = relation_access(sql, &relations()).unwrap();
+            assert!(
+                access
+                    .get("item")
+                    .is_none_or(|item| item.select_fields.is_empty()),
+                "{access:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parameters_count_to_the_highest_placeholder_outside_inert_text() {
+        assert_eq!(parameter_count(b"SELECT 1"), 0);
+        assert_eq!(
+            parameter_count(b"SELECT $2::int8, $10 -- $11\n /* $12 */ , '$13', \"$14\", $$ $15 $$"),
+            10
+        );
     }
 
     #[test]

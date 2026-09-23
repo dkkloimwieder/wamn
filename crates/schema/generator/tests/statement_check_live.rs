@@ -22,8 +22,12 @@ const AUTHORITY_SNAPSHOT_SQL: &str = "SELECT \
       WHERE c.relnamespace = 'inventory'::regnamespace AND a.attacl IS NOT NULL)";
 
 /// The declared SQL reads only id. The whole-row replacement also reads secret.
+///
+/// Generation already counts a whole-row function argument such as
+/// `to_jsonb(widget)` as a read of every column. A whole-row cast is outside
+/// that reading, so PostgreSQL is the check that refuses it.
 const WHOLE_ROW_READ: &str =
-    "SELECT to_jsonb(widget)::text AS image FROM widget AS widget ORDER BY widget.id ASC;\n";
+    "SELECT widget::text AS image FROM widget AS widget ORDER BY widget.id ASC;\n";
 
 fn generation_database() -> wamn_test_postgres::Database {
     let database = wamn_test_postgres::database();

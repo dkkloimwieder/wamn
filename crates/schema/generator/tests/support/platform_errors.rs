@@ -257,11 +257,17 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
         .iter()
         .find(|relation| relation["table"] == "widget")
         .unwrap();
-    // `widget.list` selects the text a selector shows beside the key, and
-    // `widget.archive` reads the note it returns.
+    // `widget.list` reads every column: its attributes are the whole row.
     assert_eq!(
         relation["select_fields"],
-        json!(["code", "edit_version", "id", "note"])
+        json!([
+            "code",
+            "created_at",
+            "edit_version",
+            "id",
+            "maker_id",
+            "note"
+        ])
     );
     assert_eq!(relation["insert_fields"], json!([]));
     assert_eq!(relation["update_fields"], json!([]));

@@ -131,6 +131,66 @@ fn authored_sql_access_must_match_declared_reads_and_row_locks() {
 }
 
 #[test]
+fn a_whole_row_reference_reads_every_column_of_its_relation() {
+    // `widget.list` selects `to_jsonb(widget)`, so it reads every widget column.
+    let mut manifest = fixture::manifest();
+    manifest["custom_operations"]["widget.list"]["relations"][0]["select_fields"] =
+        json!(["code", "edit_version", "id"]);
+    let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+        .expect_err("a whole-row read was admitted under a narrower declaration");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(error.object(), Some("inventory.widget"));
+    let message = error.to_string();
+    assert!(
+        message.contains("widget.list inventory.widget privilege declaration"),
+        "{message}"
+    );
+    assert!(
+        message.contains(
+            "\"select_fields\":[\"code\",\"created_at\",\"edit_version\",\"id\",\"maker_id\",\"note\"]"
+        ),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
+    // Each case replaces one authored statement. The query accessor binds the
+    // code filter, the two cursor keys, and the limit. The archive accessor
+    // binds the one declared parameter.
+    for (path, sql, expected) in [
+        (
+            "query/widget.sql",
+            "SELECT widget.code, widget.created_at, widget.edit_version, widget.id, widget.maker_id, widget.note FROM widget AS widget;\n",
+            "query/widget.sql takes 0 parameters, but its generated accessor query_created_at_ascending binds 4",
+        ),
+        (
+            "command/widget/archive.sql",
+            "SELECT id, edit_version, note FROM widget WHERE id = $1 AND edit_version = $2 FOR UPDATE;\n",
+            "command/widget/archive.sql takes 2 parameters, but its generated accessor archive binds 1",
+        ),
+    ] {
+        let authored = fixture::authored_sql()
+            .into_iter()
+            .map(|(candidate, bytes)| {
+                let bytes = if candidate == path {
+                    sql.as_bytes().to_vec()
+                } else {
+                    bytes
+                };
+                (candidate, bytes)
+            })
+            .collect::<Vec<_>>();
+        let error =
+            fixture::try_generate_with_sql(&fixture::catalog(), &fixture::manifest(), &authored)
+                .expect_err("a statement that does not take its accessor's binds was admitted");
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+        assert_eq!(error.path(), Some(path));
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
 fn state_idempotence_requires_its_exact_shape() {
     for guards in [
         json!({}),
