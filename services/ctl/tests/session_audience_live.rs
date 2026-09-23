@@ -23,7 +23,7 @@ use wamn_pg_core::quote_ident;
 use wamn_test_infrastructure::locked_database;
 
 const ORG: &str = "sessioncli";
-const PROJECT: &str = "receiving";
+const PROJECT: &str = "widgets";
 const ENVIRONMENT: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const OTHER_INSTANCE: &str = "p7x2m9k3";
@@ -144,7 +144,7 @@ fn read_target(path: &Path, generation: CredentialGeneration) -> anyhow::Result<
     let secret: Value = serde_json::from_slice(&fs::read(path)?)?;
     anyhow::ensure!(
         secret["kind"] == "Secret"
-            && secret["metadata"]["name"] == "wamn-session-role-reader-sessioncli--receiving--dev"
+            && secret["metadata"]["name"] == "wamn-session-role-reader-sessioncli--widgets--dev"
             && secret["metadata"]["namespace"] == "wamn-system",
         "session-target Secret has the wrong identity"
     );
@@ -158,7 +158,7 @@ fn read_target(path: &Path, generation: CredentialGeneration) -> anyhow::Result<
         .context("target document")?;
     let target = SessionTarget::from_json(text.as_bytes())?;
     anyhow::ensure!(
-        target.audience() == "urn:wamn:project-env:sessioncli:receiving:dev:k3m9x2p7"
+        target.audience() == "urn:wamn:project-env:sessioncli:widgets:dev:k3m9x2p7"
             && target.triple().org == ORG
             && target.triple().project == PROJECT
             && target.triple().env.as_str() == ENVIRONMENT

@@ -1931,7 +1931,7 @@ mod tests {
     #[test]
     fn the_preflight_expectations_match_the_provisioning_declaration() {
         let publication = wamn_control_provision::sql::create_publication_sql(
-            "wamn_cdc_acme__billing__dev",
+            "wamn_cdc_fixture__billing__dev",
             "app",
         );
         assert!(
@@ -1941,7 +1941,7 @@ mod tests {
         assert!(!publication.contains("truncate"), "{publication}");
         assert!(!publication.contains("FOR ALL TABLES"), "{publication}");
         let slot =
-            wamn_control_provision::sql::create_failover_slot_sql("wamn_cdc_acme__billing__dev");
+            wamn_control_provision::sql::create_failover_slot_sql("wamn_cdc_fixture__billing__dev");
         assert!(
             slot.contains(&format!("'{DECLARED_SLOT_PLUGIN}', false, false, true")),
             "{slot}"
@@ -2112,8 +2112,8 @@ mod tests {
 
     fn reader_args_fixture() -> EventReaderArgs {
         EventReaderArgs {
-            org: "acme".into(),
-            project: "receiving".into(),
+            org: "fixture".into(),
+            project: "widgets".into(),
             env: "dev".into(),
             system_database_url: String::new(),
             cdc_url: "postgres://cdc:pw@db.invalid:5432/project".into(),
@@ -2181,8 +2181,8 @@ mod tests {
     fn resolved_relation_classification_is_cached_as_one_closed_identity() {
         let mut cache = HashMap::new();
         let mapping = RelationClassification::Entity(EntityMapping {
-            package_id: "receiving".into(),
-            entity_id: "receipt".into(),
+            package_id: "platform_fixture".into(),
+            entity_id: "widget".into(),
         });
         assert_eq!(
             remember_relation_classification(&mut cache, 42, mapping.clone()),
@@ -2194,8 +2194,8 @@ mod tests {
     #[test]
     fn excluded_relation_skip_is_counted_by_package_relation_identity() {
         let excluded = ExcludedRelation {
-            package_id: "wamn_receiving".into(),
-            relation_id: "record_receipt_command".into(),
+            package_id: "platform_fixture".into(),
+            relation_id: "widget_command".into(),
         };
         let mut pending = BTreeMap::new();
         assert_eq!(
@@ -2212,16 +2212,13 @@ mod tests {
         let mut committed = BTreeMap::new();
         assert!(committed.is_empty(), "uncommitted skips are not observable");
         merge_relation_counts(&mut committed, pending);
-        assert_eq!(
-            committed.get("wamn_receiving::record_receipt_command"),
-            Some(&2)
-        );
+        assert_eq!(committed.get("platform_fixture::widget_command"), Some(&2));
     }
 
     #[test]
     fn unmapped_managed_relation_refusal_is_fatal_and_names_its_remedy() {
         let error = ReplicationError::Config(format!(
-            "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema=\"receiving\" relation_oid=42; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
+            "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema=\"inventory\" relation_oid=42; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
         ));
         assert_eq!(classify(&error), SessionFate::Fatal);
         let message = error.to_string();
@@ -2453,14 +2450,14 @@ mod tests {
     fn stream_config_drift_flags_replicas_dup_window_and_storage() {
         use jetstream::stream::{Config, StorageType};
         let matching = source_stream_config(
-            &Triple::new("acme", "receiving", "dev"),
+            &Triple::new("fixture", "widgets", "dev"),
             3,
             Duration::from_secs(120),
         );
         assert!(stream_config_matches(&matching, &matching.clone()));
         for changed in [
             Config {
-                subjects: vec!["evt.acme.*.dev.>".into()],
+                subjects: vec!["evt.fixture.*.dev.>".into()],
                 ..matching.clone()
             },
             Config {
@@ -2483,11 +2480,11 @@ mod tests {
     #[test]
     fn delivery_advisory_stream_drift_pins_the_subject_cap() {
         use jetstream::stream::Config;
-        let matching = advisory_stream_config(&Triple::new("acme", "receiving", "dev"), 3);
+        let matching = advisory_stream_config(&Triple::new("fixture", "widgets", "dev"), 3);
         assert!(stream_config_matches(&matching, &matching.clone()));
         for scope in [
-            Triple::new("acme", "wms", "dev"),
-            Triple::new("acme", "receiving", "prod"),
+            Triple::new("fixture", "gadgets", "dev"),
+            Triple::new("fixture", "widgets", "prod"),
         ] {
             assert!(!stream_config_matches(
                 &matching,
@@ -2752,7 +2749,7 @@ mod tests {
                     op: Op::Insert,
                     old: None,
                     new: None,
-                    package_id: "receiving".into(),
+                    package_id: "platform_fixture".into(),
                     entity: "orders".into(),
                     table: "orders".into(),
                     lsn,

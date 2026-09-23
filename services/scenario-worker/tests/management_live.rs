@@ -66,8 +66,8 @@ const TENANT: &str = "management-live-tenant";
 /// gate authenticates against and the authoring store it writes to live in the
 /// one control database, so there is no schema to rewrite.
 const SOURCE_SCHEMA: &str = "wamn_run";
-const ORG: &str = "acme";
-const PROJECT: &str = "receiving";
+const ORG: &str = "fixture";
+const PROJECT: &str = "widgets";
 const OTHER_PROJECT: &str = "shipping";
 const ENVIRONMENT: &str = "dev";
 const AUTHOR_PASSWORD: &str = "wamn-management-live";
@@ -76,7 +76,7 @@ const IDENTITY_READER_PASSWORD: &str = "wamn-management-identity-read-live";
 /// The project-environment database the admission credential is scoped to. The
 /// generation role name binds it, so the gate cannot rename one without the
 /// other.
-const PROJECT_DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+const PROJECT_DATABASE: &str = "wamn-db-fixture--widgets--dev--k3m9x2p7";
 const ADMITTER_PASSWORD: &str = "wamn-management-admission-live";
 /// One wiring document, exactly as `catalog.wirings.graph_json` stores it.
 ///
@@ -160,7 +160,7 @@ const EFFECTFUL_COMPONENT_DIGEST: &str =
     "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
 const EFFECTFUL_PROJECTION_HASH: &str =
     "sha256:7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c";
-const EFFECTFUL_STORE_ALIAS: &str = "receipts";
+const EFFECTFUL_STORE_ALIAS: &str = "documents";
 const HTTP_IMPORT: &str = "wamn:connection/http@0.1.0";
 /// The blobstore capability's first consumer, refused by the same clause.
 ///

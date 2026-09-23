@@ -5,7 +5,7 @@
 //!
 //! Each case applies a fixture package through the real `wamn-ctl apply-package`
 //! process. The package logs three relations: `shipment` keeps its entries for
-//! 30 days, `pallet` for 7 days, and `ledger` without limit. The case mints a
+//! 30 days, `parcel` for 7 days, and `ledger` without limit. The case mints a
 //! real `wamn_audit_retention` credential generation, writes history, moves
 //! entry times into the past, and runs the real verb through `wamn-ctl-ops`.
 //!
@@ -51,7 +51,7 @@ const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f2";
 /// The fixture relations and the retention of each.
 const RELATIONS: [(&str, &str); 3] = [
     ("shipment", "P30D"),
-    ("pallet", "P7D"),
+    ("parcel", "P7D"),
     ("ledger", "unlimited"),
 ];
 
@@ -370,12 +370,12 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
         })
         .collect::<Vec<_>>();
     let mut expected = Vec::new();
-    for history in ["pallet_history", "shipment_history"] {
+    for history in ["parcel_history", "shipment_history"] {
         for column in ["changed_at", "position", "row_key"] {
             expected.push(format!("column {SCHEMA}.{history}.{column} SELECT"));
         }
     }
-    for history in ["pallet_history", "shipment_history"] {
+    for history in ["parcel_history", "shipment_history"] {
         expected.push(format!("relation {SCHEMA}.{history} DELETE"));
     }
     expected.push(format!("schema {SCHEMA}.{SCHEMA} USAGE"));
@@ -509,32 +509,32 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
         ),
         // The seven-day relation removes what the thirty-day relation keeps.
         (
-            "pallet",
-            format!("INSERT INTO {SCHEMA}.pallet VALUES ('{}', 'a')", row_id(11)),
+            "parcel",
+            format!("INSERT INTO {SCHEMA}.parcel VALUES ('{}', 'a')", row_id(11)),
             10,
             false,
         ),
         (
-            "pallet",
+            "parcel",
             format!(
-                "UPDATE {SCHEMA}.pallet SET note = 'b' WHERE id = '{}'",
+                "UPDATE {SCHEMA}.parcel SET note = 'b' WHERE id = '{}'",
                 row_id(11)
             ),
             8,
             false,
         ),
         (
-            "pallet",
+            "parcel",
             format!(
-                "UPDATE {SCHEMA}.pallet SET note = 'c' WHERE id = '{}'",
+                "UPDATE {SCHEMA}.parcel SET note = 'c' WHERE id = '{}'",
                 row_id(11)
             ),
             1,
             true,
         ),
         (
-            "pallet",
-            format!("INSERT INTO {SCHEMA}.pallet VALUES ('{}', 'a')", row_id(12)),
+            "parcel",
+            format!("INSERT INTO {SCHEMA}.parcel VALUES ('{}', 'a')", row_id(12)),
             10,
             false,
         ),
@@ -598,7 +598,7 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
         format!(
             "removed 5 entries from {SCHEMA}.shipment_history (retention P30D, tenant {TENANT})"
         ),
-        format!("removed 3 entries from {SCHEMA}.pallet_history (retention P7D, tenant {TENANT})"),
+        format!("removed 3 entries from {SCHEMA}.parcel_history (retention P7D, tenant {TENANT})"),
         format!("pruned 2 history table(s) for tenant {TENANT}"),
     ] {
         assert!(stdout.contains(&line), "the verb did not report: {line}");
@@ -644,7 +644,7 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
             &format!(
                 "SELECT (SELECT count(*) FROM {SCHEMA}.shipment_history \
                           WHERE operation <> 'admin:seed-retention-fixture') \
-                      + (SELECT count(*) FROM {SCHEMA}.pallet_history \
+                      + (SELECT count(*) FROM {SCHEMA}.parcel_history \
                           WHERE operation <> 'admin:seed-retention-fixture') \
                       + (SELECT count(*) FROM {SCHEMA}.ledger_history \
                           WHERE operation <> 'admin:seed-retention-fixture')"
@@ -697,8 +697,8 @@ async fn await_lock_waiters(
 /// The keep window holds while a retention change waits on the audit retention lock.
 ///
 /// A blocker holds the lock. The verb queues on it first, and apply-package
-/// queues second with a `pallet` retention change from P7D to P1D. PostgreSQL
-/// grants queued lock requests in queue order, so the transaction of `pallet`,
+/// queues second with a `parcel` retention change from P7D to P1D. PostgreSQL
+/// grants queued lock requests in queue order, so the transaction of `parcel`,
 /// the first relation that the verb visits, reads and deletes with P7D.
 /// apply-package changes the trigger only after that transaction commits.
 #[tokio::test]
@@ -718,13 +718,13 @@ async fn a_retention_change_waits_for_a_running_prune() {
     let mut kept = Vec::new();
     for (statement, age, keep) in [
         (
-            format!("INSERT INTO {SCHEMA}.pallet VALUES ('{}', 'a')", row_id(11)),
+            format!("INSERT INTO {SCHEMA}.parcel VALUES ('{}', 'a')", row_id(11)),
             10,
             false,
         ),
         (
             format!(
-                "UPDATE {SCHEMA}.pallet SET note = 'b' WHERE id = '{}'",
+                "UPDATE {SCHEMA}.parcel SET note = 'b' WHERE id = '{}'",
                 row_id(11)
             ),
             3,
@@ -732,14 +732,14 @@ async fn a_retention_change_waits_for_a_running_prune() {
         ),
         (
             format!(
-                "UPDATE {SCHEMA}.pallet SET note = 'c' WHERE id = '{}'",
+                "UPDATE {SCHEMA}.parcel SET note = 'c' WHERE id = '{}'",
                 row_id(11)
             ),
             0,
             true,
         ),
     ] {
-        let written = seed(&admin, "pallet", &statement, age).await;
+        let written = seed(&admin, "parcel", &statement, age).await;
         if keep {
             kept.extend(written);
         }
@@ -753,7 +753,7 @@ async fn a_retention_change_waits_for_a_running_prune() {
     )
     .await;
     let credential_url = replace_role(&url, &credential_role, GENERATION_PASSWORD);
-    upgrade_retention(&package, "pallet", "P1D");
+    upgrade_retention(&package, "parcel", "P1D");
 
     let mut blocker = connect(&url).await;
     let blocker_tx = blocker
@@ -802,13 +802,13 @@ async fn a_retention_change_waits_for_a_running_prune() {
     let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
     print!("{stdout}");
     let line =
-        format!("removed 1 entries from {SCHEMA}.pallet_history (retention P7D, tenant {TENANT})");
+        format!("removed 1 entries from {SCHEMA}.parcel_history (retention P7D, tenant {TENANT})");
     assert!(stdout.contains(&line), "the verb did not report: {line}");
     assert_eq!(
         positions(&admin).await,
         BTreeMap::from([
             ("ledger".to_owned(), Vec::new()),
-            ("pallet".to_owned(), kept),
+            ("parcel".to_owned(), kept),
             ("shipment".to_owned(), Vec::new()),
         ]),
         "the verb deleted with the P7D keep window"
@@ -817,19 +817,19 @@ async fn a_retention_change_waits_for_a_running_prune() {
         .query_one(
             &format!(
                 "SELECT pg_catalog.pg_get_triggerdef(oid) FROM pg_catalog.pg_trigger \
-                  WHERE tgrelid = '{SCHEMA}.pallet'::regclass \
+                  WHERE tgrelid = '{SCHEMA}.parcel'::regclass \
                     AND tgname = 'wamn_record_history_log'"
             ),
             &[],
         )
         .await
-        .expect("read the pallet log trigger")
+        .expect("read the parcel log trigger")
         .get(0);
     assert_eq!(
         trigger,
         format!(
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-             ON {SCHEMA}.pallet FOR EACH ROW \
+             ON {SCHEMA}.parcel FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('P1D')"
         ),
         "apply-package committed the P1D retention after the prune"

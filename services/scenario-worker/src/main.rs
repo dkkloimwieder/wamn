@@ -59,11 +59,11 @@ mod tests {
         "--control-authoring-database-url",
         "postgres://control.invalid/wamn-system",
         "--management-admission-database-url",
-        "postgres://project.invalid/wamn-db-acme--receiving--dev--k3m9x2p7",
+        "postgres://project.invalid/wamn-db-fixture--widgets--dev--k3m9x2p7",
         "--org",
-        "acme",
+        "fixture",
         "--project",
-        "receiving",
+        "widgets",
         "--environment",
         "dev",
         "--tenant",
@@ -79,8 +79,8 @@ mod tests {
     fn serve_is_the_only_invocation() {
         let cli = Cli::try_parse_from(SERVE).expect("serve parses from its complete arguments");
         let Command::Serve(args) = cli.command;
-        assert_eq!(args.org, "acme");
-        assert_eq!(args.project, "receiving");
+        assert_eq!(args.org, "fixture");
+        assert_eq!(args.project, "widgets");
         assert_eq!(args.environment, "dev");
         assert_eq!(args.tenant, "tenant-a");
         assert_eq!(args.system_url, "postgres://system.invalid/system");
@@ -90,7 +90,7 @@ mod tests {
         );
         assert_eq!(
             args.management_admission_database_url,
-            "postgres://project.invalid/wamn-db-acme--receiving--dev--k3m9x2p7"
+            "postgres://project.invalid/wamn-db-fixture--widgets--dev--k3m9x2p7"
         );
         assert!(Cli::try_parse_from(["wamn-scenario-worker"]).is_err());
         assert!(Cli::try_parse_from(["wamn-scenario-worker", "--tenant", "tenant-a"]).is_err());

@@ -1385,13 +1385,13 @@ mod tests {
         }
     }
 
-    const SCOPE_ORG: &str = "acme";
-    const SCOPE_PROJECT: &str = "receiving";
+    const SCOPE_ORG: &str = "fixture";
+    const SCOPE_PROJECT: &str = "widgets";
     const SCOPE_ENVIRONMENT: &str = "dev";
     const CONTROL_DATABASE: &str = "wamn-system";
     /// The T1 system database this fixture's identity read names.
     const SYSTEM_DATABASE: &str = "wamn-system";
-    const PROJECT_DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+    const PROJECT_DATABASE: &str = "wamn-db-fixture--widgets--dev--k3m9x2p7";
 
     /// The scoped identity-reader login for this fixture's scope
     /// (`wamn-0h0g.12.67`). `SYSTEM_DATABASE` is the database the fixture's
@@ -1617,25 +1617,25 @@ mod tests {
     #[test]
     fn one_surface_serves_exactly_one_project_environment() {
         let admitted =
-            reconcile_command_scope("tenant-a", "acme", "receiving", "dev", "receiving", "dev")
+            reconcile_command_scope("tenant-a", "fixture", "widgets", "dev", "widgets", "dev")
                 .expect("the fixed scope is admitted");
         assert_eq!(admitted.tenant_id.as_ref(), "tenant-a");
-        assert_eq!(admitted.org.as_ref(), "acme");
-        assert_eq!(admitted.project.as_ref(), "receiving");
+        assert_eq!(admitted.org.as_ref(), "fixture");
+        assert_eq!(admitted.project.as_ref(), "widgets");
         assert_eq!(admitted.environment.as_ref(), "dev");
 
         for (project, environment) in [
-            ("receiving", "prod"),
-            ("receiving", "Dev"),
-            ("receiving", ""),
+            ("widgets", "prod"),
+            ("widgets", "Dev"),
+            ("widgets", ""),
             ("shipping", "dev"),
             ("", "dev"),
         ] {
             assert!(
                 reconcile_command_scope(
                     "tenant-a",
-                    "acme",
-                    "receiving",
+                    "fixture",
+                    "widgets",
                     "dev",
                     project,
                     environment
@@ -1813,7 +1813,7 @@ mod tests {
         use wamn_authoring_model::{AuthoringScope, Gate, PublishValidatedDraft};
 
         let scope = AuthoringScope {
-            project_id: "receiving".to_owned(),
+            project_id: "widgets".to_owned(),
             environment: "dev".to_owned(),
         };
         // Both surviving commands carry the DOCUMENT and its package placement

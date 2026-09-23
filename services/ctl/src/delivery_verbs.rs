@@ -406,7 +406,7 @@ mod tests {
         "postgres://control.invalid/store",
     ];
 
-    const PLACEMENT: [&str; 4] = ["--org", "acme", "--project", "billing"];
+    const PLACEMENT: [&str; 4] = ["--org", "fixture", "--project", "billing"];
 
     const COORDINATE: [&str; 8] = [
         "--database-url",
@@ -444,7 +444,11 @@ mod tests {
             "--effective-release-id",
             "3",
         ];
-        for placement in [vec!["--org", "acme"], vec!["--project", "billing"], vec![]] {
+        for placement in [
+            vec!["--org", "fixture"],
+            vec!["--project", "billing"],
+            vec![],
+        ] {
             let mut argv = vec!["push-release-manifest"];
             argv.extend_from_slice(&source);
             argv.extend_from_slice(&DESTINATION);
@@ -470,7 +474,7 @@ mod tests {
         );
 
         let placed = parse(&source).expect("a placed minted snapshot parses");
-        assert_eq!(placed.org, "acme");
+        assert_eq!(placed.org, "fixture");
         assert_eq!(placed.project, "billing");
         assert_eq!(
             placed.control_database_url,
@@ -495,7 +499,7 @@ mod tests {
             .expect("the fixture is canonical format-1 bytes");
         let coordinate = args.into_request().deployment_coordinate(&manifest.release);
 
-        assert_eq!(coordinate.triple.org, "acme");
+        assert_eq!(coordinate.triple.org, "fixture");
         assert_eq!(coordinate.triple.project, "billing");
         assert_eq!(coordinate.triple.env.as_str(), "prod");
         assert_eq!(coordinate.tenant_id, "tenant-a");
@@ -548,7 +552,7 @@ mod tests {
         assert_eq!(
             printed,
             format!(
-                "# deploy/platform/values-host-receiving-pat.yaml hostGroups[].extraArgs\n\
+                "# {HOST_CARRIER} hostGroups[].extraArgs\n\
                  --release-artifact-base=registry.example/wamn/releases\n\
                  --release-manifest-digest=sha256:{seven}\n",
                 seven = "7".repeat(64)

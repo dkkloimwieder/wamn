@@ -93,7 +93,7 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "supplier_id": {
+                "code": {
                   "type": [
                     "string",
                     "null"

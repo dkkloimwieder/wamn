@@ -1005,10 +1005,10 @@ mod tests {
     /// hand would refuse here, without a server.
     #[test]
     fn the_credential_probe_binds_the_parsed_generation_identity() {
-        const ORG: &str = "acme";
-        const PROJECT: &str = "receiving";
+        const ORG: &str = "fixture";
+        const PROJECT: &str = "widgets";
         const ENVIRONMENT: &str = "dev";
-        const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+        const DATABASE: &str = "wamn-db-fixture--widgets--dev--k3m9x2p7";
 
         let role = wamn_control_provision::management_admitter_generation_role(
             ORG,

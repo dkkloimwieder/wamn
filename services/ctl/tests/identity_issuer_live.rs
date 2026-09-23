@@ -564,8 +564,8 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
             "UPDATE identity.principals SET display_name = 'Escape'",
             "INSERT INTO identity.principals (kind,subject,display_name) VALUES ('human','escape','Escape')",
             "DELETE FROM identity.project_env_memberships",
-            "INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ('00000000-0000-0000-0000-000000000001','acme','receiving','dev')",
-            "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ('00000000-0000-0000-0000-000000000001','acme','receiving','owner')",
+            "INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','dev')",
+            "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','owner')",
         ] {
             let error = issuer
                 .batch_execute(statement)

@@ -67,7 +67,7 @@ fn cdc_plain_url(super_url: &str, role: &str) -> String {
 
 /// `host:port` (with credentials swapped out) → one role's plain URL on [`DB`].
 fn role_url(super_url: &str, role: &str, password: &str) -> String {
-    let after_scheme = super_url.strip_prefix("postgres://").expect("postgres://");
+    let (_, after_scheme) = super_url.split_once("://").expect("url has a scheme");
     let (_, host_and_path) = after_scheme.rsplit_once('@').expect("url has userinfo");
     let (host_port, _) = host_and_path.split_once('/').expect("url has a path");
     format!("postgres://{role}:{password}@{host_port}/{DB}")
@@ -473,9 +473,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .expect("schema");
     sys.batch_execute(
-        "CREATE TABLE app.receipts (id bigint PRIMARY KEY, val text, big text, note text); \
+        "CREATE TABLE app.widgets (id bigint PRIMARY KEY, val text, big text, note text); \
          CREATE TABLE app.command_record (id bigint PRIMARY KEY, command_bytes bytea NOT NULL); \
-         ALTER TABLE app.receipts ALTER COLUMN big SET STORAGE EXTERNAL",
+         ALTER TABLE app.widgets ALTER COLUMN big SET STORAGE EXTERNAL",
     )
     .await
     .expect("table");
@@ -495,13 +495,13 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("CDC exclusion map");
     sys.execute(
         &sql::upsert_entity_map_sql("app"),
-        &[&"receiving", &"receipt", &"receipts"],
+        &[&"platform_fixture", &"widget", &"widgets"],
     )
     .await
-    .expect("receipt entity mapping");
+    .expect("widget entity mapping");
     sys.execute(
         &sql::upsert_cdc_exclusion_map_sql("app"),
-        &[&"receiving", &"record_receipt_command", &"command_record"],
+        &[&"platform_fixture", &"widget_command", &"command_record"],
     )
     .await
     .expect("command record CDC exclusion");
@@ -616,7 +616,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     assert_eq!(
         sys.execute(
             "UPDATE app.wamn_entities SET table_name = table_name \
-              WHERE relation_oid = 'app.receipts'::regclass::oid",
+              WHERE relation_oid = 'app.widgets'::regclass::oid",
             &[],
         )
         .await
@@ -645,7 +645,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(
         "BEGIN; \
          INSERT INTO app.command_record VALUES (1, decode('deadbeef', 'hex')); \
-         INSERT INTO app.receipts (id, val) VALUES (1, 'v1'); \
+         INSERT INTO app.widgets (id, val) VALUES (1, 'v1'); \
          COMMIT",
     )
     .await
@@ -653,7 +653,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     expected.push((Op::Insert, "1".into()));
     for id in 2..=20i64 {
         sys.execute(
-            "INSERT INTO app.receipts (id, val) VALUES ($1, $2)",
+            "INSERT INTO app.widgets (id, val) VALUES ($1, $2)",
             &[&id, &format!("v{id}")],
         )
         .await
@@ -662,25 +662,25 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     }
     sys.batch_execute(
         "BEGIN; \
-         INSERT INTO app.receipts (id, val) VALUES (21, 'v21'); \
-         INSERT INTO app.receipts (id, val) VALUES (22, 'v22'); \
-         INSERT INTO app.receipts (id, val) VALUES (23, 'v23'); \
+         INSERT INTO app.widgets (id, val) VALUES (21, 'v21'); \
+         INSERT INTO app.widgets (id, val) VALUES (22, 'v22'); \
+         INSERT INTO app.widgets (id, val) VALUES (23, 'v23'); \
          COMMIT",
     )
     .await
     .unwrap();
     expected.extend([21, 22, 23].map(|id| (Op::Insert, id.to_string())));
-    sys.batch_execute("UPDATE app.receipts SET val = 'u5' WHERE id = 5")
+    sys.batch_execute("UPDATE app.widgets SET val = 'u5' WHERE id = 5")
         .await
         .unwrap();
     expected.push((Op::Update, "5".into()));
-    sys.batch_execute("DELETE FROM app.receipts WHERE id = 6")
+    sys.batch_execute("DELETE FROM app.widgets WHERE id = 6")
         .await
         .unwrap();
     expected.push((Op::Delete, "6".into()));
     // 22.4KB out-of-line value; the follow-up update must NOT re-ship it.
     sys.batch_execute(
-        "INSERT INTO app.receipts (id, val, big) \
+        "INSERT INTO app.widgets (id, val, big) \
          SELECT 30, 'v30', string_agg(md5(i::text), '') FROM generate_series(1, 700) i",
     )
     .await
@@ -690,7 +690,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // end_lsn (where confirmed parks) is necessarily past it, while trailing
     // non-txn WAL records keep the *after* position unreachable forever.
     let wal_a = insert_lsn(&sys).await;
-    sys.batch_execute("UPDATE app.receipts SET val = 'u30' WHERE id = 30")
+    sys.batch_execute("UPDATE app.widgets SET val = 'u30' WHERE id = 30")
         .await
         .unwrap();
     expected.push((Op::Update, "30".into()));
@@ -714,9 +714,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     for (subj, id, e) in &delivered {
         assert_eq!(subj, &subject(ORG, PROJECT, ENV, e.entity_segment(), e.op));
         assert_eq!(id, &msg_id(PROJECT, ENV, e.lsn));
-        assert_eq!(e.package_id, "receiving");
-        assert_eq!(e.entity, "receipt");
-        assert_eq!(e.table, "receipts");
+        assert_eq!(e.package_id, "platform_fixture");
+        assert_eq!(e.entity, "widget");
+        assert_eq!(e.table, "widgets");
     }
     let ids: std::collections::BTreeSet<_> = delivered.iter().map(|(_, id, _)| id).collect();
     assert_eq!(ids.len(), delivered.len(), "Nats-Msg-Ids are unique");
@@ -771,7 +771,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
             wal_c = insert_lsn(&sys).await; // before the phase's last txn
         }
         sys.execute(
-            "INSERT INTO app.receipts (id, val) VALUES ($1, $2)",
+            "INSERT INTO app.widgets (id, val) VALUES ($1, $2)",
             &[&id, &format!("v{id}")],
         )
         .await
@@ -805,7 +805,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
             wal_d = insert_lsn(&sys).await; // before the phase's last txn
         }
         sys.execute(
-            "INSERT INTO app.receipts (id, val) VALUES ($1, $2)",
+            "INSERT INTO app.widgets (id, val) VALUES ($1, $2)",
             &[&id, &format!("v{id}")],
         )
         .await
@@ -857,8 +857,8 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(
         "BEGIN; \
          SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-100\",\"root\":\"root-a\",\"depth\":0}'); \
-         INSERT INTO app.receipts (id, val) VALUES (100, 'c100'); \
-         INSERT INTO app.receipts (id, val) VALUES (101, 'c101'); \
+         INSERT INTO app.widgets (id, val) VALUES (100, 'c100'); \
+         INSERT INTO app.widgets (id, val) VALUES (101, 'c101'); \
          COMMIT",
     )
     .await
@@ -867,8 +867,8 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // This checks that buffer-per-txn stamps rows seen before the message arrived.
     sys.batch_execute(
         "BEGIN; \
-         INSERT INTO app.receipts (id, val) VALUES (102, 'c102'); \
-         INSERT INTO app.receipts (id, val) VALUES (103, 'c103'); \
+         INSERT INTO app.widgets (id, val) VALUES (102, 'c102'); \
+         INSERT INTO app.widgets (id, val) VALUES (103, 'c103'); \
          SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-200\",\"root\":\"root-b\",\"depth\":1}'); \
          COMMIT",
     )
@@ -876,7 +876,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .expect("causation txn: message before COMMIT");
     // a plain txn, no emit → causation ABSENT.
     sys.execute(
-        "INSERT INTO app.receipts (id, val) VALUES (104, 'c104')",
+        "INSERT INTO app.widgets (id, val) VALUES (104, 'c104')",
         &[],
     )
     .await
@@ -886,7 +886,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(
         "BEGIN; \
          SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-rolled\",\"root\":\"root-x\",\"depth\":9}'); \
-         INSERT INTO app.receipts (id, val) VALUES (105, 'c105'); \
+         INSERT INTO app.widgets (id, val) VALUES (105, 'c105'); \
          ROLLBACK",
     )
     .await

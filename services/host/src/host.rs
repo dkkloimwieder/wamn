@@ -1492,8 +1492,8 @@ mod tests {
             ("username", "materializer"),
             ("password", "test-password"),
             ("inbox-prefix", "_INBOX_materializer"),
-            ("stream-allow", "EVT_4_acme_9_receiving_4_prod"),
-            ("subject-allow", "evt.acme.receiving.prod.>"),
+            ("stream-allow", "EVT_7_fixture_7_widgets_4_prod"),
+            ("subject-allow", "evt.fixture.widgets.prod.>"),
         ]
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
@@ -1991,9 +1991,9 @@ mod tests {
         let cli = TestCli::try_parse_from([
             "host",
             "--org",
-            "acme",
+            "fixture",
             "--project",
-            "receiving",
+            "widgets",
             "--session-issuer",
             "https://identity.invalid",
             "--session-jwks-ca",
@@ -2003,10 +2003,10 @@ mod tests {
         ])
         .expect("complete session trust configuration");
         for database in [
-            "wamn-db-other--receiving--dev--k3m9x2p7",
-            "wamn-db-acme--other--dev--k3m9x2p7",
-            "wamn-db-acme--receiving--prod--k3m9x2p7",
-            "wamn-db-acme--receiving--dev--a1b2c3d4",
+            "wamn-db-other--widgets--dev--k3m9x2p7",
+            "wamn-db-fixture--other--dev--k3m9x2p7",
+            "wamn-db-fixture--widgets--prod--k3m9x2p7",
+            "wamn-db-fixture--widgets--dev--a1b2c3d4",
         ] {
             let error = session_verifier(
                 &cli.args,
