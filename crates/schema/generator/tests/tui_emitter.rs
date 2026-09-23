@@ -127,26 +127,26 @@ name = "warehouse-desk"
 name = "dock-screen"
 path = "src/main.rs"
 [dependencies]
-screens = { package = "wamn-generated-receiving-tui", path = "../generated/receiving-tui" }
+screens = { package = "wamn-generated-fixture-tui", path = "../generated/fixture-tui" }
 "#;
     std::fs::write(root.join("ui/Cargo.toml"), ui).unwrap();
-    let operator = read_operator(&root, "receiving").unwrap().unwrap();
+    let operator = read_operator(&root, "fixture").unwrap().unwrap();
     assert_eq!(operator.cargo_package, "warehouse-desk");
     assert_eq!(operator.binary, "dock-screen");
     assert!(read_operator(&root, "reports").unwrap().is_none());
     let inherited = ui.replace(
-        "[dependencies]\nscreens = { package = \"wamn-generated-receiving-tui\", path = \"../generated/receiving-tui\" }",
-        "[workspace.dependencies]\nscreens = { package = \"wamn-generated-receiving-tui\", path = \"../generated/receiving-tui\" }\n[dependencies]\nscreens = { workspace = true }",
+        "[dependencies]\nscreens = { package = \"wamn-generated-fixture-tui\", path = \"../generated/fixture-tui\" }",
+        "[workspace.dependencies]\nscreens = { package = \"wamn-generated-fixture-tui\", path = \"../generated/fixture-tui\" }\n[dependencies]\nscreens = { workspace = true }",
     );
     std::fs::write(root.join("ui/Cargo.toml"), inherited).unwrap();
-    assert_eq!(read_operator(&root, "receiving").unwrap(), Some(operator));
+    assert_eq!(read_operator(&root, "fixture").unwrap(), Some(operator));
 
     std::fs::write(
         root.join("ui/Cargo.toml"),
         format!("{ui}\n[[bin]]\nname = \"another-screen\"\n"),
     )
     .unwrap();
-    assert!(read_operator(&root, "receiving").is_err());
+    assert!(read_operator(&root, "fixture").is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -157,17 +157,17 @@ fn generation_resolves_an_app_workspace_before_its_native_crate_exists() {
         std::process::id()
     ));
     std::fs::create_dir_all(&root).unwrap();
-    assert!(read_tui_workspace(&root, "receiving").is_err());
+    assert!(read_tui_workspace(&root, "fixture").is_err());
     std::fs::write(
         root.join("Cargo.toml"),
         "[workspace]\nmembers = [\"generated/*\"]\n",
     )
     .unwrap();
-    let workspace = read_tui_workspace(&root, "receiving").unwrap();
+    let workspace = read_tui_workspace(&root, "fixture").unwrap();
     assert_eq!(workspace, "../..");
-    let files = emit_tui(&release(), "receiving", None, &workspace).unwrap();
+    let files = emit_tui(&release(), "fixture", None, &workspace).unwrap();
     let manifest: toml::Value =
-        toml::from_str(source(&files, "generated/receiving-tui/Cargo.toml")).unwrap();
+        toml::from_str(source(&files, "generated/fixture-tui/Cargo.toml")).unwrap();
     assert_eq!(manifest["package"]["workspace"].as_str(), Some("../.."));
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -179,15 +179,15 @@ fn declared_operator_keeps_generated_library_bytes_without_a_launcher() {
         binary: "dock-screen".to_owned(),
     };
     let ir = release();
-    let standalone = emit_tui(&ir, "receiving", None, "../../../..").unwrap();
-    let composed = emit_tui(&ir, "receiving", Some(&operator), "../../../..").unwrap();
+    let standalone = emit_tui(&ir, "fixture", None, "../../../..").unwrap();
+    let composed = emit_tui(&ir, "fixture", Some(&operator), "../../../..").unwrap();
     assert!(
         !composed
             .iter()
             .any(|file| file.path().ends_with("/src/main.rs"))
     );
     let cargo: toml::Value =
-        toml::from_str(source(&composed, "generated/receiving-tui/Cargo.toml")).unwrap();
+        toml::from_str(source(&composed, "generated/fixture-tui/Cargo.toml")).unwrap();
     assert!(cargo.get("bin").is_none());
     for file in composed.iter().filter(|file| {
         std::path::Path::new(file.path())
@@ -219,9 +219,9 @@ fn two_declared_components_render_only_their_owned_operations() {
     }
     let manifest = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
     let reports = component_contract(&ir, &manifest, "reports").unwrap();
-    let receiving = component_contract(&ir, &manifest, "fixture").unwrap();
+    let fixture = component_contract(&ir, &manifest, "fixture").unwrap();
     let reports_files = emit_tui(&reports, "reports", None, "../../../..").unwrap();
-    let receiving_files = emit_tui(&receiving, "receiving", None, "../../../..").unwrap();
+    let fixture_files = emit_tui(&fixture, "fixture", None, "../../../..").unwrap();
     let mut report_operations = reports
         .models
         .iter()
@@ -241,11 +241,11 @@ fn two_declared_components_render_only_their_owned_operations() {
     assert!(reports_lib.contains("screens::widget::query(binding.clone())"));
     assert!(reports_lib.contains("screens::widget_maker::query(binding)"));
     assert!(
-        !source(&receiving_files, "generated/receiving-tui/src/lib.rs")
+        !source(&fixture_files, "generated/fixture-tui/src/lib.rs")
             .contains("screens::widget::query")
     );
     assert_eq!(
-        receiving
+        fixture
             .models
             .iter()
             .map(|model| model.operations.len())
@@ -305,9 +305,9 @@ fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
 
 #[test]
 fn platform_replay_uses_the_served_contract() {
-    let receiving = emit_tui(&release(), "fixture", None, "../../../..").unwrap();
+    let emitted = emit_tui(&release(), "fixture", None, "../../../..").unwrap();
     let command = spec(
-        source(&receiving, "generated/fixture-tui/src/screens/widget.rs"),
+        source(&emitted, "generated/fixture-tui/src/screens/widget.rs"),
         "archive",
     );
     assert!(command.contains("replay: submission::Replay::State"));
@@ -498,7 +498,7 @@ fn platform_and_revision_inputs_come_only_from_exact_declared_paths() {
         "value.expected_row_version",
         "record_revision",
         "value.version_seen",
-        "supplier_id",
+        "stock_id",
         "value.domain_occurred_at",
         "value.transfer_id",
     ]
@@ -536,11 +536,7 @@ fn platform_and_revision_inputs_come_only_from_exact_declared_paths() {
         assert!(reserved.contains(&format!("SuppliedField {{\n            path: {path:?},")));
     }
     assert_eq!(reserved.matches("screen::SuppliedField").count(), 5);
-    for path in [
-        "supplier_id",
-        "value.domain_occurred_at",
-        "value.transfer_id",
-    ] {
+    for path in ["stock_id", "value.domain_occurred_at", "value.transfer_id"] {
         assert!(!reserved.contains(&format!("SuppliedField {{ path: {path:?},")));
     }
 }

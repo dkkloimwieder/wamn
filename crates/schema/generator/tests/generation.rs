@@ -55,14 +55,14 @@ fn strict_manifest_and_ir_references_fail_loudly() {
     );
 
     let mut mismatch = manifest();
-    mismatch["models"]["purchase_order"]["table"] = json!("missing");
+    mismatch["models"]["gadget"]["table"] = json!("missing");
     let error = run(&ir, &mismatch, &QUERY_SOURCES).unwrap_err();
     assert_eq!(error.kind(), GenerateErrorKind::UnknownRelation);
-    assert_eq!(error.object(), Some("receiving.missing"));
+    assert_eq!(error.object(), Some("inventory.missing"));
 
     let mut unknown_action = manifest();
-    unknown_action["models"]["purchase_order"]["operations"]["merge"] =
-        json!({"permission": "purchase_order.merge", "result": "one"});
+    unknown_action["models"]["gadget"]["operations"]["merge"] =
+        json!({"permission": "gadget.merge", "result": "one"});
     assert_eq!(
         run(&ir, &unknown_action, &QUERY_SOURCES)
             .unwrap_err()
@@ -75,17 +75,17 @@ fn strict_manifest_and_ir_references_fail_loudly() {
 fn custom_sql_generated_rust_symbols_are_unique_before_emission() {
     let mut row_collision = manifest();
     let mut operation = projection_operation();
-    let statement = operation["statements"]["load_purchase_order_detail"].clone();
+    let statement = operation["statements"]["load_gadget_part"].clone();
     operation["statements"] = json!({
         "foo1": statement,
         "foo_1": {
-            "path": "query/other_purchase_order_detail.sql",
+            "path": "query/other_gadget_part.sql",
             "fetch": "optional_one",
             "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
             "row": [{"name": "id", "type": "uuid", "nullable": false}]
         }
     });
-    row_collision["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    row_collision["custom_operations"]["quality.load_gadget_part"] = operation;
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&row_collision))
             .expect_err("two statements collapsed to one Rust row symbol")
@@ -109,7 +109,7 @@ fn custom_sql_generated_rust_symbols_are_unique_before_emission() {
             "row": [{"name": "id", "type": "uuid", "nullable": false}]
         }
     });
-    fixture_collision["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    fixture_collision["custom_operations"]["quality.load_gadget_part"] = operation;
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&fixture_collision))
             .expect_err("two statement parameters collapsed to one Rust fixture symbol")
@@ -127,17 +127,16 @@ fn a_custom_operation_refuses_the_page_result_class() {
     command["kind"] = json!("command");
     command["transaction"] = json!("explicit_per_input");
     command["automatic_retry"] = json!(false);
-    command["idempotent_by"] =
-        json!({"state": {"guards": {"purchase_order": "purchase_order_id"}}});
+    command["idempotent_by"] = json!({"state": {"guards": {"gadget": "gadget_id"}}});
     for (kind, mut operation) in [("projection", projection), ("command", command)] {
         let mut admitted = manifest();
-        admitted["custom_operations"]["quality.load_purchase_order_detail"] = operation.clone();
+        admitted["custom_operations"]["quality.load_gadget_part"] = operation.clone();
         validate_operation_vocabulary(&parsed_manifest(&admitted))
             .unwrap_or_else(|error| panic!("the {kind} fixture is valid with class one: {error}"));
 
         operation["result"]["class"] = json!("page");
         let mut paged = manifest();
-        paged["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+        paged["custom_operations"]["quality.load_gadget_part"] = operation;
         let refusal = run(&catalog(false), &paged, &QUERY_SOURCES)
             .expect_err("a custom operation declaring page generated");
         assert_eq!(
@@ -148,7 +147,7 @@ fn a_custom_operation_refuses_the_page_result_class() {
         assert_eq!(
             refusal.context(),
             format!(
-                "{kind} quality.load_purchase_order_detail must not declare result class page; \
+                "{kind} quality.load_gadget_part must not declare result class page; \
                  page belongs to the generated query"
             ),
         );
@@ -161,45 +160,45 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     assert_eq!(
         validate_operation_vocabulary(&single).unwrap(),
         BTreeSet::from([
-            "purchase_order.get".to_owned(),
-            "purchase_order.query".to_owned(),
-            "purchase_order.update".to_owned(),
+            "gadget.get".to_owned(),
+            "gadget.query".to_owned(),
+            "gadget.update".to_owned(),
         ])
     );
     assert!(
-        single.models["purchase_order"].operations[&CrudAction::Get]
+        single.models["gadget"].operations[&CrudAction::Get]
             .component
             .is_none()
     );
 
     let mut empty = manifest();
-    empty["models"]["purchase_order"]["operations"]["get"]["component"] = json!("");
+    empty["models"]["gadget"]["operations"]["get"]["component"] = json!("");
     let error = validate_operation_vocabulary(&parsed_manifest(&empty))
         .expect_err("an empty component name was accepted");
     assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
         error.context(),
-        "operation purchase_order.get component must not be empty"
+        "operation gadget.get component must not be empty"
     );
 
     let mut unknown = manifest();
-    unknown["models"]["purchase_order"]["operations"]["get"]["component"] = json!("missing");
+    unknown["models"]["gadget"]["operations"]["get"]["component"] = json!("missing");
     let error = validate_operation_vocabulary(&parsed_manifest(&unknown))
         .expect_err("an unknown component was accepted");
     assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
         error.context(),
-        "operation purchase_order.get references unknown component missing"
+        "operation gadget.get references unknown component missing"
     );
 
     let mut identical = manifest();
     identical["components"]["duplicate"] = json!({"connections": ["postgres"]});
     for operation in ["get", "query", "update"] {
-        identical["models"]["purchase_order"]["operations"][operation]["component"] =
+        identical["models"]["gadget"]["operations"][operation]["component"] =
             json!(if operation == "query" {
                 "duplicate"
             } else {
-                "receiving"
+                "inventory"
             });
     }
     let error = validate_operation_vocabulary(&parsed_manifest(&identical))
@@ -207,38 +206,36 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
         error.context(),
-        "components duplicate and receiving have identical requirement sets"
+        "components duplicate and inventory have identical requirement sets"
     );
 
     let mut distinct = manifest();
     distinct["connections"] = json!(["postgres", "reporting"]);
     distinct["components"]["reporting"] = json!({"connections": ["reporting"]});
-    distinct["models"]["purchase_order"]["operations"]["query"]["component"] = json!("reporting");
+    distinct["models"]["gadget"]["operations"]["query"]["component"] = json!("reporting");
     let error = validate_operation_vocabulary(&parsed_manifest(&distinct))
         .expect_err("a multi-component manifest omitted explicit operation grouping");
     assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
         error.context(),
-        "operation purchase_order.get must name a component when the manifest declares multiple components"
+        "operation gadget.get must name a component when the manifest declares multiple components"
     );
 
     for operation in ["get", "update"] {
-        distinct["models"]["purchase_order"]["operations"][operation]["component"] =
-            json!("receiving");
+        distinct["models"]["gadget"]["operations"][operation]["component"] = json!("inventory");
     }
     validate_operation_vocabulary(&parsed_manifest(&distinct))
         .expect("distinct requirement groups with explicit operation membership");
 
     let mut old_grouping = manifest();
-    old_grouping["components"]["receiving"]["operations"] = json!(["purchase_order.get"]);
+    old_grouping["components"]["inventory"]["operations"] = json!(["gadget.get"]);
     assert!(PackageManifest::from_slice(&serde_json::to_vec(&old_grouping).unwrap()).is_err());
 }
 
 #[test]
 fn shared_operation_vocabulary_refuses_permission_identity_drift() {
     let mut mismatch = manifest();
-    mismatch["models"]["purchase_order"]["operations"]["get"]["permission"] =
-        json!("purchase_order.query");
+    mismatch["models"]["gadget"]["operations"]["get"]["permission"] = json!("gadget.query");
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&mismatch))
             .expect_err("permission identity drift was accepted")
@@ -256,7 +253,7 @@ fn shared_operation_vocabulary_refuses_permission_identity_drift() {
 #[test]
 fn shared_operation_vocabulary_refuses_noncanonical_coordinates() {
     let mut package = manifest();
-    package["package"]["id"] = json!("wamn-Receiving");
+    package["package"]["id"] = json!("platform-Gadget");
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&package))
             .expect_err("noncanonical package id was accepted")
@@ -280,23 +277,19 @@ fn shared_operation_vocabulary_refuses_noncanonical_coordinates() {
 fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     let ir = catalog(false);
     let mut server_owned = manifest();
-    server_owned["models"]["purchase_order"]["operations"]["update"]["writable_fields"] =
-        json!(["status"]);
+    server_owned["models"]["gadget"]["operations"]["update"]["writable_fields"] = json!(["status"]);
     assert_eq!(
         run(&ir, &server_owned, &QUERY_SOURCES).unwrap_err().kind(),
         GenerateErrorKind::InvalidOperation
     );
 
     let package = run(&ir, &manifest(), &QUERY_SOURCES).unwrap();
-    let input = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.input.json",
-    );
+    let input = artifact_json(&package, "generated/contracts/gadget/update.input.json");
     assert_eq!(
         input["expected_row_version"],
         json!({"field": "row_version", "type": "int64", "required": true, "revision": true})
     );
-    assert_eq!(input["writable_fields"][0]["field"], "supplier_id");
+    assert_eq!(input["writable_fields"][0]["field"], "stock_id");
     assert_eq!(
         input["writable_fields"][0]["explicit_null"],
         "invalid_input"
@@ -305,7 +298,7 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
 
     let wit = std::str::from_utf8(
         package
-            .file("generated/wit/deps/wamn-receiving-purchase-order/package.wit")
+            .file("generated/wit/deps/platform-gadget-gadget/package.wit")
             .unwrap()
             .bytes(),
     )
@@ -313,23 +306,23 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     assert!(wit.contains("interface get"));
     assert!(wit.contains("interface query"));
     assert!(wit.contains("interface update"));
-    assert!(wit.contains("supplier-id: option<option<string>>"));
+    assert!(wit.contains("stock-id: option<option<string>>"));
     assert!(wit.contains("expected-row-version: s64"));
     assert!(wit.contains("observed-row-version: s64"));
     assert!(wit.contains("input: result<update-request, invalid-input-detail>"));
     for field in [
         "created-at",
         "id",
-        "purchase-order-number",
+        "part-code",
         "row-version",
         "status",
-        "supplier-id",
+        "stock-id",
     ] {
         assert!(wit.contains(&format!("    {field}:")));
     }
     let codec = std::str::from_utf8(
         package
-            .file("generated/wit/purchase_order_update_codec.rs")
+            .file("generated/wit/gadget_update_codec.rs")
             .unwrap()
             .bytes(),
     )
@@ -344,8 +337,8 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
 #[test]
 fn a_revision_carries_the_width_its_column_declares() {
     let base = catalog(false);
-    let purchase_order = table(&base, "purchase_order");
-    let columns = purchase_order
+    let gadget = table(&base, "gadget");
+    let columns = gadget
         .columns()
         .iter()
         .map(|column| {
@@ -364,23 +357,16 @@ fn a_revision_carries_the_width_its_column_declares() {
         .collect::<Vec<_>>();
     let narrow = replacing_table(
         &base,
-        rebuilt_table(
-            purchase_order,
-            columns,
-            purchase_order.constraints().to_vec(),
-        ),
+        rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
     );
     let package = run(&narrow, &manifest(), &QUERY_SOURCES).expect("an int32 revision generates");
 
-    let input = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.input.json",
-    );
+    let input = artifact_json(&package, "generated/contracts/gadget/update.input.json");
     assert_eq!(input["expected_row_version"]["type"], "int32");
 
     let wit = std::str::from_utf8(
         package
-            .file("generated/wit/deps/wamn-receiving-purchase-order/package.wit")
+            .file("generated/wit/deps/platform-gadget-gadget/package.wit")
             .unwrap()
             .bytes(),
     )
@@ -390,7 +376,7 @@ fn a_revision_carries_the_width_its_column_declares() {
 
     let codec = std::str::from_utf8(
         package
-            .file("generated/wit/purchase_order_update_codec.rs")
+            .file("generated/wit/gadget_update_codec.rs")
             .unwrap()
             .bytes(),
     )
@@ -402,7 +388,7 @@ fn a_revision_carries_the_width_its_column_declares() {
 
     // A revision of any other type is still refused, and the message names the
     // two widths an application can declare.
-    let columns = purchase_order
+    let columns = gadget
         .columns()
         .iter()
         .map(|column| {
@@ -415,11 +401,7 @@ fn a_revision_carries_the_width_its_column_declares() {
         .collect::<Vec<_>>();
     let wrong = replacing_table(
         &base,
-        rebuilt_table(
-            purchase_order,
-            columns,
-            purchase_order.constraints().to_vec(),
-        ),
+        rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
     );
     let refusal = run(&wrong, &manifest(), &QUERY_SOURCES).expect_err("a text revision generated");
     assert_eq!(refusal.kind(), GenerateErrorKind::InvalidOperation);
@@ -437,29 +419,19 @@ fn operation_identity_errors_and_constraint_names_are_closed() {
     let package_manifest = parsed_manifest(&manifest());
     assert_eq!(
         canonical_operation_prefix(&package_manifest.package).unwrap(),
-        "wamn-receiving:"
+        "platform-gadget:"
     );
     assert_eq!(
-        canonical_operation_identity(&package_manifest.package, "receiving.record_receipt")
-            .unwrap(),
-        "wamn-receiving:receiving/record-receipt@1.0.0"
+        canonical_operation_identity(&package_manifest.package, "gadget.assemble").unwrap(),
+        "platform-gadget:gadget/assemble@1.0.0"
     );
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
-    let operation = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.operation.json",
-    );
-    assert_eq!(operation["permission_token"], "purchase_order.update");
-    assert_eq!(
-        operation["grant"],
-        "wamn-receiving:purchase-order/update@1.0.0"
-    );
+    let operation = artifact_json(&package, "generated/contracts/gadget/update.operation.json");
+    assert_eq!(operation["permission_token"], "gadget.update");
+    assert_eq!(operation["grant"], "platform-gadget:gadget/update@1.0.0");
     assert_eq!(operation["automatic_retry"], false);
 
-    let errors = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.errors.json",
-    );
+    let errors = artifact_json(&package, "generated/contracts/gadget/update.errors.json");
     assert_eq!(errors["closed"], true);
     let cases = errors["cases"].as_array().unwrap();
     assert!(cases.iter().any(|case| case["literal"] == "invalid_input"));
@@ -507,17 +479,12 @@ fn generation_is_byte_stable_and_emits_both_projection_siblings() {
             .all(|pair| pair[0].path() < pair[1].path())
     );
 
-    first
-        .file("generated/native-verifier/purchase_order.rs")
-        .unwrap();
-    first.file("generated/wamn/purchase_order.rs").unwrap();
-    assert!(first.file("query/open_purchase_order.sql").is_none());
+    first.file("generated/native-verifier/gadget.rs").unwrap();
+    first.file("generated/wamn/gadget.rs").unwrap();
+    assert!(first.file("query/open_gadget.sql").is_none());
 
-    let source_map = artifact_json(&first, "generated/source-map/purchase_order.json");
-    assert_eq!(
-        source_map["relation"],
-        "catalog-ir://receiving.purchase_order"
-    );
+    let source_map = artifact_json(&first, "generated/source-map/gadget.json");
+    assert_eq!(source_map["relation"], "catalog-ir://inventory.gadget");
 }
 
 /// A result CLASS says how many rows come back, not what is in them. Every
@@ -531,11 +498,11 @@ fn generated_operations_ship_a_result_contract_with_closed_domains() {
     for action in ["get", "query", "update"] {
         let operation = artifact_json(
             &package,
-            &format!("generated/contracts/purchase_order/{action}.operation.json"),
+            &format!("generated/contracts/gadget/{action}.operation.json"),
         );
         let result = artifact_json(
             &package,
-            &format!("generated/contracts/purchase_order/{action}.result.json"),
+            &format!("generated/contracts/gadget/{action}.result.json"),
         );
         assert_eq!(
             result["class"], operation["result"],
@@ -555,17 +522,14 @@ fn generated_operations_ship_a_result_contract_with_closed_domains() {
     }
 
     assert_eq!(
-        artifact_json(
-            &package,
-            "generated/contracts/purchase_order/get.result.json"
-        ),
+        artifact_json(&package, "generated/contracts/gadget/get.result.json"),
         json!({
             "class": "one",
             "fields": [
                 {"path": "created_at", "type": "timestamptz", "nullable": false, "values": []},
                 {"path": "id", "type": "uuid", "nullable": false, "values": []},
                 {
-                    "path": "purchase_order_number",
+                    "path": "part_code",
                     "type": "text",
                     "nullable": false,
                     "values": []
@@ -577,27 +541,18 @@ fn generated_operations_ship_a_result_contract_with_closed_domains() {
                     "nullable": false,
                     "values": ["open", "complete", "cancelled"]
                 },
-                {"path": "supplier_id", "type": "uuid", "nullable": false, "values": []}
+                {"path": "stock_id", "type": "uuid", "nullable": false, "values": []}
             ]
         })
     );
 
-    let update = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.result.json",
-    );
+    let update = artifact_json(&package, "generated/contracts/gadget/update.result.json");
     assert_eq!(
         update,
-        artifact_json(
-            &package,
-            "generated/contracts/purchase_order/get.result.json"
-        ),
+        artifact_json(&package, "generated/contracts/gadget/get.result.json"),
         "a successful update returns the public model row"
     );
-    let operation = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.operation.json",
-    );
+    let operation = artifact_json(&package, "generated/contracts/gadget/update.operation.json");
     let columns = operation["statements"][0]["columns"].as_array().unwrap();
     for name in ["outcome", "observed_row_version"] {
         assert!(
@@ -612,7 +567,7 @@ fn update_returning_names_only_the_declared_model_columns() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
     let sql = std::str::from_utf8(
         package
-            .file("generated/sql/purchase_order/update.sql")
+            .file("generated/sql/gadget/update.sql")
             .unwrap()
             .bytes(),
     )
@@ -627,8 +582,8 @@ fn update_returning_names_only_the_declared_model_columns() {
     assert_eq!(
         returning,
         concat!(
-            "    model.created_at,\n    model.id,\n    model.purchase_order_number,\n",
-            "    model.row_version,\n    model.status,\n    model.supplier_id",
+            "    model.created_at,\n    model.id,\n    model.part_code,\n",
+            "    model.row_version,\n    model.status,\n    model.stock_id",
         )
     );
 }
@@ -636,10 +591,7 @@ fn update_returning_names_only_the_declared_model_columns() {
 #[test]
 fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
-    let get_contract = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/get.operation.json",
-    );
+    let get_contract = artifact_json(&package, "generated/contracts/gadget/get.operation.json");
     assert!(get_contract.get("sql_files").is_none());
     let get_statement = &get_contract["statements"][0];
     assert_eq!(get_statement["name"], "get");
@@ -657,13 +609,13 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
         json!([
             {"name": "created_at", "type": "timestamptz", "nullable": false},
             {"name": "id", "type": "uuid", "nullable": false},
-            {"name": "purchase_order_number", "type": "text", "nullable": false},
+            {"name": "part_code", "type": "text", "nullable": false},
             {"name": "row_version", "type": "int64", "nullable": false},
             {"name": "status", "type": "text", "nullable": false},
-            {"name": "supplier_id", "type": "uuid", "nullable": false}
+            {"name": "stock_id", "type": "uuid", "nullable": false}
         ])
     );
-    let source_map = artifact_json(&package, "generated/source-map/purchase_order.json");
+    let source_map = artifact_json(&package, "generated/source-map/gadget.json");
     let api = &source_map["wamn_api"];
     assert_eq!(api["statement_digest_visibility"], "crate");
     assert_eq!(
@@ -700,7 +652,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "visibility": "crate",
             "operation": "get",
             "statement_digest_constant": "GET_DIGEST",
-            "row": "PurchaseOrderRow",
+            "row": "GadgetRow",
             "fetch": "optional",
             "binds": [
                 accessor_bind(
@@ -716,14 +668,14 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
 
     for (name, digest_constant, cursor_postgres, native_cursor, wamn_cursor) in [
         (
-            "query_purchase_order_number_ascending",
+            "query_part_code_ascending",
             "QUERY_0_DIGEST",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
-            "query_purchase_order_number_descending",
+            "query_part_code_descending",
             "QUERY_1_DIGEST",
             "text",
             "Option<String>",
@@ -765,11 +717,11 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                 "visibility": "crate",
                 "operation": "query",
                 "statement_digest_constant": digest_constant,
-                "row": "PurchaseOrderRow",
+                "row": "GadgetRow",
                 "fetch": "all",
                 "binds": [
                     accessor_bind(
-                        "supplier_id_filter",
+                        "stock_id_filter",
                         "jsonb",
                         true,
                         "Option<serde_json::Value>",
@@ -803,14 +755,14 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "visibility": "crate",
             "operation": "update",
             "statement_digest_constant": "UPDATE_DIGEST",
-            "row": "PurchaseOrderUpdateRow",
+            "row": "GadgetUpdateRow",
             "fetch": "one",
             "binds": [
                 accessor_bind("id", "uuid", false, "uuid::Uuid", "wamn_postgres_statements::Uuid"),
                 accessor_bind("expected_row_version", "int8", false, "i64", "i64"),
-                accessor_bind("supplier_id_present", "boolean", false, "bool", "bool"),
+                accessor_bind("stock_id_present", "boolean", false, "bool", "bool"),
                 accessor_bind(
-                    "supplier_id_value",
+                    "stock_id_value",
                     "uuid",
                     true,
                     "Option<uuid::Uuid>",
@@ -822,39 +774,39 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
     assert_eq!(
         api["operation_rows"],
         json!([{
-            "name": "PurchaseOrderUpdateRow",
+            "name": "GadgetUpdateRow",
             "visibility": "public",
             "fields": [
                 {"name": "outcome", "type": "Option<String>"},
                 {"name": "observed_row_version", "type": "Option<i64>"},
                 {"name": "created_at", "type": "Option<wamn_postgres_statements::TimestampTz>"},
                 {"name": "id", "type": "Option<wamn_postgres_statements::Uuid>"},
-                {"name": "purchase_order_number", "type": "Option<String>"},
+                {"name": "part_code", "type": "Option<String>"},
                 {"name": "row_version", "type": "Option<i64>"},
                 {"name": "status", "type": "Option<String>"},
-                {"name": "supplier_id", "type": "Option<wamn_postgres_statements::Uuid>"}
+                {"name": "stock_id", "type": "Option<wamn_postgres_statements::Uuid>"}
             ]
         }])
     );
     assert_eq!(
         source_map["native_operation_rows"],
         json!([{
-            "name": "PurchaseOrderUpdateRow",
+            "name": "GadgetUpdateRow",
             "visibility": "public",
             "fields": [
                 {"name": "outcome", "type": "Option<String>"},
                 {"name": "observed_row_version", "type": "Option<i64>"},
                 {"name": "created_at", "type": "Option<chrono::DateTime<chrono::Utc>>"},
                 {"name": "id", "type": "Option<uuid::Uuid>"},
-                {"name": "purchase_order_number", "type": "Option<String>"},
+                {"name": "part_code", "type": "Option<String>"},
                 {"name": "row_version", "type": "Option<i64>"},
                 {"name": "status", "type": "Option<String>"},
-                {"name": "supplier_id", "type": "Option<uuid::Uuid>"}
+                {"name": "stock_id", "type": "Option<uuid::Uuid>"}
             ]
         }])
     );
 
-    assert_native_fixtures_match_wamn_api(&package, "purchase_order");
+    assert_native_fixtures_match_wamn_api(&package, "gadget");
 }
 
 #[test]
@@ -883,7 +835,7 @@ fn metadata_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
     );
     assert_eq!(
         base_metadata["required_platform_policy_contract"],
-        json!({"id": "receiving_data_access", "state": "unsatisfied"})
+        json!({"id": "gadget_data_access", "state": "unsatisfied"})
     );
     assert_eq!(
         base_metadata["promotion_state"],
@@ -897,7 +849,7 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
     let mut package_manifest = manifest();
     package_manifest["internal_relations"] = json!({
         "unused": {
-            "schema": "receiving",
+            "schema": "inventory",
             "table": "unused",
             "cdc": "excluded"
         }
@@ -910,7 +862,7 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
         .iter()
         .find(|table| table["table"] == "unused")
         .expect("the explicit exclusion is part of the schema contract");
-    assert_eq!(required["schema"], "receiving");
+    assert_eq!(required["schema"], "inventory");
     assert_eq!(required["fields"], json!([]));
     assert_eq!(required["constraints"], json!([]));
 }
@@ -979,31 +931,28 @@ fn corpus_hash_uses_sorted_unambiguous_framing() {
 fn ordered_filters_and_query_variants_remain_structural_and_finite() {
     let ir = catalog(false);
     let mut generated_manifest = manifest();
-    generated_manifest["models"]["purchase_order"]["operations"]["query"]
+    generated_manifest["models"]["gadget"]["operations"]["query"]
         .as_object_mut()
         .unwrap()
         .remove("authored_sql");
     let package = run(&ir, &generated_manifest, &[]).unwrap();
     package
-        .file("generated/sql/purchase_order/query_purchase_order_number_ascending.sql")
+        .file("generated/sql/gadget/query_part_code_ascending.sql")
         .unwrap();
     package
-        .file("generated/sql/purchase_order/query_created_at_descending.sql")
+        .file("generated/sql/gadget/query_created_at_descending.sql")
         .unwrap();
-    let input = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/query.input.json",
-    );
+    let input = artifact_json(&package, "generated/contracts/gadget/query.input.json");
     assert_eq!(
         input["filters"],
         json!([
-            {"field": "supplier_id", "binding": "json_array", "type": "uuid"},
+            {"field": "stock_id", "binding": "json_array", "type": "uuid"},
             {"field": "status", "binding": "json_array", "type": "text"}
         ])
     );
 
     let mut default_only = generated_manifest;
-    default_only["models"]["purchase_order"]["operations"]["query"]
+    default_only["models"]["gadget"]["operations"]["query"]
         .as_object_mut()
         .unwrap()
         .remove("sort");
@@ -1011,15 +960,12 @@ fn ordered_filters_and_query_variants_remain_structural_and_finite() {
     let query_paths = package
         .files()
         .iter()
-        .filter(|file| {
-            file.path()
-                .starts_with("generated/sql/purchase_order/query_")
-        })
+        .filter(|file| file.path().starts_with("generated/sql/gadget/query_"))
         .collect::<Vec<_>>();
     assert_eq!(query_paths.len(), 1);
     assert_eq!(
         query_paths[0].path(),
-        "generated/sql/purchase_order/query_created_at_ascending.sql"
+        "generated/sql/gadget/query_created_at_ascending.sql"
     );
 }
 
@@ -1027,7 +973,7 @@ fn ordered_filters_and_query_variants_remain_structural_and_finite() {
 fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
     let ir = catalog(false);
     let mut duplicate = manifest();
-    duplicate["models"]["purchase_order"]["operations"]["query"]["filters"] = json!([
+    duplicate["models"]["gadget"]["operations"]["query"]["filters"] = json!([
         {"field": "status"},
         {"field": "status"}
     ]);
@@ -1037,22 +983,19 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
     );
 
     let qualified = QUERY_SOURCES.map(|source| {
-        if source.path() == "query/open_purchase_order.sql" {
-            AuthoredSql::new(source.path(), b"SELECT * FROM receiving.purchase_order;\n")
+        if source.path() == "query/open_gadget.sql" {
+            AuthoredSql::new(source.path(), b"SELECT * FROM inventory.gadget;\n")
         } else {
             source
         }
     });
     let error = run(&ir, &manifest(), &qualified).unwrap_err();
     assert_eq!(error.kind(), GenerateErrorKind::SchemaQualifiedSql);
-    assert_eq!(error.path(), Some("query/open_purchase_order.sql"));
+    assert_eq!(error.path(), Some("query/open_gadget.sql"));
 
     let quoted = QUERY_SOURCES.map(|source| {
-        if source.path() == "query/open_purchase_order.sql" {
-            AuthoredSql::new(
-                source.path(),
-                b"SELECT * FROM \"receiving\".\"purchase_order\";\n",
-            )
+        if source.path() == "query/open_gadget.sql" {
+            AuthoredSql::new(source.path(), b"SELECT * FROM \"inventory\".\"gadget\";\n")
         } else {
             source
         }
@@ -1063,10 +1006,10 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
     );
 
     let inert = QUERY_SOURCES.map(|source| {
-        if source.path() == "query/open_purchase_order.sql" {
+        if source.path() == "query/open_gadget.sql" {
             AuthoredSql::new(
                 source.path(),
-                b"-- receiving.purchase_order\nSELECT 'receiving.purchase_order', $$\"receiving\".\"purchase_order\"$$ /* receiving.purchase_order */;\n",
+                b"-- inventory.gadget\nSELECT 'inventory.gadget', $$\"inventory\".\"gadget\"$$ /* inventory.gadget */;\n",
             )
         } else {
             source
@@ -1088,14 +1031,14 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
 // is due on the first one.
 // ---------------------------------------------------------------------------
 
-const CLAIM_TABLE: &str = "purchase_order_command";
+const CLAIM_TABLE: &str = "gadget_command";
 
 fn claim_columns() -> Vec<Column> {
     vec![
         Column::new("canonical_command", ColumnType::Bytes, false, None, None),
         Column::new("idempotency_key", ColumnType::Text, false, None, None),
         Column::new(
-            "purchase_order_id",
+            "gadget_id",
             ColumnType::Uuid,
             false,
             Some(ColumnDefault::GenRandomUuid),
@@ -1106,16 +1049,9 @@ fn claim_columns() -> Vec<Column> {
 
 fn claim_constraints() -> Vec<Constraint> {
     vec![
-        Constraint::primary_key(
-            "purchase_order_command_idempotency_key_pkey",
-            ["idempotency_key"],
-        )
-        .unwrap(),
-        Constraint::unique(
-            "purchase_order_command_purchase_order_id_key",
-            ["purchase_order_id"],
-        )
-        .unwrap(),
+        Constraint::primary_key("gadget_command_idempotency_key_pkey", ["idempotency_key"])
+            .unwrap(),
+        Constraint::unique("gadget_command_gadget_id_key", ["gadget_id"]).unwrap(),
     ]
 }
 
@@ -1124,11 +1060,11 @@ fn claim_catalog_with(model: Table, claim: Table) -> CatalogIr {
 }
 
 fn claim_catalog() -> CatalogIr {
-    let model = table(&catalog(false), "purchase_order").clone();
+    let model = table(&catalog(false), "gadget").clone();
     claim_catalog_with(
         model,
         Table::new(
-            "receiving",
+            "inventory",
             CLAIM_TABLE,
             claim_columns(),
             claim_constraints(),
@@ -1139,26 +1075,26 @@ fn claim_catalog() -> CatalogIr {
 
 fn claim_manifest() -> Value {
     let mut manifest = manifest();
-    manifest["models"]["purchase_order"]["operations"]["create"] = json!({
-        "permission": "purchase_order.create",
-        "writable_fields": ["supplier_id"],
+    manifest["models"]["gadget"]["operations"]["create"] = json!({
+        "permission": "gadget.create",
+        "writable_fields": ["stock_id"],
         "claim": {
             "table": CLAIM_TABLE,
-            "identities": {"id": "purchase_order_id"}
+            "identities": {"id": "gadget_id"}
         },
         "result": "one"
     });
     manifest["internal_relations"] = json!({
-        CLAIM_TABLE: {"schema": "receiving", "table": CLAIM_TABLE, "cdc": "excluded"}
+        CLAIM_TABLE: {"schema": "inventory", "table": CLAIM_TABLE, "cdc": "excluded"}
     });
     manifest
 }
 
-/// A non-Receiving model with create fields in each admitted presence state
+/// A second model with create fields in each admitted presence state
 /// and a revision name that is not `row_version`.
 fn inventory_item_fixture() -> (CatalogIr, Value) {
     let model = Table::new(
-        "receiving",
+        "inventory",
         "inventory_item",
         vec![
             Column::new(
@@ -1196,7 +1132,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
         Vec::new(),
     );
     let claim = Table::new(
-        "receiving",
+        "inventory",
         CLAIM_TABLE,
         claim_columns(),
         claim_constraints(),
@@ -1210,7 +1146,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
         },
         "models": {
             "inventory_item": {
-                "schema": "receiving",
+                "schema": "inventory",
                 "table": "inventory_item",
                 "owner": "wamn_inventory",
                 "server_owned_fields": ["id", "sequence_number", "created_at"],
@@ -1222,7 +1158,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                         "writable_fields": ["sku", "note", "priority"],
                         "claim": {
                             "table": CLAIM_TABLE,
-                            "identities": {"id": "purchase_order_id"}
+                            "identities": {"id": "gadget_id"}
                         },
                         "result": "one"
                     },
@@ -1241,7 +1177,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
             }
         },
         "internal_relations": {
-            CLAIM_TABLE: {"schema": "receiving", "table": CLAIM_TABLE, "cdc": "excluded"}
+            CLAIM_TABLE: {"schema": "inventory", "table": CLAIM_TABLE, "cdc": "excluded"}
         },
         "connections": ["postgres"],
         "components": {"inventory": {"connections": ["postgres"]}}
@@ -1366,7 +1302,7 @@ macro_rules! operation {{
 }
 
 #[test]
-fn typed_crud_contracts_follow_a_non_receiving_model_declaration() {
+fn typed_crud_contracts_follow_a_second_model_declaration() {
     let (catalog, manifest) = inventory_item_fixture();
     let package = run(&catalog, &manifest, &[]).expect("the inventory CRUD fixture generates");
     let input = artifact_json(
@@ -1447,7 +1383,7 @@ fn typed_crud_contracts_follow_a_non_receiving_model_declaration() {
 fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
     String::from_utf8(
         package
-            .file(&format!("generated/sql/purchase_order/{statement}.sql"))
+            .file(&format!("generated/sql/gadget/{statement}.sql"))
             .unwrap_or_else(|| panic!("{statement} was emitted"))
             .bytes()
             .to_vec(),
@@ -1469,25 +1405,25 @@ fn generated_create_takes_every_identity_from_the_claim() {
 
     assert_eq!(
         generated_create_sql(&package, "create_claim"),
-        "INSERT INTO purchase_order_command (idempotency_key, canonical_command)\n\
+        "INSERT INTO gadget_command (idempotency_key, canonical_command)\n\
          VALUES ($1::text, $2::bytea)\n\
-         ON CONFLICT ON CONSTRAINT purchase_order_command_idempotency_key_pkey DO NOTHING\n\
-         RETURNING\n    purchase_order_id;\n",
+         ON CONFLICT ON CONSTRAINT gadget_command_idempotency_key_pkey DO NOTHING\n\
+         RETURNING\n    gadget_id;\n",
     );
     assert_eq!(
         generated_create_sql(&package, "create"),
-        "INSERT INTO purchase_order (id, supplier_id)\n\
+        "INSERT INTO gadget (id, stock_id)\n\
          VALUES ($1::uuid, $2::uuid)\n\
          RETURNING\n    \
-         created_at,\n    id,\n    purchase_order_number,\n    row_version,\n    status,\n    supplier_id;\n",
+         created_at,\n    id,\n    part_code,\n    row_version,\n    status,\n    stock_id;\n",
     );
     assert_eq!(
         generated_create_sql(&package, "create_replay"),
         "SELECT\n    claim.canonical_command,\n    \
-         model.created_at,\n    model.id,\n    model.purchase_order_number,\n    \
-         model.row_version,\n    model.status,\n    model.supplier_id\n\
-         FROM purchase_order_command AS claim\n\
-         JOIN purchase_order AS model\n    ON model.id = claim.purchase_order_id\n\
+         model.created_at,\n    model.id,\n    model.part_code,\n    \
+         model.row_version,\n    model.status,\n    model.stock_id\n\
+         FROM gadget_command AS claim\n\
+         JOIN gadget AS model\n    ON model.id = claim.gadget_id\n\
          WHERE claim.idempotency_key = $1::text;\n",
     );
 }
@@ -1524,20 +1460,17 @@ fn generated_create_replay_writes_nothing() {
 fn generated_create_contracts_publish_the_claim_and_its_refusal() {
     let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
 
-    let operation = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/create.operation.json",
-    );
+    let operation = artifact_json(&package, "generated/contracts/gadget/create.operation.json");
     assert_eq!(
         operation["idempotency"],
         json!({
             "key": "idempotency_key",
             "canonical_command": "canonical_command",
             "claim": {
-                "schema": "receiving",
+                "schema": "inventory",
                 "table": CLAIM_TABLE,
-                "constraint": "purchase_order_command_idempotency_key_pkey",
-                "identities": {"id": "purchase_order_id"},
+                "constraint": "gadget_command_idempotency_key_pkey",
+                "identities": {"id": "gadget_id"},
             },
             "statements": {
                 "claim": "create_claim",
@@ -1564,7 +1497,7 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
     // The claim statement returns the minted identity, not the model row.
     assert_eq!(
         statements[0]["columns"],
-        json!([{"name": "purchase_order_id", "type": "uuid", "nullable": false}])
+        json!([{"name": "gadget_id", "type": "uuid", "nullable": false}])
     );
     assert_eq!(
         statements[0]["binds"],
@@ -1578,14 +1511,11 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
         statements[2]["binds"],
         json!([
             {"name": "id", "type": "uuid", "nullable": false},
-            {"name": "supplier_id", "type": "uuid", "nullable": false},
+            {"name": "stock_id", "type": "uuid", "nullable": false},
         ])
     );
 
-    let errors = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/create.errors.json",
-    );
+    let errors = artifact_json(&package, "generated/contracts/gadget/create.errors.json");
     let conflict = errors["cases"]
         .as_array()
         .unwrap()
@@ -1595,10 +1525,7 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
     assert_eq!(conflict["from"], json!("changed_canonical_command"));
     assert_eq!(conflict["detail"]["required"], json!(["field"]));
 
-    let input = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/create.input.json",
-    );
+    let input = artifact_json(&package, "generated/contracts/gadget/create.input.json");
     assert_eq!(
         input["idempotency_key"],
         json!({"type": "text", "required": true})
@@ -1634,7 +1561,7 @@ fn generated_create_pins_and_grants_its_claim_relation() {
             .iter()
             .map(|field| field["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["canonical_command", "idempotency_key", "purchase_order_id"]
+        ["canonical_command", "gadget_id", "idempotency_key"]
     );
     assert_eq!(
         claim["constraints"]
@@ -1644,8 +1571,8 @@ fn generated_create_pins_and_grants_its_claim_relation() {
             .map(|constraint| constraint["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "purchase_order_command_idempotency_key_pkey",
-            "purchase_order_command_purchase_order_id_key",
+            "gadget_command_gadget_id_key",
+            "gadget_command_idempotency_key_pkey",
         ]
     );
 
@@ -1654,7 +1581,7 @@ fn generated_create_pins_and_grants_its_claim_relation() {
     let granted = object_named(relations, "table", CLAIM_TABLE);
     assert_eq!(
         granted["select_fields"],
-        json!(["canonical_command", "idempotency_key", "purchase_order_id"])
+        json!(["canonical_command", "gadget_id", "idempotency_key"])
     );
     assert_eq!(
         granted["insert_fields"],
@@ -1664,8 +1591,8 @@ fn generated_create_pins_and_grants_its_claim_relation() {
     assert_eq!(granted["update_fields"], json!([]));
     assert_eq!(granted["lock"], json!(false));
     // The model insert writes the claim-minted id, so the grant must allow it.
-    let model = object_named(relations, "table", "purchase_order");
-    assert_eq!(model["insert_fields"], json!(["id", "supplier_id"]));
+    let model = object_named(relations, "table", "gadget");
+    assert_eq!(model["insert_fields"], json!(["id", "stock_id"]));
 }
 
 /// EXIT GATE: every way the claim could stop being the identity source refuses.
@@ -1677,9 +1604,9 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
     run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES)
         .expect("the unmutated claim generates");
 
-    let model = || table(&catalog(false), "purchase_order").clone();
+    let model = || table(&catalog(false), "gadget").clone();
     let claim_table = |columns, constraints| {
-        Table::new("receiving", CLAIM_TABLE, columns, constraints, Vec::new())
+        Table::new("inventory", CLAIM_TABLE, columns, constraints, Vec::new())
     };
     let without = |name: &str| {
         claim_columns()
@@ -1706,7 +1633,7 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
             claim_catalog(),
             {
                 let mut manifest = claim_manifest();
-                manifest["models"]["purchase_order"]["operations"]["create"]
+                manifest["models"]["gadget"]["operations"]["create"]
                     .as_object_mut()
                     .unwrap()
                     .remove("claim");
@@ -1719,11 +1646,11 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
             claim_catalog(),
             {
                 let mut manifest = claim_manifest();
-                manifest["models"]["purchase_order"]["operations"]["create"]["claim"]["table"] =
+                manifest["models"]["gadget"]["operations"]["create"]["claim"]["table"] =
                     json!("absent_command");
                 manifest["internal_relations"] = json!({
                     "absent_command": {
-                        "schema": "receiving", "table": "absent_command", "cdc": "excluded"
+                        "schema": "inventory", "table": "absent_command", "cdc": "excluded"
                     }
                 });
                 manifest
@@ -1746,7 +1673,7 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
                 model(),
                 claim_table(
                     replacing(Column::new(
-                        "purchase_order_id",
+                        "gadget_id",
                         ColumnType::Uuid,
                         false,
                         None,
@@ -1764,7 +1691,7 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
                 model(),
                 claim_table(
                     replacing(Column::new(
-                        "purchase_order_id",
+                        "gadget_id",
                         ColumnType::Uuid,
                         true,
                         Some(ColumnDefault::GenRandomUuid),
@@ -1784,7 +1711,7 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
                     claim_columns(),
                     vec![
                         Constraint::primary_key(
-                            "purchase_order_command_idempotency_key_pkey",
+                            "gadget_command_idempotency_key_pkey",
                             ["idempotency_key"],
                         )
                         .unwrap(),
@@ -1801,11 +1728,7 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
                 claim_table(
                     claim_columns(),
                     vec![
-                        Constraint::unique(
-                            "purchase_order_command_purchase_order_id_key",
-                            ["purchase_order_id"],
-                        )
-                        .unwrap(),
+                        Constraint::unique("gadget_command_gadget_id_key", ["gadget_id"]).unwrap(),
                     ],
                 ),
             ),
@@ -1841,7 +1764,7 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
             claim_catalog(),
             {
                 let mut manifest = claim_manifest();
-                manifest["models"]["purchase_order"]["operations"]["create"]["claim"]["identities"] =
+                manifest["models"]["gadget"]["operations"]["create"]["claim"]["identities"] =
                     json!({"id": "absent_id"});
                 manifest
             },
@@ -1852,9 +1775,9 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
             claim_catalog(),
             {
                 let mut manifest = claim_manifest();
-                manifest["models"]["purchase_order"]["operations"]["update"]["claim"] = json!({
+                manifest["models"]["gadget"]["operations"]["update"]["claim"] = json!({
                     "table": CLAIM_TABLE,
-                    "identities": {"id": "purchase_order_id"}
+                    "identities": {"id": "gadget_id"}
                 });
                 manifest
             },
@@ -1877,8 +1800,8 @@ fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
 #[test]
 fn a_model_identity_the_claim_does_not_mint_refuses() {
     let with_second_identity = rebuilt_table(
-        table(&catalog(false), "purchase_order"),
-        table(&catalog(false), "purchase_order")
+        table(&catalog(false), "gadget"),
+        table(&catalog(false), "gadget")
             .columns()
             .to_vec()
             .into_iter()
@@ -1890,12 +1813,10 @@ fn a_model_identity_the_claim_does_not_mint_refuses() {
                 None,
             )])
             .collect(),
-        table(&catalog(false), "purchase_order")
-            .constraints()
-            .to_vec(),
+        table(&catalog(false), "gadget").constraints().to_vec(),
     );
     let claim = Table::new(
-        "receiving",
+        "inventory",
         CLAIM_TABLE,
         claim_columns(),
         claim_constraints(),
@@ -1903,10 +1824,10 @@ fn a_model_identity_the_claim_does_not_mint_refuses() {
     );
     let unmapped = claim_catalog_with(with_second_identity.clone(), claim);
     let mut manifest = claim_manifest();
-    manifest["models"]["purchase_order"]["server_owned_fields"] = json!([
+    manifest["models"]["gadget"]["server_owned_fields"] = json!([
         "id",
         "external_id",
-        "purchase_order_number",
+        "part_code",
         "status",
         "row_version",
         "created_at"
@@ -1920,7 +1841,7 @@ fn a_model_identity_the_claim_does_not_mint_refuses() {
     let mapped = claim_catalog_with(
         with_second_identity,
         Table::new(
-            "receiving",
+            "inventory",
             CLAIM_TABLE,
             claim_columns()
                 .into_iter()
@@ -1934,25 +1855,23 @@ fn a_model_identity_the_claim_does_not_mint_refuses() {
                 .collect(),
             claim_constraints()
                 .into_iter()
-                .chain([Constraint::unique(
-                    "purchase_order_command_external_id_key",
-                    ["external_id"],
-                )
-                .unwrap()])
+                .chain([
+                    Constraint::unique("gadget_command_external_id_key", ["external_id"]).unwrap(),
+                ])
                 .collect(),
             Vec::new(),
         ),
     );
-    manifest["models"]["purchase_order"]["operations"]["create"]["claim"]["identities"] =
-        json!({"external_id": "external_id", "id": "purchase_order_id"});
+    manifest["models"]["gadget"]["operations"]["create"]["claim"]["identities"] =
+        json!({"external_id": "external_id", "id": "gadget_id"});
     let package = run(&mapped, &manifest, &QUERY_SOURCES).expect("both identities are claimed");
     assert_eq!(
         generated_create_sql(&package, "create"),
-        "INSERT INTO purchase_order (external_id, id, supplier_id)\n\
+        "INSERT INTO gadget (external_id, id, stock_id)\n\
          VALUES ($1::uuid, $2::uuid, $3::uuid)\n\
          RETURNING\n    \
-         created_at,\n    external_id,\n    id,\n    purchase_order_number,\n    \
-         row_version,\n    status,\n    supplier_id;\n",
+         created_at,\n    external_id,\n    id,\n    part_code,\n    \
+         row_version,\n    status,\n    stock_id;\n",
     );
 }
 
@@ -1962,7 +1881,7 @@ fn a_model_identity_the_claim_does_not_mint_refuses() {
 /// defines.
 ///
 /// The reachable constraint is reachable ONLY through its dependency columns:
-/// `supplier_id` is the single field `update` writes, and it appears in no key
+/// `stock_id` is the single field `update` writes, and it appears in no key
 /// -- it sits inside the expression key. PostgreSQL records it as a dependency
 /// of the constraint's index, which is what [`Exclusion::columns`] carries, so
 /// intersecting written fields with that set is what names the refusal. The
@@ -1971,15 +1890,15 @@ fn a_model_identity_the_claim_does_not_mint_refuses() {
 #[test]
 fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
     let base = catalog(false);
-    let purchase_order = table(&base, "purchase_order");
+    let gadget = table(&base, "gadget");
     let with_exclusions = rebuilt_table(
-        purchase_order,
-        purchase_order.columns().to_vec(),
-        purchase_order.constraints().to_vec(),
+        gadget,
+        gadget.columns().to_vec(),
+        gadget.constraints().to_vec(),
     )
     .with_exclusions(vec![
         Exclusion::new(
-            "purchase_order_supplier_window",
+            "gadget_stock_window",
             ExclusionAccessMethod::Gist,
             vec![
                 ExclusionKey::new(ExclusionElement::column("status"), "="),
@@ -1988,11 +1907,11 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
                     "&&",
                 ),
             ],
-            ["status", "created_at", "supplier_id"],
+            ["status", "created_at", "stock_id"],
         )
         .unwrap(),
         Exclusion::new(
-            "purchase_order_untouched_window",
+            "gadget_untouched_window",
             ExclusionAccessMethod::Gist,
             vec![ExclusionKey::new(ExclusionElement::column("status"), "=")],
             ["status", "created_at"],
@@ -2003,10 +1922,7 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
 
     let manifest = manifest();
     let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
-    let errors = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.errors.json",
-    );
+    let errors = artifact_json(&package, "generated/contracts/gadget/update.errors.json");
     assert_eq!(errors["closed"], json!(true));
     let named = errors["cases"]
         .as_array()
@@ -2020,7 +1936,7 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
         vec![json!({
             "literal": "exclusion_violation",
             "from": "exclusion_violation",
-            "constraint": "purchase_order_supplier_window",
+            "constraint": "gadget_stock_window",
             "detail": {"required": ["constraint"]}
         })],
         "the reachable exclusion is named once, in the same case shape a unique \
@@ -2032,13 +1948,13 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
 // Record history, level 1: the audit_log declaration (spec section 2, test 6).
 // ---------------------------------------------------------------------------
 
-/// The support catalog, with each named column added to `purchase_order`.
+/// The support catalog, with each named column added to `gadget`.
 fn catalog_with_columns(columns: &[(&str, ColumnType, bool)]) -> CatalogIr {
     let base = catalog(false);
-    let purchase_order = table(&base, "purchase_order");
+    let gadget = table(&base, "gadget");
     let stamped = rebuilt_table(
-        purchase_order,
-        purchase_order
+        gadget,
+        gadget
             .columns()
             .iter()
             .cloned()
@@ -2048,7 +1964,7 @@ fn catalog_with_columns(columns: &[(&str, ColumnType, bool)]) -> CatalogIr {
                     .map(|(name, ty, nullable)| Column::new(*name, *ty, *nullable, None, None)),
             )
             .collect(),
-        purchase_order.constraints().to_vec(),
+        gadget.constraints().to_vec(),
     );
     replacing_table(&base, stamped)
 }
@@ -2063,8 +1979,7 @@ fn all_stamps_catalog() -> CatalogIr {
 
 fn with_audit_log(columns: &Value, retention: &str) -> Value {
     let mut manifest = manifest();
-    manifest["models"]["purchase_order"]["audit_log"] =
-        json!({"columns": columns, "retention": retention});
+    manifest["models"]["gadget"]["audit_log"] = json!({"columns": columns, "retention": retention});
     manifest
 }
 
@@ -2075,17 +1990,17 @@ fn all_stamps_manifest() -> Value {
     )
 }
 
-/// A package that overlays the `wamn_receiving` purchase order.
+/// A package that overlays the `platform_gadget` purchase order.
 fn overlay_manifest() -> Value {
     let mut manifest = manifest();
-    manifest["package"]["id"] = json!("acme_receiving");
-    manifest["base_dependencies"] = json!({"base_receiving": {
-        "package": "wamn_receiving",
+    manifest["package"]["id"] = json!("acme_inventory");
+    manifest["base_dependencies"] = json!({"base_inventory": {
+        "package": "platform_gadget",
         "version": "1.0.0",
         "digest": format!("sha256:{}", "a".repeat(64)),
-        "operations": ["purchase_order.get"]
+        "operations": ["gadget.get"]
     }});
-    manifest["models"]["purchase_order"]
+    manifest["models"]["gadget"]
         .as_object_mut()
         .unwrap()
         .remove("audit_log");
@@ -2098,7 +2013,7 @@ fn overlay_manifest() -> Value {
 /// belongs in the set.
 fn delete_operation() -> Value {
     json!({
-        "permission": "purchase_order.delete",
+        "permission": "gadget.delete",
 
         "revision_field": "row_version",
         "result": "one"
@@ -2107,8 +2022,8 @@ fn delete_operation() -> Value {
 
 fn deleting_manifest(mode: &str) -> Value {
     let mut manifest = manifest();
-    manifest["models"]["purchase_order"]["delete_mode"] = json!(mode);
-    manifest["models"]["purchase_order"]["operations"]["delete"] = delete_operation();
+    manifest["models"]["gadget"]["delete_mode"] = json!(mode);
+    manifest["models"]["gadget"]["operations"]["delete"] = delete_operation();
     manifest
 }
 
@@ -2129,10 +2044,7 @@ fn statement(package: &wamn_schema_generator::GeneratedPackage, path: &str) -> S
 fn generated_delete_result_declares_only_the_successful_sql_outcome() {
     for (mode, catalog) in [("hard", catalog(false)), ("tombstone", tombstone_catalog())] {
         let package = run(&catalog, &deleting_manifest(mode), &QUERY_SOURCES).unwrap();
-        let result = artifact_json(
-            &package,
-            "generated/contracts/purchase_order/delete.result.json",
-        );
+        let result = artifact_json(&package, "generated/contracts/gadget/delete.result.json");
         let outcome = result["fields"]
             .as_array()
             .unwrap()
@@ -2140,7 +2052,7 @@ fn generated_delete_result_declares_only_the_successful_sql_outcome() {
             .find(|field| field["path"] == "outcome")
             .expect("delete outcome field");
         assert_eq!(outcome["values"], json!(["deleted"]));
-        let sql = statement(&package, "generated/sql/purchase_order/delete.sql");
+        let sql = statement(&package, "generated/sql/gadget/delete.sql");
         assert!(sql.contains("ELSE 'deleted'"), "{mode}: {sql}");
         assert!(sql.contains("THEN 'not_found'"), "{mode}: {sql}");
         assert!(sql.contains("THEN 'concurrency_conflict'"), "{mode}: {sql}");
@@ -2153,15 +2065,12 @@ fn generated_delete_result_declares_only_the_successful_sql_outcome() {
 fn a_hard_delete_removes_the_row_and_a_tombstone_marks_it() {
     let hard = run(&catalog(false), &deleting_manifest("hard"), &QUERY_SOURCES)
         .expect("a hard delete generates");
-    let removal = statement(&hard, "generated/sql/purchase_order/delete.sql");
-    assert!(
-        removal.contains("DELETE FROM purchase_order AS model"),
-        "{removal}"
-    );
+    let removal = statement(&hard, "generated/sql/gadget/delete.sql");
+    assert!(removal.contains("DELETE FROM gadget AS model"), "{removal}");
     assert!(!removal.contains("deleted_at"), "{removal}");
     assert!(removal.contains("ELSE 'deleted'"), "{removal}");
     assert!(
-        !statement(&hard, "generated/sql/purchase_order/get.sql").contains("deleted_at"),
+        !statement(&hard, "generated/sql/gadget/get.sql").contains("deleted_at"),
         "a hard delete adds no predicate to a read"
     );
 
@@ -2171,11 +2080,8 @@ fn a_hard_delete_removes_the_row_and_a_tombstone_marks_it() {
         &QUERY_SOURCES,
     )
     .expect("a tombstone delete generates");
-    let marking = statement(&soft, "generated/sql/purchase_order/delete.sql");
-    assert!(
-        marking.contains("UPDATE purchase_order AS model"),
-        "{marking}"
-    );
+    let marking = statement(&soft, "generated/sql/gadget/delete.sql");
+    assert!(marking.contains("UPDATE gadget AS model"), "{marking}");
     assert!(
         marking.contains("deleted_at = transaction_timestamp()"),
         "{marking}"
@@ -2186,8 +2092,8 @@ fn a_hard_delete_removes_the_row_and_a_tombstone_marks_it() {
     );
     assert!(!marking.contains("DELETE FROM"), "{marking}");
     for path in [
-        "generated/sql/purchase_order/get.sql",
-        "generated/sql/purchase_order/update.sql",
+        "generated/sql/gadget/get.sql",
+        "generated/sql/gadget/update.sql",
     ] {
         assert!(
             statement(&soft, path).contains("deleted_at IS NULL"),
@@ -2200,21 +2106,20 @@ fn a_hard_delete_removes_the_row_and_a_tombstone_marks_it() {
 #[test]
 fn authored_sql_deletes_only_from_a_hard_delete_model() {
     let authored = AuthoredSql::new(
-        "query/quality_purchase_order_detail.sql",
-        b"WITH removed AS (DELETE FROM purchase_order WHERE id = $1 AND row_version = $2 RETURNING id) SELECT removed.id FROM removed;",
+        "query/quality_gadget_part.sql",
+        b"WITH removed AS (DELETE FROM gadget WHERE id = $1 AND row_version = $2 RETURNING id) SELECT removed.id FROM removed;",
     );
     let mut operation = projection_operation();
     operation["kind"] = json!("command");
     operation["transaction"] = json!("explicit_per_input");
     operation["automatic_retry"] = json!(false);
-    operation["idempotent_by"] =
-        json!({"state": {"guards": {"purchase_order": "expected_row_version"}}});
+    operation["idempotent_by"] = json!({"state": {"guards": {"gadget": "expected_row_version"}}});
     let revision = json!({"path": "expected_row_version", "type": "int64", "nullable": false});
     operation["input"]["fields"]
         .as_array_mut()
         .unwrap()
         .push(revision);
-    operation["statements"]["load_purchase_order_detail"]["parameters"]
+    operation["statements"]["load_gadget_part"]["parameters"]
         .as_array_mut()
         .unwrap()
         .push(json!({"name": "expected_row_version", "type": "int64", "nullable": false}));
@@ -2225,8 +2130,7 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
 
     let generate = |manifest: &Value, catalog: &CatalogIr, operation: &Value| {
         let mut with_operation = manifest.clone();
-        with_operation["custom_operations"]["quality.load_purchase_order_detail"] =
-            operation.clone();
+        with_operation["custom_operations"]["quality.load_gadget_part"] = operation.clone();
         run(catalog, &with_operation, &sources)
     };
     generate(&deleting_manifest("hard"), &catalog(false), &operation)
@@ -2274,11 +2178,11 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
     // A delete with no column reads still declares relation access.
     operation["relations"][0]["select_fields"] = json!([]);
     let mut delete_only = deleting_manifest("hard");
-    delete_only["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    delete_only["custom_operations"]["quality.load_gadget_part"] = operation;
     sources.pop();
     sources.push(AuthoredSql::new(
-        "query/quality_purchase_order_detail.sql",
-        b"WITH removed AS (DELETE FROM purchase_order) SELECT $1::uuid AS id;",
+        "query/quality_gadget_part.sql",
+        b"WITH removed AS (DELETE FROM gadget) SELECT $1::uuid AS id;",
     ));
     run(&catalog(false), &delete_only, &sources).expect("delete alone is nonempty relation access");
 }
@@ -2286,7 +2190,7 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
 #[test]
 fn a_delete_mode_travels_with_its_delete_and_its_marker_columns() {
     let mut mode_without_delete = manifest();
-    mode_without_delete["models"]["purchase_order"]["delete_mode"] = json!("hard");
+    mode_without_delete["models"]["gadget"]["delete_mode"] = json!("hard");
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&mode_without_delete))
             .expect_err("a delete_mode with no delete action")
@@ -2295,7 +2199,7 @@ fn a_delete_mode_travels_with_its_delete_and_its_marker_columns() {
     );
 
     let mut overlay = overlay_manifest();
-    overlay["models"]["purchase_order"]["delete_mode"] = json!("tombstone");
+    overlay["models"]["gadget"]["delete_mode"] = json!("tombstone");
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&overlay))
             .expect_err("an overlay that declares a delete_mode")
@@ -2318,7 +2222,7 @@ fn a_delete_mode_travels_with_its_delete_and_its_marker_columns() {
             .expect_err(marker)
             .to_string(),
             format!(
-                "InvalidModel: purchase_order carries reserved column {marker} without a tombstone delete"
+                "InvalidModel: gadget carries reserved column {marker} without a tombstone delete"
             ),
             "{marker}"
         );
@@ -2333,15 +2237,12 @@ fn selected_stamp_columns_become_server_owned() {
         &QUERY_SOURCES,
     )
     .expect("a declaration that selects four valid columns generates");
-    let input = artifact_json(
-        &package,
-        "generated/contracts/purchase_order/update.input.json",
-    );
+    let input = artifact_json(&package, "generated/contracts/gadget/update.input.json");
     assert_eq!(
         input["server_owned_fields"]["fields"],
         json!([
             "id",
-            "purchase_order_number",
+            "part_code",
             "status",
             "row_version",
             "created_at",
@@ -2353,15 +2254,12 @@ fn selected_stamp_columns_become_server_owned() {
     // An overlay declares nothing, and the base stamp columns are server-owned.
     let overlay = run(&all_stamps_catalog(), &overlay_manifest(), &QUERY_SOURCES)
         .expect("an overlay inherits the owner's declaration");
-    let input = artifact_json(
-        &overlay,
-        "generated/contracts/purchase_order/update.input.json",
-    );
+    let input = artifact_json(&overlay, "generated/contracts/gadget/update.input.json");
     assert_eq!(
         input["server_owned_fields"]["fields"],
         json!([
             "id",
-            "purchase_order_number",
+            "part_code",
             "status",
             "row_version",
             "created_at",
@@ -2376,13 +2274,12 @@ fn selected_stamp_columns_become_server_owned() {
 #[test]
 fn audit_log_shape_refuses_without_a_catalog() {
     let mut missing = manifest();
-    missing["models"]["purchase_order"]
+    missing["models"]["gadget"]
         .as_object_mut()
         .unwrap()
         .remove("audit_log");
     let mut on_overlay = overlay_manifest();
-    on_overlay["models"]["purchase_order"]["audit_log"] =
-        json!({"columns": [], "retention": "none"});
+    on_overlay["models"]["gadget"]["audit_log"] = json!({"columns": [], "retention": "none"});
     let cases = [
         ("a relation-owning model without the key", missing),
         ("an overlay model with the key", on_overlay),
@@ -2439,8 +2336,7 @@ fn audit_log_shape_refuses_without_a_catalog() {
 fn audit_log_columns_refuse_against_the_catalog() {
     let timestamps_only = with_audit_log(&json!(["created_at", "updated_at"]), "none");
     let mut overlay_added = overlay_manifest();
-    overlay_added["models"]["purchase_order"]["field_owners"] =
-        json!({"updated_by": "acme_receiving"});
+    overlay_added["models"]["gadget"]["field_owners"] = json!({"updated_by": "acme_inventory"});
     let cases = [
         (
             "an absent selected column",
@@ -2490,13 +2386,13 @@ fn audit_log_columns_refuse_against_the_catalog() {
             .unwrap_or_else(|error| panic!("{label} is a catalog defect: {error:?}"));
         let refusal = run(&catalog, &manifest, &QUERY_SOURCES).expect_err(label);
         assert_eq!(refusal.kind(), GenerateErrorKind::InvalidModel, "{label}");
-        let object = format!("receiving.purchase_order.{column}");
+        let object = format!("inventory.gadget.{column}");
         assert_eq!(refusal.object(), Some(object.as_str()), "{label}");
     }
 
     let mut writable = all_stamps_manifest();
-    writable["models"]["purchase_order"]["operations"]["update"]["writable_fields"] =
-        json!(["supplier_id", "updated_by"]);
+    writable["models"]["gadget"]["operations"]["update"]["writable_fields"] =
+        json!(["stock_id", "updated_by"]);
     assert_eq!(
         run(&all_stamps_catalog(), &writable, &QUERY_SOURCES)
             .expect_err("a selected column declared writable refuses")
@@ -2596,18 +2492,18 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
             .as_array()
             .unwrap()
             .iter()
-            .all(|relation| relation["table"] != "purchase_order_history")
+            .all(|relation| relation["table"] != "gadget_history")
     );
     let overlay = artifact_json(&logged, DATA_ACCESS_OVERLAY_PATH);
     assert_eq!(
         object_named(
             overlay["relations"].as_array().unwrap(),
             "table",
-            "purchase_order_history"
+            "gadget_history"
         ),
         &json!({
-            "schema": "receiving",
-            "table": "purchase_order_history",
+            "schema": "inventory",
+            "table": "gadget_history",
             "all_fields": [
                 "after", "before", "changed_at", "changed_by", "kind", "operation", "position",
                 "row_key", "transaction_id"
@@ -2628,17 +2524,17 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
 fn a_custom_operation_reads_a_history_table() {
     let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
     let mut operation = projection_operation();
-    operation["relations"][0]["table"] = json!("purchase_order_history");
+    operation["relations"][0]["table"] = json!("gadget_history");
     operation["relations"][0]["select_fields"] = json!(["changed_by", "kind"]);
-    operation["statements"]["load_purchase_order_detail"]["row"] =
+    operation["statements"]["load_gadget_part"]["row"] =
         json!([{"name": "changed_by", "type": "uuid", "nullable": false}]);
     operation["result"]["fields"] =
         json!([{"path": "changed_by", "type": "uuid", "nullable": false}]);
-    manifest["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    manifest["custom_operations"]["quality.load_gadget_part"] = operation;
     let mut sources = QUERY_SOURCES.to_vec();
     sources.push(AuthoredSql::new(
-        "query/quality_purchase_order_detail.sql",
-        b"SELECT changed_by FROM purchase_order_history WHERE kind = $1;\n",
+        "query/quality_gadget_part.sql",
+        b"SELECT changed_by FROM gadget_history WHERE kind = $1;\n",
     ));
 
     let package = run(&all_stamps_catalog(), &manifest, &sources)
@@ -2647,7 +2543,7 @@ fn a_custom_operation_reads_a_history_table() {
     let history = object_named(
         overlay["relations"].as_array().unwrap(),
         "table",
-        "purchase_order_history",
+        "gadget_history",
     );
     assert_eq!(history["select_fields"], json!(["changed_by", "kind"]));
     assert_eq!(history["update_fields"], json!([]));
@@ -2668,31 +2564,31 @@ fn a_custom_operation_reads_a_history_table() {
 #[test]
 fn history_names_are_reserved_and_fit_in_a_postgres_name() {
     let mut model_table = all_stamps_manifest();
-    model_table["models"]["purchase_order"]["table"] = json!("purchase_order_history");
+    model_table["models"]["gadget"]["table"] = json!("gadget_history");
     let mut internal_table = manifest();
     internal_table["internal_relations"] =
-        json!({"command": {"schema": "receiving", "table": "command_history", "cdc": "excluded"}});
+        json!({"command": {"schema": "inventory", "table": "command_history", "cdc": "excluded"}});
     let mut internal_id = manifest();
     internal_id["internal_relations"] =
-        json!({"command_history": {"schema": "receiving", "table": "command", "cdc": "excluded"}});
+        json!({"command_history": {"schema": "inventory", "table": "command", "cdc": "excluded"}});
     let mut cases = vec![
         (
             "a model table",
             model_table,
             GenerateErrorKind::InvalidManifest,
-            "receiving.purchase_order_history",
+            "inventory.gadget_history",
         ),
         (
             "an internal relation table",
             internal_table,
             GenerateErrorKind::InvalidManifest,
-            "receiving.command_history",
+            "inventory.command_history",
         ),
         (
             "an internal relation id",
             internal_id,
             GenerateErrorKind::InvalidManifest,
-            "receiving.command",
+            "inventory.command",
         ),
     ];
     for (label, insert, update, lock, delete) in [
@@ -2715,7 +2611,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
     ] {
         let mut writes = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
         // An event handler can write, so the refusal is the history reservation.
-        writes["custom_operations"]["purchase_order.record_history"] = json!({
+        writes["custom_operations"]["gadget.record_history"] = json!({
             "kind": "event_handler",
             "visibility": "private",
             "connection": "postgres",
@@ -2723,8 +2619,8 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
             "errors": ["invalid_input", "retry", "timeout", "internal_error"],
 
             "relations": [{
-                "schema": "receiving",
-                "table": "purchase_order_history",
+                "schema": "inventory",
+                "table": "gadget_history",
                 "select_fields": [],
                 "insert_fields": insert,
                 "update_fields": update,
@@ -2741,8 +2637,8 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
                 }
             },
             "registration": {
-                "source_package": "wamn_receiving",
-                "entity": "purchase_order",
+                "source_package": "platform_gadget",
+                "entity": "gadget",
                 "ops": ["insert"]
             }
         });
@@ -2750,13 +2646,13 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
             label,
             writes,
             GenerateErrorKind::InvalidOperation,
-            "receiving.purchase_order_history",
+            "inventory.gadget_history",
         ));
     }
     let long_relation = "r".repeat(32);
     let mut overlong = with_audit_log(&json!([]), "P30D");
-    overlong["models"]["purchase_order"]["table"] = json!(long_relation);
-    let long_object = format!("receiving.{long_relation}");
+    overlong["models"]["gadget"]["table"] = json!(long_relation);
+    let long_object = format!("inventory.{long_relation}");
     cases.push((
         "a logged relation of 32 bytes",
         overlong,
@@ -2777,11 +2673,11 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
     }
 
     let mut fits = with_audit_log(&json!([]), "P30D");
-    fits["models"]["purchase_order"]["table"] = json!("r".repeat(31));
+    fits["models"]["gadget"]["table"] = json!("r".repeat(31));
     validate_operation_vocabulary(&parsed_manifest(&fits))
         .expect("a logged relation of 31 bytes fits its history names");
     let mut unlogged_long = with_audit_log(&json!([]), "none");
-    unlogged_long["models"]["purchase_order"]["table"] = json!("r".repeat(32));
+    unlogged_long["models"]["gadget"]["table"] = json!("r".repeat(32));
     validate_operation_vocabulary(&parsed_manifest(&unlogged_long))
         .expect("a relation that keeps no log derives no history name");
 }
@@ -2791,23 +2687,23 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
 fn a_logged_relation_needs_a_primary_key() {
     let logged = with_audit_log(&json!(ALL_STAMP_COLUMNS), "P30D");
     let stamped = all_stamps_catalog();
-    let purchase_order = table(&stamped, "purchase_order");
+    let gadget = table(&stamped, "gadget");
     let keyless = replacing_table(
         &stamped,
         rebuilt_table(
-            purchase_order,
-            purchase_order.columns().to_vec(),
-            purchase_order
+            gadget,
+            gadget.columns().to_vec(),
+            gadget
                 .constraints()
                 .iter()
-                .filter(|constraint| constraint.name() != "purchase_order_id_pkey")
+                .filter(|constraint| constraint.name() != "gadget_id_pkey")
                 .cloned()
                 .collect(),
         ),
     );
     let refusal = run(&keyless, &logged, &QUERY_SOURCES).expect_err("a keyless logged relation");
     assert_eq!(refusal.kind(), GenerateErrorKind::InvalidModel);
-    assert_eq!(refusal.object(), Some("receiving.purchase_order"));
+    assert_eq!(refusal.object(), Some("inventory.gadget"));
 }
 
 #[test]
@@ -2832,13 +2728,13 @@ fn package_id_wamn_is_reserved_for_the_platform() {
 #[test]
 fn generated_update_keeps_the_revision_on_a_true_no_op() {
     let mut manifest = manifest();
-    manifest["models"]["purchase_order"]["operations"]["update"]["writable_fields"] =
-        json!(["supplier_id", "note"]);
+    manifest["models"]["gadget"]["operations"]["update"]["writable_fields"] =
+        json!(["stock_id", "note"]);
     let catalog = catalog_with_columns(&[("note", ColumnType::Text, true)]);
     let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
     let sql = std::str::from_utf8(
         package
-            .file("generated/sql/purchase_order/update.sql")
+            .file("generated/sql/gadget/update.sql")
             .unwrap()
             .bytes(),
     )
@@ -2853,10 +2749,10 @@ fn generated_update_keeps_the_revision_on_a_true_no_op() {
     assert_eq!(
         set,
         concat!(
-            "        supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,\n",
+            "        stock_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.stock_id END,\n",
             "        note = CASE WHEN $5::boolean THEN $6::text ELSE model.note END,\n",
             "        row_version = CASE\n",
-            "            WHEN ($3::boolean AND $4::uuid::text IS DISTINCT FROM model.supplier_id::text)\n",
+            "            WHEN ($3::boolean AND $4::uuid::text IS DISTINCT FROM model.stock_id::text)\n",
             "            OR ($5::boolean AND $6::text::text IS DISTINCT FROM model.note::text)\n",
             "            THEN model.row_version + 1\n",
             "            ELSE model.row_version\n",
@@ -2869,14 +2765,14 @@ fn generated_update_keeps_the_revision_on_a_true_no_op() {
 #[test]
 fn generated_update_counts_a_numeric_scale_only_change() {
     let mut manifest = manifest();
-    manifest["models"]["purchase_order"]["operations"]["update"]["writable_fields"] =
+    manifest["models"]["gadget"]["operations"]["update"]["writable_fields"] =
         json!(["received_quantity"]);
     let catalog = catalog_with_columns(&[("received_quantity", ColumnType::Numeric, false)]);
     let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
     assert_eq!(
         std::str::from_utf8(
             package
-                .file("generated/sql/purchase_order/update.sql")
+                .file("generated/sql/gadget/update.sql")
                 .unwrap()
                 .bytes(),
         )
@@ -2884,12 +2780,12 @@ fn generated_update_counts_a_numeric_scale_only_change() {
         concat!(
             "WITH target AS MATERIALIZED (\n",
             "    SELECT id, row_version\n",
-            "    FROM purchase_order\n",
+            "    FROM gadget\n",
             "    WHERE id = $1::uuid\n",
             "    FOR UPDATE\n",
             "),\n",
             "updated AS (\n",
-            "    UPDATE purchase_order AS model\n",
+            "    UPDATE gadget AS model\n",
             "    SET\n",
             "        received_quantity = CASE WHEN $3::boolean THEN $4::numeric ELSE model.received_quantity END,\n",
             "        row_version = CASE\n",
@@ -2903,11 +2799,11 @@ fn generated_update_counts_a_numeric_scale_only_change() {
             "    RETURNING\n",
             "    model.created_at,\n",
             "    model.id,\n",
-            "    model.purchase_order_number,\n",
+            "    model.part_code,\n",
             "    model.received_quantity,\n",
             "    model.row_version,\n",
             "    model.status,\n",
-            "    model.supplier_id\n",
+            "    model.stock_id\n",
             ")\n",
             "SELECT\n",
             "    CASE\n",
@@ -2918,11 +2814,11 @@ fn generated_update_counts_a_numeric_scale_only_change() {
             "    (SELECT target.row_version FROM target) AS observed_row_version,\n",
             "    updated.created_at,\n",
             "    updated.id,\n",
-            "    updated.purchase_order_number,\n",
+            "    updated.part_code,\n",
             "    updated.received_quantity,\n",
             "    updated.row_version,\n",
             "    updated.status,\n",
-            "    updated.supplier_id\n",
+            "    updated.stock_id\n",
             "FROM (SELECT 1) AS singleton\n",
             "LEFT JOIN updated ON TRUE;\n",
         )

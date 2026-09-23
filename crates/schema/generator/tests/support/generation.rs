@@ -10,35 +10,35 @@ use wamn_schema_introspection::ir::{
 
 pub(super) const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
     AuthoredSql::new(
-        "query/open_purchase_order_by_purchase_order_number_ascending.sql",
-        b"SELECT 1 /* purchase_order_number ascending */;\n",
+        "query/open_gadget_by_part_code_ascending.sql",
+        b"SELECT 1 /* part_code ascending */;\n",
     ),
     AuthoredSql::new(
-        "query/open_purchase_order_by_purchase_order_number_descending.sql",
-        b"SELECT 1 /* purchase_order_number descending */;\n",
+        "query/open_gadget_by_part_code_descending.sql",
+        b"SELECT 1 /* part_code descending */;\n",
     ),
     AuthoredSql::new(
-        "query/open_purchase_order_by_status_ascending.sql",
+        "query/open_gadget_by_status_ascending.sql",
         b"SELECT 1 /* status ascending */;\n",
     ),
     AuthoredSql::new(
-        "query/open_purchase_order_by_status_descending.sql",
+        "query/open_gadget_by_status_descending.sql",
         b"SELECT 1 /* status descending */;\n",
     ),
     AuthoredSql::new(
-        "query/open_purchase_order.sql",
+        "query/open_gadget.sql",
         b"SELECT 1 /* created_at ascending */;\n",
     ),
     AuthoredSql::new(
-        "query/open_purchase_order_by_created_at_descending.sql",
+        "query/open_gadget_by_created_at_descending.sql",
         b"SELECT 1 /* created_at descending */;\n",
     ),
 ];
 
 pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
-    let purchase_order = Table::new(
-        "receiving",
-        "purchase_order",
+    let gadget = Table::new(
+        "inventory",
+        "gadget",
         vec![
             Column::new(
                 "id",
@@ -47,8 +47,8 @@ pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("purchase_order_number", ColumnType::Text, false, None, None),
-            Column::new("supplier_id", ColumnType::Uuid, false, None, None),
+            Column::new("part_code", ColumnType::Text, false, None, None),
+            Column::new("stock_id", ColumnType::Uuid, false, None, None),
             Column::new(
                 "status",
                 ColumnType::Text,
@@ -72,24 +72,20 @@ pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
             ),
         ],
         vec![
-            Constraint::primary_key("purchase_order_id_pkey", ["id"]).unwrap(),
-            Constraint::unique(
-                "purchase_order_purchase_order_number_key",
-                ["purchase_order_number"],
-            )
-            .unwrap(),
+            Constraint::primary_key("gadget_id_pkey", ["id"]).unwrap(),
+            Constraint::unique("gadget_part_code_key", ["part_code"]).unwrap(),
             Constraint::check(
-                "purchase_order_status_check",
+                "gadget_status_check",
                 "status = ANY (ARRAY['open'::text, 'complete'::text, 'cancelled'::text])",
             )
             .unwrap(),
         ],
         Vec::new(),
     );
-    let mut tables = vec![purchase_order];
+    let mut tables = vec![gadget];
     if add_unused_table {
         tables.push(Table::new(
-            "receiving",
+            "inventory",
             "unused",
             vec![Column::new("id", ColumnType::Uuid, false, None, None)],
             vec![Constraint::primary_key("unused_id_pkey", ["id"]).unwrap()],
@@ -103,12 +99,12 @@ pub(super) fn projection_operation() -> Value {
     json!({
         "kind": "projection",
         "visibility": "public",
-        "permission": "quality.load_purchase_order_detail",
+        "permission": "quality.load_gadget_part",
         "connection": "postgres",
         "input": {
             "fields": [
                 {"path": "request_id", "type": "text", "nullable": false},
-                {"path": "purchase_order_id", "type": "uuid", "nullable": false}
+                {"path": "gadget_id", "type": "uuid", "nullable": false}
             ]
         },
         "result": {
@@ -121,8 +117,8 @@ pub(super) fn projection_operation() -> Value {
         ],
 
         "relations": [{
-            "schema": "receiving",
-            "table": "purchase_order",
+            "schema": "inventory",
+            "table": "gadget",
             "select_fields": ["id"],
             "insert_fields": [],
             "update_fields": [],
@@ -130,11 +126,11 @@ pub(super) fn projection_operation() -> Value {
             "constraints": []
         }],
         "statements": {
-            "load_purchase_order_detail": {
-                "path": "query/quality_purchase_order_detail.sql",
+            "load_gadget_part": {
+                "path": "query/quality_gadget_part.sql",
                 "fetch": "optional_one",
                 "parameters": [
-                    {"name": "purchase_order_id", "type": "uuid", "nullable": false}
+                    {"name": "gadget_id", "type": "uuid", "nullable": false}
                 ],
                 "row": [{"name": "id", "type": "uuid", "nullable": false}]
             }
@@ -146,7 +142,7 @@ pub(super) fn table<'a>(catalog: &'a CatalogIr, name: &str) -> &'a Table {
     catalog
         .tables()
         .iter()
-        .find(|table| table.schema() == "receiving" && table.name() == name)
+        .find(|table| table.schema() == "inventory" && table.name() == name)
         .unwrap()
 }
 
@@ -179,47 +175,47 @@ pub(super) fn replacing_table(catalog: &CatalogIr, replacement: Table) -> Catalo
 
 pub(super) fn manifest() -> Value {
     json!({
-        "package": {"id": "wamn_receiving", "version": "1.0.0"},
+        "package": {"id": "platform_gadget", "version": "1.0.0"},
         "required_platform_policy_contract": {
-            "id": "receiving_data_access",
+            "id": "gadget_data_access",
             "state": "unsatisfied"
         },
         "models": {
-            "purchase_order": {
-                "schema": "receiving",
-                "table": "purchase_order",
-                "owner": "wamn_receiving",
+            "gadget": {
+                "schema": "inventory",
+                "table": "gadget",
+                "owner": "platform_gadget",
                 "server_owned_fields": [
-                    "id", "purchase_order_number", "status", "row_version", "created_at"
+                    "id", "part_code", "status", "row_version", "created_at"
                 ],
                 "enum_fields": {"status": ["open", "complete", "cancelled"]},
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "operations": {
                     "get": {
-                        "permission": "purchase_order.get",
+                        "permission": "gadget.get",
 
                         "result": "one"
                     },
                     "query": {
-                        "permission": "purchase_order.query",
+                        "permission": "gadget.query",
 
                         "authored_sql": {
-                            "default": "query/open_purchase_order.sql",
+                            "default": "query/open_gadget.sql",
                             "variants": [
-                                {"field": "purchase_order_number", "direction": "ascending", "path": "query/open_purchase_order_by_purchase_order_number_ascending.sql"},
-                                {"field": "purchase_order_number", "direction": "descending", "path": "query/open_purchase_order_by_purchase_order_number_descending.sql"},
-                                {"field": "status", "direction": "ascending", "path": "query/open_purchase_order_by_status_ascending.sql"},
-                                {"field": "status", "direction": "descending", "path": "query/open_purchase_order_by_status_descending.sql"},
-                                {"field": "created_at", "direction": "ascending", "path": "query/open_purchase_order.sql"},
-                                {"field": "created_at", "direction": "descending", "path": "query/open_purchase_order_by_created_at_descending.sql"}
+                                {"field": "part_code", "direction": "ascending", "path": "query/open_gadget_by_part_code_ascending.sql"},
+                                {"field": "part_code", "direction": "descending", "path": "query/open_gadget_by_part_code_descending.sql"},
+                                {"field": "status", "direction": "ascending", "path": "query/open_gadget_by_status_ascending.sql"},
+                                {"field": "status", "direction": "descending", "path": "query/open_gadget_by_status_descending.sql"},
+                                {"field": "created_at", "direction": "ascending", "path": "query/open_gadget.sql"},
+                                {"field": "created_at", "direction": "descending", "path": "query/open_gadget_by_created_at_descending.sql"}
                             ]
                         },
                         "filters": [
-                            {"field": "supplier_id"},
+                            {"field": "stock_id"},
                             {"field": "status"}
                         ],
                         "sort": {
-                            "fields": ["purchase_order_number", "status", "created_at"],
+                            "fields": ["part_code", "status", "created_at"],
                             "directions": ["ascending", "descending"]
                         },
                         "pagination": {
@@ -234,9 +230,9 @@ pub(super) fn manifest() -> Value {
                         "result": "page"
                     },
                     "update": {
-                        "permission": "purchase_order.update",
+                        "permission": "gadget.update",
 
-                        "writable_fields": ["supplier_id"],
+                        "writable_fields": ["stock_id"],
                         "revision_field": "row_version",
                         "result": "one"
                     }
@@ -245,7 +241,7 @@ pub(super) fn manifest() -> Value {
         },
         "connections": ["postgres"],
         "components": {
-            "receiving": {
+            "inventory": {
                 "connections": ["postgres"]
             }
         }

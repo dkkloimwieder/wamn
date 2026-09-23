@@ -463,7 +463,7 @@ fn event_registration_and_line_profiles_are_closed() {
     // command does not declare is refused, whatever the member is called.
     let mut unknown_member = lined.clone();
     unknown_member["custom_operations"]["widget.archive"]["canonicalization"]["line_order"] =
-        json!({"ascending_by": "purchase_order_line_id", "positive_member": "amount"});
+        json!({"ascending_by": "gadget_line_id", "positive_member": "amount"});
     assert_eq!(
         validate_operation_vocabulary(&parsed(&unknown_member))
             .expect_err("canonical line profile ordered by an undeclared member")
