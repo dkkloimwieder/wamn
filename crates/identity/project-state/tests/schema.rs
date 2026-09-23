@@ -1,14 +1,10 @@
 //! Storage-schema tests for the per-project system schema v1 (wamn-as5).
 //!
-//! Two layers (the `wamn-control-registry` / `deploy/sql/system-schema.sql` precedent):
-//! - a **drift guard** tying `deploy/sql/app-schema.sql` to the `wamn-project-state`
-//!   model (the schema name, each table + its pinned columns, the RLS floor +
-//!   a45 empty-tenant-row hardening, the `users.status` CHECK literals from
-//!   `UserStatus::as_str`, and the FK cascades);
-//! - a **live-apply gate** showing the DB-enforced behavior — tenant RLS
-//!   isolation, the FK cascades, the empty-tenant / status / type CHECKs, and
-//!   the platform principal rows — on a test database of the test PostgreSQL
-//!   server (a superuser URL; the harness prepares App generations).
+//! Each test applies `deploy/sql/app-schema.sql` to a test database of the test
+//! PostgreSQL server (a superuser URL; the harness prepares App generations) and
+//! asserts what PostgreSQL enforces: tenant RLS isolation, the model's columns and
+//! forced row security, the tenant-key indexes, the FK cascades, the empty-tenant
+//! / status / type CHECKs, and the platform principal rows.
 
 use std::fmt::Write as _;
 
@@ -46,22 +42,8 @@ fn record_history_app_grants_sql() -> String {
         .expect("read deploy/sql/record-history-app-grants.sql")
 }
 
-/// The SQL with `--` line comments stripped, so text assertions test the actual
-/// DDL and not the explanatory prose (the header names the app.user_id/app.role
-/// claims to explain the integration, but they do not appear in the DDL itself).
-/// No `--` appears inside a string literal in this file, so a per-line truncate
-/// is exact.
-fn code_only(sql: &str) -> String {
-    sql.lines()
-        .map(|l| l.find("--").map_or(l, |i| &l[..i]))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-// --- drift guard: DDL ↔ model ----------------------------------------------
-
 /// The privileges `wamn_app` holds on each table. The R11 adjudication is per
-/// relation, not one blanket grant, so the drift guard pins it per relation too:
+/// relation, not one blanket grant, so the log test checks it per relation too:
 ///
 /// - `users` / `roles` / `user_roles` / `permissions` / `api_keys` are
 ///   SELECT-only. The trust chain reads these rows as authorization INPUT — the
@@ -94,124 +76,6 @@ fn wamn_app_privileges(table: &str) -> &'static str {
         }
         other => panic!("table {other} has no adjudicated wamn_app grant (R11)"),
     }
-}
-
-/// `deploy/sql/app-schema.sql` must mirror the `wamn-project-state` model: the schema
-/// name, every table + its pinned columns, and the tenant RLS floor on each.
-#[test]
-fn app_schema_sql_mirrors_the_model() {
-    let sql = code_only(&app_schema_sql());
-
-    assert!(
-        sql.contains(&format!("CREATE SCHEMA {SCHEMA_NAME}")),
-        "the schema name must match the model ({SCHEMA_NAME})"
-    );
-    assert!(sql.contains(&format!("GRANT USAGE ON SCHEMA {SCHEMA_NAME} TO wamn_app")));
-
-    for t in TABLES {
-        let qualified = t.qualified();
-        assert!(
-            sql.contains(&format!("CREATE TABLE {qualified}")),
-            "app-schema.sql is missing table {qualified}"
-        );
-        for col in t.columns {
-            assert!(
-                sql.contains(col),
-                "table {qualified} is missing pinned column {col:?}"
-            );
-        }
-        // Every table carries the RLS floor: a tenant policy, FORCE RLS, and the
-        // one grant its R11 class allows.
-        assert!(
-            sql.contains(&format!("CREATE POLICY {}_tenant ON {qualified}", t.name)),
-            "table {qualified} is missing its tenant RLS policy"
-        );
-        assert!(
-            sql.contains(&format!("ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY")),
-            "table {qualified} must FORCE row level security"
-        );
-        let privileges = wamn_app_privileges(t.name);
-        assert!(
-            sql.contains(&format!("GRANT {privileges} ON {qualified} TO wamn_app")),
-            "table {qualified} must grant exactly `{privileges}` to wamn_app"
-        );
-        // …and only that one line, so a second GRANT cannot widen the class back
-        // out while the assertion above still passes.
-        assert_eq!(
-            sql.matches(&format!("ON {qualified} TO wamn_app")).count(),
-            1,
-            "table {qualified} must carry exactly one wamn_app grant"
-        );
-    }
-}
-
-/// The tenant floor derives from `current_user`, not from a claim the session
-/// can set (`wamn-0h0g.22.6.3`). Pinned by expression, not just presence (the
-/// drift-guard lesson), and pinned in BOTH directions: the retired boundary
-/// must be absent, because a policy that kept it would hand every tenant's rows
-/// to whoever sets the GUC.
-#[test]
-fn tenant_floor_derives_from_the_connected_role() {
-    let sql = code_only(&app_schema_sql());
-    assert!(
-        sql.contains("wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()"),
-        "the tenant read must derive from current_user"
-    );
-    assert!(
-        !sql.contains("app.tenant"),
-        "a settable tenant claim survived in the app schema"
-    );
-    // The expression index rides the predicate: without it the derivation
-    // sequential-scans every relation. One per table and one per history table.
-    let indexes = sql
-        .matches("((wamn_authority.tenant_key(tenant_id)))")
-        .count();
-    assert_eq!(
-        indexes,
-        2 * TABLES.len(),
-        "every table and its history table must carry a tenant-key expression index"
-    );
-    // Every table still forbids a ''-tenant row (one CHECK per table). This
-    // half of the a45 hardening SURVIVES the re-key: it is what makes a
-    // ''-tenant row structurally impossible rather than merely unmatched.
-    let checks = sql.matches("CHECK (tenant_id <> '')").count();
-    assert_eq!(
-        checks,
-        TABLES.len(),
-        "every table must CHECK (tenant_id <> '') — one per table"
-    );
-}
-
-/// The `users.status` CHECK literals come from the model (`UserStatus::as_str`),
-/// drift-guarded like the registry's tier/env literals. The live arm below
-/// asks PostgreSQL for the `users.id` type and default.
-#[test]
-fn user_status_literals_are_pinned() {
-    let sql = code_only(&app_schema_sql());
-    assert!(sql.contains("users_status_check"));
-    for s in UserStatus::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", s.as_str())),
-            "app-schema.sql is missing the users.status literal {:?}",
-            s.as_str()
-        );
-    }
-}
-
-/// The FK cascades that keep the graph consistent are pinned: the user↔role
-/// linkage and api_keys reference users ON DELETE CASCADE; permissions and the
-/// linkage reference roles ON DELETE CASCADE.
-#[test]
-fn fk_cascades_are_pinned() {
-    let sql = code_only(&app_schema_sql());
-    assert!(
-        sql.contains("REFERENCES app_system.users (tenant_id, id) ON DELETE CASCADE"),
-        "user_roles / api_keys must FK users ON DELETE CASCADE"
-    );
-    assert!(
-        sql.contains("REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE"),
-        "user_roles / permissions must FK roles ON DELETE CASCADE"
-    );
 }
 
 // --- live-apply gate --------------------------------------------------------
@@ -376,6 +240,83 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
     )
     .expect("writing to a String cannot fail");
+    // The model is the oracle for each table: row security is enabled and
+    // forced, every model column exists, and a tenant-key expression index
+    // serves the policy on the table and on its history table.
+    for table in TABLES {
+        let qualified = table.qualified();
+        let columns = table
+            .columns
+            .iter()
+            .map(|column| format!("'{column}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        writeln!(
+            script,
+            "DO $$ BEGIN\n\
+               ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_catalog.pg_class \
+                       WHERE oid = '{qualified}'::regclass), '{qualified} must enable and force row security';\n\
+               ASSERT (SELECT count(*) FROM pg_catalog.pg_attribute \
+                       WHERE attrelid = '{qualified}'::regclass AND attnum > 0 AND NOT attisdropped \
+                         AND attname IN ({columns})) = {count}, '{qualified} must carry every model column';\n\
+               ASSERT (SELECT count(*) FROM (VALUES ('{qualified}'), ('{qualified}_history')) AS relation(qualified_name) \
+                       WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_index AS i \
+                         WHERE i.indrelid = relation.qualified_name::regclass \
+                           AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%wamn_authority.tenant_key(tenant_id)%')) = 0, \
+                      '{qualified} and its history must carry a tenant-key index';\n\
+             END $$;",
+            count = table.columns.len(),
+        )
+        .expect("writing to a String cannot fail");
+    }
+    // Every base table refuses a ''-tenant row, not only users (a45).
+    for (table, insert) in [
+        ("roles", "(tenant_id, name) VALUES ('', 'empty')".to_owned()),
+        (
+            "user_roles",
+            format!("(tenant_id, user_id, role_name) VALUES ('', '{U2}', 'admin')"),
+        ),
+        (
+            "permissions",
+            "(tenant_id, role_name, permission) VALUES ('', 'admin', 'widgets:read')".to_owned(),
+        ),
+        (
+            "configurations",
+            "(tenant_id, config_key, config_value) VALUES ('', 'theme', '1'::jsonb)".to_owned(),
+        ),
+        (
+            "api_keys",
+            format!(
+                "(tenant_id, user_id, name, key_hash, prefix) VALUES ('', '{U2}', 'ci', 'hash-2', 'wk_b')"
+            ),
+        ),
+    ] {
+        writeln!(
+            script,
+            "DO $$ BEGIN BEGIN\n\
+               INSERT INTO app_system.{table} {insert};\n\
+               ASSERT false, 'a ''''-tenant {table} row must be rejected (a45)';\n\
+             EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    // The users.status CHECK admits every status the model names.
+    for (index, status) in UserStatus::ALL.iter().enumerate() {
+        writeln!(
+            script,
+            "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
+             VALUES ('t1', '55555555-5555-5555-5555-{index:012}', 'person', 'status-{index}@t1', '{}');",
+            status.as_str()
+        )
+        .expect("writing to a String cannot fail");
+    }
+    // A second holder of the admin role, so the role cascade below removes a
+    // grant that the user cascade leaves.
+    writeln!(
+        script,
+        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U2}','admin');"
+    )
+    .expect("writing to a String cannot fail");
     // FK cascade: deleting U1 prunes its role grant and api key.
     writeln!(
         script,
@@ -386,6 +327,15 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          END $$;"
     )
     .expect("writing to a String cannot fail");
+    // FK cascade: deleting the admin role prunes its permission and its
+    // remaining grant.
+    script.push_str(
+        "DELETE FROM app_system.roles WHERE tenant_id='t1' AND name='admin';\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM app_system.permissions WHERE role_name='admin')=0, 'permissions cascade';\n\
+           ASSERT (SELECT count(*) FROM app_system.user_roles WHERE role_name='admin')=0, 'user_roles cascade from roles';\n\
+         END $$;\n",
+    );
 
     script.push_str("DROP SCHEMA app_system CASCADE;\n");
 
