@@ -28,7 +28,7 @@ use wamn_control_provision::{
 };
 
 const ORG: &str = "pg18order";
-const PROJECT: &str = "receiving";
+const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
 const TENANT: &str = "tenant-order";
 const INSTANCE: &str = "k3m9x2p7";

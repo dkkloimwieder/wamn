@@ -2442,7 +2442,7 @@ mod tests {
         let component = projection_component();
         let left = ComponentConnectionRequirement::new(
             &component.component_digest,
-            "supplier",
+            "ledger",
             ConnectionTypeDescriptor::http_v1(),
         );
         let right = ComponentConnectionRequirement::new(
@@ -2964,7 +2964,7 @@ mod tests {
                 .expect("assume production control owner");
             crate::provision_project_env::project_tenant_environment(
                 &mut projection,
-                &wamn_control_registry::Triple::new("acme", "receiving", "dev"),
+                &wamn_control_registry::Triple::new("example", "fixture", "dev"),
                 Some(&projection_component().scope.tenant_id),
                 "abcd1234",
                 disposable,

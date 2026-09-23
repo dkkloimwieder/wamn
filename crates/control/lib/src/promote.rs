@@ -996,7 +996,7 @@ mod tests {
 
     fn package() -> PackageRecord {
         PackageRecord {
-            coordinate: PackageCoordinate::new("wamn_receiving", "1.1.0")
+            coordinate: PackageCoordinate::new("platform_fixture", "1.1.0")
                 .expect("fixture coordinate is valid"),
             manifest_sha256: format!("sha256:{}", "a".repeat(64)),
             predecessor_version: Some("1.0.0".to_owned()),
@@ -1019,7 +1019,7 @@ mod tests {
             .expect_err("promotion cannot create an absent package");
         assert_eq!(error.kind(), PromotionErrorKind::PackageNotApplied);
         let rendered = error.to_string();
-        assert!(rendered.contains("wamn_receiving@1.1.0"));
+        assert!(rendered.contains("platform_fixture@1.1.0"));
         assert!(rendered.contains("run wamn-ctl apply-package"));
     }
 

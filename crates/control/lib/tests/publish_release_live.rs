@@ -42,8 +42,8 @@ async fn seed_package_and_release(client: &Client) {
         .await
         .expect("claim the test tenant");
     for (package_id, package_version, predecessor_version) in [
-        ("receiving", "1.0.0", None),
-        ("receiving", "2.0.0", Some("1.0.0")),
+        ("inventory", "1.0.0", None),
+        ("inventory", "2.0.0", Some("1.0.0")),
     ] {
         client
             .execute(
@@ -64,7 +64,7 @@ async fn seed_package_and_release(client: &Client) {
             INSERT_MIGRATION_SQL,
             &[
                 &TENANT,
-                &"receiving",
+                &"inventory",
                 &"1.0.0",
                 &1_i32,
                 &"migrations/0001_initial.sql",
@@ -148,7 +148,7 @@ async fn assert_package_seal(url: &str, store: Store) {
     publication
         .execute(
             INSERT_MEMBERSHIP_SQL,
-            &[&TENANT, &1_i32, &"receiving", &"1.0.0"],
+            &[&TENANT, &1_i32, &"inventory", &"1.0.0"],
         )
         .await
         .expect("insert the first membership while holding the package row");
@@ -157,7 +157,7 @@ async fn assert_package_seal(url: &str, store: Store) {
     let late_ordinal = 2_i32;
     let late_params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
         &TENANT,
-        &"receiving",
+        &"inventory",
         &"1.0.0",
         &late_ordinal,
         &"migrations/0002_late.sql",
@@ -185,7 +185,7 @@ async fn assert_package_seal(url: &str, store: Store) {
     assert_eq!(refused.message(), "package-version-sealed");
     assert_eq!(
         refused.detail(),
-        Some("coordinate=receiving@1.0.0 belongs to an effective release")
+        Some("coordinate=inventory@1.0.0 belongs to an effective release")
     );
     assert_eq!(
         refused.hint(),
@@ -202,7 +202,7 @@ async fn assert_package_seal(url: &str, store: Store) {
                     INSERT_MIGRATION_SQL,
                     &[
                         &TENANT,
-                        &"receiving",
+                        &"inventory",
                         &"2.0.0",
                         &ordinal,
                         &path,
@@ -229,9 +229,9 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
         tenant_id: TENANT.to_owned(),
         effective_release_id: EffectiveReleaseId::new(1).unwrap(),
         environment: "dev".to_owned(),
-        packages: BTreeSet::from([PackageCoordinate::new("receiving", "1.0.0").unwrap()]),
+        packages: BTreeSet::from([PackageCoordinate::new("inventory", "1.0.0").unwrap()]),
     };
-    let coordinate = DeploymentCoordinate::new("acme", "receiving", &release);
+    let coordinate = DeploymentCoordinate::new("demo", "inventory", &release);
     let digest = ManifestDigest::parse(format!("sha256:{}", "f".repeat(64))).unwrap();
     let (first, second) = tokio::join!(
         attest_deployment(url, &coordinate, &digest, Some("0123456789abcdef")),
@@ -251,7 +251,7 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     let coordinate = DeploymentCoordinate {
         tenant_id: TENANT.to_owned(),
         effective_release_id: 7,
-        triple: wamn_control_registry::Triple::new("acme", "billing", "prod"),
+        triple: wamn_control_registry::Triple::new("demo", "billing", "prod"),
     };
     let (first, second) = tokio::join!(
         project_release_identity(&url, &coordinate),
@@ -360,7 +360,7 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     );
 
     // The marker alone cannot replace the old deployment.
-    inspector.execute("INSERT INTO catalog.tenant_environments (tenant_id,org,project,env,instance_suffix,disposable,environment_instance) VALUES ($1,'acme','billing','prod','abcd1234',true,'')", &[&TENANT]).await.unwrap();
+    inspector.execute("INSERT INTO catalog.tenant_environments (tenant_id,org,project,env,instance_suffix,disposable,environment_instance) VALUES ($1,'demo','billing','prod','abcd1234',true,'')", &[&TENANT]).await.unwrap();
     let error = attest_deployment(&url, &coordinate, &other_hash, None)
         .await
         .unwrap_err();
@@ -450,7 +450,7 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
 
     // A rolled-back first insert leaves the waiting native writer free to win.
     let transaction = held.transaction().await.unwrap();
-    transaction.execute("INSERT INTO catalog.deployment_attestations (tenant_id,environment_instance,effective_release_id,org_id,project_id,environment,deployed_manifest_hash,source_commit,attested_at) VALUES ($1,'16384',7,'acme','rollback','prod',$2,NULL,'2026-08-15T12:00:00Z')", &[&TENANT, &hash.as_str()]).await.unwrap();
+    transaction.execute("INSERT INTO catalog.deployment_attestations (tenant_id,environment_instance,effective_release_id,org_id,project_id,environment,deployed_manifest_hash,source_commit,attested_at) VALUES ($1,'16384',7,'demo','rollback','prod',$2,NULL,'2026-08-15T12:00:00Z')", &[&TENANT, &hash.as_str()]).await.unwrap();
     let mut rollback_coordinate = coordinate.clone();
     rollback_coordinate.triple.project = "rollback".into();
     let waiting = attest_deployment(&url, &rollback_coordinate, &other_hash, None);

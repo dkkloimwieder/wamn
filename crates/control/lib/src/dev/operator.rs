@@ -439,7 +439,7 @@ mod tests {
         LaunchSpec {
             executable,
             base_url: "http://127.0.0.1:31001".to_owned(),
-            route_host: "receiving.localhost".to_owned(),
+            route_host: "fixture.localhost".to_owned(),
             target_instance: instance.to_owned(),
             authentication: Authentication::Pat("fixture-operator-secret".to_owned()),
         }
@@ -504,7 +504,7 @@ mod tests {
         wait_for_shutdown(&stopped).await;
         assert_eq!(
             fs::read_to_string(fixture.root.join("facts")).expect("read child facts"),
-            "http://127.0.0.1:31001\nreceiving.localhost\ninstance-a\nfixture-operator-secret\n0\n"
+            "http://127.0.0.1:31001\nfixture.localhost\ninstance-a\nfixture-operator-secret\n0\n"
         );
         control
             .stop("finish the session")

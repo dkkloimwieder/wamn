@@ -32,7 +32,7 @@ use wamn_control_provision::{
 use wamn_control_registry::Triple;
 
 const ORG: &str = "pg18admit";
-const PROJECT: &str = "receiving";
+const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
 /// Required by the shared workload-action identity contract and deliberately
 /// NOT an input to this family's scope digest — the derived-pair assertions in

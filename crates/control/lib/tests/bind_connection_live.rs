@@ -6,8 +6,8 @@
 //! the assertion here is `wamn_blobstore::binding::resolve` returning the
 //! coordinates that were bound, over a snapshot the postgres plugin's own
 //! `connection_effect_snapshot` loaded from the rows the verb wrote. Nothing
-//! between the verb and the resolver is this file's: the fixture is the real
-//! WMS package applied by the real verb, a component admitted the way
+//! between the verb and the resolver is this file's: the fixture is a
+//! package applied by the real verb, a component admitted the way
 //! push-component admits one, a wiring authored by the real author under a
 //! green report, and a release row of the shape the mint writes.
 //!
@@ -40,7 +40,7 @@ use wamn_schema_control::connections::{
 
 const TENANT: &str = "bind-connection-tenant";
 const ENVIRONMENT: &str = "dev";
-const PACKAGE: &str = "wamn_wms";
+const PACKAGE: &str = "bind_connection_fixture";
 const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT_ID: &str = "bind-connection-component";
 const BLOB_PUT: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
@@ -578,7 +578,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     let good = definition_file(
         scratch,
         "good.json",
-        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"wms/"}"#,
+        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"fixture/"}"#,
     );
     let error = bind_connection::bind(&args(&project_url, good.clone(), "erp", HTTP_SIDECAR))
         .await
@@ -614,7 +614,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     let resolved = binding::resolve(&after).expect("the plugin resolves the bound connection");
     assert_eq!(resolved.endpoint, "http://10.0.0.7:9000");
     assert_eq!(resolved.container, "labels");
-    assert_eq!(resolved.prefix, "wms/");
+    assert_eq!(resolved.prefix, "fixture/");
     assert_eq!(resolved.credential_handle, "labels-store");
     assert_eq!(
         after.definition_hash.as_deref(),
@@ -629,7 +629,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     let again = definition_file(
         scratch,
         "again.json",
-        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"wms/"}"#,
+        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"fixture/"}"#,
     );
     let rebound = bind_connection::bind(&args(&project_url, again, "labels", BLOB_PUT))
         .await

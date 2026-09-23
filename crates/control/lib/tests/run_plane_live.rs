@@ -845,12 +845,12 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
              tenant_id text NOT NULL, registration_id text NOT NULL, \
              stream_seq bigint NOT NULL, \
              PRIMARY KEY (tenant_id, registration_id, stream_seq)); \
-         CREATE TABLE {SCHEMA}.receipts ( \
+         CREATE TABLE {SCHEMA}.widgets ( \
              id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id text NOT NULL); \
          CREATE FUNCTION {SCHEMA}.wamn_outbox_event() RETURNS trigger \
              LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END $f$; \
          CREATE TRIGGER wamn_outbox_event AFTER INSERT OR UPDATE OR DELETE \
-             ON {SCHEMA}.receipts FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.wamn_outbox_event();"
+             ON {SCHEMA}.widgets FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.wamn_outbox_event();"
     ))
     .await
     .expect("build the v1-era queue + outbox era");
@@ -1095,7 +1095,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     assert_eq!(funcs, 0, "legacy function dropped");
     // The floor table the trigger sat on is untouched.
     assert!(
-        table_exists(su, SCHEMA, "receipts").await,
+        table_exists(su, SCHEMA, "widgets").await,
         "floor table left alone"
     );
 

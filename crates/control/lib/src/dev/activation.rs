@@ -1558,7 +1558,7 @@ mod tests {
             "tempo_query_url": "http://127.0.0.1:41015",
             "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
             "gate_bearer_token": "gate-secret",
-            "route_host": "receiving.localhost",
+            "route_host": "fixture.localhost",
             "platform_domain": "example.invalid",
             "local_artifacts": {
                 "directory": "/tmp/wamn-local-candidate", "flow_http_component": "/tmp/flow-http.wasm"
@@ -1567,13 +1567,13 @@ mod tests {
             "effective_release_id": 1,
             "tenant": "00000000-0000-0000-0000-000000000001",
             "catalog": "default",
-            "environment": "receiving-dev",
-            "org": "acme",
-            "project": "receiving",
-            "schema": "receiving",
-            "host_group": "wamn-dev-receiving",
-            "host_name": "wamn-dev-receiving-1",
-            "runner": "wamn-dev-receiving-1",
+            "environment": "fixture-dev",
+            "org": "example",
+            "project": "fixture",
+            "schema": "inventory",
+            "host_group": "wamn-dev-fixture",
+            "host_name": "wamn-dev-fixture-1",
+            "runner": "wamn-dev-fixture-1",
             "host_binary": "/opt/wamn/bin/wamn-host",
             "wasmtime_cache_dir": "/tmp/wamn-dev-cache"
         })
@@ -1583,13 +1583,13 @@ mod tests {
         DevActivationIdentity {
             tenant: "00000000-0000-0000-0000-000000000001".to_owned(),
             catalog: "default".to_owned(),
-            environment: "receiving-dev".to_owned(),
-            org: "acme".to_owned(),
-            project: "receiving".to_owned(),
-            schema: "receiving".to_owned(),
-            host_group: "wamn-dev-receiving".to_owned(),
-            host_name: "wamn-dev-receiving-1".to_owned(),
-            runner: "wamn-dev-receiving-1".to_owned(),
+            environment: "fixture-dev".to_owned(),
+            org: "example".to_owned(),
+            project: "fixture".to_owned(),
+            schema: "inventory".to_owned(),
+            host_group: "wamn-dev-fixture".to_owned(),
+            host_name: "wamn-dev-fixture-1".to_owned(),
+            runner: "wamn-dev-fixture-1".to_owned(),
         }
     }
 
@@ -1941,15 +1941,15 @@ mod tests {
         let expected_args = [
             "host",
             "--host-group",
-            "wamn-dev-receiving",
+            "wamn-dev-fixture",
             "--scheduler-nats-url",
             "nats://127.0.0.1:41009",
             "--host-name",
-            "wamn-dev-receiving-1",
+            "wamn-dev-fixture-1",
             "--runner",
-            "wamn-dev-receiving-1",
+            "wamn-dev-fixture-1",
             "--environment",
-            "receiving-dev",
+            "fixture-dev",
             "--http-addr",
             "127.0.0.1:0",
             "--local-application",
@@ -1961,11 +1961,11 @@ mod tests {
             "--wasmtime-cache-dir",
             "/tmp/wamn-dev-cache",
             "--project",
-            "receiving",
+            "fixture",
             "--org",
-            "acme",
+            "example",
             "--schema",
-            "receiving",
+            "inventory",
         ]
         .map(str::to_owned);
         assert_eq!(&*spec.args, &expected_args);
@@ -2007,9 +2007,9 @@ mod tests {
                 ),
                 ("WAMN_EVT_STREAM_REPLICAS".to_owned(), "1".to_owned()),
                 ("WAMN_EVT_DUP_WINDOW_SECS".to_owned(), "120".to_owned()),
-                ("WAMN_EVT_ORG".to_owned(), "acme".to_owned()),
-                ("WAMN_EVT_PROJECT".to_owned(), "receiving".to_owned()),
-                ("WAMN_EVT_ENV".to_owned(), "receiving-dev".to_owned()),
+                ("WAMN_EVT_ORG".to_owned(), "example".to_owned()),
+                ("WAMN_EVT_PROJECT".to_owned(), "fixture".to_owned()),
+                ("WAMN_EVT_ENV".to_owned(), "fixture-dev".to_owned()),
                 (
                     "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
                     "http://127.0.0.1:41016".to_owned(),
@@ -2027,7 +2027,7 @@ mod tests {
         assert_eq!(
             requests.len(),
             3,
-            "running status, one status receipt, then stop"
+            "running status, one status reply, then stop"
         );
         assert_eq!(
             requests
@@ -2055,7 +2055,7 @@ mod tests {
             .expect("flow-http declares the native incoming HTTP interface");
         assert_eq!(
             incoming_http.config,
-            HashMap::from([("host".to_owned(), "receiving.localhost".to_owned())])
+            HashMap::from([("host".to_owned(), "fixture.localhost".to_owned())])
         );
         drop(requests);
 

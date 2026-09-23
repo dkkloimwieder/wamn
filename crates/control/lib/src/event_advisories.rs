@@ -910,9 +910,9 @@ mod tests {
         );
         std::fs::DirBuilder::new().mode(0o700).create(root.path())?;
         let scopes = [
-            Triple::new("acme", "receiving", "dev"),
-            Triple::new("acme", "wms", "dev"),
-            Triple::new("acme", "receiving", "prod"),
+            Triple::new("example", "fixture", "dev"),
+            Triple::new("example", "other", "dev"),
+            Triple::new("example", "fixture", "prod"),
         ];
         let mut brokers = Vec::new();
         let mut declarations = Vec::new();

@@ -157,10 +157,10 @@ mod tests {
 
     #[test]
     fn provision_refuses_foreign_consumers_before_connecting() {
-        let scope = Triple::new("acme", "receiving", "dev");
+        let scope = Triple::new("example", "fixture", "dev");
         let expected = materializer_consumer_config(
             "mat_t_pkg_r1",
-            "evt.acme.receiving.dev.receipt.>",
+            "evt.example.fixture.dev.widget.>",
             Duration::from_secs(30),
             5,
         );
@@ -172,9 +172,9 @@ mod tests {
         )
         .unwrap();
         for filter in [
-            "evt.acme.wms.dev.receipt.>",
-            "evt.acme.receiving.prod.receipt.>",
-            "evt.acme.receiving.dev",
+            "evt.example.other.dev.widget.>",
+            "evt.example.fixture.prod.widget.>",
+            "evt.example.fixture.dev",
         ] {
             let config = pull::Config {
                 filter_subject: filter.into(),
@@ -195,10 +195,10 @@ mod tests {
 
     #[test]
     fn provision_refuses_implicit_or_unbounded_delivery_inputs() {
-        let scope = Triple::new("acme", "receiving", "dev");
+        let scope = Triple::new("example", "fixture", "dev");
         let config = materializer_consumer_config(
             "mat_t_pkg_r1",
-            "evt.acme.receiving.dev.receipt.>",
+            "evt.example.fixture.dev.widget.>",
             Duration::from_secs(30),
             5,
         );

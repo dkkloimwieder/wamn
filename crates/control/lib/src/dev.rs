@@ -593,7 +593,7 @@ mod tests {
         fn run_notices(&self) -> Vec<DevRunNotice> {
             vec![DevRunNotice::new(
                 "pin stale",
-                "client_acme_receiving@3.0.0 wamn.json names sha256:aa, built sha256:bb",
+                "platform_fixture_overlay@1.0.0 wamn.json names sha256:aa, built sha256:bb",
             )]
         }
     }

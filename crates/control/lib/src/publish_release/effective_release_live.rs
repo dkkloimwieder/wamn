@@ -1,7 +1,7 @@
 //! Fresh two-package effective-release test on disposable PostgreSQL.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{AdmittedComponent, ComponentDeclaration, PackageCoordinate, ServingAttachment};
@@ -26,25 +26,21 @@ const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql");
-const BASE_WIRINGS: [&str; 9] = [
-    "location_list",
-    "purchase_order_get",
-    "purchase_order_query",
-    "purchase_order_update",
-    "receipt_get",
-    "receipt_query",
-    "receiving_load_purchase_order_history",
-    "receiving_load_receipt_screen",
-    "receiving_record_receipt",
+const PACKAGE_VERSION: &str = "1.0.0";
+const BASE_WIRINGS: [&str; 11] = [
+    "widget_archive",
+    "widget_create",
+    "widget_delete",
+    "widget_get",
+    "widget_list",
+    "widget_maker_list",
+    "widget_maker_query",
+    "widget_query",
+    "widget_record_batch",
+    "widget_tag_update",
+    "widget_update",
 ];
-const OVERLAY_WIRINGS: [&str; 6] = [
-    "purchase_order_get",
-    "purchase_order_update",
-    "quality_approve_inspection",
-    "quality_create_inspection",
-    "quality_load_purchase_order_detail",
-    "receiving_record_receipt",
-];
+const OVERLAY_WIRINGS: [&str; 1] = ["widget_get"];
 
 struct PackageInput {
     id: &'static str,
@@ -56,30 +52,25 @@ struct PackageInput {
     wirings: &'static [&'static str],
 }
 
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
-
 /// The base component digest, read from the ONE file that authors it.
 ///
 /// wamn-10yt.50: this test used to restate the same `sha256:` literal the
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> String {
-    let overlay = repository_root().join("apps/client_acme_receiving");
-    crate::component_declaration::authored_base_digests(&overlay)
-        .expect("the overlay manifest authors its base digest")["wamn_receiving@1.0.0"]
-        .to_string()
+    let base = format!("{}@{PACKAGE_VERSION}", wamn_fixture_package::PACKAGE_ID);
+    crate::component_declaration::authored_base_digests(&wamn_fixture_package::overlay_root())
+        .expect("the overlay manifest authors its base digest")[base.as_str()]
+    .to_string()
 }
 
 fn packages() -> [PackageInput; 2] {
-    let root = repository_root();
-    let base = root.join("apps/wamn_receiving");
-    let overlay = root.join("apps/client_acme_receiving");
+    let base = wamn_fixture_package::package_root();
+    let overlay = wamn_fixture_package::overlay_root();
     [
         PackageInput {
-            id: "wamn_receiving",
-            version: "1.0.0",
-            component_declaration: base.join("publication/components/receiving.json.in"),
+            id: wamn_fixture_package::PACKAGE_ID,
+            version: PACKAGE_VERSION,
+            component_declaration: base.join("publication/components/fixture.json.in"),
             root: base,
             component_bytes: std::env::var_os(BASE_WASM_ENV)
                 .map(PathBuf::from)
@@ -88,10 +79,10 @@ fn packages() -> [PackageInput; 2] {
             wirings: &BASE_WIRINGS,
         },
         PackageInput {
-            id: "client_acme_receiving",
-            version: "3.0.0",
+            id: wamn_fixture_package::OVERLAY_PACKAGE_ID,
+            version: PACKAGE_VERSION,
             component_declaration: overlay
-                .join("publication/components/client_acme_receiving.json.in"),
+                .join("publication/components/platform_fixture_overlay.json.in"),
             root: overlay,
             component_bytes: std::env::var_os(OVERLAY_WASM_ENV)
                 .map(PathBuf::from)
@@ -121,7 +112,7 @@ async fn provision_project(project: &Client) {
             // (48367402), so that role must exist and must own this database
             // or the migrations are refused for want of CREATE on it. The test
             // creates every role it needs; it takes no out-of-band setup.
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
@@ -425,9 +416,8 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         &std::fs::read(inputs[0].root.join("publication/attachments.json")).unwrap(),
     )
     .unwrap();
-    let attachments =
-        resolve_route_host_overlay(&authored_attachments, Some("receiving.localhost"))
-            .expect("bind the deployment-owned route hostname");
+    let attachments = resolve_route_host_overlay(&authored_attachments, Some("fixture.localhost"))
+        .expect("bind the deployment-owned route hostname");
     let request = MintReleaseManifest {
         tenant_id: TENANT,
         effective_release_id: RELEASE_ID,
@@ -452,11 +442,9 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
             admitted_digests[component.package_id.as_str()]
         );
     }
-    let registration =
-        &first.manifest.registrations["client_acme_receiving::quality.create_inspection"];
-    assert_eq!(registration.package_id, "client_acme_receiving");
-    assert_eq!(registration.source_package_id, "wamn_receiving");
-    assert_eq!(registration.entity, "receipt");
+    // The fixture declares no event handler. The unit test
+    // serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring
+    // states the registration a handler derives.
 
     let stored: Vec<u8> = project
         .query_one(
@@ -481,7 +469,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
 
     let mut drifted_hashes = manifest_hashes.clone();
     drifted_hashes.insert(
-        "client_acme_receiving".to_owned(),
+        wamn_fixture_package::OVERLAY_PACKAGE_ID.to_owned(),
         format!("sha256:{}", "f".repeat(64)),
     );
     let transaction = project.transaction().await.expect("begin refused mint");
@@ -497,7 +485,10 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     .await
     .expect_err("manifest bytes other than apply-package's exact input must refuse");
     assert_eq!(refusal.kind(), MintManifestErrorKind::PackageManifest);
-    assert!(refusal.detail().contains("client_acme_receiving@3.0.0"));
+    assert!(refusal.detail().contains(&format!(
+        "{}@{PACKAGE_VERSION}",
+        wamn_fixture_package::OVERLAY_PACKAGE_ID
+    )));
     assert!(refusal.detail().contains("use the exact wamn.json"));
     transaction
         .rollback()
@@ -506,7 +497,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
 
     project
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE;",
         )

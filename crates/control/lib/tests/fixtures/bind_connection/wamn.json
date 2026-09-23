@@ -1,6 +1,6 @@
 {
   "package": {
-    "id": "wamn_wms",
+    "id": "bind_connection_fixture",
     "version": "1.0.0"
   },
   "required_platform_policy_contract": {
@@ -11,7 +11,7 @@
     "item": {
       "schema": "bind_connection_fixture",
       "table": "item",
-      "owner": "wamn_wms",
+      "owner": "bind_connection_fixture",
       "server_owned_fields": ["id"],
       "audit_log": {
         "columns": [],

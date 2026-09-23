@@ -41,7 +41,7 @@ use wamn_control_provision::{
 use wamn_test_infrastructure::locked_database;
 
 const ORG: &str = "dkzrisolation";
-const PROJECT: &str = "receiving";
+const PROJECT: &str = "inventory";
 /// The environment the generation is minted for.
 const HOME_ENVIRONMENT: &str = "dev";
 /// The NEIGHBOUR. It is a real provisioned project-env database, not an empty

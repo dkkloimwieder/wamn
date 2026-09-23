@@ -46,18 +46,18 @@ fn acceptance_route_requires_the_selected_pat_operation() {
     assert_eq!(digest.as_str(), vector::DIGEST);
     let attachment = manifest.attachments.get_mut("orders-http").unwrap();
     attachment.definition["route"] =
-        json!({"path":"/orders","method":"POST","host":"receiving.localhost"});
+        json!({"path":"/orders","method":"POST","host":"fixture.localhost"});
     require_released_route(
         &manifest,
         "http://127.0.0.1:1234/orders",
-        "receiving.localhost",
+        "fixture.localhost",
     )
     .unwrap();
     assert!(
         require_released_route(
             &manifest,
             "http://127.0.0.1:1234/other",
-            "receiving.localhost"
+            "fixture.localhost"
         )
         .is_err()
     );
@@ -78,7 +78,7 @@ fn acceptance_route_requires_the_selected_pat_operation() {
         require_released_route(
             &manifest,
             "http://127.0.0.1:1234/orders",
-            "receiving.localhost"
+            "fixture.localhost"
         )
         .is_err()
     );
@@ -100,7 +100,7 @@ async fn authenticated_acceptance_refuses_denial_redirect_and_wrong_result() {
             let read = stream.read(&mut request).await.unwrap();
             let request = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
             assert!(request.contains("authorization: bearer test-token"));
-            assert!(request.contains("host: receiving.localhost"));
+            assert!(request.contains("host: fixture.localhost"));
             stream.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
         }
     });
@@ -108,7 +108,7 @@ async fn authenticated_acceptance_refuses_denial_redirect_and_wrong_result() {
         assert!(
             authenticated_interaction(
                 &url,
-                "receiving.localhost",
+                "fixture.localhost",
                 "test-token",
                 b"{}".to_vec(),
                 json!({"ok":true})
@@ -119,7 +119,7 @@ async fn authenticated_acceptance_refuses_denial_redirect_and_wrong_result() {
     }
     authenticated_interaction(
         &url,
-        "receiving.localhost",
+        "fixture.localhost",
         "test-token",
         b"{}".to_vec(),
         json!({"ok":true}),
@@ -136,25 +136,25 @@ async fn seed_package(
     migration: char,
     wiring: char,
 ) {
-    client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,manifest_sha256,predecessor_version) VALUES ('delivery','receiving',$1,$2,$3)",
+    client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,manifest_sha256,predecessor_version) VALUES ('delivery','inventory',$1,$2,$3)",
         &[&version, &format!("sha256:{}", migration.to_string().repeat(64)), &predecessor]).await.unwrap();
-    client.execute("INSERT INTO catalog.package_migrations (tenant_id,package_id,package_version,ordinal,relative_path,sha256) VALUES ('delivery','receiving',$1,1,'migrations/0001_initial.sql',$2)",
+    client.execute("INSERT INTO catalog.package_migrations (tenant_id,package_id,package_version,ordinal,relative_path,sha256) VALUES ('delivery','inventory',$1,1,'migrations/0001_initial.sql',$2)",
         &[&version, &format!("sha256:{}", migration.to_string().repeat(64))]).await.unwrap();
-    client.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ('delivery','receiving',$1,'orders',1,'{}',$2)",
+    client.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ('delivery','inventory',$1,'orders',1,'{}',$2)",
         &[&version, &format!("sha256:{}", wiring.to_string().repeat(64))]).await.unwrap();
 }
 
 async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> ServingManifest {
     client.execute("INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment) VALUES ('delivery',$1,'test')", &[&id]).await.unwrap();
-    client.execute("INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ('delivery',$1,'receiving',$2)", &[&id, &version]).await.unwrap();
+    client.execute("INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ('delivery',$1,'inventory',$2)", &[&id, &version]).await.unwrap();
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
     manifest.release.tenant_id = "delivery".to_owned();
     manifest.release.environment = "test".to_owned();
     manifest.release.effective_release_id =
         EffectiveReleaseId::new(u32::try_from(id).unwrap()).unwrap();
-    manifest.release.packages = [PackageCoordinate::new("receiving", version).unwrap()].into();
+    manifest.release.packages = [PackageCoordinate::new("inventory", version).unwrap()].into();
     let mut wiring = manifest.wirings.iter().next().unwrap().clone();
-    wiring.package_id = "receiving".to_owned();
+    wiring.package_id = "inventory".to_owned();
     wiring.wiring_id = "orders".to_owned();
     wiring.graph_hash =
         wamn_catalog::DefinitionHash::parse(format!("sha256:{}", hash.to_string().repeat(64)))

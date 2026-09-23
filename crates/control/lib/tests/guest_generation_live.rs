@@ -27,7 +27,7 @@ use wamn_control_provision::{
 };
 
 const ORG: &str = "pg18guest";
-const PROJECT: &str = "receiving";
+const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
 /// A tenant carrying characters a Kubernetes label value would reject and a
 /// length that would matter if the name embedded it: the digest is what makes

@@ -28,7 +28,7 @@ async fn register(
     let inserted = register_package(
         &tx,
         TENANT,
-        &PackageCoordinate::new("receiving", version).unwrap(),
+        &PackageCoordinate::new("inventory", version).unwrap(),
         hash,
         predecessor,
     )
@@ -109,7 +109,7 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
                 register_package(
                     &tx,
                     TENANT,
-                    &PackageCoordinate::new("receiving", winner).unwrap(),
+                    &PackageCoordinate::new("inventory", winner).unwrap(),
                     &hash,
                     Some(predecessor)
                 )
@@ -139,7 +139,7 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
             register_package(
                 &tx,
                 TENANT,
-                &PackageCoordinate::new("receiving", "5.0.0").unwrap(),
+                &PackageCoordinate::new("inventory", "5.0.0").unwrap(),
                 &hash,
                 Some("4.0.0")
             )

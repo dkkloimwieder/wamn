@@ -45,9 +45,9 @@ fn the_minted_instance_suffix_is_a_fresh_valid_dns_label_tail() {
 fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
     // The name validation runs first — a reserved / non-slug project id fails
     // without touching the registry or emitting a CR.
-    assert!(validate_project_env("acme", "wamn-x", "dev").is_err());
-    assert!(validate_project_env("acme", "Bad", "prod").is_err());
-    assert!(validate_project_env("acme", "billing", "prod").is_ok());
+    assert!(validate_project_env("demo", "wamn-x", "dev").is_err());
+    assert!(validate_project_env("demo", "Bad", "prod").is_err());
+    assert!(validate_project_env("demo", "billing", "prod").is_ok());
 }
 
 /// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
@@ -58,32 +58,32 @@ fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
 #[test]
 fn cluster_is_derived_by_placement_and_policy() {
     use wamn_control_registry::EnvPolicy;
-    let ded = Org::dedicated("acme");
-    assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "acme-dev");
-    assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "acme-prod");
+    let ded = Org::dedicated("demo");
+    assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "demo-dev");
+    assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "demo-prod");
     let pooled = Org::pooled("try", "wamn-pg");
     assert_eq!(cluster_of(&pooled, &EnvPolicy::prod()).name, "wamn-pg");
 }
 
 #[test]
 fn pat_literals_and_secret_documents_are_exact() {
-    let triple = Triple::new("acme", "billing", "dev");
+    let triple = Triple::new("demo", "billing", "dev");
     assert_eq!(PAT_TTL, Duration::from_hours(720));
     assert_eq!(
         MANAGEMENT_AUTHOR.subject(&triple).unwrap(),
-        "wamn-management-author-acme--billing--dev"
+        "wamn-management-author-demo--billing--dev"
     );
     assert_eq!(
         MANAGEMENT_AUTHOR.display_name(&triple),
-        "WAMN management author acme/billing/dev"
+        "WAMN management author demo/billing/dev"
     );
     assert_eq!(
         ROUTE_CALLER.subject(&triple).unwrap(),
-        "wamn-route-caller-acme--billing--dev"
+        "wamn-route-caller-demo--billing--dev"
     );
     assert_eq!(
         ROUTE_CALLER.display_name(&triple),
-        "WAMN route caller acme/billing/dev"
+        "WAMN route caller demo/billing/dev"
     );
 
     let secret = render_pat_secret(
@@ -102,12 +102,12 @@ fn pat_literals_and_secret_documents_are_exact() {
             "apiVersion": "v1",
             "kind": "Secret",
             "metadata": {
-                "name": "wamn-pat-management-author-acme--billing--dev",
+                "name": "wamn-pat-management-author-demo--billing--dev",
                 "namespace": "wamn-system",
                 "labels": {
                     "app.kubernetes.io/managed-by": "wamn",
                     "app.kubernetes.io/component": "project-env-pat",
-                    "wamn.org": "acme",
+                    "wamn.org": "demo",
                     "wamn.project": "billing",
                     "wamn.env": "dev",
                 },
@@ -115,7 +115,7 @@ fn pat_literals_and_secret_documents_are_exact() {
                     "wamn.io/credential-purpose": "management-author",
                     "wamn.io/principal-id": "6d3f2d1c-0000-4000-8000-00000000abcd",
                     "wamn.io/principal-kind": "service",
-                    "wamn.io/principal-subject": "wamn-management-author-acme--billing--dev",
+                    "wamn.io/principal-subject": "wamn-management-author-demo--billing--dev",
                     "wamn.io/project-role": "project-author",
                     "wamn.io/pat-prefix": "0123456789abcdef",
                     "wamn.io/pat-expires-at": "2026-09-09T12:34:56Z",
@@ -148,7 +148,7 @@ fn pat_literals_and_secret_documents_are_exact() {
     .unwrap();
     assert_eq!(
         route_secret["metadata"]["name"],
-        "wamn-pat-route-caller-acme--billing--dev"
+        "wamn-pat-route-caller-demo--billing--dev"
     );
     assert_eq!(
         route_secret["metadata"]["annotations"]["wamn.io/project-role"],
@@ -232,12 +232,12 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
 /// by its own prepare.
 #[test]
 fn the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_statement() {
-    let batch = privilege_sql("wamn-db-acme--billing--dev");
+    let batch = privilege_sql("wamn-db-demo--billing--dev");
     assert_eq!(
         batch,
-        "ALTER DATABASE \"wamn-db-acme--billing--dev\" OWNER TO \"wamn_db_owner\";\n\
-             REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC; \
-             REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"wamn_app\";\n"
+        "ALTER DATABASE \"wamn-db-demo--billing--dev\" OWNER TO \"wamn_db_owner\";\n\
+             REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-demo--billing--dev\" FROM PUBLIC; \
+             REVOKE CONNECT ON DATABASE \"wamn-db-demo--billing--dev\" FROM \"wamn_app\";\n"
     );
 
     // The ordering assertion, stated independently of the frozen literal so
@@ -261,14 +261,14 @@ fn the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_stateme
 /// refuses the result, which is how the defect surfaced.
 #[test]
 fn the_privilege_batch_never_grants_the_stable_guest_acl_role_connect() {
-    let batch = privilege_sql("wamn-db-acme--billing--dev");
+    let batch = privilege_sql("wamn-db-demo--billing--dev");
     assert!(
         !batch.contains(&format!("TO \"{APP_ROLE}\"")),
         "the batch must not grant the stable guest ACL role anything: {batch}"
     );
     assert!(
         batch.contains(&format!(
-            "REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"{APP_ROLE}\""
+            "REVOKE CONNECT ON DATABASE \"wamn-db-demo--billing--dev\" FROM \"{APP_ROLE}\""
         )),
         "the batch must CONVERGE a pre-cutover CONNECT away: {batch}"
     );
@@ -322,19 +322,19 @@ fn the_role_batch_creates_passwordless_nologin_acl_roles() {
 #[test]
 fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     let identity = WorkloadActionIdentity {
-        org: "acme",
+        org: "demo",
         project: "billing",
         environment: "dev",
         tenant: "tenant",
     };
     for family in WorkloadRoleFamily::ALL {
-        let lifecycle = workload_lifecycle(family, identity, "wamn-db-acme--billing--dev");
+        let lifecycle = workload_lifecycle(family, identity, "wamn-db-demo--billing--dev");
         assert_eq!(lifecycle.family, family);
-        assert_eq!(lifecycle.database(), "wamn-db-acme--billing--dev");
+        assert_eq!(lifecycle.database(), "wamn-db-demo--billing--dev");
         // The scope grain is the family's own declaration, so a family can
         // never be paired with the wrong one here.
         assert_eq!(lifecycle.scope, {
-            let probe = workload_lifecycle(family, identity, "wamn-db-acme--billing--dev");
+            let probe = workload_lifecycle(family, identity, "wamn-db-demo--billing--dev");
             probe.scope
         });
         let a = lifecycle.role(CredentialGeneration::A);
@@ -578,24 +578,24 @@ fn every_family_derives_its_credential_secret_name() {
     let frozen = [
         (
             WorkloadRoleFamily::ControlAuthor,
-            "wamn-authoring-acme--billing--dev",
+            "wamn-authoring-demo--billing--dev",
         ),
         (
             WorkloadRoleFamily::ManagementAdmitter,
-            "wamn-mgmt-admitter-acme--billing--dev",
+            "wamn-mgmt-admitter-demo--billing--dev",
         ),
-        (WorkloadRoleFamily::App, "wamn-guest-acme--billing--dev"),
+        (WorkloadRoleFamily::App, "wamn-guest-demo--billing--dev"),
     ];
     for (family, name) in frozen {
         assert_eq!(
-            wamn_control_provision::workload_secret_name(family, "acme", "billing", "dev"),
+            wamn_control_provision::workload_secret_name(family, "demo", "billing", "dev"),
             name,
             "{family:?}"
         );
     }
     let mut names = BTreeSet::new();
     for family in WorkloadRoleFamily::ALL {
-        let name = wamn_control_provision::workload_secret_name(family, "acme", "billing", "dev");
+        let name = wamn_control_provision::workload_secret_name(family, "demo", "billing", "dev");
         assert!(name.starts_with("wamn-"), "{family:?}: {name}");
         assert!(names.insert(name), "{family:?} shares a Secret name");
     }
@@ -668,11 +668,11 @@ fn session_reader_requires_exact_grants() {
 #[test]
 fn audit_retention_requires_exact_grants_on_the_retention_targets() {
     let targets = vec![
-        ("orders".to_string(), "purchase_order_history".to_string()),
-        ("orders".to_string(), "receipt_history".to_string()),
+        ("orders".to_string(), "widget_history".to_string()),
+        ("orders".to_string(), "widget_tag_history".to_string()),
     ];
     let mut exact = vec![role_acl("schema", "orders", "orders", "USAGE")];
-    for history in ["purchase_order_history", "receipt_history"] {
+    for history in ["widget_history", "widget_tag_history"] {
         exact.push(role_acl("relation", "orders", history, "DELETE"));
         for column in ["row_key", "position", "changed_at"] {
             exact.push(role_acl(
@@ -694,15 +694,10 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
         assert!(verify(&missing, &targets).is_err());
     }
     for extra in [
-        role_acl("relation", "orders", "purchase_order_history", "SELECT"),
-        role_acl(
-            "column",
-            "orders",
-            "purchase_order_history.before",
-            "SELECT",
-        ),
-        role_acl("relation", "orders", "purchase_order_history", "INSERT"),
-        role_acl("relation", "orders", "purchase_order", "DELETE"),
+        role_acl("relation", "orders", "widget_history", "SELECT"),
+        role_acl("column", "orders", "widget_history.before", "SELECT"),
+        role_acl("relation", "orders", "widget_history", "INSERT"),
+        role_acl("relation", "orders", "widget", "DELETE"),
         // The history table of an unlimited relation is not a target.
         role_acl("relation", "orders", "ledger_history", "DELETE"),
         role_acl("schema", "app_system", "app_system", "USAGE"),
@@ -819,14 +814,14 @@ fn management_grants_are_exact_and_required_in_the_target_database() {
 /// result.
 #[test]
 fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() {
-    const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+    const DATABASE: &str = "wamn-db-demo--inventory--dev--k3m9x2p7";
 
     // The ONE lifecycle derivation pairs the seventh family with its exact
     // scope grain, and carries no control tenant: the tenant mapping row
     // belongs to the control plane, which this credential never reaches.
     let identity = WorkloadActionIdentity {
-        org: "acme",
-        project: "receiving",
+        org: "demo",
+        project: "inventory",
         environment: "dev",
         tenant: "tenant",
     };
@@ -847,8 +842,8 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
         assert_eq!(
             derived,
             &wamn_control_provision::management_admitter_generation_role(
-                "acme",
-                "receiving",
+                "demo",
+                "inventory",
                 "dev",
                 DATABASE,
                 generation,
@@ -881,15 +876,15 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
     // so the mint and the reference cannot drift apart.
     let secret = render_workload_secret_manifest(
         WorkloadRoleFamily::ManagementAdmitter,
-        &Triple::new("acme", "receiving", "dev"),
+        &Triple::new("demo", "inventory", "dev"),
         "wamn-system",
         WorkloadSecretBody::Url(
-            "postgres://role:pw@acme-dev-rw:5432/wamn-db-acme--receiving--dev--k3m9x2p7",
+            "postgres://role:pw@demo-dev-rw:5432/wamn-db-demo--inventory--dev--k3m9x2p7",
         ),
     );
     assert_eq!(
         secret["metadata"]["name"].as_str().expect("Secret name"),
-        wamn_control_provision::management_admitter_secret_name("acme", "receiving", "dev")
+        wamn_control_provision::management_admitter_secret_name("demo", "inventory", "dev")
     );
 }
 
@@ -1003,9 +998,9 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     };
     let mut first = connect().await;
     first.batch_execute("SET ROLE wamn_system").await.unwrap();
-    first.batch_execute("INSERT INTO registry.orgs (id,placement_kind) VALUES ('acme','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
-    let triple = Triple::new("acme", "receiving", "dev");
-    let other = Triple::new("acme", "shipping", "dev");
+    first.batch_execute("INSERT INTO registry.orgs (id,placement_kind) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
+    let triple = Triple::new("demo", "inventory", "dev");
+    let other = Triple::new("demo", "shipping", "dev");
     let mut second = connect().await;
     second.batch_execute("SET ROLE wamn_system").await.unwrap();
     let (one, two) = tokio::join!(
@@ -1142,9 +1137,9 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
             .starts_with("tenant-environment-identity-projection-content-conflict:")
     );
     let row = first.query_one("SELECT project,projected_at FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap();
-    assert_eq!(row.get::<_, String>(0), "receiving");
+    assert_eq!(row.get::<_, String>(0), "inventory");
     assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
-    assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='acme' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
+    assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='demo' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
 
     claim_environment_instance(&connect().await, "tenant-a", "")
         .await

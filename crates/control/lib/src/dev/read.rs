@@ -613,9 +613,9 @@ mod tests {
         );
 
         publisher.set_gate_outcomes(vec![DevGateOutcome {
-            package_id: "receiving".to_owned(),
+            package_id: "platform_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
-            wiring_id: "purchase-order/get".to_owned(),
+            wiring_id: "widget/get".to_owned(),
             wiring_version: 1,
             verdict: DevGateVerdict::Accepted(GateResult {
                 report_id: "report-1".to_owned(),
@@ -659,7 +659,7 @@ mod tests {
         publisher.set_release(manifest.clone(), carrier(&manifest));
         publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
             "http://127.0.0.1:38080".to_owned(),
-            "receiving.localhost",
+            "fixture.localhost",
             "target-one",
         ));
 
@@ -703,7 +703,7 @@ mod tests {
         publisher.set_release(manifest.clone(), carrier(&manifest));
         publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
             "http://127.0.0.1:38080".to_owned(),
-            "receiving.localhost",
+            "fixture.localhost",
             "target-one",
         ));
         let snapshot = handle.snapshot();
@@ -718,9 +718,9 @@ mod tests {
             .collect::<Vec<_>>();
         let routes = snapshot.routes().map(|(id, _)| id).collect::<Vec<_>>();
 
-        assert_eq!(memberships, ["receiving"]);
-        assert_eq!(operations, ["purchase-order/get"]);
-        assert_eq!(routes, ["purchase-order/get", "purchase-order/studio"]);
+        assert_eq!(memberships, ["platform_fixture"]);
+        assert_eq!(operations, ["widget/get"]);
+        assert_eq!(routes, ["widget/get", "widget/studio"]);
         assert_eq!(
             snapshot
                 .release()
@@ -735,7 +735,7 @@ mod tests {
         );
         let endpoint = snapshot.runtime_endpoint().expect("activation is present");
         assert_eq!(endpoint.base_url(), "http://127.0.0.1:38080");
-        assert_eq!(endpoint.route_host(), "receiving.localhost");
+        assert_eq!(endpoint.route_host(), "fixture.localhost");
     }
 
     #[test]
@@ -797,33 +797,33 @@ mod tests {
     }
 
     fn manifest() -> ServingManifest {
-        let package = PackageCoordinate::new("receiving", "1.0.0").expect("valid package");
+        let package = PackageCoordinate::new("platform_fixture", "1.0.0").expect("valid package");
         let operation = ServingComponentOperation {
             pre_commit: None,
             committed_result_schema: None,
             fresh_only: false,
-            registered_operation: Some("receiving@1.0.0::purchase-order/get".to_owned()),
+            registered_operation: Some("platform_fixture@1.0.0::widget/get".to_owned()),
             dependencies: Vec::new(),
             statements: BTreeMap::new(),
         };
         let component = ServingComponent {
-            package_id: "receiving".to_owned(),
-            component: "receiving".to_owned(),
+            package_id: "platform_fixture".to_owned(),
+            component: "fixture".to_owned(),
             interface_version: "0.1.0".to_owned(),
             digest: ArtifactHash::parse(DIGEST).expect("valid digest"),
-            operations: BTreeMap::from([("purchase-order/get".to_owned(), operation)]),
+            operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
         };
         let attachment = ServingAttachment {
             kind: AttachmentKind::Http,
-            package_id: "receiving".to_owned(),
-            wiring_id: "purchase-order/get".to_owned(),
+            package_id: "platform_fixture".to_owned(),
+            wiring_id: "widget/get".to_owned(),
             wiring_version: 1,
             definition_hash: DefinitionHash::parse(DIGEST).expect("valid digest"),
             definition: json!({
-                "route": {"method": "POST", "path": "/purchase-orders/get"}
+                "route": {"method": "POST", "path": "/widgets/get"}
             }),
             auth_policy: json!({"modes": ["pat"]}),
-            registered_operation: Some("receiving@1.0.0::purchase-order/get".to_owned()),
+            registered_operation: Some("platform_fixture@1.0.0::widget/get".to_owned()),
         };
         ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -836,9 +836,9 @@ mod tests {
             components: BTreeSet::from([component]),
             wirings: BTreeSet::new(),
             attachments: BTreeMap::from([
-                ("purchase-order/get".to_owned(), attachment.clone()),
+                ("widget/get".to_owned(), attachment.clone()),
                 (
-                    "purchase-order/studio".to_owned(),
+                    "widget/studio".to_owned(),
                     ServingAttachment {
                         kind: AttachmentKind::Studio,
                         definition: json!({

@@ -2065,7 +2065,7 @@ mod tests {
             "second-http",
             "observer_fixture",
             "quality_load_widget_detail",
-            "observer-fixture:quality/load-purchase-order-detail@3.0.0",
+            "observer-fixture:quality/load-widget-detail@3.0.0",
             "/widget/{widget_id}",
         );
         let authored = merge_package_attachment_documents(vec![
@@ -2079,7 +2079,7 @@ mod tests {
             ),
         ])
         .expect("distinct attachment identities merge before route validation");
-        let error = resolve_route_host_overlay(&authored, Some("receiving.localhost"))
+        let error = resolve_route_host_overlay(&authored, Some("fixture.localhost"))
             .expect_err("canonical route collisions remain refused after package merging");
 
         assert_eq!(error.kind(), MintManifestErrorKind::Document);
@@ -2257,7 +2257,7 @@ mod tests {
 
     #[test]
     fn fresh_only_component_policy_survives_release_projection() {
-        let operation = "base:purchase-order/get@1.0.0";
+        let operation = "base:widget/get@1.0.0";
         let mut component = closure_component("registered-component", Some(operation));
         let baseline = project_serving_component(&component).unwrap();
         assert!(!baseline.operations[operation].fresh_only);
@@ -2287,7 +2287,7 @@ mod tests {
             .into_iter()
             .collect();
         WiringDocument::new(
-            "receiving",
+            "stock",
             1,
             "entry",
             BTreeMap::from([
@@ -2307,7 +2307,7 @@ mod tests {
                     wamn_catalog::WiringNode {
                         component: "registered-component".to_owned(),
                         interface_version: "0.1.0".to_owned(),
-                        operation: "base:purchase-order/get@1.0.0".to_owned(),
+                        operation: "base:widget/get@1.0.0".to_owned(),
                         operation_dependency: None,
                         params: BTreeMap::new(),
                         terminal: None,
@@ -2324,7 +2324,7 @@ mod tests {
         ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
             package_id: "base".to_owned(),
-            wiring_id: "receiving".to_owned(),
+            wiring_id: "stock".to_owned(),
             wiring_version: 1,
             definition_hash: wamn_catalog::DefinitionHash::parse(DIGEST)
                 .expect("fixture definition hash is canonical"),
@@ -2344,7 +2344,7 @@ mod tests {
                 "package": "base",
                 "version": "1.0.0",
                 "digest": digest,
-                "operations": ["receiving.record_widget"]
+                "operations": ["stock.record_widget"]
             }
         });
         serde_json::from_value(document).expect("the dependency fixture manifest parses")
@@ -2551,7 +2551,7 @@ mod tests {
 
     fn dependency_document() -> WiringDocument {
         WiringDocument::new(
-            "receiving",
+            "stock",
             1,
             "registered",
             BTreeMap::from([(
@@ -2559,10 +2559,10 @@ mod tests {
                 wamn_catalog::WiringNode {
                     component: "registered-component".to_owned(),
                     interface_version: "0.1.0".to_owned(),
-                    operation: "base:receiving/record-widget@1.0.0".to_owned(),
+                    operation: "base:stock/record-widget@1.0.0".to_owned(),
                     operation_dependency: Some(wamn_catalog::WiringOperationDependency {
                         alias: "base".to_owned(),
-                        operation: "receiving.record_widget".to_owned(),
+                        operation: "stock.record_widget".to_owned(),
                     }),
                     params: BTreeMap::new(),
                     terminal: Some(wamn_catalog::WiringTerminal::Respond),
@@ -2583,7 +2583,7 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base:receiving/record-widget@1.0.0"),
+            Some("base:stock/record-widget@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let mut local_same_name = closure_component(
@@ -2621,7 +2621,7 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base:receiving/record-widget@1.0.0"),
+            Some("base:stock/record-widget@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base])]);
@@ -2674,7 +2674,7 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base:receiving/record-widget@1.0.0"),
+            Some("base:stock/record-widget@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()])]);
@@ -2724,8 +2724,8 @@ mod tests {
 
     #[test]
     fn component_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {
-        let base_operation = "base:receiving/record-widget@1.0.0";
-        let overlay_operation = "overlay:receiving/record-widget@3.0.0";
+        let base_operation = "base:stock/record-widget@1.0.0";
+        let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
         base.scope.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
@@ -2786,8 +2786,8 @@ mod tests {
     /// hits the same wall the wiring resolver does. One rule governs both.
     #[test]
     fn a_disposable_target_expands_a_closure_whose_declared_dependency_digest_moved() {
-        let base_operation = "base:receiving/record-widget@1.0.0";
-        let overlay_operation = "overlay:receiving/record-widget@3.0.0";
+        let base_operation = "base:stock/record-widget@1.0.0";
+        let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
         base.scope.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
@@ -2856,7 +2856,7 @@ mod tests {
         dependency: &wamn_catalog::ComponentOperationDependency,
         effects: Vec<AdmittedComponentEffect>,
     ) -> BTreeMap<(String, String), Vec<AdmittedComponent>> {
-        let mut admitted = closure_component("receiving", Some(dependency.operation.as_str()));
+        let mut admitted = closure_component("stock", Some(dependency.operation.as_str()));
         admitted.scope.package_id = dependency.package.clone();
         admitted.scope.package_version = dependency.version.clone();
         admitted.component_digest = dependency.digest.clone();
@@ -2918,7 +2918,7 @@ mod tests {
 
     #[test]
     fn release_projection_preserves_operation_scoped_statement_facts() {
-        let operation = "base:purchase-order/get@1.0.0";
+        let operation = "base:widget/get@1.0.0";
         let sql = "SELECT row_version FROM widget WHERE id = $1";
         let digest = sha256(sql.as_bytes());
         let mut admitted = closure_component("base-component", Some(operation));
@@ -2953,7 +2953,7 @@ mod tests {
         let target = ReleaseWiringTarget {
             package_id: "base".to_owned(),
             package_version: "1.0.0".to_owned(),
-            wiring_id: "receiving".to_owned(),
+            wiring_id: "stock".to_owned(),
             wiring_version: 1,
         };
         let facts = BTreeMap::from([
@@ -2963,10 +2963,7 @@ mod tests {
             ),
             (
                 "registered".to_owned(),
-                closure_component(
-                    "registered-component",
-                    Some("base:purchase-order/get@1.0.0"),
-                ),
+                closure_component("registered-component", Some("base:widget/get@1.0.0")),
             ),
         ]);
         let anonymous = BTreeMap::from([(
@@ -2983,7 +2980,7 @@ mod tests {
         assert_eq!(
             error.detail(),
             "attachment \"fixture-http\" reaches registered operation \
-             \"base:purchase-order/get@1.0.0\" at node \"registered\"; set \
+             \"base:widget/get@1.0.0\" at node \"registered\"; set \
              auth-policy modes = [\"pat\"]"
         );
 
@@ -2999,7 +2996,7 @@ mod tests {
             package: "base".to_owned(),
             version: "1.0.0".to_owned(),
             digest: DIGEST.to_owned(),
-            operation: "base:purchase-order/get@1.0.0".to_owned(),
+            operation: "base:widget/get@1.0.0".to_owned(),
         }];
         let error = validate_anonymous_wiring_closure(
             &anonymous,
@@ -3052,7 +3049,7 @@ mod tests {
         let target = ReleaseWiringTarget {
             package_id: "base".to_owned(),
             package_version: "1.0.0".to_owned(),
-            wiring_id: "receiving".to_owned(),
+            wiring_id: "stock".to_owned(),
             wiring_version: 1,
         };
         let anonymous = BTreeMap::from([(
@@ -3117,15 +3114,15 @@ mod tests {
         assert_eq!(package.package_id(), "source_fixture");
         assert_eq!(package.package_version(), "1.0.0");
 
-        let wiring = "source_fixture@1.0.0::receiving=2"
+        let wiring = "source_fixture@1.0.0::stock=2"
             .parse::<ReleaseWiringTarget>()
             .unwrap();
         assert_eq!(wiring.package_id, "source_fixture");
         assert_eq!(wiring.package_version, "1.0.0");
-        assert_eq!(wiring.wiring_id, "receiving");
+        assert_eq!(wiring.wiring_id, "stock");
         assert_eq!(wiring.wiring_version, 2);
         assert!(
-            "source_fixture::receiving=2"
+            "source_fixture::stock=2"
                 .parse::<ReleaseWiringTarget>()
                 .is_err()
         );
@@ -3136,7 +3133,7 @@ mod tests {
         let authoritative_hash = format!("sha256:{}", "a".repeat(64));
         let stale_hash = format!("sha256:{}", "b".repeat(64));
         let source_policy = AuthoritativeEnvironmentPolicy {
-            source_policy_org: "acme".into(),
+            source_policy_org: "demo".into(),
             policy: wamn_control_registry::EnvPolicy::prod(),
             source_policy_hash: authoritative_hash.clone().into_boxed_str(),
         };
@@ -3155,7 +3152,7 @@ mod tests {
         );
         let wrong_environment = ProjectedEnvironmentPolicy {
             expected_environment: "dev".to_owned(),
-            source_policy_org: Some("acme".to_owned()),
+            source_policy_org: Some("demo".to_owned()),
             source_policy_hash: Some(authoritative_hash.clone()),
         };
         assert_eq!(
@@ -3171,7 +3168,7 @@ mod tests {
         );
         let stale = ProjectedEnvironmentPolicy {
             expected_environment: "prod".to_owned(),
-            source_policy_org: Some("acme".to_owned()),
+            source_policy_org: Some("demo".to_owned()),
             source_policy_hash: Some(stale_hash.clone()),
         };
         let mismatch =
@@ -3187,7 +3184,7 @@ mod tests {
 
         let exact = ProjectedEnvironmentPolicy {
             expected_environment: "prod".to_owned(),
-            source_policy_org: Some("acme".to_owned()),
+            source_policy_org: Some("demo".to_owned()),
             source_policy_hash: Some(authoritative_hash),
         };
         verify_projected_environment_policy(Some(&exact), &source_policy, &release, &schema)

@@ -385,7 +385,7 @@ async fn check_generated_outputs(
     }
     for &(package, schema) in schemas {
         let app_root = root.join("apps").join(package);
-        let mut prefix = schema_database_prefix(root, target, package, schema);
+        let mut prefix = schema_database_prefix(root, target, package, schema)?;
         let mut generate = prefix.clone();
         generate.extend(strings(&[
             "cargo",
@@ -411,8 +411,21 @@ async fn check_generated_outputs(
 }
 
 /// Start a fresh database with the package's schema, migrations, and history tables.
-fn schema_database_prefix(root: &Path, target: &Path, package: &str, schema: &str) -> Vec<String> {
+///
+/// The migrations of each base package the manifest declares run before the
+/// package's own.
+fn schema_database_prefix(
+    root: &Path,
+    target: &Path,
+    package: &str,
+    schema: &str,
+) -> anyhow::Result<Vec<String>> {
     let app_root = root.join("apps").join(package);
+    let manifest_path = app_root.join("wamn.json");
+    let manifest =
+        fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest = wamn_schema_generator::PackageManifest::from_slice(&manifest)
+        .with_context(|| format!("parse {}", manifest_path.display()))?;
     let mut prefix = vec![
         target
             .join("debug/wamn-test-postgres")
@@ -423,10 +436,12 @@ fn schema_database_prefix(root: &Path, target: &Path, package: &str, schema: &st
         "--schema".to_owned(),
         schema.to_owned(),
     ];
-    if package == "client_acme_receiving" {
+    for dependency in manifest.base_dependencies.values() {
         prefix.extend([
             "--migration-dir".to_owned(),
-            root.join("apps/wamn_receiving/migrations")
+            root.join("apps")
+                .join(&dependency.package)
+                .join("migrations")
                 .display()
                 .to_string(),
         ]);
@@ -440,7 +455,7 @@ fn schema_database_prefix(root: &Path, target: &Path, package: &str, schema: &st
         "DATABASE_URL".to_owned(),
         "--".to_owned(),
     ]);
-    prefix
+    Ok(prefix)
 }
 
 /// Execute exact selected tests and distinguish executed success from a skip.
@@ -796,55 +811,67 @@ mod tests {
                 )
             })
         };
-        let split = workspaces("wamn-ctl", "wamn-receiving-data-access");
+        let split = workspaces("wamn-ctl", "wamn-platform-fixture-data-access");
         assert_eq!(
             member_workspace("wamn-ctl", &split).unwrap(),
             Path::new("/r")
         );
         assert_eq!(
-            member_workspace("wamn-receiving-data-access", &split).unwrap(),
+            member_workspace("wamn-platform-fixture-data-access", &split).unwrap(),
             Path::new("/r/apps")
         );
-        assert!(member_workspace("wamn-wms-data-access", &split).is_err());
+        assert!(member_workspace("wamn-absent-data-access", &split).is_err());
         assert!(member_workspace("same", &workspaces("same", "same")).is_err());
     }
 
     #[test]
-    fn sqlx_check_database_applies_base_before_overlay_for_each_receiving_verifier() {
-        let (root, target) = (Path::new("/r"), Path::new("/t"));
+    fn sqlx_check_database_applies_base_before_overlay_for_each_fixture_verifier() {
+        let (root, target) = (wamn_fixture_package::repository_root(), Path::new("/t"));
+        let path = |relative: &str| root.join(relative).display().to_string();
         assert_eq!(
-            schema_database_prefix(root, target, "client_acme_receiving", "receiving"),
+            schema_database_prefix(
+                &root,
+                target,
+                wamn_fixture_package::OVERLAY_PACKAGE_ID,
+                wamn_fixture_package::SCHEMA,
+            )
+            .unwrap(),
             [
-                "/t/debug/wamn-test-postgres",
-                "--database",
-                "delivery_schema",
-                "--schema",
-                "receiving",
-                "--migration-dir",
-                "/r/apps/wamn_receiving/migrations",
-                "--migration-dir",
-                "/r/apps/client_acme_receiving/migrations",
-                "--history-manifest",
-                "/r/apps/client_acme_receiving/wamn.json",
-                "--url-env",
-                "DATABASE_URL",
-                "--",
+                "/t/debug/wamn-test-postgres".to_owned(),
+                "--database".to_owned(),
+                "delivery_schema".to_owned(),
+                "--schema".to_owned(),
+                "inventory".to_owned(),
+                "--migration-dir".to_owned(),
+                path("apps/platform_fixture/migrations"),
+                "--migration-dir".to_owned(),
+                path("apps/platform_fixture_overlay/migrations"),
+                "--history-manifest".to_owned(),
+                path("apps/platform_fixture_overlay/wamn.json"),
+                "--url-env".to_owned(),
+                "DATABASE_URL".to_owned(),
+                "--".to_owned(),
             ]
         );
-        let receiving = schema_database_prefix(root, target, "wamn_receiving", "receiving");
+        let base = schema_database_prefix(
+            &root,
+            target,
+            wamn_fixture_package::PACKAGE_ID,
+            wamn_fixture_package::SCHEMA,
+        )
+        .unwrap();
         assert_eq!(
-            receiving
-                .iter()
+            base.iter()
                 .filter(|argument| argument.as_str() == "--migration-dir")
                 .count(),
             1
         );
-        assert!(receiving.contains(&"/r/apps/wamn_receiving/migrations".to_owned()));
+        assert!(base.contains(&path("apps/platform_fixture/migrations")));
     }
 
     #[tokio::test]
     #[ignore = "requires: cargo-sqlx"]
-    async fn sqlx_metadata_check_reaches_fresh_receiving_and_acme_databases() {
+    async fn sqlx_metadata_check_reaches_fresh_fixture_and_overlay_databases() {
         wamn_test_postgres::require_prerequisites(&["cargo-sqlx"]);
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")
@@ -853,10 +880,20 @@ mod tests {
         let target =
             std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
         let mut checks = Vec::new();
-        check_generated_outputs(&root, &target, RECEIVING_SCHEMAS, &mut checks)
+        let schemas = [
+            (
+                wamn_fixture_package::PACKAGE_ID,
+                wamn_fixture_package::SCHEMA,
+            ),
+            (
+                wamn_fixture_package::OVERLAY_PACKAGE_ID,
+                wamn_fixture_package::SCHEMA,
+            ),
+        ];
+        check_generated_outputs(&root, &target, &schemas, &mut checks)
             .await
             .expect("the committed SQLx metadata matches fresh databases");
-        for (package, _) in RECEIVING_SCHEMAS {
+        for (package, _) in schemas {
             assert_eq!(
                 checks
                     .iter()
