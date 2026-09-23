@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{
@@ -378,6 +379,34 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         assert!(!caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_TENANT));
     }
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 5);
+
+    // A browser sends the signed token in its cookie and the CSRF token in a header.
+    // The admitted request reads permissions once, and the refused one reads nothing.
+    let before = statements(&admin, &generation).await?;
+    let csrf = "fixture-csrf-token";
+    let mut carried = first.clone();
+    carried["csrf"] = json!(hex::encode(Sha256::digest(csrf.as_bytes())));
+    let cookie = format!(
+        "theme=dark; __Host-wamn-session={}",
+        signed(&header(), &carried)
+    );
+    let by_cookie = route
+        .authenticate_headers_for_test(ATTACHMENT, &[("cookie", &cookie), ("x-wamn-csrf", csrf)])
+        .await
+        .expect("a cookie with its CSRF header is admitted")
+        .expect("host-owned caller");
+    assert_eq!(by_cookie.principal_id(), first["sub"].as_str().unwrap());
+    assert_eq!(by_cookie.credential_kind(), CredentialKind::Session);
+    assert!(by_cookie.permits(READ) && by_cookie.permits(WRITE));
+    assert_eq!(
+        route
+            .authenticate_headers_for_test(ATTACHMENT, &[("cookie", &cookie)])
+            .await
+            .unwrap_err(),
+        (401, "unauthorized".into()),
+        "a cookie without its CSRF header refuses"
+    );
+    assert_permission_reads(&before, &statements(&admin, &generation).await?, 1);
     assert_eq!(
         server.count(),
         1,

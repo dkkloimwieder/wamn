@@ -890,6 +890,25 @@ impl FlowHttpRouting {
             .await
             .map_err(|rejection| (rejection.status, rejection.code))
     }
+
+    /// Exercise production route authentication with exact request headers.
+    #[cfg(feature = "test-util")]
+    pub async fn authenticate_headers_for_test(
+        &self,
+        attachment_id: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
+        let headers = headers
+            .iter()
+            .map(|(name, value)| Header {
+                name: (*name).to_string(),
+                value: (*value).to_string(),
+            })
+            .collect::<Vec<_>>();
+        self.authenticate(attachment_id, &headers)
+            .await
+            .map_err(|rejection| (rejection.status, rejection.code))
+    }
 }
 
 /// Every candidate the adapter could select for this request.
