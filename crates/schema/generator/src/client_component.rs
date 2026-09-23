@@ -247,7 +247,14 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             }
             Role::Delete => {
                 solid.extend(["createSignal", "Show"]);
-                emit_delete(&mut body, screen, &mut runtime, &mut bindings, &records)?;
+                emit_delete(
+                    &mut body,
+                    screen,
+                    &mut runtime,
+                    &mut ui,
+                    &mut bindings,
+                    &records,
+                )?;
             }
             role @ Role::Unsupported(_) => {
                 return Err(ClientComponentError::new(
@@ -676,7 +683,10 @@ fn emit_table(
     )
     .expect("write");
     source.push_str("    props.onOutcome?.(outcome);\n");
+    // A completed read shows its rows, so only another outcome is announced.
+    ui.insert("announceOutcome");
     source.push_str("    if (outcome.status !== \"completed\") {\n");
+    writeln!(source, "      announceOutcome(outcome, {stem}TableLabel);").expect("write");
     source.push_str("      setPage({ ...page(), busy: false });\n      return;\n    }\n");
     let cursor_of = if rows_key == "item" {
         "outcome.value.nextCursor"
@@ -772,7 +782,7 @@ fn emit_detail(
     ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
 ) -> Result<(), ClientComponentError> {
-    ui.extend(["DetailItem", "DetailList", "FieldError"]);
+    ui.extend(["DetailItem", "DetailList", "FieldError", "announceOutcome"]);
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
@@ -836,7 +846,7 @@ fn emit_detail(
     .expect("write");
     writeln!(
         source,
-        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        {{ ...input, requestId: newRequestId() }} as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      return read;\n    }},\n  );"
+        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        {{ ...input, requestId: newRequestId() }} as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      if (read.status !== \"completed\") {{\n        announceOutcome(read, {stem}DetailLabel);\n      }}\n      return read;\n    }},\n  );"
     )
     .expect("write");
     writeln!(
@@ -1334,6 +1344,9 @@ fn emit_form(
     )
     .expect("write");
     source.push_str("      props.onSubmitted?.(outcome);\n");
+    // Every outcome of a submission is announced. A refusal that names a
+    // member still marks that member in place.
+    writeln!(source, "      announceOutcome(outcome, {stem}FormLabel);").expect("write");
     source.push_str(
         "      setRefusal(\n        outcome.status === \"refused\"\n          ? { code: outcome.code, member: refusedMember(outcome.detail) }\n          : null,\n      );\n",
     );
@@ -1374,7 +1387,7 @@ fn emit_form(
     }
 
     // The markup. A refusal that names no member reads above the controls.
-    ui.extend(["Button", "FieldError"]);
+    ui.extend(["Button", "FieldError", "announceOutcome"]);
     source.push_str(
         "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <FieldError>{refusal()?.code}</FieldError>\n      </Show>\n",
     );
@@ -1810,6 +1823,7 @@ fn emit_delete(
     source: &mut String,
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
+    ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
     records: &BTreeMap<String, String>,
 ) -> Result<(), ClientComponentError> {
@@ -1824,6 +1838,7 @@ fn emit_delete(
         "type Outcome",
         "type Transport",
     ]);
+    ui.extend(["ConfirmAction", "FieldError", "announceOutcome"]);
     for supplied in &screen.supplied {
         match supplied.kind {
             SuppliedKind::RequestId => runtime.insert("newRequestId"),
@@ -1904,7 +1919,6 @@ fn emit_delete(
         "export function {stem}Delete(props: {stem}DeleteProps) {{"
     )
     .expect("write");
-    source.push_str("  const [confirming, setConfirming] = createSignal(false);\n");
     source.push_str(
         "  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(\n    null,\n  );\n",
     );
@@ -1969,11 +1983,12 @@ fn emit_delete(
     )
     .expect("write");
     source.push_str("    props.onSubmitted?.(outcome);\n");
+    writeln!(source, "    announceOutcome(outcome, {stem}DeleteLabel);").expect("write");
     source.push_str(
         "    setRefusal(\n      outcome.status === \"refused\"\n        ? { code: outcome.code, member: refusedMember(outcome.detail) }\n        : null,\n    );\n  };\n",
     );
     source.push_str(
-        "\n  return (\n    <section>\n      <Show when={refusal()}>\n        <p>{refusal()?.code}</p>\n      </Show>\n      <Show\n        when={confirming()}\n        fallback={\n          <button type=\"button\" onClick={() => setConfirming(true)}>\n            delete\n          </button>\n        }\n      >\n        <p>remove this record?</p>\n        <button\n          type=\"button\"\n          onClick={() => {\n            setConfirming(false);\n            void remove();\n          }}\n        >\n          confirm\n        </button>\n        <button type=\"button\" onClick={() => setConfirming(false)}>\n          cancel\n        </button>\n      </Show>\n    </section>\n  );\n}\n",
+        "\n  return (\n    <section>\n      <Show when={refusal()}>\n        <FieldError>{refusal()?.code}</FieldError>\n      </Show>\n      <ConfirmAction\n        trigger=\"delete\"\n        question=\"remove this record?\"\n        confirm=\"confirm\"\n        cancel=\"cancel\"\n        onConfirm={() => void remove()}\n      />\n    </section>\n  );\n}\n",
     );
     Ok(())
 }

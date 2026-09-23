@@ -222,16 +222,23 @@ fn a_table_declares_its_features_and_leaves_paging_to_the_release() {
 fn a_table_renders_through_the_data_grid_and_states_no_class() {
     let files = emit(&release());
     let widget = widget(&files);
-    assert!(
-        widget.contains(concat!(
-            "  Button,\n",
-            "  ChoiceField,\n",
-            "  DataGrid,\n",
-            "  DataGridContainer,\n",
-            "  DataGridTable,\n",
-        )) && widget.contains("} from \"@wamn/ui\";\n"),
-        "the table names the grid and its controls from the UI package"
-    );
+    let ui = widget
+        .split("} from \"@wamn/ui\";\n")
+        .next()
+        .and_then(|head| head.rsplit("import {\n").next())
+        .expect("the module imports the UI package");
+    for name in [
+        "Button",
+        "ChoiceField",
+        "DataGrid",
+        "DataGridContainer",
+        "DataGridTable",
+    ] {
+        assert!(
+            ui.contains(&format!("  {name},\n")),
+            "the table names {name} from the UI package"
+        );
+    }
     assert!(
         widget.contains("      <DataGrid\n        table={table}\n"),
         "the grid renders the instance the component creates"
@@ -382,6 +389,13 @@ fn a_form_renders_through_the_ui_fields_and_states_no_class() {
         "adding and removing a line are buttons"
     );
     assert!(batch.contains("<Button type=\"submit\">submit</Button>"));
+    assert!(
+        batch.contains(concat!(
+            "      props.onSubmitted?.(outcome);\n",
+            "      announceOutcome(outcome, WidgetRecordBatchFormLabel);\n",
+        )),
+        "every outcome of a submission reaches the operator as a toast"
+    );
     for markup in [
         "<input",
         "<select",
@@ -491,13 +505,27 @@ fn a_delete_confirms_and_sends_the_revision_it_read() {
         .next()
         .expect("the delete ends");
     assert!(
-        remove.contains("const [confirming, setConfirming] = createSignal(false);"),
-        "it asks before it acts"
+        remove.contains(concat!(
+            "      <ConfirmAction\n",
+            "        trigger=\"delete\"\n",
+            "        question=\"remove this record?\"\n",
+            "        confirm=\"confirm\"\n",
+            "        cancel=\"cancel\"\n",
+            "        onConfirm={() => void remove()}\n",
+            "      />\n",
+        )),
+        "it asks before it acts, and the question states what it removes"
     );
     assert!(
-        remove.contains("<p>remove this record?</p>") && remove.contains(">\n          confirm\n"),
-        "the confirmation states what it removes"
+        remove.contains(concat!(
+            "    props.onSubmitted?.(outcome);\n",
+            "    announceOutcome(outcome, WidgetDeleteDeleteLabel);\n",
+        )),
+        "the outcome reaches the caller and the operator"
     );
+    for markup in ["<button", "<p>", "class=", "className="] {
+        assert!(!remove.contains(markup), "the UI package owns {markup}");
+    }
     assert!(
         remove.contains("const record = await get(props.transport, ["),
         "it reads the record first"
