@@ -13,6 +13,7 @@ const UPDATE: Constraints = Constraints {
     unique: sql::UPDATE_UNIQUE_CONSTRAINTS,
     foreign_key: sql::UPDATE_FOREIGN_KEY_CONSTRAINTS,
     check: sql::UPDATE_CHECK_CONSTRAINTS,
+    exclusion: sql::UPDATE_EXCLUSION_CONSTRAINTS,
 };
 
 /// Change one widget tag at the revision the caller last read.

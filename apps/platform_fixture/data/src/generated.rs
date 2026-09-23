@@ -5,7 +5,7 @@ pub(crate) mod wamn {
     /// Generated `widget` model accessors.
     #[expect(
         dead_code,
-        reason = "no fixture operation selects a transaction participant, delete maps no constraint, and create and update map no exclusion constraint"
+        reason = "no fixture operation selects a transaction participant, and delete maps no constraint"
     )]
     pub(crate) mod widget {
         include!(concat!(
@@ -59,7 +59,6 @@ pub(crate) mod wamn {
     }
 
     /// Generated `widget_tag` model accessors.
-    #[expect(dead_code, reason = "update maps no exclusion constraint")]
     pub(crate) mod widget_tag {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

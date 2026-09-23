@@ -192,15 +192,16 @@ To run the ignored tests of the selected packages, use `tools/test-changes --clu
 They run one at a time.
 To select tests by name, add `--name FILTER`, as [select the relevant tests](#select-the-relevant-tests) describes.
 
-Run the generated Receiving exclusion test through its PostgreSQL fixture:
+Run the generated exclusion test of the platform fixture through its PostgreSQL fixture:
 
 ```bash
 cargo run --locked --offline -p wamn-test-infrastructure --example exclusion_diagnostics
 ```
 
-The fixture starts disposable PostgreSQL, applies the Receiving migration, and adds a test-only exclusion constraint.
+The fixture starts disposable PostgreSQL, applies the platform fixture migration, and adds a test-only exclusion constraint on `widget`.
 It captures actual update failures under a non-superuser role.
-It regenerates Receiving code in a temporary copy and runs the existing data-package test.
+It regenerates the platform fixture code in a temporary copy.
+Then it runs the ignored test `error::tests::generated_update_exclusion_from_postgres` of `wamn-platform-fixture-data-access`.
 `WAMN_EXCLUSION_DIAGNOSTICS` supplies the server diagnostics to that test.
 The fixture removes its database, generated copy, diagnostics, and build output when it finishes.
 The application schemas and generated files in the checkout do not change.

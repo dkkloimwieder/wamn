@@ -23,6 +23,8 @@ pub enum AccessErrorKind {
     ForeignKeyViolation,
     /// The write broke a check constraint the operation names.
     CheckViolation,
+    /// The write broke an exclusion constraint the operation names.
+    ExclusionViolation,
     /// Transient. The caller may send the same request again.
     Retry,
     /// The statement exceeded its time budget.
@@ -45,6 +47,7 @@ impl AccessErrorKind {
             Self::UniqueViolation => "unique_violation",
             Self::ForeignKeyViolation => "foreign_key_violation",
             Self::CheckViolation => "check_violation",
+            Self::ExclusionViolation => "exclusion_violation",
             Self::Retry => "retry",
             Self::Timeout => "timeout",
             Self::PermissionDenied => "permission_denied",
@@ -115,12 +118,20 @@ impl AccessError {
     /// A constraint the operation does not name lands on `internal_error`, as
     /// does every unmapped kind.
     pub(crate) fn from_statement(error: &StatementError, constraints: Constraints) -> Self {
-        let violation =
-            |kind, names: &[&str]| match error.constraint().filter(|name| names.contains(name)) {
-                Some(constraint) => Self::new(kind, json!({ "constraint": constraint })),
-                None => Self::internal(),
-            };
-        match error.kind() {
+        Self::from_statement_parts(error.kind(), error.constraint(), constraints)
+    }
+
+    fn from_statement_parts(
+        kind: StatementErrorKind,
+        constraint: Option<&str>,
+        constraints: Constraints,
+    ) -> Self {
+        let violation = |kind, names: &[&str]| match constraint.filter(|name| names.contains(name))
+        {
+            Some(constraint) => Self::new(kind, json!({ "constraint": constraint })),
+            None => Self::internal(),
+        };
+        match kind {
             StatementErrorKind::SerializationFailure
             | StatementErrorKind::ConnectionUnavailable => {
                 Self::new(AccessErrorKind::Retry, json!({}))
@@ -138,6 +149,9 @@ impl AccessError {
             ),
             StatementErrorKind::CheckViolation => {
                 violation(AccessErrorKind::CheckViolation, constraints.check)
+            }
+            StatementErrorKind::ExclusionViolation => {
+                violation(AccessErrorKind::ExclusionViolation, constraints.exclusion)
             }
             _ => Self::internal(),
         }
@@ -162,6 +176,7 @@ pub(crate) struct Constraints {
     pub(crate) unique: &'static [&'static str],
     pub(crate) foreign_key: &'static [&'static str],
     pub(crate) check: &'static [&'static str],
+    pub(crate) exclusion: &'static [&'static str],
 }
 
 impl Constraints {
@@ -169,5 +184,40 @@ impl Constraints {
         unique: &[],
         foreign_key: &[],
         check: &[],
+        exclusion: &[],
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use wamn_postgres_statements::StatementErrorKind;
+
+    use super::{AccessError, AccessErrorKind};
+
+    // The exclusion diagnostics example supplies actual PostgreSQL diagnostics.
+    #[test]
+    #[ignore = "requires: WAMN_EXCLUSION_DIAGNOSTICS"]
+    fn generated_update_exclusion_from_postgres() {
+        let path = std::env::var_os("WAMN_EXCLUSION_DIAGNOSTICS")
+            .expect("WAMN_EXCLUSION_DIAGNOSTICS must name the disposable PostgreSQL diagnostics");
+        let diagnostics: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read the diagnostics"))
+                .expect("the diagnostics are JSON");
+        let diagnostic = &diagnostics["fixture"];
+        assert_eq!(diagnostic["sqlstate"], "23P01");
+        let constraint = diagnostic["constraint"]
+            .as_str()
+            .expect("server constraint name");
+        let error = AccessError::from_statement_parts(
+            StatementErrorKind::ExclusionViolation,
+            Some(constraint),
+            crate::widget::UPDATE,
+        );
+        assert_eq!(error.kind(), AccessErrorKind::ExclusionViolation);
+        assert_eq!(
+            error.detail(),
+            &json!({ "constraint": "widget_maker_id_excl" })
+        );
+    }
 }

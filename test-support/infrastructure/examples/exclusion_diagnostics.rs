@@ -1,4 +1,4 @@
-//! Generate real exclusion diagnostics and run the Receiving error-mapping test.
+//! Generate real exclusion diagnostics and run the fixture error-mapping test.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -118,26 +118,30 @@ async fn main() -> anyhow::Result<()> {
     let (client, connection) =
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     let task = tokio::spawn(connection);
-    client.batch_execute("CREATE SCHEMA receiving; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA receiving TO wamn_app;").await?;
+    client.batch_execute("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA inventory TO wamn_app;").await?;
     client
         .batch_execute(include_str!(
-            "../../../apps/wamn_receiving/migrations/0001_initial.sql"
+            "../../../apps/platform_fixture/migrations/0001_initial.sql"
         ))
         .await?;
-    client.batch_execute("GRANT SELECT, UPDATE ON receiving.purchase_order TO wamn_app;
-        INSERT INTO receiving.supplier (id, name)
-        VALUES ('00000000-0000-4000-8000-000000000f01', 'first supplier'),
-               ('00000000-0000-4000-8000-000000000f02', 'second supplier');
-        INSERT INTO receiving.purchase_order (purchase_order_number, supplier_id, created_at, created_by, updated_at, updated_by)
-        VALUES ('first', '00000000-0000-4000-8000-000000000f01', now(), gen_random_uuid(), now(), gen_random_uuid()),
-               ('second', '00000000-0000-4000-8000-000000000f02', now(), gen_random_uuid(), now(), gen_random_uuid());
-        ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_supplier_id_excl EXCLUDE USING gist (supplier_id WITH =);").await?;
-    let receiving = diagnostic(&client, "UPDATE receiving.purchase_order SET supplier_id = (SELECT supplier_id FROM receiving.purchase_order WHERE purchase_order_number = 'first') WHERE purchase_order_number = 'second'").await?;
-    generate_fixture(database.url(), &scratch.path().join("apps/wamn_receiving")).await?;
+    client.batch_execute("GRANT SELECT, UPDATE ON inventory.widget TO wamn_app;
+        INSERT INTO inventory.widget_maker (id, name)
+        VALUES ('00000000-0000-4000-8000-000000000f01', 'first maker'),
+               ('00000000-0000-4000-8000-000000000f02', 'second maker');
+        INSERT INTO inventory.widget (code, maker_id)
+        VALUES ('priority', '00000000-0000-4000-8000-000000000f01'),
+               ('standard', '00000000-0000-4000-8000-000000000f02');
+        ALTER TABLE inventory.widget ADD CONSTRAINT widget_maker_id_excl EXCLUDE USING gist (maker_id WITH =);").await?;
+    let fixture = diagnostic(&client, "UPDATE inventory.widget SET maker_id = (SELECT maker_id FROM inventory.widget WHERE code = 'priority') WHERE code = 'standard'").await?;
+    generate_fixture(
+        database.url(),
+        &scratch.path().join("apps/platform_fixture"),
+    )
+    .await?;
     let diagnostics = scratch.path().join("exclusion-diagnostics.json");
     std::fs::write(
         &diagnostics,
-        serde_json::to_vec(&json!({"receiving": receiving}))?,
+        serde_json::to_vec(&json!({"fixture": fixture}))?,
     )?;
     drop(client);
     task.await??;
@@ -154,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
             "--locked",
             "--offline",
             "-p",
-            "wamn-receiving-data-access",
+            "wamn-platform-fixture-data-access",
             "--lib",
             "error::tests::generated_update_exclusion_from_postgres",
             "--",
@@ -164,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
         .status()?;
     ensure!(
         status.success(),
-        "generated exclusion test failed for Receiving"
+        "generated exclusion test failed for the fixture"
     );
     Ok(())
 }

@@ -24,11 +24,13 @@ const CREATE: Constraints = Constraints {
     unique: sql::CREATE_UNIQUE_CONSTRAINTS,
     foreign_key: sql::CREATE_FOREIGN_KEY_CONSTRAINTS,
     check: sql::CREATE_CHECK_CONSTRAINTS,
+    exclusion: sql::CREATE_EXCLUSION_CONSTRAINTS,
 };
-const UPDATE: Constraints = Constraints {
+pub(crate) const UPDATE: Constraints = Constraints {
     unique: sql::UPDATE_UNIQUE_CONSTRAINTS,
     foreign_key: sql::UPDATE_FOREIGN_KEY_CONSTRAINTS,
     check: sql::UPDATE_CHECK_CONSTRAINTS,
+    exclusion: sql::UPDATE_EXCLUSION_CONSTRAINTS,
 };
 const MAX_BATCH_LINES: usize = 10;
 
