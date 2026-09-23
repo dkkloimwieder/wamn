@@ -33,7 +33,7 @@ pub fn connection_options(
 }
 
 /// Create missing broker objects with the caller's provisioning credential.
-/// Existing objects must match the complete declaration before attachment.
+/// Existing objects must match the fields their declaration owns before attachment.
 pub async fn provision(
     context: &Context,
     scope: &Triple,
