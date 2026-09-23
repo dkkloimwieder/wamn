@@ -1,1 +1,1 @@
-SELECT id, edit_version FROM widget WHERE id = $1 FOR UPDATE;
+SELECT id, edit_version, note FROM widget WHERE id = $1 FOR UPDATE;

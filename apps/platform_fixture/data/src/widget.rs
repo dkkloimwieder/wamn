@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_postgres_statements::{Connection, Json, StatementError, Uuid};
+use wamn_postgres_statements::{Connection, StatementError};
 
 use crate::error::{AccessError, AccessErrorKind, Constraints};
 use crate::generated::wamn::{
@@ -13,6 +13,10 @@ use crate::scalar;
 
 #[doc(inline)]
 pub use crate::generated::wamn::widget::{WidgetDeleteRow, WidgetRow};
+#[doc(inline)]
+pub use crate::generated::wamn::widget_archive::ArchiveRow;
+#[doc(inline)]
+pub use crate::generated::wamn::widget_list::ListRow;
 #[doc(inline)]
 pub use crate::generated::wamn::widget_record_batch::FinalizeBatchRow;
 
@@ -34,25 +38,6 @@ pub struct Change {
     pub code: Option<Option<String>>,
     pub maker_id: Option<Option<String>>,
     pub note: Option<Option<String>>,
-}
-
-/// The `widget.archive` result.
-#[derive(Debug)]
-pub struct Archived {
-    pub id: Uuid,
-    pub edit_version: i64,
-    /// Always `None`: the authored archive statement does not select `note`.
-    pub note: Option<String>,
-}
-
-/// One `widget.list` row.
-#[derive(Debug)]
-pub struct Listed {
-    pub id: Uuid,
-    pub code: String,
-    pub edit_version: i64,
-    /// The keys the list statement returns for the widget, as one JSON object.
-    pub attributes: Json,
 }
 
 /// One `widget.record_batch` line.
@@ -278,7 +263,7 @@ pub async fn archive(
     connection: &mut Connection,
     id: &str,
     expected_edit_version: i64,
-) -> Result<Archived, AccessError> {
+) -> Result<ArchiveRow, AccessError> {
     let id = scalar::uuid("id", id)?;
     let statement = |error: StatementError| AccessError::from_statement(&error, Constraints::NONE);
     let mut transaction = connection.begin().await.map_err(statement)?;
@@ -292,11 +277,7 @@ pub async fn archive(
         ));
     }
     transaction.commit().await.map_err(statement)?;
-    Ok(Archived {
-        id: row.id,
-        edit_version: row.edit_version,
-        note: None,
-    })
+    Ok(row)
 }
 
 /// List every widget in id order.
@@ -304,29 +285,14 @@ pub async fn archive(
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
-pub async fn list(connection: &mut Connection) -> Result<Vec<Listed>, AccessError> {
+pub async fn list(connection: &mut Connection) -> Result<Vec<ListRow>, AccessError> {
     let statement = |error: StatementError| AccessError::from_statement(&error, Constraints::NONE);
     let mut transaction = connection.begin().await.map_err(statement)?;
     let rows = widget_list::list(&mut transaction)
         .await
         .map_err(statement)?;
     transaction.commit().await.map_err(statement)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| Listed {
-            attributes: Json(
-                String::from_utf8(canonical_json_bytes(&json!({
-                    "code": row.code,
-                    "edit_version": row.edit_version,
-                    "id": row.id.0,
-                })))
-                .expect("canonical JSON is UTF-8"),
-            ),
-            id: row.id,
-            code: row.code,
-            edit_version: row.edit_version,
-        })
-        .collect())
+    Ok(rows)
 }
 
 /// Record one batch of lines under one idempotency key.

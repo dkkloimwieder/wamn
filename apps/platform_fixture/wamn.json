@@ -236,7 +236,8 @@
           "schema": "inventory",
           "select_fields": [
             "id",
-            "edit_version"
+            "edit_version",
+            "note"
           ],
           "table": "widget",
           "update_fields": []
@@ -284,6 +285,11 @@
               "name": "edit_version",
               "nullable": false,
               "type": "int64"
+            },
+            {
+              "name": "note",
+              "nullable": true,
+              "type": "text"
             }
           ]
         }
@@ -392,6 +398,11 @@
               "name": "edit_version",
               "nullable": false,
               "type": "int64"
+            },
+            {
+              "name": "attributes",
+              "nullable": false,
+              "type": "json"
             }
           ]
         }

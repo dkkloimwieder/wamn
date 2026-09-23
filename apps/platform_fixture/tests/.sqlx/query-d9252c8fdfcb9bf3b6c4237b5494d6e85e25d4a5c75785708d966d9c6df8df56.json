@@ -1,0 +1,91 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO widget (id, code, maker_id, note)\nVALUES ($1::uuid, $2::text, $3::uuid, $4::text)\nRETURNING\n    code,\n    created_at,\n    edit_version,\n    id,\n    maker_id,\n    note;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "code"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "edit_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "edit_version"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "maker_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "maker_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d9252c8fdfcb9bf3b6c4237b5494d6e85e25d4a5c75785708d966d9c6df8df56"
+}

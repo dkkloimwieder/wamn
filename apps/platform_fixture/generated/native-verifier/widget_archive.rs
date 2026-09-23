@@ -4,6 +4,7 @@
 pub struct ArchiveRow {
     pub id: uuid::Uuid,
     pub edit_version: i64,
+    pub note: Option<String>,
 }
 
 pub(crate) const ARCHIVE_SQL: &str = include_str!("../../command/widget/archive.sql");

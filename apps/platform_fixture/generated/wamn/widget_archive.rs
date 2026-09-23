@@ -6,10 +6,11 @@ use wamn_postgres_statements::Transaction;
 pub struct ArchiveRow {
     pub id: wamn_postgres_statements::Uuid,
     pub edit_version: i64,
+    pub note: Option<String>,
 }
 
 pub(crate) const ARCHIVE_DIGEST: &str =
-    "sha256:60d573f8af069d58f1a420ac844eb8a7ae81f9f18a452ca5b03f19f301cf0b99";
+    "sha256:340afea3740efd68e6c9b3925765fa40766b352562bb78f39c2c1973dac3fedf";
 
 pub(crate) async fn archive(
     transaction: &mut Transaction,
@@ -25,6 +26,7 @@ pub(crate) async fn archive(
         Ok(ArchiveRow {
             id: row.decode("id")?,
             edit_version: row.decode("edit_version")?,
+            note: row.decode("note")?,
         })
     })
 }

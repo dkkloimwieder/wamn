@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT canonical_command, widget_id FROM widget_command WHERE idempotency_key = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "widget_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "widget_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget_command",
+            "name": "widget_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d64a246fe06ccd0f9b4e0528435d6743ed66c1921f5297e332a48b7aa37abeb1"
+}

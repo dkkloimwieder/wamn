@@ -1,0 +1,109 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH target AS MATERIALIZED (\n    SELECT id, edit_version\n    FROM widget\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE widget AS model\n    SET\n        code = CASE WHEN $3::boolean THEN $4::text ELSE model.code END,\n        maker_id = CASE WHEN $5::boolean THEN $6::uuid ELSE model.maker_id END,\n        note = CASE WHEN $7::boolean THEN $8::text ELSE model.note END,\n        edit_version = CASE\n            WHEN ($3::boolean AND $4::text::text IS DISTINCT FROM model.code::text)\n            OR ($5::boolean AND $6::uuid::text IS DISTINCT FROM model.maker_id::text)\n            OR ($7::boolean AND $8::text::text IS DISTINCT FROM model.note::text)\n            THEN model.edit_version + 1\n            ELSE model.edit_version\n        END\n    FROM target\n    WHERE model.id = target.id\n      AND target.edit_version = $2::int8\n    RETURNING\n    model.code,\n    model.created_at,\n    model.edit_version,\n    model.id,\n    model.maker_id,\n    model.note\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    (SELECT target.edit_version FROM target) AS observed_edit_version,\n    updated.code,\n    updated.created_at,\n    updated.edit_version,\n    updated.id,\n    updated.maker_id,\n    updated.note\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "observed_edit_version",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "code"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "edit_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "edit_version"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "maker_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "maker_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Bool",
+        "Text",
+        "Bool",
+        "Uuid",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "a012c26134f98282143795c4c02c39ff6b7db89ef85661c279a275a3125ef540"
+}
