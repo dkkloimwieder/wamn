@@ -132,7 +132,7 @@ A second assertion pins the wash-runtime list from section 3 exactly. If the lis
 
 | Today in `wamn-execution-host` | After |
 | --- | --- |
-| `invoke_operation`, `OperationCall`, `OperationClosure`, `operation/native_call.rs`, `operation/native_workload.rs`, `warm_reuse.rs` | `wamn-engine`, `invoke_operation` is `pub` |
+| `invoke_operation`, `OperationCall`, `OperationClosure`, `operation/invocation_policy.rs`, `operation/native_call.rs`, `operation/native_workload.rs`, `warm_reuse.rs` | `wamn-engine`, `invoke_operation` is `pub` |
 | `OperationHost`, `operation/native_policy.rs`, nested calls, `route.rs`, `router_driver.rs`, `queue.rs` | stay, and implement the engine traits |
 
 The admission test at `component_admission.rs:710` calls `wiring_lowering::project_component_operations`. That test moves to `wamn-runtime` beside `wiring_lowering.rs`. It is not rewritten.
@@ -146,7 +146,7 @@ Each issue names the files it moves. Each ends with the workspace building, clip
 4. `wamn-3lw7.4` Admission and artifacts into the engine: `component_admission.rs`, `component_artifact.rs`, `release_manifest.rs`, `plugins/invocation_trace.rs`, `component_imports`. The `wiring_lowering` admission test moves to `wamn-runtime`.
 5. `wamn-3lw7.5` Artifact source seam. The engine declares `ArtifactSource`, and holds the digest check and the file source. The registry source stays in `wamn-runtime` and implements the trait. `OperationHost` holds `Arc<dyn ArtifactSource>`.
 6. `wamn-3lw7.6` Invocation seam in place, inside `wamn-execution-host`, before any move. `native_call.rs` and `native_workload.rs` stop naming `NativePolicy` and use an `InvocationPolicy` trait with an associated fact type. By owner ruling 6, the trait covers only the calls that `invoke_operation` makes today. `invoke_operation` takes a host trait that gives the loaded application. `NativePolicy` and `OperationHost` implement them. No `wamn-runtime` type moves into the engine. The native policy, route, and router driver tests pass unchanged.
-7. `wamn-3lw7.7` Move `invoke_operation` into the engine and make it `pub`: `operation/native_call.rs`, `operation/native_workload.rs`, `warm_reuse.rs`, and the call half of `operation.rs`. `route.rs` and `router_driver.rs` call `wamn_engine::invoke_operation`.
+7. `wamn-3lw7.7` Move `invoke_operation` into the engine and make it `pub`: `operation/invocation_policy.rs` (the `InvocationPolicy` and `ApplicationHost` traits from `wamn-3lw7.6`), `operation/native_call.rs`, `operation/native_workload.rs`, `warm_reuse.rs`, and the call half of `operation.rs`. `route.rs` and `router_driver.rs` call `wamn_engine::invoke_operation`.
 8. `wamn-3lw7.8` Docs, sweep, closeout. `docs/architecture/overview.md` and `execution.md` name the three crates. The full workspace sweep runs once with the same count and no new failures. Generated output is byte-identical. The closeout states the `wamn-engine` dependency count with and without wash-runtime, so the edge epic knows the cost. It goes on the epic bead, and section 7 of routes-router.md gets one line.
 
 Order: 1, 3, then 4, 5, and 6 in parallel with file fences, then 7, then 8. Issue `wamn-3lw7.2` (the rename) is closed by owner ruling 4. Issue 5 and issue 6 both edit `operation.rs`: 5 owns the `source` field and `released_application`, and 6 owns everything below `IntentStore`.
