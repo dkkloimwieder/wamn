@@ -1012,7 +1012,8 @@ mod tests {
 
         // Local cutover retains the owner's exact parsed evidence; removing
         // source files after validation cannot substitute a later manifest/ACL.
-        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+        let source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_fixture");
         let original = crate::apply_package::read_package_directory(&source).unwrap();
         let overlay_bytes = std::fs::read(source.join(DATA_ACCESS_OVERLAY_PATH)).unwrap();
         let root =
@@ -1040,7 +1041,7 @@ mod tests {
     #[test]
     fn a_residual_sequence_privilege_revokes_through_the_sequence_carrier() {
         let residue = UndeclaredResidue::from([(
-            "receiving".to_owned(),
+            "inventory".to_owned(),
             "unconsumed_sequence".to_owned(),
             "S".to_owned(),
             None,
@@ -1048,7 +1049,7 @@ mod tests {
         )]);
         assert_eq!(
             render_undeclared_revocation("wamn_app", &residue),
-            "REVOKE ALL PRIVILEGES ON SEQUENCE \"receiving\".\"unconsumed_sequence\" \
+            "REVOKE ALL PRIVILEGES ON SEQUENCE \"inventory\".\"unconsumed_sequence\" \
              FROM PUBLIC, \"wamn_app\";\n"
         );
     }
@@ -1057,14 +1058,14 @@ mod tests {
     fn a_residual_column_privilege_revokes_beside_the_relation_it_sits_on() {
         let residue = UndeclaredResidue::from([
             (
-                "receiving".to_owned(),
+                "inventory".to_owned(),
                 "unconsumed_view".to_owned(),
                 "v".to_owned(),
                 None,
                 "SELECT".to_owned(),
             ),
             (
-                "receiving".to_owned(),
+                "inventory".to_owned(),
                 "unconsumed_view".to_owned(),
                 "v".to_owned(),
                 Some("id".to_owned()),
@@ -1074,14 +1075,14 @@ mod tests {
         let sql = render_undeclared_revocation("wamn_app", &residue);
         assert!(
             sql.contains(
-                "REVOKE ALL PRIVILEGES ON TABLE \"receiving\".\"unconsumed_view\" \
+                "REVOKE ALL PRIVILEGES ON TABLE \"inventory\".\"unconsumed_view\" \
                  FROM PUBLIC, \"wamn_app\";"
             ),
             "the relation revocation is missing: {sql}"
         );
         assert!(
             sql.contains(
-                "REVOKE SELECT (\"id\") ON TABLE \"receiving\".\"unconsumed_view\" \
+                "REVOKE SELECT (\"id\") ON TABLE \"inventory\".\"unconsumed_view\" \
                  FROM PUBLIC, \"wamn_app\";"
             ),
             "the column revocation is missing: {sql}"

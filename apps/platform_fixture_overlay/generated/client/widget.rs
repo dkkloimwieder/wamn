@@ -257,7 +257,7 @@ pub const WIDGET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
 pub const WIDGET_GET_KIND: &str = "get";
 pub const WIDGET_GET_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_GET_REPLAY: Option<&str> = None;
-pub const WIDGET_GET_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_GET_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture-overlay:widget/get@1.0.0`.
 pub const WIDGET_GET_GRANT: &str = "platform-fixture-overlay:widget/get@1.0.0";

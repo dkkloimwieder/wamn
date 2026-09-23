@@ -28,12 +28,12 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-fn receiving_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving")
+fn fixture_package_root() -> PathBuf {
+    wamn_fixture_package::package_root()
 }
 
 fn overlay_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/client_acme_receiving")
+    wamn_fixture_package::overlay_root()
 }
 
 fn generation_url(admin_url: &str, role: &str) -> String {
@@ -58,23 +58,21 @@ async fn acl_identity(client: &Client) -> Vec<String> {
             "SELECT identity FROM ( \
                SELECT 'schema:' || namespace.nspname || ':' || namespace.xmin::text AS identity \
                  FROM pg_catalog.pg_namespace AS namespace \
-                WHERE namespace.nspname = 'receiving' \
+                WHERE namespace.nspname = 'inventory' \
                UNION ALL \
                SELECT 'table:' || relation.relname || ':' || relation.xmin::text \
                  FROM pg_catalog.pg_class AS relation \
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-                WHERE namespace.nspname = 'receiving' AND relation.relname IN ( \
-                    'item', 'location', 'purchase_order', 'purchase_order_line', \
-                    'quality_inspection', 'record_receipt_command', 'receipt', 'receipt_line', \
+                WHERE namespace.nspname = 'inventory' AND relation.relname IN ( \
+                    'widget', 'widget_command', 'widget_maker', \
                     'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
                UNION ALL \
                SELECT 'column:' || relation.relname || ':' || attribute.attname || ':' || attribute.xmin::text \
                  FROM pg_catalog.pg_attribute AS attribute \
                  JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid \
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-                WHERE namespace.nspname = 'receiving' AND relation.relname IN ( \
-                    'item', 'location', 'purchase_order', 'purchase_order_line', \
-                    'quality_inspection', 'record_receipt_command', 'receipt', 'receipt_line', \
+                WHERE namespace.nspname = 'inventory' AND relation.relname IN ( \
+                    'widget', 'widget_command', 'widget_maker', \
                     'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
                   AND attribute.attnum > 0 AND NOT attribute.attisdropped \
              ) AS observed ORDER BY identity COLLATE \"C\"",
@@ -112,7 +110,7 @@ async fn applier_owned_authority(client: &Client) -> Vec<String> {
                  FROM pg_catalog.pg_class AS relation \
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
                  CROSS JOIN unnest($1::text[]) AS privilege \
-                WHERE namespace.nspname = 'receiving' \
+                WHERE namespace.nspname = 'inventory' \
                   AND relation.relname = ANY($3::text[]) \
                   AND pg_catalog.has_table_privilege('wamn_app', relation.oid, privilege) \
                UNION ALL \
@@ -121,7 +119,7 @@ async fn applier_owned_authority(client: &Client) -> Vec<String> {
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
                  JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
                  CROSS JOIN unnest($2::text[]) AS privilege \
-                WHERE namespace.nspname = 'receiving' \
+                WHERE namespace.nspname = 'inventory' \
                   AND relation.relname = ANY($3::text[]) \
                   AND attribute.attnum > 0 AND NOT attribute.attisdropped \
                   AND pg_catalog.has_column_privilege( \
@@ -160,7 +158,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     .expect("App generation accepts tenant scope");
     admin
         .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $reset$ BEGIN \
@@ -203,12 +201,12 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .await
         .expect("install application authorization floor");
     apply_package::apply_package(ApplyPackageRequest {
-        package: receiving_package_root(),
+        package: fixture_package_root(),
         database_url: url.to_string(),
         tenant: TENANT.to_owned(),
     })
     .await
-    .expect("apply Receiving package before policy");
+    .expect("apply the fixture package before policy");
     apply_package::apply_package(ApplyPackageRequest {
         package: overlay_package_root(),
         database_url: url.to_string(),
@@ -228,10 +226,11 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .expect("prepare production App generation");
     admin
         .batch_execute(
-            "GRANT DELETE ON TABLE receiving.purchase_order TO wamn_app; \
-             GRANT UPDATE (location_code) ON TABLE receiving.location TO wamn_app; \
-             GRANT DELETE ON TABLE receiving.quality_inspection TO wamn_app; \
-             GRANT SELECT (item_number) ON TABLE receiving.item TO PUBLIC;",
+            "ALTER TABLE inventory.widget_maker ADD COLUMN undeclared_note text; \
+             GRANT DELETE ON TABLE inventory.widget_maker TO wamn_app; \
+             GRANT UPDATE (name) ON TABLE inventory.widget_maker TO wamn_app; \
+             GRANT SELECT (undeclared_note) ON TABLE inventory.widget_maker TO wamn_app; \
+             GRANT SELECT (name) ON TABLE inventory.widget_maker TO PUBLIC;",
         )
         .await
         .expect("seed direct ACL residue");
@@ -242,14 +241,14 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     // for. Every declared relation fails that test by construction.
     admin
         .batch_execute(
-            "CREATE TABLE receiving.unconsumed_relation ( \
+            "CREATE TABLE inventory.unconsumed_relation ( \
                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), note text); \
-             CREATE VIEW receiving.unconsumed_view AS SELECT id FROM receiving.location; \
-             CREATE SEQUENCE receiving.unconsumed_sequence; \
-             GRANT SELECT ON TABLE receiving.unconsumed_relation TO wamn_app; \
-             GRANT UPDATE (note) ON TABLE receiving.unconsumed_relation TO wamn_app; \
-             GRANT SELECT ON TABLE receiving.unconsumed_view TO wamn_app; \
-             GRANT USAGE ON SEQUENCE receiving.unconsumed_sequence TO wamn_app;",
+             CREATE VIEW inventory.unconsumed_view AS SELECT id FROM inventory.widget_maker; \
+             CREATE SEQUENCE inventory.unconsumed_sequence; \
+             GRANT SELECT ON TABLE inventory.unconsumed_relation TO wamn_app; \
+             GRANT UPDATE (note) ON TABLE inventory.unconsumed_relation TO wamn_app; \
+             GRANT SELECT ON TABLE inventory.unconsumed_view TO wamn_app; \
+             GRANT USAGE ON SEQUENCE inventory.unconsumed_sequence TO wamn_app;",
         )
         .await
         .expect("seed authority on relations no package declares");
@@ -265,7 +264,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
 
     let incomplete = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
-        vec![receiving_package_root()],
+        vec![fixture_package_root()],
     ))
     .await
     .expect_err("one package cannot reconcile a two-package installed set");
@@ -276,7 +275,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         "incomplete installed set did not carry its typed refusal: {incomplete:#}"
     );
 
-    let installed_packages = vec![receiving_package_root(), overlay_package_root()];
+    let installed_packages = vec![fixture_package_root(), overlay_package_root()];
     let first_effect = reconcile_package_data_access::reconcile_package_data_access(
         reconcile_args(&url, installed_packages.clone()),
     )
@@ -293,69 +292,55 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     );
     let guest = connect(&generation_url(&url, &generation)).await;
     guest
-        .query("SELECT id FROM receiving.location", &[])
+        .query("SELECT id FROM inventory.widget_maker", &[])
         .await
         .expect("generated SELECT field is reachable through a real App generation");
     guest
         .execute(
-            "UPDATE receiving.purchase_order \
-                SET supplier_id = supplier_id, row_version = row_version \
+            "UPDATE inventory.widget \
+                SET maker_id = maker_id, edit_version = edit_version \
               WHERE false",
             &[],
         )
         .await
         .expect("generated writable and revision fields are reachable");
     guest
-        .query("SELECT id FROM receiving.location FOR KEY SHARE", &[])
+        .query("SELECT id FROM inventory.widget FOR KEY SHARE", &[])
         .await
         .expect("generated lock carrier permits the declared row lock");
     guest
-        .query(
-            "SELECT receipt_id, status, row_version FROM receiving.quality_inspection",
-            &[],
-        )
+        .query("SELECT overlay_note FROM inventory.widget", &[])
         .await
         .expect("overlay SELECT survives beside base authority");
-    guest
-        .execute(
-            "UPDATE receiving.quality_inspection \
-                SET status = status, row_version = row_version \
-              WHERE false",
-            &[],
-        )
-        .await
-        .expect("overlay UPDATE survives beside base authority");
     let delete = guest
-        .execute("DELETE FROM receiving.purchase_order WHERE false", &[])
+        .execute("DELETE FROM inventory.widget_maker WHERE false", &[])
         .await
         .expect_err("residual table DELETE survived reconciliation");
     assert_eq!(
         delete.as_db_error().map(|error| error.code().code()),
         Some("42501")
     );
-    // receipt_line is insert-only with select_fields of id alone, so quantity is
-    // a real undeclared column. The arm used to name location.location_code,
-    // which 0ca9418c declared when it added location.list, so the assertion
-    // stated a falsehood from that commit until wamn-10yt.29.
+    // undeclared_note is added to the live relation by the seeding above and
+    // no manifest declares it, so it is a real undeclared column.
     let undeclared_column = guest
-        .query("SELECT quantity FROM receiving.receipt_line", &[])
+        .query("SELECT undeclared_note FROM inventory.widget_maker", &[])
         .await
-        .expect_err("undeclared receipt_line column remained readable");
+        .expect_err("the undeclared column remained readable");
     assert_eq!(
         undeclared_column
             .as_db_error()
             .map(|error| error.code().code()),
         Some("42501")
     );
-    // The arm used to name receiving.item, which both packages declare and whose
+    // The arm used to name a relation both packages declare, and whose
     // select fields carry id. It asserted that a declared read fails. The subject
     // is now a relation no package declares, so the arm shows the absence of
     // authority instead of fabricating it.
     for unconsumed in [
-        "SELECT id FROM receiving.unconsumed_relation",
-        "SELECT note FROM receiving.unconsumed_relation",
-        "SELECT id FROM receiving.unconsumed_view",
-        "SELECT nextval('receiving.unconsumed_sequence')",
+        "SELECT id FROM inventory.unconsumed_relation",
+        "SELECT note FROM inventory.unconsumed_relation",
+        "SELECT id FROM inventory.unconsumed_view",
+        "SELECT nextval('inventory.unconsumed_sequence')",
     ] {
         let denied = guest
             .query(unconsumed, &[])
@@ -369,7 +354,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     }
     for control_relation in ["wamn_entities", "wamn_cdc_exclusions"] {
         let denied = guest
-            .query(&format!("SELECT * FROM receiving.{control_relation}"), &[])
+            .query(&format!("SELECT * FROM inventory.{control_relation}"), &[])
             .await
             .expect_err("package data authority reached a control-owned relation map");
         assert_eq!(
@@ -379,7 +364,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         );
     }
     let overlay_delete = guest
-        .execute("DELETE FROM receiving.quality_inspection WHERE false", &[])
+        .execute("DELETE FROM inventory.widget_maker WHERE false", &[])
         .await
         .expect_err("overlay residue survived installed-set reconciliation");
     assert_eq!(
@@ -495,7 +480,7 @@ async fn install_lineage_fixture(url: &str) -> Client {
     let admin = connect(url).await;
     admin
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $reset$ BEGIN \
@@ -550,11 +535,11 @@ async fn apply(url: &str, package: PathBuf) {
 async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
     let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
-    let (released, _) = stage_package_root(&receiving_package_root(), "receiving", None);
+    let (released, _) = stage_package_root(&fixture_package_root(), "fixture", None);
     let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay", None);
     let (bumped, bumped_sha256) = stage_package_root(
-        &receiving_package_root(),
-        "receiving-bumped",
+        &fixture_package_root(),
+        "fixture-bumped",
         Some(("1.1.0", "1.0.0")),
     );
     apply(&url, released.clone()).await;
@@ -568,11 +553,11 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
         admin
             .query_one(
                 "SELECT count(*) FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving'",
+                  WHERE tenant_id = $1 AND package_id = 'platform_fixture'",
                 &[&TENANT],
             )
             .await
-            .expect("count the applied Receiving coordinates")
+            .expect("count the applied fixture coordinates")
             .get::<_, i64>(0),
         2,
         "the failed bump did not leave two applied coordinates"
@@ -642,7 +627,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
     assert!(
         drift
             .to_string()
-            .contains("package-data-access-source-drift: package=wamn_receiving@1.1.0"),
+            .contains("package-data-access-source-drift: package=platform_fixture@1.1.0"),
         "the immutable coordinate did not carry its drift refusal: {drift:#}"
     );
 
@@ -654,7 +639,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
 async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing() {
     let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
-    apply(&url, receiving_package_root()).await;
+    apply(&url, fixture_package_root()).await;
     apply(&url, overlay_package_root()).await;
     // app_system and catalog are platform schemas. No package manifest names
     // them, so the reconciler never reads a relation there. The floor grants the
@@ -666,7 +651,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
         .expect("seed App authority inside the platform schemas");
     reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
-        vec![receiving_package_root(), overlay_package_root()],
+        vec![fixture_package_root(), overlay_package_root()],
     ))
     .await
     .expect("reconcile the installed package set beside platform-schema authority");
@@ -702,16 +687,16 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     );
 }
 
-/// Stage Receiving, whose `purchase_order_line` logs with no stamp columns.
-fn stage_logged_receiving() -> PathBuf {
-    let (root, _) = stage_package_root(&receiving_package_root(), "receiving-logged", None);
+/// Stage the fixture application, whose `widget` relation logs.
+fn stage_logged_fixture() -> PathBuf {
+    let (root, _) = stage_package_root(&fixture_package_root(), "fixture-logged", None);
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("wamn.json")).expect("read manifest"))
             .expect("parse manifest");
     assert_eq!(
-        manifest["models"]["purchase_order_line"]["audit_log"],
-        serde_json::json!({"columns": [], "retention": "P30D"}),
-        "the relation logs and carries no stamp columns"
+        manifest["models"]["widget"]["audit_log"],
+        serde_json::json!({"columns": ["created_at"], "retention": "P30D"}),
+        "the relation logs and stamps its one reserved column"
     );
     root
 }
@@ -728,7 +713,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .await
         .expect("read disposable database")
         .get(0);
-    let package = stage_logged_receiving();
+    let package = stage_logged_fixture();
     apply(&url, package.clone()).await;
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
@@ -765,7 +750,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
                      FROM pg_catalog.pg_attribute AS attribute \
                      CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) \
                           AS privilege \
-                    WHERE attribute.attrelid = 'receiving.purchase_order_line_history'::regclass \
+                    WHERE attribute.attrelid = 'inventory.widget_history'::regclass \
                       AND attribute.attnum > 0 AND NOT attribute.attisdropped \
                       AND pg_catalog.has_column_privilege( \
                             'wamn_app', attribute.attrelid, attribute.attnum, privilege) \
@@ -795,18 +780,11 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
             "BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
-             INSERT INTO receiving.item (id, item_number) \
-               VALUES ('00000000-0000-4000-8000-00000000b001', 'history-item'); \
-             INSERT INTO receiving.supplier (id, name) \
-               VALUES ('00000000-0000-4000-8000-00000000b004', 'history-supplier'); \
-             INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) \
-               VALUES ('00000000-0000-4000-8000-00000000b002', 'history-po', \
+             INSERT INTO inventory.widget_maker (id, name) \
+               VALUES ('00000000-0000-4000-8000-00000000b004', 'history-maker'); \
+             INSERT INTO inventory.widget (id, code, maker_id) \
+               VALUES ('00000000-0000-4000-8000-00000000b003', 'priority', \
                        '00000000-0000-4000-8000-00000000b004'); \
-             INSERT INTO receiving.purchase_order_line \
-               (id, purchase_order_id, line_number, item_id, ordered_quantity) \
-               VALUES ('00000000-0000-4000-8000-00000000b003', \
-                       '00000000-0000-4000-8000-00000000b002', 1, \
-                       '00000000-0000-4000-8000-00000000b001', 5); \
              COMMIT;",
         )
         .await
@@ -817,8 +795,8 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .batch_execute(
             "BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true), \
-                    set_config('app.operation', 'wamn-receiving:receiving/record-receipt@1.0.0', true); \
-             UPDATE receiving.purchase_order_line SET received_quantity = received_quantity + 2 \
+                    set_config('app.operation', 'platform-fixture:widget/update@1.0.0', true); \
+             UPDATE inventory.widget SET note = 'logged' \
               WHERE id = '00000000-0000-4000-8000-00000000b003'; \
              COMMIT;",
         )
@@ -827,7 +805,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     let entries = admin
         .query(
             "SELECT kind, operation, changed_by::text, row_key::text, before::text, after::text \
-               FROM receiving.purchase_order_line_history ORDER BY position",
+               FROM inventory.widget_history ORDER BY position",
             &[],
         )
         .await
@@ -861,17 +839,17 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         entries[1],
         (
             "update".to_owned(),
-            "wamn-receiving:receiving/record-receipt@1.0.0".to_owned(),
+            "platform-fixture:widget/update@1.0.0".to_owned(),
             "00000000-0000-4000-8000-0000000000f2".to_owned(),
             r#"{"id": "00000000-0000-4000-8000-00000000b003"}"#.to_owned(),
-            r#"{"received_quantity": 0}"#.to_owned(),
-            r#"{"received_quantity": 2}"#.to_owned(),
+            r#"{"note": null}"#.to_owned(),
+            r#"{"note": "logged"}"#.to_owned(),
         )
     );
     let stamps = admin
         .query_one(
             "SELECT count(*) FROM pg_catalog.pg_attribute \
-              WHERE attrelid = 'receiving.purchase_order_line'::regclass \
+              WHERE attrelid = 'inventory.widget'::regclass \
                 AND attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
                 AND NOT attisdropped",
             &[],
@@ -879,12 +857,15 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .await
         .expect("read stamp columns")
         .get::<_, i64>(0);
-    assert_eq!(stamps, 0, "the logged relation carries no stamp column");
+    assert_eq!(
+        stamps, 1,
+        "the logged relation carries the one stamp column its audit_log declares"
+    );
 
     for statement in [
-        "SELECT kind FROM receiving.purchase_order_line_history",
-        "UPDATE receiving.purchase_order_line_history SET kind = kind",
-        "DELETE FROM receiving.purchase_order_line_history",
+        "SELECT kind FROM inventory.widget_history",
+        "UPDATE inventory.widget_history SET kind = kind",
+        "DELETE FROM inventory.widget_history",
     ] {
         let denied = guest
             .execute(statement, &[])
@@ -906,7 +887,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     assert!(again.is_noop(), "the reconciler changed the history grant");
     assert_eq!(history_privileges().await, expected_privileges);
 
-    std::fs::remove_dir_all(lineage_fixture_directory().join("receiving-logged"))
+    std::fs::remove_dir_all(lineage_fixture_directory().join("fixture-logged"))
         .expect("remove the logged package fixture");
 }
 
@@ -964,10 +945,10 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     const ENVIRONMENT: &str = "development";
     let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
-    let (receiving, first) = stage_package_root(&receiving_package_root(), "receiving-local", None);
+    let (fixture, first) = stage_package_root(&fixture_package_root(), "fixture-local", None);
     let (overlay, overlay_sha256) =
         stage_package_root(&overlay_package_root(), "overlay-local", None);
-    apply(&url, receiving.clone()).await;
+    apply(&url, fixture.clone()).await;
     apply(&url, overlay.clone()).await;
 
     let instance: u32 = admin
@@ -990,7 +971,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         .await
         .expect("mark the local target");
 
-    let roots = vec![receiving.clone(), overlay.clone()];
+    let roots = vec![fixture.clone(), overlay.clone()];
     let reconcile = |apply: bool| {
         let prepared = reconcile_package_data_access::prepare_local(&roots)
             .expect("prepare the presented local packages");
@@ -1017,21 +998,23 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert_eq!(
         recorded_manifests(&admin).await,
         BTreeMap::from([
-            ("wamn_receiving@1.0.0".to_owned(), first.clone()),
-            ("client_acme_receiving@3.0.0".to_owned(), overlay_sha256),
+            ("platform_fixture@1.0.0".to_owned(), first.clone()),
+            ("platform_fixture_overlay@1.0.0".to_owned(), overlay_sha256),
         ]),
         "the comment does not name the presented manifest of each package"
     );
 
     // An operations-only wamn.json edit at an applied coordinate reconciles
     // with no Migrate, and the comment follows the presented manifest.
-    let second = change_manifest_bytes(&receiving);
+    let second = change_manifest_bytes(&fixture);
     assert_ne!(second, first, "the manifest bytes did not move");
     reconcile(true)
         .await
         .expect("the local reconcile takes a changed manifest at an applied coordinate");
     assert_eq!(
-        recorded_manifests(&admin).await.get("wamn_receiving@1.0.0"),
+        recorded_manifests(&admin)
+            .await
+            .get("platform_fixture@1.0.0"),
         Some(&second),
         "the comment kept a manifest hash the application no longer came from"
     );
@@ -1039,7 +1022,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         admin
             .query_one(
                 "SELECT manifest_sha256 FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'platform_fixture' \
                     AND package_version = '1.0.0'",
                 &[&TENANT],
             )
@@ -1060,7 +1043,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert!(
         drift
             .to_string()
-            .contains("package-data-access-source-drift: package=wamn_receiving@1.0.0"),
+            .contains("package-data-access-source-drift: package=platform_fixture@1.0.0"),
         "the production path did not refuse the moved bytes: {drift:#}"
     );
 

@@ -2020,34 +2020,34 @@ mod tests {
     #[test]
     fn package_attachment_documents_refuse_duplicate_identity() {
         let base = package_http_attachment(
-            "receiving-http",
+            "fixture-http",
             "source_fixture",
-            "receiving_record_receipt",
-            "source-fixture:receiving/record-receipt@1.0.0",
-            "/receiving/record_receipt",
+            "fixture_widget_update",
+            "source-fixture:widget/update@1.0.0",
+            "/widget/update",
         );
         let overlay = package_http_attachment(
-            "receiving-http",
+            "fixture-http",
             "observer_fixture",
-            "receiving_record_receipt",
-            "observer-fixture:receiving/record-receipt@3.0.0",
-            "/acme/receiving/record_receipt",
+            "fixture_widget_update",
+            "observer-fixture:widget/update@3.0.0",
+            "/overlay/widget/update",
         );
         let error = merge_package_attachment_documents(vec![
             (
                 PathBuf::from("apps/source_fixture/publication/attachments.json"),
-                BTreeMap::from([("receiving-http".to_owned(), base)]),
+                BTreeMap::from([("fixture-http".to_owned(), base)]),
             ),
             (
                 PathBuf::from("apps/observer_fixture/publication/attachments.json"),
-                BTreeMap::from([("receiving-http".to_owned(), overlay)]),
+                BTreeMap::from([("fixture-http".to_owned(), overlay)]),
             ),
         ])
         .expect_err("one attachment identity cannot have two package owners");
 
         assert_eq!(error.kind(), MintManifestErrorKind::DuplicateAttachmentId);
         assert_eq!(error.kind().as_str(), "duplicate-attachment-id");
-        assert!(error.detail().contains("receiving-http"));
+        assert!(error.detail().contains("fixture-http"));
         assert!(error.detail().contains("apps/source_fixture"));
         assert!(error.detail().contains("apps/observer_fixture"));
     }
@@ -2057,16 +2057,16 @@ mod tests {
         let first = package_http_attachment(
             "first-http",
             "source_fixture",
-            "receipt_get",
-            "source-fixture:receipt/get@1.0.0",
-            "/receipt/{id}",
+            "widget_get",
+            "source-fixture:widget/get@1.0.0",
+            "/widget/{id}",
         );
         let second = package_http_attachment(
             "second-http",
             "observer_fixture",
-            "quality_load_purchase_order_detail",
+            "quality_load_widget_detail",
             "observer-fixture:quality/load-purchase-order-detail@3.0.0",
-            "/receipt/{receipt_id}",
+            "/widget/{widget_id}",
         );
         let authored = merge_package_attachment_documents(vec![
             (
@@ -2089,30 +2089,30 @@ mod tests {
     #[test]
     fn release_mint_binds_each_attachment_hash_to_its_definition() {
         let definition = serde_json::json!({
-            "id": "receiving-http",
+            "id": "fixture-http",
             "kind": "http",
-            "route": {"path": "/receipt/get", "method": "POST"},
+            "route": {"path": "/widget/get", "method": "POST"},
         });
         let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
             package_id: "source_fixture".to_owned(),
-            wiring_id: "receipt_get".to_owned(),
+            wiring_id: "widget_get".to_owned(),
             wiring_version: 1,
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("source-fixture:receipt/get@1.0.0".to_owned()),
+            registered_operation: Some("source-fixture:widget/get@1.0.0".to_owned()),
         };
-        let attachments = BTreeMap::from([("receiving-http".to_owned(), attachment.clone())]);
+        let attachments = BTreeMap::from([("fixture-http".to_owned(), attachment.clone())]);
         validate_attachment_definition_hashes(&attachments)
             .expect("the exact canonical definition matches its authored hash");
 
         let mut changed = attachment;
-        changed.definition["route"]["path"] = serde_json::json!("/receipt/query");
+        changed.definition["route"]["path"] = serde_json::json!("/widget/query");
         let error = validate_attachment_definition_hashes(&BTreeMap::from([(
-            "receiving-http".to_owned(),
+            "fixture-http".to_owned(),
             changed,
         )]))
         .expect_err("changed definition bytes cannot retain the old identity");
@@ -2122,59 +2122,59 @@ mod tests {
     #[test]
     fn release_mint_requires_and_applies_the_deployment_route_host() {
         let definition = serde_json::json!({
-            "id": "receiving-http",
+            "id": "fixture-http",
             "kind": "http",
-            "route": {"path": "/receipt/get", "method": "POST"},
+            "route": {"path": "/widget/get", "method": "POST"},
         });
         let authored_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
             kind: wamn_catalog::AttachmentKind::Http,
             package_id: "source_fixture".to_owned(),
-            wiring_id: "receipt_get".to_owned(),
+            wiring_id: "widget_get".to_owned(),
             wiring_version: 1,
             definition_hash: wamn_catalog::DefinitionHash::parse(authored_hash.clone())
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("source-fixture:receipt/get@1.0.0".to_owned()),
+            registered_operation: Some("source-fixture:widget/get@1.0.0".to_owned()),
         };
-        let authored = BTreeMap::from([("receiving-http".to_owned(), attachment)]);
+        let authored = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
 
         let missing = resolve_route_host_overlay(&authored, None)
             .expect_err("a routed release requires its deployment hostname");
         assert_eq!(missing.kind(), MintManifestErrorKind::RouteHostUnbound);
         assert_eq!(missing.kind().as_str(), "route-host-unbound");
-        assert!(missing.detail().contains("receiving-http"));
+        assert!(missing.detail().contains("fixture-http"));
         assert!(missing.detail().contains("--route-host"));
 
         let resolved = resolve_route_host_overlay(&authored, Some("Route.Example"))
             .expect("the deployment overlay resolves the route hostname");
         assert!(
-            authored["receiving-http"].definition["route"]
+            authored["fixture-http"].definition["route"]
                 .get("host")
                 .is_none()
         );
         assert_eq!(
-            resolved["receiving-http"].definition["route"]["host"],
+            resolved["fixture-http"].definition["route"]["host"],
             "route.example"
         );
         assert_ne!(
-            resolved["receiving-http"].definition_hash.as_str(),
+            resolved["fixture-http"].definition_hash.as_str(),
             authored_hash
         );
         assert_eq!(
-            resolved["receiving-http"].definition_hash.as_str(),
-            wamn_execution_contract::canonical_json_sha256(&resolved["receiving-http"].definition)
+            resolved["fixture-http"].definition_hash.as_str(),
+            wamn_execution_contract::canonical_json_sha256(&resolved["fixture-http"].definition)
         );
 
         let mut package_authored = authored.clone();
         package_authored
-            .get_mut("receiving-http")
+            .get_mut("fixture-http")
             .expect("the attachment exists")
             .definition["route"]["host"] = serde_json::json!("package.example");
         refresh_definition_hash(
             package_authored
-                .get_mut("receiving-http")
+                .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
         let package_host = resolve_route_host_overlay(&package_authored, None)
@@ -2185,7 +2185,7 @@ mod tests {
 
         let mut non_routed = package_authored;
         non_routed
-            .get_mut("receiving-http")
+            .get_mut("fixture-http")
             .expect("the attachment exists")
             .kind = wamn_catalog::AttachmentKind::Internal;
         let package_host = resolve_route_host_overlay(&non_routed, None)
@@ -2194,12 +2194,12 @@ mod tests {
 
         let mut extra_route_field = authored.clone();
         extra_route_field
-            .get_mut("receiving-http")
+            .get_mut("fixture-http")
             .expect("the attachment exists")
             .definition["route"]["port"] = serde_json::json!(443);
         refresh_definition_hash(
             extra_route_field
-                .get_mut("receiving-http")
+                .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
         let extra = resolve_route_host_overlay(&extra_route_field, Some("route.example"))
@@ -2209,15 +2209,15 @@ mod tests {
 
         let mut colliding = authored;
         let first = colliding
-            .get_mut("receiving-http")
+            .get_mut("fixture-http")
             .expect("the attachment exists");
-        first.definition["route"]["path"] = serde_json::json!("/receipt/{id}");
+        first.definition["route"]["path"] = serde_json::json!("/widget/{id}");
         refresh_definition_hash(first);
         let mut second = first.clone();
-        second.definition["id"] = serde_json::json!("receiving-http-alias");
-        second.definition["route"]["path"] = serde_json::json!("/receipt/{receipt_id}");
+        second.definition["id"] = serde_json::json!("fixture-http-alias");
+        second.definition["route"]["path"] = serde_json::json!("/widget/{widget_id}");
         refresh_definition_hash(&mut second);
-        colliding.insert("receiving-http-alias".to_owned(), second);
+        colliding.insert("fixture-http-alias".to_owned(), second);
         let collision = resolve_route_host_overlay(&colliding, Some("route.example"))
             .expect_err("one overlay host cannot carry ambiguous route templates");
         assert_eq!(collision.kind(), MintManifestErrorKind::Document);
@@ -2344,7 +2344,7 @@ mod tests {
                 "package": "base",
                 "version": "1.0.0",
                 "digest": digest,
-                "operations": ["receiving.record_receipt"]
+                "operations": ["receiving.record_widget"]
             }
         });
         serde_json::from_value(document).expect("the dependency fixture manifest parses")
@@ -2559,10 +2559,10 @@ mod tests {
                 wamn_catalog::WiringNode {
                     component: "registered-component".to_owned(),
                     interface_version: "0.1.0".to_owned(),
-                    operation: "base:receiving/record-receipt@1.0.0".to_owned(),
+                    operation: "base:receiving/record-widget@1.0.0".to_owned(),
                     operation_dependency: Some(wamn_catalog::WiringOperationDependency {
                         alias: "base".to_owned(),
-                        operation: "receiving.record_receipt".to_owned(),
+                        operation: "receiving.record_widget".to_owned(),
                     }),
                     params: BTreeMap::new(),
                     terminal: Some(wamn_catalog::WiringTerminal::Respond),
@@ -2583,12 +2583,12 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base:receiving/record-receipt@1.0.0"),
+            Some("base:receiving/record-widget@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let mut local_same_name = closure_component(
             "registered-component",
-            Some("source-fixture:receiving/record-receipt@1.0.0"),
+            Some("source-fixture:widget/update@1.0.0"),
         );
         local_same_name.component_digest = format!("sha256:{}", "c".repeat(64));
         let facts = BTreeMap::from([
@@ -2621,7 +2621,7 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base:receiving/record-receipt@1.0.0"),
+            Some("base:receiving/record-widget@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base])]);
@@ -2674,7 +2674,7 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base:receiving/record-receipt@1.0.0"),
+            Some("base:receiving/record-widget@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()])]);
@@ -2724,8 +2724,8 @@ mod tests {
 
     #[test]
     fn component_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {
-        let base_operation = "base:receiving/record-receipt@1.0.0";
-        let overlay_operation = "overlay:receiving/record-receipt@3.0.0";
+        let base_operation = "base:receiving/record-widget@1.0.0";
+        let overlay_operation = "overlay:receiving/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
         base.scope.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
@@ -2786,8 +2786,8 @@ mod tests {
     /// hits the same wall the wiring resolver does. One rule governs both.
     #[test]
     fn a_disposable_target_expands_a_closure_whose_declared_dependency_digest_moved() {
-        let base_operation = "base:receiving/record-receipt@1.0.0";
-        let overlay_operation = "overlay:receiving/record-receipt@3.0.0";
+        let base_operation = "base:receiving/record-widget@1.0.0";
+        let overlay_operation = "overlay:receiving/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
         base.scope.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
@@ -2919,7 +2919,7 @@ mod tests {
     #[test]
     fn release_projection_preserves_operation_scoped_statement_facts() {
         let operation = "base:purchase-order/get@1.0.0";
-        let sql = "SELECT row_version FROM purchase_order WHERE id = $1";
+        let sql = "SELECT row_version FROM widget WHERE id = $1";
         let digest = sha256(sql.as_bytes());
         let mut admitted = closure_component("base-component", Some(operation));
         admitted
@@ -2931,7 +2931,7 @@ mod tests {
                 digest.clone(),
                 wamn_catalog::ComponentSqlStatement {
                     name: "get".to_owned(),
-                    path: "generated/sql/purchase_order/get.sql".to_owned(),
+                    path: "generated/sql/widget/get.sql".to_owned(),
                     sql: sql.to_owned(),
                     binds: Vec::new(),
                     columns: Vec::new(),
@@ -2970,7 +2970,7 @@ mod tests {
             ),
         ]);
         let anonymous = BTreeMap::from([(
-            "receiving-http".to_owned(),
+            "fixture-http".to_owned(),
             closure_attachment(wamn_catalog::NO_AUTHENTICATION_MODE),
         )]);
         let error =
@@ -2982,7 +2982,7 @@ mod tests {
         );
         assert_eq!(
             error.detail(),
-            "attachment \"receiving-http\" reaches registered operation \
+            "attachment \"fixture-http\" reaches registered operation \
              \"base:purchase-order/get@1.0.0\" at node \"registered\"; set \
              auth-policy modes = [\"pat\"]"
         );
@@ -3031,7 +3031,7 @@ mod tests {
         ] {
             let mut attachment = closure_attachment(wamn_catalog::PAT_AUTHENTICATION_MODE);
             attachment.auth_policy = serde_json::json!({"modes": modes});
-            let protected = BTreeMap::from([("receiving-http".to_owned(), attachment)]);
+            let protected = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
             assert!(
                 validate_anonymous_wiring_closure(
                     &protected,
@@ -3056,14 +3056,14 @@ mod tests {
             wiring_version: 1,
         };
         let anonymous = BTreeMap::from([(
-            "receiving-http".to_owned(),
+            "fixture-http".to_owned(),
             closure_attachment(wamn_catalog::NO_AUTHENTICATION_MODE),
         )]);
         let closure = |transactional: bool| {
             let sql = if transactional {
-                "UPDATE purchase_order SET note = $1"
+                "UPDATE widget SET note = $1"
             } else {
-                "SELECT note FROM purchase_order"
+                "SELECT note FROM widget"
             };
             let mut entry = closure_component("entry-component", None);
             entry
@@ -3095,7 +3095,7 @@ mod tests {
         assert_eq!(error.kind().as_str(), "unauthenticated-write");
         assert_eq!(
             error.detail(),
-            "attachment \"receiving-http\" reaches transactional statement \"note\" at \
+            "attachment \"fixture-http\" reaches transactional statement \"note\" at \
              node \"entry\"; set auth-policy modes = [\"pat\"]"
         );
 

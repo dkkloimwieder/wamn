@@ -10,7 +10,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_GET_RESULT_SCHEMA,
         result_class: Some("one"),

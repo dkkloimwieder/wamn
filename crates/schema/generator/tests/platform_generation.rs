@@ -606,6 +606,9 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
     let model = manifest["models"]["widget"].as_object_mut().unwrap();
     model.remove("audit_log");
     model.remove("delete_mode");
+    // Only the package that owns a relation declares that its client may
+    // extend it, so an overlay of this model declares nothing.
+    model.remove("client_field_extensible");
     model["operations"]
         .as_object_mut()
         .unwrap()

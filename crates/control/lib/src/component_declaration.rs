@@ -242,13 +242,13 @@ mod tests {
     use super::*;
 
     fn overlay_package_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/client_acme_receiving")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_fixture_overlay")
     }
 
     fn overlay_declaration_template() -> PathBuf {
         overlay_package_root()
             .join("publication/components")
-            .join("client_acme_receiving.json.in")
+            .join("platform_fixture_overlay.json.in")
     }
 
     /// The rendered declaration names the bytes this run built.
@@ -270,7 +270,7 @@ mod tests {
             1,
             "the shipped overlay authors exactly one base dependency digest"
         );
-        let pin = authored["wamn_receiving@1.0.0"].to_string();
+        let pin = authored["platform_fixture@1.0.0"].to_string();
         let built = format!("sha256:{}", "7".repeat(64));
         assert_ne!(pin, built);
 
@@ -284,7 +284,7 @@ mod tests {
 
         let mut base_digests = authored.clone();
         base_digests.insert(
-            Box::<str>::from("wamn_receiving@1.0.0"),
+            Box::<str>::from("platform_fixture@1.0.0"),
             Box::<str>::from(built.as_str()),
         );
         let disposable = render_declaration_document(&template, "tenant-a", &base_digests)
@@ -333,7 +333,7 @@ mod tests {
 
         let restated = String::from_utf8_lossy(&bytes).replace(
             COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
-            &authored["wamn_receiving@1.0.0"],
+            &authored["platform_fixture@1.0.0"],
         );
         let hand_written = std::env::temp_dir().join(format!(
             "wamn-control-declaration-{}.json.in",

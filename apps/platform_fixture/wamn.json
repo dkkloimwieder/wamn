@@ -13,7 +13,7 @@
         "columns": [
           "created_at"
         ],
-        "retention": "none"
+        "retention": "P30D"
       },
       "delete_mode": "hard",
       "enum_fields": {
@@ -122,7 +122,8 @@
         "edit_version",
         "created_at"
       ],
-      "table": "widget"
+      "table": "widget",
+      "client_field_extensible": true
     },
     "widget_maker": {
       "audit_log": {
