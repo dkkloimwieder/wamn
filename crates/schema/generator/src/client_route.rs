@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use wamn_catalog::{
-    ComponentDeclaration, ServingAttachment, WiringDocument, WiringNode, WiringTerminal,
-    partial_response_schema,
+    AttachmentTarget, ComponentDeclaration, ServingAttachment, WiringDocument, WiringNode,
+    WiringTerminal, partial_response_schema,
 };
 
 use crate::client_ir::{ClientIrError, ClientIrErrorKind};
@@ -20,7 +20,7 @@ pub(super) struct RouteEvidence {
     pub direct: bool,
 }
 
-/// Read the request schema and the selected wiring's actual response owner.
+/// Read the request schema and the route's or selected wiring's response owner.
 pub(super) fn evidence(
     attachments: &Path,
     attachment: &ServingAttachment,
@@ -37,7 +37,24 @@ pub(super) fn evidence(
         ..RouteEvidence::default()
     };
     let publication = attachments.parent().unwrap_or_else(|| Path::new(""));
-    let Some(wiring) = selected_wiring(publication, attachment)? else {
+    let (wiring_id, wiring_version) = match &attachment.target {
+        AttachmentTarget::Route {
+            component,
+            operation,
+        } => {
+            // A route calls one export directly and responds with its output.
+            result.direct = attachment.registered_operation.as_deref() == Some(operation.as_str());
+            result.terminal_operation = Some(operation.clone());
+            result.output_schema =
+                component_schema(publication, attachment, component, None, operation, false)?;
+            return Ok(result);
+        }
+        AttachmentTarget::Wiring {
+            wiring_id,
+            wiring_version,
+        } => (wiring_id, *wiring_version),
+    };
+    let Some(wiring) = selected_wiring(publication, wiring_id, wiring_version)? else {
         return Ok(result);
     };
     let Some((terminal_id, terminal)) = response_node(&wiring) else {
@@ -57,7 +74,7 @@ pub(super) fn evidence(
         }
         if let Some(committed) = &response.committed_result {
             result.partial_schema =
-                component_schema(publication, attachment, &wiring.nodes[committed], true)?
+                node_schema(publication, attachment, &wiring.nodes[committed], true)?
                     .as_ref()
                     .map(partial_response_schema);
         }
@@ -67,28 +84,22 @@ pub(super) fn evidence(
             &response.schema,
         )?)
     } else {
-        component_schema(publication, attachment, terminal, false)?
+        node_schema(publication, attachment, terminal, false)?
     };
     Ok(result)
 }
 
 fn selected_wiring(
     publication: &Path,
-    attachment: &ServingAttachment,
+    wiring_id: &str,
+    wiring_version: u32,
 ) -> Result<Option<WiringDocument>, ClientIrError> {
-    let wamn_catalog::AttachmentTarget::Wiring {
-        wiring_id,
-        wiring_version,
-    } = &attachment.target
-    else {
-        return Ok(None);
-    };
     let mut selected = None;
     for path in declaration_paths(&publication.join("wirings"), false)? {
         let document = read_json(&path)?;
         let wiring = WiringDocument::parse(&document)
             .map_err(|error| malformed(&path, format!("invalid wiring: {error}")))?;
-        if wiring.wiring_id != *wiring_id || wiring.version != *wiring_version {
+        if wiring.wiring_id != wiring_id || wiring.version != wiring_version {
             continue;
         }
         if selected.is_some() {
@@ -130,29 +141,50 @@ fn response_node(wiring: &WiringDocument) -> Option<(&str, &WiringNode)> {
     response
 }
 
-fn component_schema(
+fn node_schema(
     publication: &Path,
     attachment: &ServingAttachment,
-    terminal: &WiringNode,
+    node: &WiringNode,
     committed: bool,
 ) -> Result<Option<Value>, ClientIrError> {
     // A dependency alias needs its owner's exact publication closure. The
     // attachment's package declarations do not establish that ownership.
-    if terminal.operation_dependency.is_some() {
+    if node.operation_dependency.is_some() {
         return Ok(None);
     }
+    component_schema(
+        publication,
+        attachment,
+        &node.component,
+        Some(&node.interface_version),
+        &node.operation,
+        committed,
+    )
+}
+
+/// Read one export's schema from the attachment package's component declarations.
+///
+/// A route names no interface version, so it passes `None` and matches any.
+fn component_schema(
+    publication: &Path,
+    attachment: &ServingAttachment,
+    component: &str,
+    interface_version: Option<&str>,
+    export: &str,
+    committed: bool,
+) -> Result<Option<Value>, ClientIrError> {
     let mut selected = None;
     let mut matched = false;
     for path in declaration_paths(&publication.join("components"), true)? {
         let declaration: ComponentDeclaration = serde_json::from_value(read_json(&path)?)
             .map_err(|error| malformed(&path, format!("invalid component declaration: {error}")))?;
         if declaration.scope.package_id != attachment.package_id
-            || declaration.component != terminal.component
-            || declaration.interface_version != terminal.interface_version
+            || declaration.component != component
+            || interface_version.is_some_and(|version| declaration.interface_version != version)
         {
             continue;
         }
-        let Some(operation) = declaration.operations.get(&terminal.operation) else {
+        let Some(operation) = declaration.operations.get(export) else {
             continue;
         };
         if matched {
@@ -160,7 +192,7 @@ fn component_schema(
         }
         matched = true;
         if committed {
-            if operation.registered_operation.as_deref() != Some(terminal.operation.as_str()) {
+            if operation.registered_operation.as_deref() != Some(export) {
                 continue;
             }
             selected = operation
