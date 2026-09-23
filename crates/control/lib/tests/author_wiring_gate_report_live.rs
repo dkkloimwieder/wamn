@@ -77,7 +77,7 @@ use wamn_control::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, au
 use wamn_control::push_component::admitted_projection_hash;
 
 const TENANT: &str = "gate-report-tenant";
-const PACKAGE: &str = "wamn_receiving";
+const PACKAGE: &str = "wamn_inventory";
 const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const FACT_FINGERPRINT: &str =
@@ -101,9 +101,9 @@ fn wiring(id: &str, version: u32) -> WiringDocument {
         BTreeMap::from([(
             "node".to_string(),
             WiringNode {
-                component: "receiving_data".to_string(),
+                component: "inventory_data".to_string(),
                 interface_version: "0.1".to_string(),
-                operation: "wamn-receiving:purchase-order/get@1.0.0".to_string(),
+                operation: "wamn-inventory:panel/get@1.0.0".to_string(),
                 operation_dependency: None,
                 params: BTreeMap::new(),
                 terminal: Some(WiringTerminal::Respond),
@@ -145,15 +145,15 @@ async fn provision_project(project: &Client, project_url: &str) {
             package_id: PACKAGE.to_owned(),
             package_version: PACKAGE_VERSION.to_owned(),
         },
-        component: "receiving_data".to_owned(),
+        component: "inventory_data".to_owned(),
         interface_version: "0.1".to_owned(),
         operations: BTreeMap::from([(
-            "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
+            "wamn-inventory:panel/get@1.0.0".to_owned(),
             AdmittedComponentOperation {
                 pre_commit: None,
                 committed_result_schema: None,
                 fresh_only: false,
-                registered_operation: Some("wamn-receiving:purchase-order/get@1.0.0".to_owned()),
+                registered_operation: Some("wamn-inventory:panel/get@1.0.0".to_owned()),
                 dependencies: Vec::new(),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -174,8 +174,8 @@ async fn provision_project(project: &Client, project_url: &str) {
                    (tenant_id, package_id, package_version, component, interface_version, \
                     operations, component_digest, projection_hash, imports, \
                     imports_fingerprint, effects) \
-             VALUES ($1, $2, $3, 'receiving_data', '0.1', \
-                     '{\"wamn-receiving:purchase-order/get@1.0.0\":{\"registered-operation\":\"wamn-receiving:purchase-order/get@1.0.0\",\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}'::jsonb, \
+             VALUES ($1, $2, $3, 'inventory_data', '0.1', \
+                     '{\"wamn-inventory:panel/get@1.0.0\":{\"registered-operation\":\"wamn-inventory:panel/get@1.0.0\",\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}'::jsonb, \
                      $4, $5, '[]'::jsonb, $6, '[]'::jsonb)",
             &[
                 &TENANT,
