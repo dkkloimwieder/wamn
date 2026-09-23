@@ -57,7 +57,7 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     // The columns are the plan's columns, in contract order, with the cell type
     // that the release declared.
     assert!(widget.contains(concat!(
-        "const LIST_COLUMNS: ColumnDef<typeof TABLE_FEATURES, WidgetListRow>[] = [\n",
+        "const LIST_COLUMNS: ColumnDef<GridFeatures, WidgetListRow>[] = [\n",
         "  {\n",
         "    accessorKey: \"attributes\",\n",
         // The fixture authors this column's label, so the header is the
@@ -82,26 +82,30 @@ fn a_page_table_renders_every_control_the_plan_names() {
         .expect("the query table exists");
 
     assert!(
-        widget.contains("change([\"filter\", \"code\"], event.currentTarget.value.split(\",\")"),
+        widget.contains("change([\"filter\", \"code\"], value.split(\",\")"),
         "a repeated filter takes a list"
     );
     assert!(
-        widget.contains("<select onChange={(event) => change([\"sort\", \"field\"], event.currentTarget.value)}>"),
-        "the sort field is a choice"
+        widget.contains(concat!(
+            "        <ChoiceField\n",
+            "          label=\"field\"\n",
+            "          allowEmpty={true}\n",
+            "          choices={[\n",
+            "            { value: \"created_at\", text: \"created at\" },\n",
+            "          ]}\n",
+            "          onChange={(value) => change([\"sort\", \"field\"], value)}\n",
+        )),
+        "the sort field is a choice of exactly what the contract permits"
     );
+    assert!(widget.contains("            { value: \"ascending\", text: \"ascending\" },"));
     assert!(
-        widget.contains("<option value=\"created_at\">created at</option>"),
-        "the choices are exactly what the contract permits"
-    );
-    assert!(widget.contains("<option value=\"ascending\">ascending</option>"));
-    assert!(
-        widget.contains("change([\"limit\"], event.currentTarget.value)"),
+        widget.contains("onChange={(value) => change([\"limit\"], value)}"),
         "the limit is a control, not an operator field"
     );
     assert!(
         widget.contains("min={1}")
             && widget.contains("max={100}")
-            && widget.contains("value={100}"),
+            && widget.contains("value=\"100\""),
         "the limit states the bounds the contract declares"
     );
     assert!(
@@ -197,13 +201,11 @@ fn a_table_declares_its_features_and_leaves_paging_to_the_release() {
     let files = emit(&release());
     let widget = widget(&files);
     assert!(
-        widget.contains(
-            "const TABLE_FEATURES = tableFeatures({ columnVisibilityFeature, rowPaginationFeature });"
-        ),
-        "the module declares one bundle for its tables"
+        widget.contains("  gridFeatures,\n") && widget.contains("  type GridFeatures,\n"),
+        "every table takes the one bundle the UI package exports"
     );
     assert!(
-        widget.contains("  const table = createTable({\n    features: TABLE_FEATURES,\n"),
+        widget.contains("  const table = createTable({\n    features: gridFeatures,\n"),
         "each table is created over that bundle"
     );
     assert!(
@@ -212,6 +214,54 @@ fn a_table_declares_its_features_and_leaves_paging_to_the_release() {
     );
     for retired in ["createSolidTable", "getCoreRowModel"] {
         assert!(!widget.contains(retired), "{retired} is the version 8 name");
+    }
+}
+
+/// A table renders through the UI package, which owns how it looks.
+#[test]
+fn a_table_renders_through_the_data_grid_and_states_no_class() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    assert!(
+        widget.contains(concat!(
+            "  Button,\n",
+            "  ChoiceField,\n",
+            "  DataGrid,\n",
+            "  DataGridContainer,\n",
+            "  DataGridTable,\n",
+        )) && widget.contains("} from \"@wamn/ui\";\n"),
+        "the table names the grid and its controls from the UI package"
+    );
+    assert!(
+        widget.contains("      <DataGrid\n        table={table}\n"),
+        "the grid renders the instance the component creates"
+    );
+    assert!(
+        widget.contains("onRowClick={(row) => props.onRowSelect?.(row)}"),
+        "picking a row still reaches the page"
+    );
+    assert!(
+        widget.contains(concat!(
+            "      <Show when={hasNextPage(page())}>\n",
+            "        <Button type=\"button\" variant=\"outline\" onClick={() => void read(page().cursor)}>\n",
+            "          next page\n",
+        )),
+        "the next page is a button, because a keyset page has no index"
+    );
+    let query = widget
+        .split("export function WidgetQueryTable")
+        .nth(1)
+        .and_then(|rest| rest.split("\nexport ").next())
+        .expect("the query table exists");
+    for markup in [
+        "<table",
+        "<select",
+        "<input",
+        "<button",
+        "class=",
+        "className=",
+    ] {
+        assert!(!query.contains(markup), "the UI package owns {markup}");
     }
 }
 
@@ -224,7 +274,7 @@ fn a_row_link_becomes_one_callback_named_from_its_target() {
         "the plan's row link reaches the props"
     );
     assert!(
-        widget.contains("onClick={() => props.onOpenWidgetGet?.(row.original)}"),
+        widget.contains("onClick={() => props.onOpenWidgetGet?.(cell.row.original)}"),
         "the row carries the key, and the parent decides what to open"
     );
     for absent in ["href=", "navigate", "router", "<a "] {
@@ -649,7 +699,9 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
 
     // A page control that names a model column.
     assert!(
-        widget.contains("          Widget code\n          <input type=\"text\""),
+        widget.contains(
+            "        <TextField\n          label=\"Widget code\"\n          type=\"text\""
+        ),
         "a filter control reads the column's authored label"
     );
 
@@ -794,13 +846,13 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
     );
     assert!(
         maker.contains(
-            "onClick={() => props.onFillWidgetCreate?.(writeMember({} as WidgetCreateFormInitial, [\"makerId\"], row.original.id))}"
+            "onClick={() => props.onFillWidgetCreate?.(writeMember({} as WidgetCreateFormInitial, [\"makerId\"], cell.row.original.id))}"
         ),
         "the row writes its key at the declared input path"
     );
     assert!(
         maker.contains(
-            "props.onFillWidgetRecordBatch?.(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"makerId\"], row.original.id))"
+            "props.onFillWidgetRecordBatch?.(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"makerId\"], cell.row.original.id))"
         ),
         "a nested input path is written one member at a time"
     );

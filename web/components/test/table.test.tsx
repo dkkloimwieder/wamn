@@ -68,7 +68,8 @@ describe("the generated table for a page", () => {
     expect(screen.getByText("b")).toBeDefined();
     // The plan's columns are the headers, in contract order. A column whose
     // model authors a label reads that text, and one that does not keeps its
-    // field name with spaces.
+    // field name with spaces. The row link and the row form are one column
+    // each, after the plan's columns, with no header text.
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
       "Widget code",
       "created at",
@@ -76,6 +77,8 @@ describe("the generated table for a page", () => {
       "id",
       "maker id",
       "Operator note",
+      "",
+      "",
     ]);
   });
 
@@ -104,6 +107,21 @@ describe("the generated table for a page", () => {
     expect(screen.getByText("b")).toBeDefined();
   });
 
+  it("clears the rows and reads again when a control changes", async () => {
+    const { transport, sent } = stub([page(["a"], "c1"), page(["b"], null)]);
+    render(() => <WidgetQueryTable transport={transport} />);
+    fireEvent.click(screen.getByText("read"));
+    await waitFor(() => expect(screen.getByText("a")).toBeDefined());
+
+    fireEvent.change(screen.getByLabelText("Widget code"), { target: { value: "x,y" } });
+    await waitFor(() => expect(screen.getByText("b")).toBeDefined());
+    // The old rows go, because the cursor named a place in the old list.
+    expect(screen.queryByText("a")).toBeNull();
+    const second = sent[1]?.items[0] as { [key: string]: JsonValue };
+    expect(second["filter"]).toEqual({ code: ["x", "y"] });
+    expect(second["cursor"]).toBeUndefined();
+  });
+
   it("states an outcome that is not a completion, and shows no row", async () => {
     const { transport } = stub([
       { status: "refused", code: "permission_denied", detail: null },
@@ -115,6 +133,8 @@ describe("the generated table for a page", () => {
     fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]?.status).toBe("refused");
-    expect(screen.queryAllByRole("row")).toHaveLength(1);
+    // The header row, and the one row the grid shows when it holds no record.
+    expect(screen.queryAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText("No data available")).toBeDefined();
   });
 });
