@@ -5809,6 +5809,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-registry",
  "wamn-event-wire",
+ "wamn-fixture-package",
  "wamn-pg-core",
  "wamn-project-state",
  "wamn-record-history",

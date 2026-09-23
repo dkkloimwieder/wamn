@@ -19,7 +19,6 @@ const RECORD_HISTORY_APP_GRANTS: &str =
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
-const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
 
 fn psql(url: &str, script: &str) -> (bool, String, String) {
     let mut child = Command::new("psql")
@@ -113,7 +112,8 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
     );
 
     let reconcile_statement =
-        reconcile_operation_grants_sql(RECEIVING_MANIFEST, "t1").expect("build exact reconcile");
+        reconcile_operation_grants_sql(&wamn_fixture_package::manifest_bytes(), "t1")
+            .expect("build exact reconcile");
     let reconcile = transaction(&reconcile_statement);
     let (ok, _, missing_stderr) = psql(&url, &reconcile);
     assert!(!ok, "reconcile installed its own missing app_system floor");
@@ -140,10 +140,10 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
            ('t1', 'sibling-role', false), \
            ('t2', 'route-caller', false); \
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-           ('t1', 'route-caller', 'wamn-receiving:purchase-order/get@1.0.0'), \
-           ('t1', 'route-caller', 'wamn-receiving:obsolete/operation@1.0.0'), \
-           ('t1', 'route-caller', 'wamn-receiving:purchase-order/get@1.1.0'), \
-           ('t1', 'route-caller', 'client-acme-receiving:receiving/submit-receipt@3.0.0'), \
+           ('t1', 'route-caller', 'platform-fixture:widget/get@1.0.0'), \
+           ('t1', 'route-caller', 'platform-fixture:obsolete/operation@1.0.0'), \
+           ('t1', 'route-caller', 'platform-fixture:widget/get@1.1.0'), \
+           ('t1', 'route-caller', 'platform-fixture-overlay:widget/archive@3.0.0'), \
            ('t1', 'sibling-role', 'residue.must.stay'), \
            ('t2', 'route-caller', 'residue.must.stay'); COMMIT;"
         ),
@@ -151,7 +151,7 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
 
     let changed = result(&run(&url, "reconcile operation grants", &reconcile));
     assert_eq!(changed.role_rows_changed(), 1, "role was not hardened");
-    assert_eq!(changed.grants_added(), 8, "missing grants were not exact");
+    assert_eq!(changed.grants_added(), 9, "missing grants were not exact");
     assert_eq!(
         changed.grants_removed(),
         1,
@@ -164,22 +164,23 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
             "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
                FROM app_system.permissions \
               WHERE tenant_id = 't1' AND role_name = 'route-caller' \
-                AND starts_with(permission, 'wamn-receiving:') \
+                AND starts_with(permission, 'platform-fixture:') \
                 AND right(permission, length('@1.0.0')) = '@1.0.0'"
         ),
         [
-            "wamn-receiving:location/list@1.0.0",
-            "wamn-receiving:purchase-order/get@1.0.0",
-            "wamn-receiving:purchase-order/query@1.0.0",
-            "wamn-receiving:purchase-order/update@1.0.0",
-            "wamn-receiving:receipt/get@1.0.0",
-            "wamn-receiving:receipt/query@1.0.0",
-            "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
-            "wamn-receiving:receiving/load-receipt-screen@1.0.0",
-            "wamn-receiving:receiving/record-receipt@1.0.0",
+            "platform-fixture:widget-maker/list@1.0.0",
+            "platform-fixture:widget-maker/query@1.0.0",
+            "platform-fixture:widget/archive@1.0.0",
+            "platform-fixture:widget/create@1.0.0",
+            "platform-fixture:widget/delete@1.0.0",
+            "platform-fixture:widget/get@1.0.0",
+            "platform-fixture:widget/list@1.0.0",
+            "platform-fixture:widget/query@1.0.0",
+            "platform-fixture:widget/record-batch@1.0.0",
+            "platform-fixture:widget/update@1.0.0",
         ]
         .join("\n"),
-        "server did not retain exactly the manifest's nine operation grants"
+        "server did not retain exactly the manifest's ten operation grants"
     );
     assert_eq!(
         query(
@@ -187,12 +188,12 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
             "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
                FROM app_system.permissions \
               WHERE tenant_id = 't1' AND role_name = 'route-caller' \
-                AND NOT (starts_with(permission, 'wamn-receiving:') \
+                AND NOT (starts_with(permission, 'platform-fixture:') \
                          AND right(permission, length('@1.0.0')) = '@1.0.0')"
         ),
         [
-            "client-acme-receiving:receiving/submit-receipt@3.0.0",
-            "wamn-receiving:purchase-order/get@1.1.0",
+            "platform-fixture-overlay:widget/archive@3.0.0",
+            "platform-fixture:widget/get@1.1.0",
         ]
         .join("\n"),
         "package reconciliation changed another coordinate's operation grants"

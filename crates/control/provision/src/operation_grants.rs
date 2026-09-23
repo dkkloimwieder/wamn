@@ -316,22 +316,25 @@ pub fn reconcile_operation_grants_sql(
 mod tests {
     use super::*;
 
-    const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
+    fn fixture_manifest() -> Vec<u8> {
+        wamn_fixture_package::manifest_bytes()
+    }
 
     #[test]
-    fn receiving_manifest_yields_the_nine_canonical_operation_grants() {
+    fn fixture_manifest_yields_the_ten_canonical_operation_grants() {
         assert_eq!(
-            operation_grant_tokens(RECEIVING_MANIFEST).expect("parse strict Receiving manifest"),
+            operation_grant_tokens(&fixture_manifest()).expect("parse strict fixture manifest"),
             [
-                "wamn-receiving:location/list@1.0.0",
-                "wamn-receiving:purchase-order/get@1.0.0",
-                "wamn-receiving:purchase-order/query@1.0.0",
-                "wamn-receiving:purchase-order/update@1.0.0",
-                "wamn-receiving:receipt/get@1.0.0",
-                "wamn-receiving:receipt/query@1.0.0",
-                "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
-                "wamn-receiving:receiving/load-receipt-screen@1.0.0",
-                "wamn-receiving:receiving/record-receipt@1.0.0",
+                "platform-fixture:widget-maker/list@1.0.0",
+                "platform-fixture:widget-maker/query@1.0.0",
+                "platform-fixture:widget/archive@1.0.0",
+                "platform-fixture:widget/create@1.0.0",
+                "platform-fixture:widget/delete@1.0.0",
+                "platform-fixture:widget/get@1.0.0",
+                "platform-fixture:widget/list@1.0.0",
+                "platform-fixture:widget/query@1.0.0",
+                "platform-fixture:widget/record-batch@1.0.0",
+                "platform-fixture:widget/update@1.0.0",
             ]
             .map(str::to_owned)
             .into_iter()
@@ -342,8 +345,8 @@ mod tests {
     #[test]
     fn private_custom_operations_never_become_route_caller_grants() {
         let mut manifest: serde_json::Value =
-            serde_json::from_slice(RECEIVING_MANIFEST).expect("fixture is JSON");
-        let operation = &mut manifest["custom_operations"]["receiving.record_receipt"];
+            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
+        let operation = &mut manifest["custom_operations"]["widget.record_batch"];
         operation["visibility"] = serde_json::json!("private");
         operation
             .as_object_mut()
@@ -363,15 +366,15 @@ mod tests {
         assert!(
             !grants
                 .iter()
-                .any(|grant| grant == "wamn-receiving:receiving/record-receipt@1.0.0")
+                .any(|grant| grant == "platform-fixture:widget/record-batch@1.0.0")
         );
-        assert_eq!(grants.len(), 8);
+        assert_eq!(grants.len(), 9);
     }
 
     #[test]
     fn manifest_unknown_fields_are_refused_by_the_public_strict_parser() {
         let mut manifest: serde_json::Value =
-            serde_json::from_slice(RECEIVING_MANIFEST).expect("fixture is JSON");
+            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
         manifest["invented_grant_grammar"] = serde_json::Value::Bool(true);
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown field was accepted");
@@ -385,8 +388,8 @@ mod tests {
     #[test]
     fn semantic_operation_vocabulary_refusal_reaches_the_grant_boundary() {
         let mut manifest: serde_json::Value =
-            serde_json::from_slice(RECEIVING_MANIFEST).expect("fixture is JSON");
-        manifest["models"]["receipt"]["operations"]["get"]["component"] =
+            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
+        manifest["models"]["widget"]["operations"]["get"]["component"] =
             serde_json::json!("missing");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown operation was granted");
@@ -403,8 +406,8 @@ mod tests {
     #[test]
     fn noncanonical_package_identity_reaches_the_grant_boundary() {
         let mut manifest: serde_json::Value =
-            serde_json::from_slice(RECEIVING_MANIFEST).expect("fixture is JSON");
-        manifest["package"]["id"] = serde_json::json!("wamn-Receiving");
+            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
+        manifest["package"]["id"] = serde_json::json!("platform-Fixture");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("invalid package id was granted");
         assert_eq!(error.kind(), OperationGrantErrorKind::InvalidManifest);

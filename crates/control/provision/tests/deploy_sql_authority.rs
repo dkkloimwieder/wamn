@@ -410,8 +410,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
             "INSERT INTO catalog.packages \
                (tenant_id, package_id, package_version, manifest_sha256) \
              VALUES \
-               ('t1', 'receiving', '1.0.0', 'sha256:' || repeat('a', 64)), \
-               ('t2', 'receiving', '1.0.0', 'sha256:' || repeat('b', 64));\n\
+               ('t1', 'platform_fixture', '1.0.0', 'sha256:' || repeat('a', 64)), \
+               ('t2', 'platform_fixture', '1.0.0', 'sha256:' || repeat('b', 64));\n\
              BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
              SET LOCAL app.tenant = 't2';\n\
@@ -614,7 +614,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &format!(
             "INSERT INTO catalog.packages \
                (tenant_id, package_id, package_version, manifest_sha256) \
-             SELECT t, 'receiving', '1.0.0', {hash} \
+             SELECT t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO catalog.effective_releases \
                (tenant_id, effective_release_id, environment) \
@@ -625,7 +625,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
              INSERT INTO wamn_run.runs \
                (tenant_id, run_id, package_id, effective_release_id, environment, \
                 flow_id, flow_version) \
-             SELECT t, 'r', 'receiving', 1, 'dev', 'f', 1 \
+             SELECT t, 'r', 'platform_fixture', 1, 'dev', 'f', 1 \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n"
         ),
     );
@@ -1870,7 +1870,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     //     admin:<kebab-purpose>.
     let accepted = [
         UPDATE_OPERATION,
-        "acme2:quality-inspection/create@2.1.0-rc.1+build.5",
+        "fixture2:widget-maker/create@2.1.0-rc.1+build.5",
         "a:b-2/c3@v1",
         "wamn:audit-retention",
         "wamn:apply-package",
@@ -2422,19 +2422,45 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// Receiving, which logs `purchase_order` and declares its history read.
-const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
-const RECEIVING_MIGRATION: &str =
-    include_str!("../../../../apps/wamn_receiving/migrations/0001_initial.sql");
-const RECEIVING_HISTORY_READ: &str =
-    include_str!("../../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
-const HISTORY_PURCHASE_ORDER: &str = "7a1c0a4e-2b9d-4f3e-8a61-0c5d2e9b4f17";
-/// The supplier the history purchase order references.
-const HISTORY_SUPPLIER: &str = "00000000-0000-4000-8000-000000000501";
-/// The supplier the update moves the purchase order to.
-const HISTORY_SUPPLIER_NEXT: &str = "00000000-0000-4000-8000-000000000502";
+/// One page of the history of one fixture widget, in ascending position
+/// order. The fixture logs `widget` and declares no history read, so the test
+/// states the read. It has the shape of an authored history read: every row
+/// repeats the current row image, which names each declared `widget` column
+/// and spells each timestamptz column through the platform image function. A
+/// deleted row has the current image '{}'.
+const WIDGET_HISTORY_READ: &str = "SELECT \
+       history.position, \
+       history.kind, \
+       history.operation, \
+       history.changed_by, \
+       history.changed_at, \
+       history.before::text AS before, \
+       history.after::text AS after, \
+       COALESCE( \
+           (SELECT jsonb_build_object( \
+                       'id', widget.id, \
+                       'code', widget.code, \
+                       'note', widget.note, \
+                       'maker_id', widget.maker_id, \
+                       'edit_version', widget.edit_version, \
+                       'created_at', wamn_history.timestamptz_image(widget.created_at) \
+                   )::text \
+              FROM widget AS widget \
+             WHERE widget.id = $1::uuid), \
+           '{}' \
+       ) AS current \
+   FROM widget_history AS history \
+  WHERE history.row_key = jsonb_build_object('id', $1::uuid) \
+    AND history.position > $2::bigint \
+  ORDER BY history.position ASC \
+  LIMIT LEAST($3::int4, 100)";
+const HISTORY_WIDGET: &str = "7a1c0a4e-2b9d-4f3e-8a61-0c5d2e9b4f17";
+/// The maker the history widget references.
+const HISTORY_MAKER: &str = "00000000-0000-4000-8000-000000000501";
+/// The maker the update moves the widget to.
+const HISTORY_MAKER_NEXT: &str = "00000000-0000-4000-8000-000000000502";
 
-/// Run `sql` as the guest under the Receiving schema and return its rows, with
+/// Run `sql` as the guest under the fixture schema and return its rows, with
 /// the unit separator between fields and the record separator between rows.
 fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
     let out = Command::new("psql")
@@ -2451,7 +2477,7 @@ fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
         ])
         .arg("-c")
         .arg(format!(
-            "SET ROLE \"{guest}\"; SET search_path = receiving; {sql}"
+            "SET ROLE \"{guest}\"; SET search_path = inventory; {sql}"
         ))
         .output()
         .expect("psql runs");
@@ -2469,9 +2495,9 @@ fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// Every page of the Receiving history read of `item`, two entries a page.
+/// Every page of the fixture history read of `item`, two entries a page.
 fn history_pages(db_url: &str, guest: &str, item: &str) -> Vec<Vec<String>> {
-    let read = RECEIVING_HISTORY_READ.trim_end().trim_end_matches(';');
+    let read = WIDGET_HISTORY_READ;
     let mut rows: Vec<Vec<String>> = Vec::new();
     loop {
         let after = rows.last().map_or("0", |row| row[0].as_str()).to_owned();
@@ -2524,10 +2550,10 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
     }
 }
 
-/// The reconstruction half of spec test 1, over Receiving. The guest holds the
-/// grants that generation derives for Receiving, writes an insert, two updates,
-/// and a delete of a purchase order, and reads the history through the
-/// Receiving SQL. The fold then shows the row at each retained position.
+/// The reconstruction half of spec test 1, over the fixture application. The
+/// guest holds the grants that generation derives for the fixture, writes an
+/// insert, two updates, and a delete of a widget, and reads the history. The
+/// fold then shows the row at each retained position.
 #[test]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     let (_server, admin) = owned_server();
@@ -2537,32 +2563,37 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         &format!(
             "BEGIN;\n\
              SET LOCAL ROLE wamn_db_owner;\n\
-             CREATE SCHEMA receiving;\n\
-             {RECEIVING_MIGRATION}\
-             CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.purchase_order\n\
-                 FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
-                     'created_at', 'created_by', 'updated_at', 'updated_by');\n\
-             SELECT wamn_history.create_history_table('receiving', 'purchase_order', false);\n\
-             SELECT wamn_history.create_history_table('receiving', 'purchase_order_line', false);\n\
+             CREATE SCHEMA inventory;\n\
+             {migrations}\n\
+             CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.widget\n\
+                 FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');\n\
+             SELECT wamn_history.create_history_table('inventory', 'widget', false);\n\
              CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
-                 ON receiving.purchase_order\n\
-                 FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
-             INSERT INTO receiving.supplier (id, name)\n\
-                 VALUES ('{HISTORY_SUPPLIER}', 'history supplier'),\n\
-                        ('{HISTORY_SUPPLIER_NEXT}', 'next history supplier');\n\
-             COMMIT;\n"
+                 ON inventory.widget\n\
+                 FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');\n\
+             INSERT INTO inventory.widget_maker (id, name)\n\
+                 VALUES ('{HISTORY_MAKER}', 'history maker'),\n\
+                        ('{HISTORY_MAKER_NEXT}', 'next history maker');\n\
+             COMMIT;\n",
+            migrations = wamn_fixture_package::migrations()
+                .into_iter()
+                .map(|(_, sql)| sql)
+                .collect::<String>(),
         ),
     );
 
-    // The grants that generation derives from the Receiving manifest and the
-    // server catalog. Receiving declares no generated insert or delete of a
-    // purchase order, so the guest gets its writes from the test.
+    // The grants that generation derives from the fixture manifest and the
+    // server catalog. The fixture declares the insert, the update and the
+    // delete of a widget. It declares no history read, so the guest gets the
+    // select of the history read from the test. A declared history read adds
+    // exactly that select grant, which the generator test
+    // a_custom_operation_reads_a_history_table states.
     let relation_fields = psql(
         &db_url,
         None,
         "SELECT c.relname || ':' || string_agg(a.attname, ',' ORDER BY a.attnum) \
            FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid \
-          WHERE c.relnamespace = 'receiving'::regnamespace AND c.relkind = 'r' \
+          WHERE c.relnamespace = 'inventory'::regnamespace AND c.relkind = 'r' \
             AND a.attnum > 0 AND NOT a.attisdropped \
           GROUP BY c.relname ORDER BY c.relname",
     )
@@ -2570,7 +2601,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     .map(|line| {
         let (table, fields) = line.split_once(':').expect("table and fields");
         wamn_schema_generator::DataAccessRelationFields::new(
-            "receiving",
+            "inventory",
             table,
             fields.split(',').map(str::to_owned).collect(),
         )
@@ -2578,19 +2609,20 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     .collect::<Vec<_>>();
     let overlay = wamn_schema_generator::derive_data_access_overlay_from_relation_fields(
         &relation_fields,
-        RECEIVING_MANIFEST,
+        &wamn_fixture_package::manifest_bytes(),
     )
-    .expect("the Receiving manifest derives its data access");
+    .expect("the fixture manifest derives its data access");
     let grants = wamn_schema_generator::render_effective_data_access_sql(
         &wamn_schema_generator::derive_effective_data_access(&relation_fields, &[overlay])
-            .expect("the Receiving data access is one installed set"),
+            .expect("the fixture data access is one installed set"),
     )
-    .expect("the Receiving data access renders");
+    .expect("the fixture data access renders");
     apply(
         &db_url,
         &format!(
             "BEGIN;\n{grants}\
-             GRANT INSERT, UPDATE, DELETE ON receiving.purchase_order TO wamn_app;\n\
+             GRANT SELECT (position, row_key, kind, operation, changed_by, changed_at, \
+                           before, after) ON inventory.widget_history TO wamn_app;\n\
              COMMIT;\n"
         ),
     );
@@ -2599,10 +2631,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     let plan = guest_rows(
         &db_url,
         &guest,
-        &format!(
-            "EXPLAIN (GENERIC_PLAN, FORMAT JSON) {}",
-            RECEIVING_HISTORY_READ.trim_end().trim_end_matches(';')
-        ),
+        &format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {WIDGET_HISTORY_READ}"),
     );
     let plan: serde_json::Value =
         serde_json::from_str(&plan[0][0]).expect("EXPLAIN returns a JSON plan");
@@ -2616,7 +2645,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     assert!(unknown.is_empty(), "an unknown row must return no entries");
     assert_eq!(state_at(&[], 1), Ok(RowState::Unavailable));
 
-    // An insert, an update of the status and the revision, an update of a
+    // An insert, an update of the code and the revision, an update of a
     // text and a uuid, and a delete, each in its own transaction. After each write, the row image of
     // the row is the state that the fold must reconstruct.
     let image = || {
@@ -2624,8 +2653,8 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             &db_url,
             None,
             &format!(
-                "SELECT COALESCE((SELECT wamn_history.row_image(p)::text \
-                   FROM receiving.purchase_order p WHERE id = '{HISTORY_PURCHASE_ORDER}'), '{{}}')"
+                "SELECT COALESCE((SELECT wamn_history.row_image(w)::text \
+                   FROM inventory.widget w WHERE id = '{HISTORY_WIDGET}'), '{{}}')"
             ),
         )
     };
@@ -2635,32 +2664,32 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             ACTOR_A,
             CREATE_OPERATION,
             format!(
-                "INSERT INTO purchase_order (id, purchase_order_number, supplier_id) \
-                   VALUES ('{HISTORY_PURCHASE_ORDER}', 'PO-history', \
-                           '{HISTORY_SUPPLIER}');"
+                "INSERT INTO widget (id, code, note, maker_id) \
+                   VALUES ('{HISTORY_WIDGET}', 'priority', 'history', \
+                           '{HISTORY_MAKER}');"
             ),
         ),
         (
             ACTOR_B,
             UPDATE_OPERATION,
             format!(
-                "UPDATE purchase_order SET status = 'complete', row_version = 2 \
-                   WHERE id = '{HISTORY_PURCHASE_ORDER}';"
+                "UPDATE widget SET code = 'standard', edit_version = 2 \
+                   WHERE id = '{HISTORY_WIDGET}';"
             ),
         ),
         (
             ACTOR_B,
             UPDATE_OPERATION,
             format!(
-                "UPDATE purchase_order SET purchase_order_number = 'PO-history-2', \
-                   supplier_id = '{HISTORY_SUPPLIER_NEXT}' \
-                   WHERE id = '{HISTORY_PURCHASE_ORDER}';"
+                "UPDATE widget SET note = 'history-2', \
+                   maker_id = '{HISTORY_MAKER_NEXT}' \
+                   WHERE id = '{HISTORY_WIDGET}';"
             ),
         ),
         (
             ACTOR_C,
             REPAIR_OPERATION,
-            format!("DELETE FROM purchase_order WHERE id = '{HISTORY_PURCHASE_ORDER}';"),
+            format!("DELETE FROM widget WHERE id = '{HISTORY_WIDGET}';"),
         ),
     ] {
         apply(
@@ -2671,14 +2700,14 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
                     &guest,
                     actor,
                     operation,
-                    &format!("SET LOCAL search_path = receiving;\n{write}"),
+                    &format!("SET LOCAL search_path = inventory;\n{write}"),
                 )
             ),
         );
         images.push(image());
     }
 
-    let pages = history_pages(&db_url, &guest, HISTORY_PURCHASE_ORDER);
+    let pages = history_pages(&db_url, &guest, HISTORY_WIDGET);
     // The read answers position, kind, operation, changed_by, changed_at,
     // before, after and current. It states no head position, so the newest
     // position is the last entry of the last page this read took.

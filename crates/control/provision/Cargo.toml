@@ -67,6 +67,7 @@ wamn-test-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
 wamn-catalog = { workspace = true }
+wamn-fixture-package = { workspace = true }
 # wamn-0h0g.8.21: `catalog.deployment_attestations` is CONTROL-plane only, so its
 # live test belongs to this crate's portable-store gate, while the Rust binding
 # for `catalog.register_deployment_attestation` belongs to the pure SQL owner.
