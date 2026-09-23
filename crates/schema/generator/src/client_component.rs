@@ -1594,16 +1594,20 @@ fn emit_selector_state(
 
 /// One selector: the options are the rows the list returned.
 ///
-/// A list that declares a filter on its display field also gets a search
-/// control, and a list that serves pages also gets a next page control. The
-/// list's other filters stay on the list's own screen: a selector asks one
-/// question, which is the text the operator already knows.
+/// It renders `RecordSelect` from `@wamn/ui`. A list that declares a filter on
+/// its display field also gets the search, and a list that serves pages also
+/// gets the next page. The list's other filters stay on the list's own
+/// screen: a selector asks one question, which is the text the operator
+/// already knows.
 fn emit_selector_control(
     source: &mut String,
     populated: &PopulatedInput<'_>,
     indent: usize,
     label: &str,
+    marks: &str,
+    ui: &mut BTreeSet<&'static str>,
 ) {
+    ui.insert("RecordSelect");
     let pad = " ".repeat(indent);
     let alias = foreign_alias(populated.list_model, populated.list_name);
     let stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
@@ -1611,37 +1615,30 @@ fn emit_selector_control(
     let display = crate::client_ts::to_camel(populated.display_field);
     writeln!(
         source,
-        "{pad}<select\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(event) => field().handleChange(event.currentTarget.value)}}\n{pad}>"
+        "{pad}<RecordSelect\n{pad}  label={label:?}\n{pad}  options={{{alias}Options().rows}}\n{pad}  optionValue={{(row) => String(row.{key})}}\n{pad}  optionLabel={{(row) => String(row.{display})}}\n{pad}  value={{field().state.value == null ? null : String(field().state.value)}}\n{pad}  onChange={{(value) => field().handleChange(value ?? \"\")}}"
     )
     .expect("write");
-    writeln!(source, "{pad}  <option value=\"\"></option>").expect("write");
-    // `selected` is stated on the option, not only as the select's value: the
-    // options arrive after the first render, and a value the browser cannot
-    // find yet is dropped.
-    writeln!(
-        source,
-        "{pad}  <For each={{{alias}Options().rows}}>\n{pad}    {{(row) => (\n{pad}      <option\n{pad}        value={{String(row.{key})}}\n{pad}        selected={{String(field().state.value ?? \"\") === String(row.{key})}}\n{pad}      >\n{pad}        {{String(row.{display})}}\n{pad}      </option>\n{pad}    )}}\n{pad}  </For>"
-    )
-    .expect("write");
-    writeln!(source, "{pad}</select>").expect("write");
     // The search asks the list again from its first page, because a cursor
     // names a position in the answer the old value produced.
     if populated.search_input.is_some() {
         writeln!(
             source,
-            "{pad}<input\n{pad}  type=\"search\"\n{pad}  aria-label={:?}\n{pad}  value={{{alias}Search()}}\n{pad}  onChange={{(event) => {{\n{pad}    set{stem}Search(event.currentTarget.value);\n{pad}    void read{stem}Options(null);\n{pad}  }}}}\n{pad}/>",
-            format!("{label} search")
+            "{pad}  onSearch={{(text) => {{\n{pad}    set{stem}Search(text);\n{pad}    void read{stem}Options(null);\n{pad}  }}}}"
         )
         .expect("write");
     }
     if populated.cursor_input.is_some() {
         writeln!(
             source,
-            "{pad}<Show when={{hasNextPage({alias}Options())}}>\n{pad}  <button\n{pad}    type=\"button\"\n{pad}    aria-label={:?}\n{pad}    onClick={{() => void read{stem}Options({alias}Options().cursor)}}\n{pad}  >\n{pad}    next page\n{pad}  </button>\n{pad}</Show>",
-            format!("{label} next page")
+            "{pad}  hasNextPage={{hasNextPage({alias}Options())}}\n{pad}  onNextPage={{() => void read{stem}Options({alias}Options().cursor)}}"
         )
         .expect("write");
     }
+    writeln!(
+        source,
+        "{pad}  error={{{marks} ? (refusal()?.code ?? \"refused\") : null}}\n{pad}/>"
+    )
+    .expect("write");
 }
 
 /// One control, its label, and the refusal that names it.
@@ -1669,15 +1666,7 @@ fn emit_field(
         // An input that names a record is chosen from the list that offers
         // it, never typed. The options come from one read of that list.
         Some(populated) => {
-            writeln!(source, "{pad}    <label>").expect("write");
-            writeln!(source, "{pad}      {}", label(input)).expect("write");
-            emit_selector_control(source, populated, indent + 6, &label(input));
-            writeln!(
-                source,
-                "{pad}      <Show when={{{marks}}}>\n{pad}        <em>{{refusal()?.code}}</em>\n{pad}      </Show>"
-            )
-            .expect("write");
-            writeln!(source, "{pad}    </label>").expect("write");
+            emit_selector_control(source, populated, indent + 4, &label(input), &marks, ui);
         }
         None => emit_input_control(source, input, indent + 4, &marks, ui),
     }

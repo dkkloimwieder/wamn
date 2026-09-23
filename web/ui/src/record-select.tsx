@@ -7,9 +7,10 @@
  * options are exactly the rows the release sent.
  */
 
-import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, createUniqueId, on, onCleanup, Show } from "solid-js";
 
 import { Button } from "./components/ui/button";
+import { Field, FieldError, FieldLabel } from "./components/ui/field";
 import {
   Combobox,
   ComboboxContent,
@@ -30,8 +31,10 @@ export interface RecordSelectProps<Row extends object> {
   /** The stored value, or null when no record is chosen. */
   readonly value: string | null;
   readonly onChange: (value: string | null) => void;
-  /** The accessible name of the control. */
+  /** The label of the control. */
   readonly label: string;
+  /** The refusal that marks this control, or null. */
+  readonly error?: string | null | undefined;
   /**
    * Called with the typed text after a pause. A selector whose list declares
    * no search passes none, and its input is then read only.
@@ -78,43 +81,54 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
     pending = setTimeout(() => search(text), SEARCH_PAUSE_MS);
   };
 
+  const labelId = createUniqueId();
   return (
-    <Combobox<Row>
-      options={[...props.options]}
-      optionValue={(row) => props.optionValue(row)}
-      optionTextValue={(row) => props.optionLabel(row)}
-      optionLabel={(row) => props.optionLabel(row)}
-      value={selected()}
-      onChange={(row) => {
-        setChosen(() => row);
-        props.onChange(row === null ? null : props.optionValue(row));
-      }}
-      onInputChange={typed}
-      defaultFilter={() => true}
-      triggerMode={props.onSearch === undefined ? "focus" : "input"}
-      itemComponent={(item) => (
-        <ComboboxItem item={item.item}>{item.item.textValue}</ComboboxItem>
-      )}
-    >
-      <ComboboxInput aria-label={props.label} readOnly={props.onSearch === undefined} />
-      <ComboboxContent
-        footer={
-          <Show when={props.hasNextPage === true && props.onNextPage !== undefined}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              class="w-full"
-              aria-label={`${props.label} next page`}
-              // The input keeps the focus, so the list stays open.
-              onMouseDown={(event: MouseEvent) => event.preventDefault()}
-              onClick={() => props.onNextPage?.()}
-            >
-              next page
-            </Button>
-          </Show>
-        }
-      />
-    </Combobox>
+    <Field data-invalid={props.error ? "true" : undefined}>
+      <FieldLabel id={labelId}>{props.label}</FieldLabel>
+      <Combobox<Row>
+        options={[...props.options]}
+        optionValue={(row) => props.optionValue(row)}
+        optionTextValue={(row) => props.optionLabel(row)}
+        optionLabel={(row) => props.optionLabel(row)}
+        value={selected()}
+        onChange={(row) => {
+          setChosen(() => row);
+          props.onChange(row === null ? null : props.optionValue(row));
+        }}
+        onInputChange={typed}
+        defaultFilter={() => true}
+        triggerMode={props.onSearch === undefined ? "focus" : "input"}
+        itemComponent={(item) => (
+          <ComboboxItem item={item.item}>{item.item.textValue}</ComboboxItem>
+        )}
+      >
+        <ComboboxInput
+          aria-labelledby={labelId}
+          aria-invalid={props.error ? "true" : undefined}
+          readOnly={props.onSearch === undefined}
+        />
+        <ComboboxContent
+          footer={
+            <Show when={props.hasNextPage === true && props.onNextPage !== undefined}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                class="w-full"
+                aria-label={`${props.label} next page`}
+                // The input keeps the focus, so the list stays open.
+                onMouseDown={(event: MouseEvent) => event.preventDefault()}
+                onClick={() => props.onNextPage?.()}
+              >
+                next page
+              </Button>
+            </Show>
+          }
+        />
+      </Combobox>
+      <Show when={props.error}>
+        <FieldError>{props.error}</FieldError>
+      </Show>
+    </Field>
   );
 }
