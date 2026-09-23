@@ -84,8 +84,12 @@ pub fn materializer_consumer_config(
 ///
 /// The declaration does not own annotations: `metadata` (NATS 2.11 and later
 /// add their own `_nats.*` keys), `description`, `template_owner`, and
-/// `placement`. The destructure names every field, so a new upstream field
-/// needs a decision here before the crate builds.
+/// `placement`. It does not own the NATS 2.11 and 2.12 fields either:
+/// `pause_until`, `allow_message_ttl`, `subject_delete_marker_ttl`,
+/// `allow_atomic_publish`, `allow_message_schedules` and
+/// `allow_message_counter`. The declaration never sets them. The destructure
+/// names every field, so a new upstream field needs a decision here before the
+/// crate builds.
 pub fn stream_config_matches(expected: &stream::Config, actual: &stream::Config) -> bool {
     let stream::Config {
         name,
@@ -121,6 +125,12 @@ pub fn stream_config_matches(expected: &stream::Config, actual: &stream::Config)
         first_sequence,
         placement: _,
         persist_mode,
+        pause_until: _,
+        allow_message_ttl: _,
+        subject_delete_marker_ttl: _,
+        allow_atomic_publish: _,
+        allow_message_schedules: _,
+        allow_message_counter: _,
     } = expected;
     *name == actual.name
         && *max_bytes == actual.max_bytes

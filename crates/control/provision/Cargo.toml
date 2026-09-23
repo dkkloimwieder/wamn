@@ -24,7 +24,10 @@ required-features = ["ops"]
 
 [dependencies]
 # Native broker configuration types. Network effects stay in wamn-ctl.
-async-nats = { workspace = true, features = ["jetstream", "server_2_10"] }
+# server_2_11 and server_2_12 are the features wash-runtime enables. This crate
+# enables them too, so stream::Config has the same fields in a build of this
+# crate alone and in a workspace build.
+async-nats = { workspace = true, features = ["jetstream", "server_2_10", "server_2_11", "server_2_12"] }
 wamn-event-wire = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # The per-project-env credential Secrets render as JSON (kubectl apply accepts
