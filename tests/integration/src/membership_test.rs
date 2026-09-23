@@ -15,9 +15,14 @@ use clap::Args;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use wamn_platform_identity::{PrincipalId, assign_project_role, create_human, issue_pat};
+use wamn_schema_generator::{PackageIdentity, canonical_operation_identity};
 
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
-const OPERATION_GRANT: &str = "wamn-receiving:purchase-order/get@1.0.0";
+/// The deployed Receiving package whose route this test drives.
+const PACKAGE_ID: &str = "wamn_receiving";
+const PACKAGE_VERSION: &str = "1.0.0";
+/// The one operation the test role is granted.
+const OPERATION: &str = "purchase_order.get";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const TEST_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -281,7 +286,7 @@ async fn seed_tenant_role(
     tx.execute(
         "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
          VALUES ($1, $2, $3)",
-        &[&args.tenant, &role, &OPERATION_GRANT],
+        &[&args.tenant, &role, &operation_grant()?],
     )
     .await
     .context("grant only the canonical purchase-order/get operation to the test role")?;
@@ -426,11 +431,20 @@ async fn cleanup(
     Ok(())
 }
 
+/// The grant of the purchase-order get operation, built the way the generator
+/// builds every operation grant.
+fn operation_grant() -> anyhow::Result<String> {
+    let package = PackageIdentity {
+        id: PACKAGE_ID.to_owned(),
+        version: PACKAGE_VERSION.to_owned(),
+        predecessor_version: None,
+    };
+    canonical_operation_identity(&package, OPERATION).context("derive the purchase-order get grant")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{
-        MembershipTestArgs, OPERATION_GRANT, PURCHASE_ORDER_ID, check_record, write_benchmark_pat,
-    };
+    use super::{MembershipTestArgs, PURCHASE_ORDER_ID, check_record, write_benchmark_pat};
     use clap::Parser;
     use serde_json::json;
     use std::os::unix::fs::PermissionsExt as _;
@@ -453,16 +467,6 @@ mod tests {
     struct TestCommand {
         #[command(flatten)]
         args: MembershipTestArgs,
-    }
-
-    #[test]
-    fn permission_uses_the_generated_canonical_operation_grant() {
-        let contract: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../apps/wamn_receiving/generated/contracts/purchase_order/get.operation.json"
-        ))
-        .expect("parse the generated purchase-order/get contract");
-        assert_eq!(contract["grant"], OPERATION_GRANT);
-        assert_ne!(contract["permission_token"], OPERATION_GRANT);
     }
 
     #[test]

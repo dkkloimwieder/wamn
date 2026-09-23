@@ -49,6 +49,7 @@ wamn-execution-host = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true }
 wamn-schema-control = { workspace = true }
+wamn-schema-generator = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
@@ -60,7 +61,6 @@ async-trait = { workspace = true }
 proptest.workspace = true
 wamn-client = { workspace = true }
 wamn-receiving-tui = { workspace = true }
-wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wat = "=1.252.0"
 wamn-run-state = { workspace = true, features = ["test-util"] }
