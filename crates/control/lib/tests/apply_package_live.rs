@@ -2389,17 +2389,38 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
 /// it, which is the shape a package has after a column edit is committed.
 #[tokio::test]
 async fn one_apply_takes_a_created_relation_and_its_later_column() {
+    apply_created_then_added("dock").await;
+}
+
+/// The name of the relation does not change the order in which one apply reads
+/// its migrations. The directory of the file system listed 0002_lane_note.sql
+/// before 0001_initial.sql, and the apply refused the column (wamn-eqaf).
+#[tokio::test]
+async fn one_apply_takes_a_created_relation_and_its_later_column_whatever_the_relation_name() {
+    apply_created_then_added("lane").await;
+}
+
+/// Apply the base fixture with its dock relation renamed to `relation`, and
+/// then a later migration that adds a column to that relation.
+async fn apply_created_then_added(relation: &str) {
     let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     install(&client).await;
     let package = fixture_root().with_file_name(format!(
-        "apply-package-created-then-added-{}",
+        "apply-package-created-then-added-{relation}-{}",
         std::process::id()
     ));
     copy_base_fixture(&package);
+    for file in ["wamn.json", "migrations/0001_initial.sql"] {
+        let path = package.join(file);
+        let text = std::fs::read_to_string(&path)
+            .expect("read copied fixture file")
+            .replace("dock", relation);
+        std::fs::write(&path, text).expect("rename the dock relation");
+    }
     std::fs::write(
-        package.join("migrations/0002_dock_note.sql"),
-        "ALTER TABLE inventory.dock ADD COLUMN note text;\n",
+        package.join(format!("migrations/0002_{relation}_note.sql")),
+        format!("ALTER TABLE inventory.{relation} ADD COLUMN note text;\n"),
     )
     .expect("append a migration to the stream");
     let outcome = apply(&url, &package)
@@ -2409,9 +2430,9 @@ async fn one_apply_takes_a_created_relation_and_its_later_column() {
     let owned: bool = client
         .query_one(
             "SELECT count(*) = 1 FROM catalog.package_definition_owners \
-             WHERE relation_name = 'dock' AND definition_kind = 'field' \
+             WHERE relation_name = $1 AND definition_kind = 'field' \
                AND definition_name = 'note' AND owner_package_id = 'wamn_inventory'",
-            &[],
+            &[&relation],
         )
         .await
         .expect("read the recorded field owner")
