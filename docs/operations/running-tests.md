@@ -560,6 +560,24 @@ The tests read the shared case table at `crates/client/tui/tests/data/classifica
 `crates/client/tui/tests/classification_table.rs` reads the same file, so one table holds both clients to one rule.
 If you change the table, run both.
 
+### Platform UI
+
+`web/ui` holds the copied Zaidan components and the one stylesheet that generated components render through.
+Install its dependencies once:
+
+```bash
+cd web/ui && npm install
+```
+
+To type-check the package and build its stylesheet once, run:
+
+```bash
+cd web/ui && npm run check
+```
+
+The stylesheet build writes into `node_modules/.cache/wamn-ui`, and nothing reads that file.
+It shows that the CSS entry compiles.
+
 ### Generated components
 
 A generated component imports SolidJS, TanStack Table, TanStack Form, and zod.
