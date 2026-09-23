@@ -76,10 +76,10 @@ fn error_value(error: &contract::ListError) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::ListRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
-    if let Some(value) = &mut request.maker_id {
-        if !canonical_uuid(value) {
-            return Err(invalid("maker_id"));
-        }
+    if let Some(value) = &mut request.maker_id
+        && (!canonical_uuid(value))
+    {
+        return Err(invalid("maker_id"));
     }
     Ok(())
 }

@@ -1969,36 +1969,29 @@ fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, i
             }
             continue;
         }
-        let mut body = String::new();
+        let mut checks = Vec::new();
         if field.type_name == "uuid" {
-            write!(
-                body,
-                "if !canonical_uuid(value) {{ return Err(invalid({:?})); }}",
-                field.path
-            )
-            .expect("writing to a String cannot fail");
+            checks.push("!canonical_uuid(value)".to_owned());
         }
         if !field.values.is_empty() {
-            write!(
-                body,
-                "if !{:?}.contains(&value.as_str()) {{ return Err(invalid({:?})); }}",
-                field.values, field.path
-            )
-            .expect("writing to a String cannot fail");
+            checks.push(format!("!{:?}.contains(&value.as_str())", field.values));
         }
-        if body.is_empty() {
+        if checks.is_empty() {
             continue;
         }
+        let condition = checks.join(" || ");
+        let path = &field.path;
         if field.nullable {
+            // One let chain, so clippy::collapsible_if accepts the generated code.
             writeln!(
                 source,
-                "{indent}if let Some(value) = &mut {field_access} {{ {body} }}"
+                "{indent}if let Some(value) = &mut {field_access} && ({condition}) {{ return Err(invalid({path:?})); }}"
             )
             .expect("writing to a String cannot fail");
         } else {
             writeln!(
                 source,
-                "{indent}{{ let value = &mut {field_access}; {body} }}"
+                "{indent}{{ let value = &mut {field_access}; if {condition} {{ return Err(invalid({path:?})); }} }}"
             )
             .expect("writing to a String cannot fail");
         }

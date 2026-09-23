@@ -132,10 +132,10 @@ fn normalize(
             }
         }
     }
-    if let Some(value) = &mut request.maker_id {
-        if !canonical_uuid(value) {
-            return Err(invalid("value.maker_id"));
-        }
+    if let Some(value) = &mut request.maker_id
+        && (!canonical_uuid(value))
+    {
+        return Err(invalid("value.maker_id"));
     }
     Ok(())
 }

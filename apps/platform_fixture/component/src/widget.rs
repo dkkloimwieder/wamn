@@ -246,10 +246,6 @@ mod archive {
 mod list {
     use super::{Connection, detail, widget};
     use crate::exports::platform_fixture::widget::list as contract;
-    #[expect(
-        clippy::collapsible_if,
-        reason = "the generated codec checks a nullable uuid input with a nested if; generated files are not edited by hand"
-    )]
     mod codec {
         use super::contract;
         include!(concat!(
@@ -291,10 +287,6 @@ mod list {
 mod record_batch {
     use super::{Connection, detail, widget};
     use crate::exports::platform_fixture::widget::record_batch as contract;
-    #[expect(
-        clippy::collapsible_if,
-        reason = "the generated codec checks a nullable uuid input with a nested if; generated files are not edited by hand"
-    )]
     mod codec {
         use super::contract;
         include!(concat!(
