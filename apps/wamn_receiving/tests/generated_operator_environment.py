@@ -31,7 +31,7 @@ def main():
         "--package", str(source / "apps/client_acme_receiving"),
     ], env=environment, check=True)
     return subprocess.call([
-        sys.executable, str(source / "services/ctl/tests/generated_operator_live.py"),
+        sys.executable, str(source / "apps/wamn_receiving/tests/generated_operator_live.py"),
         "--wamn", wamn, "--config", str(root / "environment/dev.json"),
         "--overlay-root", str(source / "apps/client_acme_receiving"),
         "--evidence-dir", str(root / "result"),

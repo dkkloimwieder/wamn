@@ -350,7 +350,7 @@ Build the native programs, fixture, HTTP guest, and exact test binary from that 
 cd "$SOURCE"
 cargo build --locked --offline \
   -p wamn-ctl -p wamn-host -p wamn-identity \
-  -p wamn-test-infrastructure --bins --example delivery_timings
+  -p wamn-test-infrastructure -p wamn-receiving-tests --bins --example delivery_timings
 cargo build --locked --offline --manifest-path apps/Cargo.toml \
   --target wasm32-wasip2 -p http-route
 cargo test --locked --offline -p wamn-receiving-tests --lib --no-run
@@ -392,7 +392,7 @@ WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_rou
   "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_OPERATOR_RESULTS" -- \
   "$CARGO_TARGET_DIR/debug/wamn-test-postgres" \
   --database wamn_system --url-env WAMN_DEV_ENV_SYSTEM_DATABASE_URL -- \
-  python3 "$SOURCE/services/ctl/tests/generated_operator_environment.py"
+  python3 "$SOURCE/apps/wamn_receiving/tests/generated_operator_environment.py"
 ```
 
 The runner calls `wamn dev up` with Receiving and its Acme overlay.

@@ -55,6 +55,7 @@ wamn-schema-control = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 async-trait = { workspace = true }
+rustix = { workspace = true }
 wamn-client = { workspace = true }
 wamn-client-terminal = { workspace = true }
 wamn-client-tui = { workspace = true }
