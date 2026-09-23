@@ -382,7 +382,15 @@ fn a_form_renders_through_the_ui_fields_and_states_no_class() {
         "adding and removing a line are buttons"
     );
     assert!(batch.contains("<Button type=\"submit\">submit</Button>"));
-    for markup in ["<fieldset", "<legend", "class=", "className="] {
+    for markup in [
+        "<input",
+        "<select",
+        "<button",
+        "<fieldset",
+        "<legend",
+        "class=",
+        "className=",
+    ] {
         assert!(!batch.contains(markup), "the UI package owns {markup}");
     }
 }
@@ -791,21 +799,21 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
         "{widget}"
     );
     assert!(
-        widget.contains("value={String(row.id)}"),
+        widget.contains("optionValue={(row) => String(row.id)}"),
         "the option carries the key the plan named"
     );
     assert!(
-        widget.contains("{String(row.name)}"),
+        widget.contains("optionLabel={(row) => String(row.name)}"),
         "the default display field reaches the option text"
     );
     assert!(
-        widget.contains("{String(row.code)}"),
+        widget.contains("optionLabel={(row) => String(row.code)}"),
         "an authored display field reaches the option text"
     );
     assert!(
-        widget.contains("selected={String(field().state.value ?? \"\") === String(row.id)}"),
-        "the option states its own selected state, because the rows arrive \
-         after the first render"
+        widget.contains("value={field().state.value == null ? null : String(field().state.value)}"),
+        "the selector states the value the form holds, and the UI package \
+         shows the row once the options arrive"
     );
 
     // A narrowed selector reads the value the operator already chose, and it
@@ -984,10 +992,15 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
     );
     assert!(
         create.contains(concat!(
-            "              aria-label=\"maker id search\"\n",
-            "              value={widgetMakerQuerySearch()}\n",
+            "          <RecordSelect\n",
+            "            label=\"maker id\"\n",
+        )) && create.contains(concat!(
+            "            onSearch={(text) => {\n",
+            "              setWidgetMakerQuerySearch(text);\n",
+            "              void readWidgetMakerQueryOptions(null);\n",
+            "            }}\n",
         )),
-        "the search control states the field it searches"
+        "the selector hands its search to the list it reads"
     );
     assert!(
         create.contains("    void readWidgetMakerQueryOptions(null);\n"),
@@ -1012,8 +1025,8 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
     );
     assert!(
         create.contains(concat!(
-            "                aria-label=\"maker id next page\"\n",
-            "                onClick={() => void readWidgetMakerQueryOptions(widgetMakerQueryOptions().cursor)}\n",
+            "            hasNextPage={hasNextPage(widgetMakerQueryOptions())}\n",
+            "            onNextPage={() => void readWidgetMakerQueryOptions(widgetMakerQueryOptions().cursor)}\n",
         )),
         "the next page control reads the cursor the selector holds"
     );
@@ -1027,12 +1040,17 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
         .split("\n/**")
         .next()
         .expect("the form ends");
+    let line = batch
+        .split("label=\"Line\"")
+        .nth(1)
+        .and_then(|rest| rest.split("/>").next())
+        .expect("the line selector exists");
     assert!(
-        !batch.contains("aria-label=\"Line search\""),
+        !line.contains("onSearch="),
         "a list that declares no filter on its display field offers no search"
     );
     assert!(
-        !batch.contains("aria-label=\"Line next page\""),
+        !line.contains("onNextPage="),
         "a bounded list has no next page to offer"
     );
     assert!(

@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
 
 import { WidgetCreateForm } from "../fixture/components/widget.js";
+import { choose, openSelector } from "./choose.js";
 
 afterEach(cleanup);
 
@@ -45,18 +46,16 @@ describe("a populated input", () => {
   it("offers the rows of the list the plan chose", async () => {
     const { transport } = stub();
     render(() => <WidgetCreateForm transport={transport} />);
+    await openSelector("maker id");
     await waitFor(() => expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined());
-    const option = screen.getByRole("option", { name: "Northwind" }) as HTMLOptionElement;
-    expect(option.value).toBe(MAKER);
+    // The option stands for the row's key, and shows its display field.
+    expect(screen.getByRole("option", { name: "Northwind" }).getAttribute("data-key")).toBe(MAKER);
   });
 
   it("sends the key of the row the operator picked", async () => {
     const { transport, sent } = stub();
     render(() => <WidgetCreateForm transport={transport} />);
-    await waitFor(() => expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined());
-
-    const selector = screen.getByRole("combobox") as HTMLSelectElement;
-    fireEvent.change(selector, { target: { value: MAKER } });
+    await choose("maker id", "Northwind");
     fireEvent.submit(screen.getByRole("button", { name: "submit" }).closest("form")!);
 
     await waitFor(() => expect(sent).toHaveLength(2));
@@ -110,12 +109,14 @@ describe("a selector over a list that declares its display filter", () => {
   it("searches by the value the operator typed", async () => {
     const { transport, sent } = paged();
     render(() => <WidgetCreateForm transport={transport} />);
+    const input = await openSelector("maker id");
     await waitFor(() => expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined());
 
-    const search = screen.getByLabelText("maker id search") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "Southwind" } });
+    // The search goes out after a pause in typing, as one request.
+    fireEvent.input(input, { target: { value: "Southwind" } });
 
     await waitFor(() => expect(screen.getByRole("option", { name: "Southwind" })).toBeDefined());
+    expect(sent).toHaveLength(2);
     expect(screen.queryByRole("option", { name: "Northwind" })).toBeNull();
     const searched = sent[1]?.items[0] as { filter: { name: string[] }; cursor?: string };
     expect(searched.filter.name).toEqual(["Southwind"]);
@@ -125,12 +126,17 @@ describe("a selector over a list that declares its display filter", () => {
   it("appends the next page to the options it already offers", async () => {
     const { transport, sent } = paged();
     render(() => <WidgetCreateForm transport={transport} />);
+    await openSelector("maker id");
     await waitFor(() => expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined());
 
     fireEvent.click(screen.getByLabelText("maker id next page"));
 
     await waitFor(() => expect(screen.getByRole("option", { name: "Southwind" })).toBeDefined());
-    expect(screen.getByRole("option", { name: "Northwind" })).toBeDefined();
+    // The first page stays above the second.
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Northwind",
+      "Southwind",
+    ]);
     expect((sent[1]?.items[0] as { cursor: string }).cursor).toBe("page-2");
   });
 });
