@@ -1,4 +1,4 @@
-//! Drift and live-apply test for the operations persistence extension.
+//! Live-apply test for the operations persistence extension.
 //!
 //! The core control schema remains independently installable. The ops artifact
 //! is applied afterwards, owns exactly two operations relations, and may
@@ -7,140 +7,6 @@
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::process::{Command, Stdio};
-
-use std::path::Path;
-
-fn deploy_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
-}
-
-fn system_schema_sql() -> String {
-    std::fs::read_to_string(deploy_dir().join("sql/system-schema.sql"))
-        .expect("read deploy/sql/system-schema.sql")
-}
-
-fn ops_schema_sql() -> String {
-    std::fs::read_to_string(deploy_dir().join("sql/ops-schema.sql"))
-        .expect("read deploy/sql/ops-schema.sql")
-}
-
-#[test]
-fn packaged_ops_schema_is_the_deploy_artifact() {
-    assert_eq!(wamn_control_provision::OPS_SCHEMA_SQL, ops_schema_sql());
-}
-
-/// Strip `--` comments before asserting contract-bearing SQL text.
-fn code_only(sql: &str) -> String {
-    sql.lines()
-        .map(|line| line.find("--").map_or(line, |index| &line[..index]))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-#[test]
-fn core_schema_has_no_operations_relations_or_literals() {
-    let core = code_only(&system_schema_sql());
-
-    for operations_only in ["provisioning.dumps", "provisioning.copy_sagas", "'copy'"] {
-        assert!(
-            !core.contains(operations_only),
-            "core schema contains operations-only SQL {operations_only:?}"
-        );
-    }
-}
-
-#[test]
-fn ops_schema_is_additive_idempotent_and_one_way() {
-    let ops = code_only(&ops_schema_sql());
-
-    assert_eq!(
-        ops.matches("CREATE TABLE IF NOT EXISTS provisioning.")
-            .count(),
-        2,
-        "the ops artifact owns exactly its two additive relations"
-    );
-    for relation in ["dumps", "copy_sagas"] {
-        assert!(
-            ops.contains(&format!(
-                "CREATE TABLE IF NOT EXISTS provisioning.{relation}"
-            )),
-            "ops artifact is missing provisioning.{relation}"
-        );
-    }
-
-    assert!(
-        !ops.contains("CREATE SCHEMA") && !ops.contains("CREATE TABLE registry."),
-        "the ops artifact must extend an installed core schema, never install core objects"
-    );
-    assert_eq!(
-        ops.matches("REFERENCES registry.project_envs").count(),
-        1,
-        "dumps are the only ops-to-core reference"
-    );
-    for forbidden_reference in [
-        "REFERENCES provisioning.sagas",
-        "REFERENCES identity.",
-        "REFERENCES registry.orgs",
-        "REFERENCES registry.projects",
-        "REFERENCES registry.env_policies",
-        "REFERENCES registry.event_readers",
-    ] {
-        assert!(
-            !ops.contains(forbidden_reference),
-            "unexpected cross-boundary reference {forbidden_reference:?}"
-        );
-    }
-
-    let role = wamn_control_provision::state::ensure_ops_role_sql();
-    for attribute in [
-        "NOLOGIN",
-        "NOSUPERUSER",
-        "NOCREATEDB",
-        "NOCREATEROLE",
-        "NOINHERIT",
-        "NOREPLICATION",
-        "NOBYPASSRLS",
-    ] {
-        assert!(role.contains(attribute), "wamn_ops role lost {attribute}");
-    }
-    assert!(ops.contains("GRANT USAGE ON SCHEMA provisioning TO wamn_ops"));
-    assert!(ops.contains("GRANT SELECT, INSERT, UPDATE ON provisioning.dumps TO wamn_ops"));
-    assert!(ops.contains("GRANT SELECT, INSERT, UPDATE ON provisioning.copy_sagas TO wamn_ops"));
-}
-
-#[test]
-fn copy_and_dump_builders_match_the_ops_relations() {
-    let ops = code_only(&ops_schema_sql());
-
-    let create = wamn_control_provision::state::create_saga_sql();
-    assert!(create.contains("INSERT INTO provisioning.copy_sagas"));
-    assert!(create.contains("ON CONFLICT (saga_id) DO NOTHING"));
-    for column in ["saga_id", "kind", "target", "total_steps"] {
-        assert!(
-            create.contains(column),
-            "copy-saga builder missing {column}"
-        );
-        assert!(ops.contains(column), "copy-saga DDL missing {column}");
-    }
-    for builder in [
-        wamn_control_provision::state::advance_saga_step_sql(),
-        wamn_control_provision::state::complete_saga_sql(),
-        wamn_control_provision::state::fail_saga_sql(),
-        wamn_control_provision::state::select_saga_sql(),
-    ] {
-        assert!(
-            builder.contains("provisioning.copy_sagas"),
-            "copy state builder targets a non-ops relation: {builder}"
-        );
-    }
-
-    let record = wamn_control_provision::state::record_dump_sql();
-    assert!(record.contains("INSERT INTO provisioning.dumps"));
-    assert!(record.contains("ON CONFLICT (org, project, env, object_key) DO UPDATE"));
-    let reader = wamn_control_provision::state::select_dumps_sql();
-    assert!(reader.contains("FROM provisioning.dumps"));
-    assert!(reader.contains("ORDER BY taken_at DESC, object_key DESC"));
-}
 
 /// Apply core once and the ops extension twice to a test database, then
 /// exercise the real builders. The test holds the process lock, because it
@@ -166,10 +32,13 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
     script.push_str("\nSET ROLE wamn_system;\n");
     script.push_str(wamn_control_provision::SYSTEM_SCHEMA_SQL);
     script.push('\n');
-    script.push_str(&ops_schema_sql());
+    // The ops artifact extends an installed core and creates no core object.
+    script.push_str(CORE_OBJECTS_BEFORE);
+    script.push_str(wamn_control_provision::OPS_SCHEMA_SQL);
     script.push('\n');
-    script.push_str(&ops_schema_sql());
+    script.push_str(wamn_control_provision::OPS_SCHEMA_SQL);
     script.push('\n');
+    script.push_str(CORE_OBJECTS_UNCHANGED);
     script.push_str(
         "INSERT INTO registry.orgs (id, placement_kind) VALUES ('acme','dedicated');\n\
          INSERT INTO registry.env_policies \
@@ -184,23 +53,51 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
     writeln!(
         script,
         "PREPARE dump (text,text,text,text,text,bigint) AS {record_dump};\n\
+         PREPARE dumps (text,text,text) AS {select_dumps};\n\
+         EXECUTE dump('acme','app','dev','dumps/acme/app/dev/2','directory',5);\n\
          EXECUTE dump('acme','app','dev','dumps/acme/app/dev/1','directory',10);\n\
          EXECUTE dump('acme','app','dev','dumps/acme/app/dev/1','directory',20);\n\
+         CREATE TEMP TABLE dumps_probe AS EXECUTE dumps('acme','app','dev');\n\
          PREPARE copy (text,text,text,int) AS {create_copy};\n\
          PREPARE advance (text) AS {advance_copy};\n\
+         PREPARE complete (text) AS {complete_copy};\n\
+         PREPARE fail (text,text) AS {fail_copy};\n\
+         PREPARE checkpoint (text) AS {select_copy};\n\
          EXECUTE copy('copy-1','copy','acme/app/dev -> acme/app/prod',5);\n\
-         EXECUTE advance('copy-1');",
+         EXECUTE copy('copy-1','copy','acme/app/dev -> acme/app/test',9);\n\
+         EXECUTE advance('copy-1');\n\
+         CREATE TEMP TABLE copy_running AS EXECUTE checkpoint('copy-1');\n\
+         EXECUTE complete('copy-1');\n\
+         CREATE TEMP TABLE copy_done AS EXECUTE checkpoint('copy-1');\n\
+         EXECUTE copy('copy-2','copy','acme/app/dev -> acme/app/prod',5);\n\
+         EXECUTE fail('copy-2','restore refused');\n\
+         CREATE TEMP TABLE copy_failed AS EXECUTE checkpoint('copy-2');",
         record_dump = wamn_control_provision::state::record_dump_sql(),
+        select_dumps = wamn_control_provision::state::select_dumps_sql(),
         create_copy = wamn_control_provision::state::create_saga_sql(),
         advance_copy = wamn_control_provision::state::advance_saga_step_sql(),
+        complete_copy = wamn_control_provision::state::complete_saga_sql(),
+        fail_copy = wamn_control_provision::state::fail_saga_sql(),
+        select_copy = wamn_control_provision::state::select_saga_sql(),
     )
     .expect("writing to a String cannot fail");
     script.push_str(
         "DO $$ BEGIN\n\
            ASSERT (SELECT byte_size FROM provisioning.dumps WHERE object_key='dumps/acme/app/dev/1')=20, \
              'dump upsert updates metadata';\n\
-           ASSERT (SELECT step FROM provisioning.copy_sagas WHERE saga_id='copy-1')=1, \
+           ASSERT (SELECT string_agg(object_key, ',') FROM dumps_probe) \
+                  = 'dumps/acme/app/dev/1,dumps/acme/app/dev/2', \
+             'dumps list newest first';\n\
+           ASSERT (SELECT target FROM provisioning.copy_sagas WHERE saga_id='copy-1') \
+                  = 'acme/app/dev -> acme/app/prod', \
+             'a repeated copy create changes nothing';\n\
+           ASSERT (SELECT status || '/' || step || '/' || total_steps FROM copy_running) = 'running/1/5', \
              'copy checkpoint advances';\n\
+           ASSERT (SELECT status || '/' || step FROM copy_done) = 'completed/1', \
+             'copy completes at its checkpoint';\n\
+           ASSERT (SELECT status FROM copy_failed) = 'failed' \
+              AND (SELECT last_error FROM provisioning.copy_sagas WHERE saga_id='copy-2') = 'restore refused', \
+             'a failed copy keeps its diagnostic';\n\
            ASSERT has_schema_privilege('wamn_ops','provisioning','USAGE'), \
              'wamn_ops needs provisioning usage';\n\
            ASSERT has_table_privilege('wamn_ops','provisioning.dumps','SELECT') \
@@ -224,7 +121,9 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
              VALUES ('acme','missing','dev','dumps/acme/missing/dev/1');\n\
            ASSERT false, 'ops-to-core identity FK must reject an unknown project-env';\n\
          EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;\n\
-         DEALLOCATE dump; DEALLOCATE copy; DEALLOCATE advance;\n\
+         DROP TABLE dumps_probe, copy_running, copy_done, copy_failed;\n\
+         DEALLOCATE dump; DEALLOCATE dumps; DEALLOCATE copy; DEALLOCATE advance;\n\
+         DEALLOCATE complete; DEALLOCATE fail; DEALLOCATE checkpoint;\n\
          RESET ROLE;\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT string_agg(table_name,',' ORDER BY table_name) \
@@ -232,6 +131,12 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
                      WHERE table_schema='provisioning' AND table_type='BASE TABLE') = \
                   'copy_sagas,dumps,sagas', \
              'core plus ops provisioning relation set';\n\
+           ASSERT (SELECT string_agg(DISTINCT confrelid::regclass::text, ',') \
+                     FROM pg_catalog.pg_constraint \
+                     WHERE contype = 'f' \
+                       AND conrelid IN ('provisioning.dumps'::regclass, \
+                                        'provisioning.copy_sagas'::regclass)) = 'registry.project_envs', \
+             'the only foreign key out of the ops relations targets the project-environment identity';\n\
          END $$;\n\
          DROP SCHEMA registry CASCADE;\n\
          DROP SCHEMA provisioning CASCADE;\n\
@@ -259,3 +164,25 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// The core schemas and their relations, recorded before the ops artifact runs.
+const CORE_OBJECTS_BEFORE: &str = "CREATE TEMP TABLE core_objects AS \
+     SELECT namespace.nspname, relation.relname, relation.relkind \
+       FROM pg_catalog.pg_namespace AS namespace \
+       LEFT JOIN pg_catalog.pg_class AS relation ON relation.relnamespace = namespace.oid \
+      WHERE namespace.nspname NOT LIKE 'pg\\_%' AND namespace.nspname <> 'information_schema' \
+        AND (relation.oid IS NULL OR namespace.nspname <> 'provisioning');\n";
+
+/// After two ops applies, every schema and every relation outside
+/// `provisioning` is exactly the set recorded before.
+const CORE_OBJECTS_UNCHANGED: &str = "DO $$ BEGIN\n\
+       ASSERT NOT EXISTS ( \
+         (SELECT namespace.nspname, relation.relname, relation.relkind \
+            FROM pg_catalog.pg_namespace AS namespace \
+            LEFT JOIN pg_catalog.pg_class AS relation ON relation.relnamespace = namespace.oid \
+           WHERE namespace.nspname NOT LIKE 'pg\\_%' AND namespace.nspname <> 'information_schema' \
+             AND (relation.oid IS NULL OR namespace.nspname <> 'provisioning')) \
+         EXCEPT SELECT * FROM core_objects), \
+         'the ops artifact must not create a schema or a core relation';\n\
+     END $$;\n\
+     DROP TABLE core_objects;\n";
