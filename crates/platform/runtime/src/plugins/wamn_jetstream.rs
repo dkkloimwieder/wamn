@@ -1405,8 +1405,8 @@ mod tests {
     fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
         DerivedPublishRequest {
             component_id: component_id.into(),
-            package_id: "receiving".into(),
-            wiring_id: "receiving-orders".into(),
+            package_id: "platform_fixture".into(),
+            wiring_id: "fixture-orders".into(),
             wiring_version: 7,
             node_id: "publish".into(),
             entity: "orders".into(),
@@ -1430,14 +1430,14 @@ mod tests {
         plugin
             .bind_derived_scope(
                 "component-1",
-                "receiving-route-auth",
+                "fixture-route-auth",
                 "database-project",
                 "dev",
             )
             .expect("trusted driver scope binds");
         plugin.event_coordinates = EventCoordinates {
-            org: "acme".into(),
-            project: "receiving".into(),
+            org: "fixture".into(),
+            project: "widgets".into(),
             environment: "dev".into(),
         };
         plugin
@@ -1460,11 +1460,11 @@ mod tests {
             harness.attributes("wamn.jetstream"),
             expected_attributes(&[
                 ("effect.operation", "publish-derived"),
-                ("wamn.tenant", "receiving-route-auth"),
+                ("wamn.tenant", "fixture-route-auth"),
                 ("wamn.project", "database-project"),
                 ("wamn.component", "component-1"),
-                ("wamn.package_id", "receiving"),
-                ("wamn.wiring_id", "receiving-orders"),
+                ("wamn.package_id", "platform_fixture"),
+                ("wamn.wiring_id", "fixture-orders"),
                 ("wamn.wiring_version", "7"),
                 ("wamn.node_id", "publish"),
                 // The publish path stands in no guest component scope, so it
@@ -1517,28 +1517,28 @@ mod tests {
         let dangerous_author_id = "author\r\nNats-Msg-Id: forged";
         let publication = prepare_derived_publication(
             JetstreamClaim {
-                tenant: "receiving-route-auth".into(),
+                tenant: "fixture-route-auth".into(),
                 project: "database-project".into(),
                 environment: "dev".into(),
             },
             &EventCoordinates {
-                org: "acme".into(),
-                project: "receiving".into(),
+                org: "fixture".into(),
+                project: "widgets".into(),
                 environment: "dev".into(),
             },
             derived_request("component-1", dangerous_author_id),
         )
         .expect("trusted scope and admitted selector prepare");
 
-        assert_eq!(publication.subject, "evt.acme.receiving.dev.orders.update");
-        assert_eq!(publication.expected_stream, "EVT_4_acme_9_receiving_3_dev");
+        assert_eq!(publication.subject, "evt.fixture.widgets.dev.orders.update");
+        assert_eq!(publication.expected_stream, "EVT_7_fixture_7_widgets_3_dev");
         assert_eq!(
             publication.message_id,
             derived_msg_id(
-                "receiving-route-auth",
-                "receiving",
+                "fixture-route-auth",
+                "widgets",
                 "dev",
-                "receiving",
+                "platform_fixture",
                 "orders",
                 Op::Update,
                 dangerous_author_id,
@@ -1548,10 +1548,10 @@ mod tests {
         assert!(!publication.message_id.contains("\r\n"));
 
         let event = DerivedEvent::from_slice(&publication.body).expect("derived wire decodes");
-        assert_eq!(event.tenant, "receiving-route-auth");
-        assert_eq!(event.project, "receiving");
+        assert_eq!(event.tenant, "fixture-route-auth");
+        assert_eq!(event.project, "widgets");
         assert_eq!(event.environment, "dev");
-        assert_eq!(event.package_id, "receiving");
+        assert_eq!(event.package_id, "platform_fixture");
         assert_eq!(event.entity, "orders");
         assert_eq!(event.op, Op::Update);
         assert_eq!(event.dedup_id, dangerous_author_id);
@@ -1564,14 +1564,14 @@ mod tests {
     #[test]
     fn derived_publication_refuses_a_noncanonical_package_identity() {
         let claim = JetstreamClaim {
-            tenant: "acme".into(),
+            tenant: "fixture".into(),
             project: "app".into(),
             environment: "dev".into(),
         };
         let mut request = derived_request("component-1", "author:orders:7");
-        request.package_id = " receiving".into();
+        request.package_id = " platform_fixture".into();
         let coordinates = EventCoordinates {
-            org: "acme".into(),
+            org: "fixture".into(),
             project: "app".into(),
             environment: "dev".into(),
         };
@@ -1590,7 +1590,7 @@ mod tests {
                 .kind(),
             DerivedPublishErrorKind::UnboundScope
         );
-        plugin.set_claim("component-1", Some("acme"), Some("app"), None);
+        plugin.set_claim("component-1", Some("fixture"), Some("app"), None);
         assert_eq!(
             plugin
                 .required_derived_claim("component-1")
@@ -1618,7 +1618,7 @@ mod tests {
             "a claim that can escape one subject token is refused"
         );
         plugin
-            .bind_derived_scope("component-1", "acme", "app", "dev")
+            .bind_derived_scope("component-1", "fixture", "app", "dev")
             .expect("complete trusted scope binds");
         assert_eq!(
             plugin
@@ -1638,7 +1638,7 @@ mod tests {
         plugin
             .bind_derived_scope(
                 "component-1",
-                "receiving-route-auth",
+                "fixture-route-auth",
                 "database-project",
                 "dev",
             )
@@ -1646,18 +1646,18 @@ mod tests {
         for coordinates in [
             EventCoordinates::default(),
             EventCoordinates {
-                org: "acme".into(),
+                org: "fixture".into(),
                 project: Box::default(),
                 environment: "dev".into(),
             },
             EventCoordinates {
-                org: "acme.>".into(),
-                project: "receiving".into(),
+                org: "fixture.>".into(),
+                project: "widgets".into(),
                 environment: "dev".into(),
             },
             EventCoordinates {
-                org: "acme".into(),
-                project: "receiving".into(),
+                org: "fixture".into(),
+                project: "widgets".into(),
                 environment: "prod".into(),
             },
         ] {
@@ -1678,7 +1678,7 @@ mod tests {
                 .is_err()
         );
         let mut plugin = WamnJetstream::new(WamnJetstreamConfig {
-            event_scope: Some(Triple::new("acme", "receiving", "dev")),
+            event_scope: Some(Triple::new("fixture", "widgets", "dev")),
             ..Default::default()
         });
         assert!(plugin.expected_event_streams().is_err());
@@ -1742,25 +1742,25 @@ mod tests {
 
     #[test]
     fn registration_preparation_requires_the_exact_release_source() {
-        let manifest = release_registering("receipts", &["insert"]);
+        let manifest = release_registering("widgets", &["insert"]);
         let coordinates = EventCoordinates {
-            org: "acme".into(),
+            org: "fixture".into(),
             project: "proj".into(),
             environment: "prod".into(),
         };
         require_registration(
             Some(&manifest),
             &coordinates,
-            "EVT_4_acme_4_proj_4_prod",
+            "EVT_7_fixture_4_proj_4_prod",
             "cat",
             "r1",
-            "evt.acme.proj.prod.receipts.>",
+            "evt.fixture.proj.prod.widgets.>",
         )
         .expect("exact release registration admits");
         for foreign_stream in [
             stream_name("foreign", "proj", "prod"),
-            stream_name("acme", "other-project", "prod"),
-            stream_name("acme", "proj", "dev"),
+            stream_name("fixture", "other-project", "prod"),
+            stream_name("fixture", "proj", "dev"),
         ] {
             assert!(
                 require_registration(
@@ -1769,7 +1769,7 @@ mod tests {
                     &foreign_stream,
                     "cat",
                     "r1",
-                    "evt.acme.proj.prod.receipts.>",
+                    "evt.fixture.proj.prod.widgets.>",
                 )
                 .is_err()
             );
@@ -1778,27 +1778,27 @@ mod tests {
             require_registration(
                 None,
                 &coordinates,
-                "EVT_4_acme_4_proj_4_prod",
+                "EVT_7_fixture_4_proj_4_prod",
                 "cat",
                 "r1",
-                "evt.acme.proj.prod.receipts.>"
+                "evt.fixture.proj.prod.widgets.>"
             )
             .is_err()
         );
         for filter in [
             "",
             "evt.>",
-            "evt.foreign.proj.prod.receipts.>",
-            "evt.acme.foreign.prod.receipts.>",
-            "evt.acme.proj.foreign.receipts.>",
-            "evt.acme.proj.prod.*.>",
-            "evt.acme.proj.prod.receipts.delete",
+            "evt.foreign.proj.prod.widgets.>",
+            "evt.fixture.foreign.prod.widgets.>",
+            "evt.fixture.proj.foreign.widgets.>",
+            "evt.fixture.proj.prod.*.>",
+            "evt.fixture.proj.prod.widgets.delete",
         ] {
             assert!(
                 require_registration(
                     Some(&manifest),
                     &coordinates,
-                    "EVT_4_acme_4_proj_4_prod",
+                    "EVT_7_fixture_4_proj_4_prod",
                     "cat",
                     "r1",
                     filter
@@ -1812,10 +1812,10 @@ mod tests {
             require_registration(
                 Some(&manifest),
                 &coordinates,
-                "EVT_4_acme_4_proj_4_prod",
+                "EVT_7_fixture_4_proj_4_prod",
                 "cat",
                 "r2",
-                "evt.acme.proj.prod.receipts.>"
+                "evt.fixture.proj.prod.widgets.>"
             )
             .unwrap_err()
             .starts_with(UNREGISTERED_SOURCE)
@@ -1824,10 +1824,10 @@ mod tests {
             require_registration(
                 Some(&manifest),
                 &coordinates,
-                "EVT_4_acme_4_proj_4_prod",
+                "EVT_7_fixture_4_proj_4_prod",
                 "cat",
                 "r1",
-                "evt.acme.proj.prod.orders.>"
+                "evt.fixture.proj.prod.orders.>"
             )
             .is_err(),
             "a real registration id cannot bless another registration's source"
@@ -1836,10 +1836,10 @@ mod tests {
             require_registration(
                 Some(&manifest),
                 &coordinates,
-                "EVT_4_acme_4_proj_4_prod",
+                "EVT_7_fixture_4_proj_4_prod",
                 "other_package",
                 "r1",
-                "evt.acme.proj.prod.receipts.>"
+                "evt.fixture.proj.prod.widgets.>"
             )
             .is_err(),
             "registration ids are package-scoped and must not collide across packages"
@@ -1850,7 +1850,7 @@ mod tests {
 
     fn tap_claim() -> JetstreamClaim {
         JetstreamClaim {
-            tenant: "acme".into(),
+            tenant: "fixture".into(),
             project: "app".into(),
             environment: "prod".into(),
         }
@@ -1861,8 +1861,8 @@ mod tests {
     fn every_minted_tap_subject_preserves_its_host_owned_scope() {
         let claim = tap_claim();
         let subject = router_tap_subject(&claim, "orders", "d-1").expect("both ids name tokens");
-        assert_eq!(subject, "tap.acme.app.prod.orders.d-1");
-        assert!(subject.starts_with("tap.acme.app.prod."));
+        assert_eq!(subject, "tap.fixture.app.prod.orders.d-1");
+        assert!(subject.starts_with("tap.fixture.app.prod."));
 
         // The delivery id crosses the WIT boundary from a guest. Sanitization
         // keeps it ONE token, so it can neither add a level nor plant a
@@ -1878,7 +1878,7 @@ mod tests {
             !injected.contains('*') && !injected.contains('>'),
             "{injected}"
         );
-        assert!(injected.starts_with("tap.acme.app.prod."));
+        assert!(injected.starts_with("tap.fixture.app.prod."));
 
         // An id that sanitizes to nothing yields no subject at all rather than a
         // malformed one with an empty token.
@@ -1922,7 +1922,7 @@ mod tests {
         assert_eq!(record.wiring_version, 3);
         assert_eq!(&*record.source_id, "orders-http");
         assert_eq!(record.format_version.as_u32(), 1);
-        assert_eq!(prepared.subject, "tap.acme.app.prod.orders.d-1");
+        assert_eq!(prepared.subject, "tap.fixture.app.prod.orders.d-1");
 
         // A settled preview names its outcome; an accepted one has none to name.
         let settled = prepare_router_tap(
@@ -2082,7 +2082,7 @@ mod tests {
 
         assert_eq!(
             router_tap_subject(&claim, "orders", "d-1").as_deref(),
-            Some("tap.acme.app.prod.orders.d-1"),
+            Some("tap.fixture.app.prod.orders.d-1"),
             "the subject grammar is the other half of the frozen contract: \
              {ROUTER_TAP_PREFIX}.<tenant>.<project>.<environment>.<wiring>.<delivery>"
         );
@@ -2134,9 +2134,9 @@ mod tests {
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
 
         let requested = registration::ConsumerConfig {
-            stream_name: "EVT_4_acme_4_proj_4_prod".into(),
+            stream_name: "EVT_7_fixture_4_proj_4_prod".into(),
             durable: "mat_t1_cat_r1".into(),
-            filter_subject: "evt.acme.proj.prod.receipts.>".into(),
+            filter_subject: "evt.fixture.proj.prod.widgets.>".into(),
             ack_wait_ms: 30_000,
             max_deliver: 5,
         };

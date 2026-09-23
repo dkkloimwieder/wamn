@@ -818,7 +818,7 @@ mod tests {
                             package: "base".into(),
                             version: "1.0.0".into(),
                             digest: COMPONENT_A.into(),
-                            operation: "base:purchase-order/get@1.0.0".into(),
+                            operation: "base:widget/get@1.0.0".into(),
                         }],
                         statements: BTreeMap::new(),
                     },
@@ -830,12 +830,12 @@ mod tests {
                 interface_version: "0.1".into(),
                 digest: artifact_hash(COMPONENT_A),
                 operations: BTreeMap::from([(
-                    "base:purchase-order/get@1.0.0".into(),
+                    "base:widget/get@1.0.0".into(),
                     ServingComponentOperation {
                         pre_commit: None,
                         committed_result_schema: None,
                         fresh_only: false,
-                        registered_operation: Some("base:purchase-order/get@1.0.0".into()),
+                        registered_operation: Some("base:widget/get@1.0.0".into()),
                         dependencies: Vec::new(),
                         statements: BTreeMap::new(),
                     },
@@ -874,7 +874,7 @@ mod tests {
                 "route": {"host": "*", "path": "/orders", "method": "POST"}
             }),
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("base:purchase-order/get@1.0.0".into()),
+            registered_operation: Some("base:widget/get@1.0.0".into()),
         }
     }
 
@@ -994,7 +994,7 @@ mod tests {
             .find(|component| component.package_id == "base")
             .expect("the fixture carries the base component");
         base.operations
-            .get_mut("base:purchase-order/get@1.0.0")
+            .get_mut("base:widget/get@1.0.0")
             .unwrap()
             .dependencies = vec![ComponentOperationDependency {
             participant: None,
@@ -1033,8 +1033,8 @@ mod tests {
 
     #[test]
     fn statement_lookup_is_operation_scoped_and_revalidates_exact_bytes() {
-        let operation = "base:purchase-order/get@1.0.0";
-        let sql = "SELECT row_version FROM purchase_order WHERE id = $1";
+        let operation = "base:widget/get@1.0.0";
+        let sql = "SELECT row_version FROM widget WHERE id = $1";
         let digest = crate::digest(sql.as_bytes());
         let mut components = components();
         let mut base = components
@@ -1051,7 +1051,7 @@ mod tests {
                 digest.clone(),
                 ComponentSqlStatement {
                     name: "get".into(),
-                    path: "generated/sql/purchase_order/get.sql".into(),
+                    path: "generated/sql/widget/get.sql".into(),
                     sql: sql.into(),
                     // A SELECT fixture: PostgreSQL classifies it as needing no
                     // transaction.
@@ -1143,7 +1143,7 @@ mod tests {
     #[test]
     fn attachment_operation_is_explicit_and_canonical() {
         let mut malformed = attachment();
-        malformed.registered_operation = Some("purchase_order.get".into());
+        malformed.registered_operation = Some("widget.get".into());
         let error = ServingManifest::new(
             release(),
             components(),
@@ -1161,10 +1161,7 @@ mod tests {
 
     #[test]
     fn registered_operations_match_the_containing_package_coordinate() {
-        for operation in [
-            "overlay:purchase-order/get@3.0.0",
-            "base:purchase-order/get@2.0.0",
-        ] {
+        for operation in ["overlay:widget/get@3.0.0", "base:widget/get@2.0.0"] {
             let mut mismatched = attachment();
             mismatched.registered_operation = Some(operation.into());
             let error = ServingManifest::new(
@@ -1187,7 +1184,7 @@ mod tests {
             .values_mut()
             .next()
             .expect("fixture component has an operation");
-        component_operation.registered_operation = Some("overlay:purchase-order/get@3.0.0".into());
+        component_operation.registered_operation = Some("overlay:widget/get@3.0.0".into());
         mismatched_components.insert(component);
         let error = ServingManifest::new(
             release(),
@@ -1346,18 +1343,18 @@ mod tests {
     fn registration_identity_keeps_owner_and_emitter_distinct() {
         let mut registrations = BTreeMap::from([
             (
-                "base::receipt-created".to_owned(),
+                "base::widget-created".to_owned(),
                 ServingRegistration {
                     package_id: "base".into(),
                     source_package_id: "base".into(),
                     wiring_id: "orders".into(),
                     wiring_version: 3,
-                    entity: "receipt".into(),
+                    entity: "widget".into(),
                     ops: BTreeSet::from(["insert".into()]),
                     input: ServingRegistrationInput::Event,
                 },
             ),
-            ("overlay::receipt-created".to_owned(), registration()),
+            ("overlay::widget-created".to_owned(), registration()),
         ]);
         ServingManifest::new(
             release(),
@@ -1369,7 +1366,7 @@ mod tests {
         .expect("the same local registration id remains distinct by owner package");
 
         let overlay = registrations
-            .get_mut("overlay::receipt-created")
+            .get_mut("overlay::widget-created")
             .expect("fixture carries the overlay registration");
         overlay.source_package_id = "missing".into();
         let error = ServingManifest::new(

@@ -35,8 +35,8 @@ fn release() -> ServingRelease {
         effective_release_id: EffectiveReleaseId::new(3).expect("non-zero release"),
         environment: "prod".into(),
         packages: BTreeSet::from([
-            PackageCoordinate::new("wamn_receiving", "1.0.0").unwrap(),
-            PackageCoordinate::new("client_acme_receiving", "3.0.0").unwrap(),
+            PackageCoordinate::new("platform_fixture", "1.0.0").unwrap(),
+            PackageCoordinate::new("platform_fixture_overlay", "3.0.0").unwrap(),
         ]),
     }
 }
@@ -44,7 +44,7 @@ fn release() -> ServingRelease {
 fn components() -> BTreeSet<ServingComponent> {
     BTreeSet::from([
         ServingComponent {
-            package_id: "wamn_receiving".into(),
+            package_id: "platform_fixture".into(),
             component: "transform".into(),
             interface_version: "0.1".into(),
             digest: artifact_hash(COMPONENT_B),
@@ -61,19 +61,17 @@ fn components() -> BTreeSet<ServingComponent> {
             )]),
         },
         ServingComponent {
-            package_id: "client_acme_receiving".into(),
+            package_id: "platform_fixture_overlay".into(),
             component: "http-request".into(),
             interface_version: "0.1".into(),
             digest: artifact_hash(COMPONENT_A),
             operations: BTreeMap::from([(
-                "client-acme-receiving:purchase-order/get@3.0.0".into(),
+                "platform-fixture-overlay:widget/get@3.0.0".into(),
                 ServingComponentOperation {
                     pre_commit: None,
                     committed_result_schema: None,
                     fresh_only: false,
-                    registered_operation: Some(
-                        "client-acme-receiving:purchase-order/get@3.0.0".into(),
-                    ),
+                    registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
                     dependencies: Vec::new(),
                     statements: BTreeMap::new(),
                 },
@@ -85,13 +83,13 @@ fn components() -> BTreeSet<ServingComponent> {
 fn wirings() -> BTreeSet<ServingWiring> {
     BTreeSet::from([
         ServingWiring {
-            package_id: "wamn_receiving".into(),
+            package_id: "platform_fixture".into(),
             wiring_id: "shipping".into(),
             wiring_version: 2,
             graph_hash: definition_hash(GRAPH_B),
         },
         ServingWiring {
-            package_id: "client_acme_receiving".into(),
+            package_id: "platform_fixture_overlay".into(),
             wiring_id: "orders".into(),
             wiring_version: 1,
             graph_hash: definition_hash(GRAPH_A),
@@ -108,7 +106,7 @@ fn manifest() -> ServingManifest {
             "orders-http".into(),
             ServingAttachment {
                 kind: AttachmentKind::Http,
-                package_id: "client_acme_receiving".into(),
+                package_id: "platform_fixture_overlay".into(),
                 wiring_id: "orders".into(),
                 wiring_version: 1,
                 definition_hash: definition_hash(DEFINITION),
@@ -118,14 +116,14 @@ fn manifest() -> ServingManifest {
                     "run-deadline-ms": 30000
                 }),
                 auth_policy: json!({"modes": ["pat"]}),
-                registered_operation: Some("client-acme-receiving:purchase-order/get@3.0.0".into()),
+                registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
             },
         )]),
         BTreeMap::from([(
-            "wamn_receiving::orders-changed".into(),
+            "platform_fixture::orders-changed".into(),
             ServingRegistration {
-                package_id: "wamn_receiving".into(),
-                source_package_id: "wamn_receiving".into(),
+                package_id: "platform_fixture".into(),
+                source_package_id: "platform_fixture".into(),
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 entity: "orders".into(),
@@ -624,7 +622,7 @@ fn every_manifest_field_is_pinned() {
         ]
     );
     assert_eq!(
-        sorted_keys(&document["registrations"]["wamn_receiving::orders-changed"]),
+        sorted_keys(&document["registrations"]["platform_fixture::orders-changed"]),
         [
             "entity",
             "input",
@@ -659,7 +657,7 @@ fn each_exact_target_reaches_the_digest() {
     let mut retargeted = manifest();
     let registration = retargeted
         .registrations
-        .get_mut("wamn_receiving::orders-changed")
+        .get_mut("platform_fixture::orders-changed")
         .expect("fixture registration");
     registration.wiring_id = "orders".into();
     registration.wiring_version = 1;
@@ -670,7 +668,7 @@ fn each_exact_target_reaches_the_digest() {
     let mut regrained = manifest();
     regrained
         .registrations
-        .get_mut("wamn_receiving::orders-changed")
+        .get_mut("platform_fixture::orders-changed")
         .expect("fixture registration")
         .input = ServingRegistrationInput::Event;
     assert_ne!(baseline.digest(), regrained.digest());

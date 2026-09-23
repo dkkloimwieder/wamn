@@ -119,13 +119,13 @@ fn guest_url(tenant: &str, database: &str) -> String {
 #[test]
 fn a_guest_credential_resolves_for_its_own_tenant_and_no_other() {
     let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        "acme",
+        "fixture",
         "host-default",
     ))))
     .expect("compose with a credential");
     assert!(
         host.provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
+            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
             .expect("the credential's own tenant resolves")
             .is_some()
     );
@@ -154,14 +154,14 @@ fn a_guest_credential_resolves_for_its_own_tenant_and_no_other() {
 #[test]
 fn the_composed_credential_becomes_the_default_project() {
     let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        "acme",
+        "fixture",
         "host-default",
     ))))
     .expect("compose with a credential");
     assert!(
         composed
             .provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
+            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
             .expect("resolve default")
             .is_some(),
         "a host composed WITH a credential must resolve the default project; \
@@ -172,7 +172,7 @@ fn the_composed_credential_becomes_the_default_project() {
     let bare = WamnPostgres::from_env(None).expect("compose without a credential");
     assert!(
         bare.provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
+            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
             .expect("resolve default")
             .is_none(),
         "composing without a credential must resolve nothing, not reach for \
@@ -182,9 +182,9 @@ fn the_composed_credential_becomes_the_default_project() {
 
 #[test]
 fn a_serving_host_binds_its_credential_to_the_declared_project() {
-    let executor_platform_url = "postgres://executor-platform@db/host-receiving";
+    let executor_platform_url = "postgres://executor-platform@db/host-fixture";
     let composed = WamnPostgres::from_env_for_project(
-        "receiving",
+        "fixture",
         Some(
             ClassCredentials::default()
                 .with_class(AuthorityClass::ExecutorPlatform, executor_platform_url),
@@ -193,7 +193,7 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
     .expect("compose the declared project credential");
     let resolved = composed
         .provider
-        .resolve("receiving", AuthorityClass::ExecutorPlatform, None)
+        .resolve("fixture", AuthorityClass::ExecutorPlatform, None)
         .expect("resolve the declared project")
         .expect("the declared project has an executor-platform credential");
     assert_eq!(
@@ -212,7 +212,7 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
 
 #[test]
 fn a_serving_host_refuses_an_invalid_declared_project() {
-    let error = WamnPostgres::from_env_for_project("receiving.prod", None)
+    let error = WamnPostgres::from_env_for_project("fixture.prod", None)
         .expect_err("an invalid project must refuse before reading ambient configuration");
     assert!(error.to_string().contains("invalid composed project"));
 }
@@ -226,7 +226,7 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
         // rather than relying on a libpq-style implicit OS user.
         credentials: Some(ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}_a@localhost/pool-lifecycle-test",
-            wamn_run_state::app_scope_hash("acme", "pool-lifecycle-test")
+            wamn_run_state::app_scope_hash("fixture", "pool-lifecycle-test")
         ))),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -237,7 +237,7 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
     .expect("construct lazy lifecycle pools");
 
     let guest_first = postgres
-        .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("acme"))
+        .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("fixture"))
         .expect("first guest pool");
     let platform_first = postgres
         .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
@@ -246,7 +246,7 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
         .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
         .expect("memoized platform pool");
     let guest_second = postgres
-        .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("acme"))
+        .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("fixture"))
         .expect("memoized guest pool");
 
     assert!(Arc::ptr_eq(&guest_first, &guest_second));
@@ -503,27 +503,27 @@ fn validate_claims_rejects_malformed_identities() {
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     assert!(
         validate_claims(
-            "acme",
+            "fixture",
             Some("public"),
             Some("owner-1"),
             Some("inspector"),
             Some(U1),
-            Some("wamn-receiving:purchase-order/update@1.0.0"),
+            Some("platform-fixture:widget/update@1.0.0"),
         )
         .is_ok()
     );
-    assert!(validate_claims("acme", None, None, None, None, None).is_ok());
+    assert!(validate_claims("fixture", None, None, None, None, None).is_ok());
     assert!(validate_claims("bad'tenant", None, None, None, None, None).is_err());
-    assert!(validate_claims("acme", Some("has-hyphen"), None, None, None, None).is_err());
-    assert!(validate_claims("acme", None, Some("bad;runner"), None, None, None).is_err());
+    assert!(validate_claims("fixture", Some("has-hyphen"), None, None, None, None).is_err());
+    assert!(validate_claims("fixture", None, Some("bad;runner"), None, None, None).is_err());
     // `''` is the deny floor, never a claim.
-    assert!(validate_claims("acme", None, None, Some(""), None, None).is_err());
+    assert!(validate_claims("fixture", None, None, Some(""), None, None).is_err());
     // A non-uuid user id would raise 22P02 inside every ownership predicate.
-    assert!(validate_claims("acme", None, None, None, Some("not-a-uuid"), None).is_err());
-    assert!(validate_claims("acme", None, None, None, Some(&U1[..35]), None).is_err());
-    assert!(validate_claims("acme", None, None, None, Some(&format!("{U1}-1")), None).is_err());
+    assert!(validate_claims("fixture", None, None, None, Some("not-a-uuid"), None).is_err());
+    assert!(validate_claims("fixture", None, None, None, Some(&U1[..35]), None).is_err());
+    assert!(validate_claims("fixture", None, None, None, Some(&format!("{U1}-1")), None).is_err());
     // `''` is the unbound operation, never a claim.
-    assert!(validate_claims("acme", None, None, None, None, Some("")).is_err());
+    assert!(validate_claims("fixture", None, None, None, None, Some("")).is_err());
 }
 
 #[test]
@@ -555,7 +555,7 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
             component_digest: format!("sha256:{}", "a".repeat(64)),
             component: "receiver".to_string(),
             interface_version: "0.1.0".to_string(),
-            operation: "wamn-receiving:purchase-order/update@1.0.0".to_string(),
+            operation: "platform-fixture:widget/update@1.0.0".to_string(),
         },
         package_id: "package_a".to_string(),
         wiring_id: "orders".to_string(),
@@ -564,7 +564,7 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
         occurrence: 1,
         component_digest: format!("sha256:{}", "a".repeat(64)),
         component: "receiver".to_string(),
-        operation: "wamn-receiving:purchase-order/update@1.0.0".to_string(),
+        operation: "platform-fixture:widget/update@1.0.0".to_string(),
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     }
@@ -608,7 +608,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
     // Two components under workload "wl-a", one under "wl-b".
     for c in ["wl-a-component-0", "wl-b-component-0"] {
-        pg.set_tenant(c, "acme").unwrap();
+        pg.set_tenant(c, "fixture").unwrap();
         pg.set_project(c, "proj").unwrap();
         pg.set_schema(c, "s_run").unwrap();
         pg.set_runner(c, "owner-1").unwrap();
@@ -616,7 +616,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
         pg.set_role(c, "inspector").unwrap();
         pg.set_user_id(c, "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
             .unwrap();
-        pg.set_operation(c, "wamn-receiving:purchase-order/update@1.0.0")
+        pg.set_operation(c, "platform-fixture:widget/update@1.0.0")
             .unwrap();
         pg.set_current_run(
             c,
@@ -632,7 +632,10 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
 
     // Unbinding an UNKNOWN workload clears nothing.
     pg.clear_component_claims("wl-unknown");
-    assert_eq!(pg.tenant_for("wl-a-component-0").as_deref(), Some("acme"));
+    assert_eq!(
+        pg.tenant_for("wl-a-component-0").as_deref(),
+        Some("fixture")
+    );
 
     pg.clear_component_claims("wl-a");
 
@@ -653,7 +656,10 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     assert!(pg.invocation("wl-a-component-0").is_none());
 
     // The other workload's component is untouched across the board.
-    assert_eq!(pg.tenant_for("wl-b-component-0").as_deref(), Some("acme"));
+    assert_eq!(
+        pg.tenant_for("wl-b-component-0").as_deref(),
+        Some("fixture")
+    );
     assert_eq!(pg.project_for("wl-b-component-0"), "proj");
     assert_eq!(pg.schema_for("wl-b-component-0").as_deref(), Some("s_run"));
     assert_eq!(
@@ -674,7 +680,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     );
     assert_eq!(
         pg.operation_for("wl-b-component-0").as_deref(),
-        Some("wamn-receiving:purchase-order/update@1.0.0")
+        Some("platform-fixture:widget/update@1.0.0")
     );
     assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
     assert_eq!(
@@ -689,7 +695,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
 // ------------------------------------------------------------------
 
 /// The tenant every live guest checkout in this module authenticates for.
-const LIVE_TENANT: &str = "acme";
+const LIVE_TENANT: &str = "fixture";
 
 /// The executing principal a live transactional statement binds.
 pub(in crate::plugins::wamn_postgres) const LIVE_PRINCIPAL: &str =
@@ -985,7 +991,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     })
     .unwrap();
     let user_id = "11111111-1111-4111-8111-111111111111";
-    let operation = "wamn-receiving:purchase-order/update@1.0.0";
+    let operation = "platform-fixture:widget/update@1.0.0";
     let (conn, _pp) = pg
         .checkout_guest(DEFAULT_PROJECT, LIVE_TENANT)
         .await
@@ -993,7 +999,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     pg.begin_with_claims(
         &conn,
         AuthorityClass::GuestSql,
-        "acme",
+        "fixture",
         Some("public"),
         Some("owner-1"),
         Some("inspector"),
@@ -2500,7 +2506,7 @@ fn operation_statement(transactional: bool) -> VerifiedStatement {
 /// and this test owns the operation registry rather than that check.
 #[tokio::test]
 async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
-    const OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
+    const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
         HashMap::new(),
         None,
@@ -2552,7 +2558,7 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
 #[tokio::test]
 async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none() {
     const TENANT: &str = "operation";
-    const OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
+    const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();

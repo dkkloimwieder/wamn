@@ -1919,7 +1919,7 @@ mod tests {
             node: "load-order".to_owned(),
             input_port: Some("request".to_owned()),
             component: "entity".to_owned(),
-            operation: "orders:purchase-order/get@1.0.0".to_owned(),
+            operation: "orders:widget/get@1.0.0".to_owned(),
             config: serde_json::json!({}),
             connection: None,
             credential: None,
@@ -2059,7 +2059,7 @@ mod tests {
 
     #[test]
     fn every_registered_invocation_requires_the_exact_operation_grant() {
-        let operation = "orders:purchase-order/get@7.0.0";
+        let operation = "orders:widget/get@7.0.0";
 
         assert!(authorize_registered_operation(None, None, false).is_ok());
         let denial = authorize_registered_operation(None, Some(operation), false)
@@ -2067,17 +2067,17 @@ mod tests {
         assert_eq!(denial.operation(), operation);
     }
 
-    /// Spec test 9. The host refuses the Receiving history read to a caller
+    /// Spec test 9. The host refuses the fixture's custom list read to a caller
     /// without its operation grant.
     #[test]
-    fn the_history_read_refuses_a_caller_without_its_grant() {
+    fn a_custom_read_refuses_a_caller_without_its_grant() {
         let tokens = wamn_control_provision::operation_grants::operation_grant_tokens(
-            include_bytes!("../../../../apps/wamn_receiving/wamn.json"),
+            &wamn_fixture_package::manifest_bytes(),
         )
-        .expect("parse the Receiving manifest");
+        .expect("parse the fixture manifest");
         let operation = tokens
-            .get("wamn-receiving:receiving/load-purchase-order-history@1.0.0")
-            .expect("the history read is its own operation grant");
+            .get("platform-fixture:widget/list@1.0.0")
+            .expect("the custom list read is its own operation grant");
         let denial = authorize_registered_operation(None, Some(operation), false)
             .expect_err("a caller without the grant is refused");
         assert_eq!(
@@ -2113,20 +2113,20 @@ mod tests {
             invocation: ConnectionInvocation {
                 origin: ConnectionOrigin {
                     wiring_package_id: "org_workflow".to_owned(),
-                    package_id: "client_acme_receiving".to_owned(),
+                    package_id: "platform_fixture_overlay".to_owned(),
                     component_digest: "sha256:overlay".to_owned(),
                     component: "overlay".to_owned(),
                     interface_version: "1.0.0".to_owned(),
-                    operation: "client-acme-receiving:receiving/record-receipt@1.0.0".to_owned(),
+                    operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
                 },
-                package_id: "client_acme_receiving".to_owned(),
-                wiring_id: "record-receipt".to_owned(),
+                package_id: "platform_fixture_overlay".to_owned(),
+                wiring_id: "record-batch".to_owned(),
                 wiring_version: 1,
                 node_id: "base-command".to_owned(),
                 occurrence: 0,
                 component_digest: "sha256:overlay".to_owned(),
                 component: "overlay".to_owned(),
-                operation: "client-acme-receiving:receiving/record-receipt@1.0.0".to_owned(),
+                operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
                 closure: ConnectionExecutionClosure::Released,
                 effects: None,
             },
@@ -2136,15 +2136,15 @@ mod tests {
 
         let original = acquisition.clone();
         let mut target = component_with_operations(BTreeMap::new());
-        target.scope.package_id = "wamn_receiving".to_owned();
-        target.component = "receiving".to_owned();
+        target.scope.package_id = "platform_fixture".to_owned();
+        target.component = "fixture".to_owned();
         target.component_digest = "sha256:base".to_owned();
         let executor = NodeAcquisition {
             platform: Some(PlatformComponent::Executor),
             ..acquisition.clone()
         }
-        .retarget(&target, "wamn-receiving:receiving/record-receipt@1.0.0");
-        let child = acquisition.retarget(&target, "wamn-receiving:receiving/record-receipt@1.0.0");
+        .retarget(&target, "platform-fixture:widget/record-batch@1.0.0");
+        let child = acquisition.retarget(&target, "platform-fixture:widget/record-batch@1.0.0");
         // A callerless parent and its nested call bind the same platform principal.
         let materializer = PlatformComponent::Materializer.principal_id().to_string();
         assert_eq!(
@@ -2163,35 +2163,35 @@ mod tests {
         // the token of the operation that it executes.
         assert_eq!(
             original.executing_claims(None).operation.as_deref(),
-            Some("client-acme-receiving:receiving/record-receipt@1.0.0")
+            Some("platform-fixture-overlay:widget/record-batch@1.0.0")
         );
         assert_eq!(
             child.executing_claims(None),
             SessionClaims {
                 user_id: Some(materializer.clone()),
-                operation: Some("wamn-receiving:receiving/record-receipt@1.0.0".to_owned()),
+                operation: Some("platform-fixture:widget/record-batch@1.0.0".to_owned()),
                 ..original.claims.clone()
             }
         );
         assert_eq!(child.causation.as_ref(), Some(&causation));
-        assert_eq!(child.invocation.package_id, "wamn_receiving");
+        assert_eq!(child.invocation.package_id, "platform_fixture");
         assert_eq!(child.invocation.component_digest, "sha256:base");
-        assert_eq!(child.invocation.wiring_id, "record-receipt");
+        assert_eq!(child.invocation.wiring_id, "record-batch");
         // The child raises its effects under ITS OWN component and operation.
         // The overlay's pair belongs to the caller (`wamn-b2m6.7`).
-        assert_eq!(child.invocation.component, "receiving");
+        assert_eq!(child.invocation.component, "fixture");
         assert_eq!(
             child.invocation.operation,
-            "wamn-receiving:receiving/record-receipt@1.0.0"
+            "platform-fixture:widget/record-batch@1.0.0"
         );
         assert_eq!(child.claims, original.claims);
         assert_eq!(
             child.invocation,
             ConnectionInvocation {
-                package_id: "wamn_receiving".to_owned(),
+                package_id: "platform_fixture".to_owned(),
                 component_digest: "sha256:base".to_owned(),
-                component: "receiving".to_owned(),
-                operation: "wamn-receiving:receiving/record-receipt@1.0.0".to_owned(),
+                component: "fixture".to_owned(),
+                operation: "platform-fixture:widget/record-batch@1.0.0".to_owned(),
                 ..original.invocation.clone()
             }
         );
@@ -2216,11 +2216,11 @@ mod tests {
 
     #[test]
     fn shared_nested_import_retains_each_declaring_export() {
-        let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let operation = "platform-fixture:widget/record-batch@1.0.0";
         let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let dependency = ComponentOperationDependency {
             participant: None,
-            package: "wamn_receiving".to_owned(),
+            package: "platform_fixture".to_owned(),
             version: "1.0.0".to_owned(),
             digest: digest.to_owned(),
             operation: operation.to_owned(),
@@ -2228,10 +2228,10 @@ mod tests {
         let target = AdmittedComponent {
             scope: ComponentPackageScope {
                 tenant_id: "tenant-a".to_owned(),
-                package_id: "wamn_receiving".to_owned(),
+                package_id: "platform_fixture".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
-            component: "receiving".to_owned(),
+            component: "fixture".to_owned(),
             interface_version: "0.1.0".to_owned(),
             operations: BTreeMap::from([(
                 operation.to_owned(),
@@ -2268,11 +2268,11 @@ mod tests {
         let mut caller = target;
         caller.operations = BTreeMap::from([
             (
-                "client-acme-receiving:one/run@3.0.0".to_owned(),
+                "platform-fixture-overlay:one/run@3.0.0".to_owned(),
                 declaration.clone(),
             ),
             (
-                "client-acme-receiving:two/run@3.0.0".to_owned(),
+                "platform-fixture-overlay:two/run@3.0.0".to_owned(),
                 declaration,
             ),
         ]);

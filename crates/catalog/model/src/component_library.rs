@@ -1265,9 +1265,9 @@ mod tests {
 
     /// The effect `operation_dependency` carries into a component that declares
     /// it and does not show it is pure.
-    fn inherited_receiving_effect() -> AdmittedComponentEffect {
+    fn inherited_fixture_effect() -> AdmittedComponentEffect {
         AdmittedComponentEffect {
-            package: "wamn-receiving:receiving".to_string(),
+            package: "platform-fixture:widget".to_string(),
             provenance: ComponentEffectProvenance::Inherited,
             interfaces: Vec::new(),
         }
@@ -1276,10 +1276,10 @@ mod tests {
     fn operation_dependency() -> ComponentOperationDependency {
         ComponentOperationDependency {
             participant: None,
-            package: "wamn_receiving".to_string(),
+            package: "platform_fixture".to_string(),
             version: "1.0.0".to_string(),
             digest: format!("sha256:{}", "c".repeat(64)),
-            operation: "wamn-receiving:receiving/record-receipt@1.0.0".to_string(),
+            operation: "platform-fixture:widget/record-batch@1.0.0".to_string(),
         }
     }
 
@@ -1458,7 +1458,7 @@ mod tests {
             ComponentFactErrorKind::RegisteredOperationMismatch,
         );
 
-        let registered = "orders:purchase-order/create@1.2.0";
+        let registered = "orders:widget/create@1.2.0";
         let mut operation = palette.operations.remove("map").unwrap();
         operation.registered_operation = Some(registered.to_owned());
         palette.operations.insert(registered.to_owned(), operation);
@@ -1528,7 +1528,7 @@ mod tests {
     #[test]
     fn fresh_only_is_preserved_only_for_registered_operations() {
         let mut declared = declaration();
-        let registered = "orders:purchase-order/get@1.2.0";
+        let registered = "orders:widget/get@1.2.0";
         let mut operation = declared.operations.remove("map").unwrap();
         assert!(
             serde_json::to_value(&operation)
@@ -1593,7 +1593,7 @@ mod tests {
     #[test]
     fn registered_operation_is_explicit_and_equals_the_export_token() {
         let mut declared = declaration();
-        let registered = "orders:purchase-order/get@1.2.0";
+        let registered = "orders:widget/get@1.2.0";
         let mut operation = declared.operations.remove("map").expect("map operation");
         operation.registered_operation = Some(registered.to_string());
         declared
@@ -1614,7 +1614,7 @@ mod tests {
         );
 
         let mut malformed = declaration();
-        operation_mut(&mut malformed).registered_operation = Some("purchase_order.get".to_string());
+        operation_mut(&mut malformed).registered_operation = Some("widget.get".to_string());
         assert_eq!(
             normalize_component_fact(
                 malformed,
@@ -1627,10 +1627,7 @@ mod tests {
             ComponentFactErrorKind::NonCanonicalIdentity
         );
 
-        for operation in [
-            "other:purchase-order/get@1.2.0",
-            "orders:purchase-order/get@2.0.0",
-        ] {
+        for operation in ["other:widget/get@1.2.0", "orders:widget/get@2.0.0"] {
             let mut mismatched = declaration();
             operation_mut(&mut mismatched).registered_operation = Some(operation.to_string());
             assert_eq!(
@@ -1648,7 +1645,7 @@ mod tests {
 
         let mut unequal = declaration();
         operation_mut(&mut unequal).registered_operation =
-            Some("orders:purchase-order/get@1.2.0".to_string());
+            Some("orders:widget/get@1.2.0".to_string());
         assert_eq!(
             normalize_component_fact(
                 unequal,
@@ -1666,7 +1663,7 @@ mod tests {
             .operations
             .get_mut("map")
             .expect("map operation")
-            .registered_operation = Some("other:purchase-order/get@1.2.0".into());
+            .registered_operation = Some("other:widget/get@1.2.0".into());
         assert_eq!(
             verify_stored_effect_projection(&stored).unwrap_err().kind(),
             ComponentFactErrorKind::NonCanonicalIdentity
@@ -1849,13 +1846,13 @@ mod tests {
             declared,
             format!("sha256:{}", "a".repeat(64)),
             [dependency.operation.clone()],
-            vec![inherited_receiving_effect()],
+            vec![inherited_fixture_effect()],
         )
         .expect("an inherited effect admits");
 
         assert_eq!(
             facts.component.effects,
-            vec![inherited_receiving_effect()],
+            vec![inherited_fixture_effect()],
             "the inherited fact names the dependency package and carries no interfaces"
         );
         verify_stored_effect_projection(&facts.component)
@@ -1870,7 +1867,7 @@ mod tests {
         let dependency = operation_dependency();
         let mut declared = declaration();
         operation_mut(&mut declared).dependencies = vec![dependency.clone()];
-        let mut widened = inherited_receiving_effect();
+        let mut widened = inherited_fixture_effect();
         widened.interfaces = vec![dependency.operation.clone()];
 
         assert_eq!(
@@ -1901,10 +1898,10 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(inherited_receiving_effect())
+            serde_json::to_value(inherited_fixture_effect())
                 .expect("an inherited effect serializes"),
             json!({
-                "package": "wamn-receiving:receiving",
+                "package": "platform-fixture:widget",
                 "provenance": "inherited",
                 "interfaces": [],
             })
@@ -2022,7 +2019,7 @@ mod tests {
             component_sql_digest(sql.as_bytes()),
             ComponentSqlStatement {
                 name: "select_order".to_owned(),
-                path: "generated/sql/purchase_order/get.sql".to_owned(),
+                path: "generated/sql/widget/get.sql".to_owned(),
                 sql: sql.to_owned(),
                 // A SELECT fixture: PostgreSQL classifies it as needing no
                 // transaction.
@@ -2043,7 +2040,7 @@ mod tests {
 
     #[test]
     fn generated_statement_facts_bind_to_exact_registered_export() {
-        let registered = "orders:purchase-order/get@1.2.0";
+        let registered = "orders:widget/get@1.2.0";
         let mut declared = declaration();
         let mut operation = declared.operations.remove("map").expect("map operation");
         operation.registered_operation = Some(registered.to_owned());
@@ -2056,7 +2053,7 @@ mod tests {
         )
         .expect("declaration normalizes before package evidence is attached")
         .component;
-        let statement = sql_statement("SELECT row_version FROM purchase_order WHERE id = $1");
+        let statement = sql_statement("SELECT row_version FROM widget WHERE id = $1");
 
         bind_component_statement_facts(
             &mut component,
@@ -2075,7 +2072,7 @@ mod tests {
     #[test]
     fn manifest_matched_private_operation_can_carry_sql_without_an_auth_token() {
         let mut component = migration_defaulted_fact(&[]);
-        let statement = sql_statement("SELECT row_version FROM purchase_order WHERE id = $1");
+        let statement = sql_statement("SELECT row_version FROM widget WHERE id = $1");
 
         bind_component_statement_facts(
             &mut component,
@@ -2092,7 +2089,7 @@ mod tests {
     #[test]
     fn statement_authority_refuses_wrong_operation_digest_and_shape() {
         let mut component = migration_defaulted_fact(&[]);
-        let statement = sql_statement("SELECT row_version FROM purchase_order WHERE id = $1");
+        let statement = sql_statement("SELECT row_version FROM widget WHERE id = $1");
         assert_eq!(
             bind_component_statement_facts(
                 &mut component,
@@ -2104,7 +2101,7 @@ mod tests {
         );
 
         let operation = component.operations.get_mut("map").expect("map operation");
-        operation.registered_operation = Some("orders:purchase-order/get@1.2.0".to_owned());
+        operation.registered_operation = Some("orders:widget/get@1.2.0".to_owned());
         operation.statements =
             BTreeMap::from([(format!("sha256:{}", "f".repeat(64)), statement.1.clone())]);
         assert_eq!(
@@ -2117,7 +2114,7 @@ mod tests {
         let operation = component.operations.remove("map").expect("map operation");
         component
             .operations
-            .insert("orders:purchase-order/get@1.2.0".to_owned(), operation);
+            .insert("orders:widget/get@1.2.0".to_owned(), operation);
         assert_eq!(
             verify_stored_effect_projection(&component)
                 .unwrap_err()
@@ -2127,7 +2124,7 @@ mod tests {
 
         let operation = component
             .operations
-            .get_mut("orders:purchase-order/get@1.2.0")
+            .get_mut("orders:widget/get@1.2.0")
             .expect("registered operation");
         let (digest, mut malformed) = statement;
         malformed.binds.push(malformed.binds[0].clone());

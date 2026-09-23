@@ -228,25 +228,25 @@ mod tests {
             )
             .is_err()
         );
-        assert!(validate_canonical_operation("wamn:purchase-order/get@1.0.0").is_err());
-        assert!(PackageCoordinate::new("wamn_receiving", "1.0.0").is_ok());
+        assert!(validate_canonical_operation("wamn:widget-maker/get@1.0.0").is_err());
+        assert!(PackageCoordinate::new("wamn_fixture", "1.0.0").is_ok());
     }
 
     #[test]
     fn operation_tokens_use_the_native_component_export_grammar() {
-        let token = "wamn-receiving:purchase-order/get@1.0.0";
+        let token = "wamn-fixture:widget-maker/get@1.0.0";
         assert_eq!(validate_canonical_operation(token), Ok(()));
         assert_eq!(
-            validate_canonical_operation_for_package(token, "wamn_receiving", "1.0.0"),
+            validate_canonical_operation_for_package(token, "wamn_fixture", "1.0.0"),
             Ok(())
         );
 
         for malformed in [
-            "wamn_receiving@1.0.0::purchase_order.get",
-            "wamn_receiving:purchase-order/get@1.0.0",
-            "wamn-receiving:purchase_order/get@1.0.0",
-            "wamn-receiving:purchase-order.get@1.0.0",
-            "wamn-receiving:purchase-order/get",
+            "wamn_fixture@1.0.0::widget_maker.get",
+            "wamn_fixture:widget-maker/get@1.0.0",
+            "wamn-fixture:widget_maker/get@1.0.0",
+            "wamn-fixture:widget-maker.get@1.0.0",
+            "wamn-fixture:widget-maker/get",
         ] {
             assert!(
                 validate_canonical_operation(malformed).is_err(),
@@ -254,8 +254,6 @@ mod tests {
             );
         }
         assert!(validate_canonical_operation_for_package(token, "other_package", "1.0.0").is_err());
-        assert!(
-            validate_canonical_operation_for_package(token, "wamn_receiving", "2.0.0").is_err()
-        );
+        assert!(validate_canonical_operation_for_package(token, "wamn_fixture", "2.0.0").is_err());
     }
 }

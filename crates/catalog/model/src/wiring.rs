@@ -507,7 +507,7 @@ mod tests {
         let mut wiring = crud_wiring(vec![case("roundtrip")]);
         wiring.nodes.get_mut("write").unwrap().params.insert(
             "credential".to_owned(),
-            json!({"secret_ref": "receiving-api-token", "environment": "prod"}),
+            json!({"secret_ref": "fixture-api-token", "environment": "prod"}),
         );
         let portable = serde_json::to_value(&wiring).unwrap();
         WiringDocument::parse(&portable).expect("names are not secret values");
@@ -600,16 +600,16 @@ mod tests {
     fn a_cross_package_node_carries_one_closed_alias_operation_coordinate() {
         let mut stored = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
         stored["nodes"]["write"]["operation-dependency"] = json!({
-            "alias": "receiving",
-            "operation": "receiving.record_receipt"
+            "alias": "fixture",
+            "operation": "widget.record_batch"
         });
 
         let parsed = WiringDocument::parse(&stored).expect("dependency coordinate parses");
         assert_eq!(
             parsed.nodes["write"].operation_dependency,
             Some(WiringOperationDependency {
-                alias: "receiving".to_owned(),
-                operation: "receiving.record_receipt".to_owned(),
+                alias: "fixture".to_owned(),
+                operation: "widget.record_batch".to_owned(),
             })
         );
         assert_eq!(
@@ -655,10 +655,10 @@ mod tests {
     #[test]
     fn partial_response_schema_preserves_success_references_and_refuses_extra_results() {
         let success = json!({
-            "$defs": {"receipt": {"type": "string"}},
+            "$defs": {"widget": {"type": "string"}},
             "type": "object",
-            "required": ["receipt_id"],
-            "properties": {"receipt_id": {"$ref": "#/$defs/receipt"}},
+            "required": ["widget_id"],
+            "properties": {"widget_id": {"$ref": "#/$defs/widget"}},
             "additionalProperties": false
         });
         let schema = super::partial_response_schema(&success);
@@ -672,7 +672,7 @@ mod tests {
             .compile("mem://partial-response.json", &mut schemas)
             .unwrap();
         let accepted = json!({
-            "committed_result": {"receipt_id": "receipt-1"},
+            "committed_result": {"widget_id": "widget-1"},
             "failed_outcome": {"code": "write_failed", "operation": "store", "effect_outcome": "response-lost"}
         });
         schemas
@@ -680,7 +680,7 @@ mod tests {
             .expect("declared evidence validates");
         for (pointer, value) in [
             ("/all_results", json!([])),
-            ("/committed_result/receipt_id", json!(7)),
+            ("/committed_result/widget_id", json!(7)),
             ("/failed_outcome/code", json!("")),
             ("/failed_outcome/effect_outcome", json!("rolled-back")),
             ("/failed_outcome/extra", json!(true)),
@@ -703,7 +703,7 @@ mod tests {
         assert!(
             schemas
                 .validate(
-                    &json!({"committed_result": {"receipt_id": "receipt-1"}}),
+                    &json!({"committed_result": {"widget_id": "widget-1"}}),
                     schema_index
                 )
                 .is_err()
