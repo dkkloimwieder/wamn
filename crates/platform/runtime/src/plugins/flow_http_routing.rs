@@ -32,8 +32,8 @@ use tracing::Instrument as _;
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentKind, ServingAttachment, ServingManifest,
-    parse_attachment_auth_policy,
+    AttachmentAuthPolicy, AttachmentKind, AttachmentTarget, OperationKind, ServingAttachment,
+    ServingManifest, parse_attachment_auth_policy,
 };
 use wamn_platform_identity::{PAT_TOKEN_PREFIX, PreparedIdentityReads, PrincipalKind};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
@@ -711,7 +711,7 @@ impl FlowHttpRouting {
                 .authenticate_session(
                     attachment_id,
                     token,
-                    Some(headers),
+                    Some((headers, !serves_read(manifest, attachment))),
                     &manifest.release.tenant_id,
                     &manifest.release.environment,
                 )
@@ -809,12 +809,13 @@ impl FlowHttpRouting {
     }
 
     /// `cookie_headers` is `Some` only when `token` arrived by the session
-    /// cookie; those requests then pass the CSRF check.
+    /// cookie; those requests then pass the CSRF check. Its flag is whether
+    /// the route requires the CSRF header, which a read route does not.
     async fn authenticate_session(
         &self,
         attachment_id: &str,
         token: &str,
-        cookie_headers: Option<&[Header]>,
+        cookie_headers: Option<(&[Header], bool)>,
         tenant: &str,
         environment: &str,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
@@ -827,9 +828,8 @@ impl FlowHttpRouting {
             .verify(token)
             .await
             .map_err(|_| unauthorized())?;
-        if let Some(headers) = cookie_headers {
-            // wamn-glgg: once ServingRoute.kind is on main, pass `kind != read`.
-            check_csrf(true, session.claims().csrf.as_deref(), headers)?;
+        if let Some((headers, requires_csrf)) = cookie_headers {
+            check_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
         }
         let principal = session.claims().sub.parse().map_err(|_| unauthorized())?;
         let permissions = authentication
@@ -1116,6 +1116,28 @@ fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
         }
     }
     Ok(found)
+}
+
+/// Whether an attachment only reads: it targets a route whose operation kind is
+/// get, query or projection, the read kinds of `client_plan.rs` in the
+/// generator. A wiring can write, so it never reads only.
+fn serves_read(manifest: &ServingManifest, attachment: &ServingAttachment) -> bool {
+    let AttachmentTarget::Route {
+        component,
+        operation,
+    } = &attachment.target
+    else {
+        return false;
+    };
+    manifest.routes.iter().any(|route| {
+        route.package_id == attachment.package_id
+            && &route.component == component
+            && &route.operation == operation
+            && matches!(
+                route.kind,
+                OperationKind::Get | OperationKind::Query | OperationKind::Projection
+            )
+    })
 }
 
 /// Check the signed double-submit of a cookie session.

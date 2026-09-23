@@ -37,6 +37,8 @@ use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
 const PROJECT: &str = "project";
 const TENANT: &str = "tenant-a";
 const ATTACHMENT: &str = "purchase-http";
+const READ_ROUTE: &str = "purchase-read-http";
+const WRITE_ROUTE: &str = "purchase-write-http";
 const READ: &str = "session-test:purchase/read@1.0.0";
 const WRITE: &str = "session-test:purchase/write@1.0.0";
 const OTHER_TENANT: &str = "session-test:secret/read@1.0.0";
@@ -157,6 +159,16 @@ fn permission_reader(url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     ))))
 }
 
+/// One HTTP attachment that targets the route of `operation` directly.
+fn route_attachment(id: &str, path: &str, operation: &str, modes: &[&str]) -> Value {
+    let definition = json!({"id": id, "kind": "http", "route": {
+        "host": "purchase.example.test", "path": path, "method": "POST"
+    }});
+    json!({"kind": "http", "package-id": "session_test", "component": "purchase",
+        "operation": operation, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+        "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": operation})
+}
+
 fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
     let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase", "method": "POST"
@@ -169,12 +181,17 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
                 READ: {"registered-operation": READ}, WRITE: {"registered-operation": WRITE}
             }}],
-        "routes": [],
+        "routes": [
+            {"package-id": "session_test", "component": "purchase", "operation": READ, "kind": "get"},
+            {"package-id": "session_test", "component": "purchase", "operation": WRITE, "kind": "create"}
+        ],
         "wirings": [{"package-id": "session_test", "wiring-id": "purchase", "wiring-version": 1,
             "graph-hash": format!("sha256:{}", "b".repeat(64))}],
         "attachments": {ATTACHMENT: {"kind": "http", "package-id": "session_test", "wiring-id": "purchase",
             "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
-            "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ}},
+            "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ},
+            READ_ROUTE: route_attachment(READ_ROUTE, "/purchase/read", READ, modes),
+            WRITE_ROUTE: route_attachment(WRITE_ROUTE, "/purchase/write", WRITE, modes)},
         "registrations": {}
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
@@ -412,6 +429,23 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         server.count(),
         1,
         "warm sessions perform no additional JWKS request"
+    );
+
+    // A read route skips the CSRF header, because a read changes nothing. A
+    // write route still requires it.
+    let read = route
+        .authenticate_headers_for_test(READ_ROUTE, &[("cookie", &cookie)])
+        .await
+        .expect("a cookie read without its CSRF header is admitted")
+        .expect("host-owned caller");
+    assert_eq!(read.credential_kind(), CredentialKind::Session);
+    assert_eq!(
+        route
+            .authenticate_headers_for_test(WRITE_ROUTE, &[("cookie", &cookie)])
+            .await
+            .unwrap_err(),
+        (401, "unauthorized".into()),
+        "a cookie write without its CSRF header refuses"
     );
 
     let before = statements(&admin, &generation).await?;
