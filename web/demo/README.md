@@ -8,8 +8,10 @@ Delete it with two steps: remove `web/demo`, and remove its line in [the web REA
 
 ## What it does
 
-The page signs in with the existing password login, keeps the bearer token in memory, and builds one transport.
-It then mounts the generated Receiving components under that transport.
+The page signs in with the existing password login and the cookie carrier of `@wamn/web-runtime`.
+The identity service sets the session in an HttpOnly cookie, so the page holds no token and writes nothing to browser storage.
+The page writes the selected environment into the address fragment, and a reload renews the session from the renewal cookie.
+It then mounts the generated Receiving components under one cookie transport.
 Generated files are never edited.
 
 ## Run it

@@ -186,10 +186,19 @@ No historical suffix-uniqueness promise follows from that value.
 Session tokens use Ed25519 with `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
 `authority` is exactly one object: `{"login":"<login UUID>"}` or `{"pat":"<source PAT UUID>"}`.
+The optional `csrf` claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
 The password issuer binds the existing login record. PAT exchange binds the authenticated source PAT.
 The `kid` selects a key only within the configured issuer.
 Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
 Unknown roles grant no implicit authority, and an empty permission set returns 403.
+
+A browser presents the session token in the `__Host-wamn-session` cookie instead of the `Authorization` header.
+The host reads that cookie only when the request has no `Authorization` header and the route admits a session.
+A request that carries both refuses with 401, and so does a repeated session cookie.
+The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF check.
+A cookie token without the `csrf` claim refuses with 401.
+The CSRF check needs one `x-wamn-csrf` header whose SHA-256 hex equals the claim.
+Today every route requires the header. `wamn-glgg` exempts read routes when the route kind reaches the serving manifest.
 
 The token lifetime is at most 900 seconds, with 30 seconds of time tolerance.
 Minting anchors expiry to the start of credential validation and records the actual signing time in `iat`.
@@ -204,7 +213,8 @@ Authentication deadlines bound new admission and do not cancel work already acce
 
 The [session token owner](../../crates/identity/platform/src/session_token.rs) defines the token and time rules.
 PAT exchange keeps no login record or renewal credential.
-The current client retains its session token only in memory.
+The current terminal client retains its session token only in memory.
+The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.
 Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
 Failed renewal or login expiry requires explicit login and submission. Quitting clears local credentials and requests server logout.
@@ -298,6 +308,16 @@ It returns HTTP 204, including when the credential is already unusable.
 It revokes all password login families for that person and returns HTTP 204.
 Neither operation requires continued application access. Neither revokes PATs.
 Previously issued password tokens fail new admission after logout commits.
+
+`/password/session`, `/password/renew`, and `/password/logout` accept an optional `carrier`, `"bearer"` by default or `"cookie"`.
+With `"cookie"`, the reply body holds only `expires_at` and `login_expires_at`, and the tokens travel in three cookies.
+`__Host-wamn-session` holds the session token. It is HttpOnly, with `Path=/`.
+`__Host-wamn-csrf` holds a new random CSRF token. The page reads it, so it is not HttpOnly.
+`__Secure-wamn-renewal` holds the renewal token. It is HttpOnly, with `Path=/password`.
+All three are `Secure` and `SameSite=Strict` and carry no `Domain`.
+The session and CSRF cookies live as long as the token. The renewal cookie lives as long as the login.
+Renew and logout read the renewal token from its cookie and refuse a `renewal_token` in the body.
+Logout clears all three cookies with `Max-Age=0`. `/password/logout-all` accepts only the bearer carrier.
 
 `POST /password/recover` accepts `email` and shares the global, source, and account limits.
 The service sends a reset secret only for an active human with an established password.

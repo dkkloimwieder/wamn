@@ -1,15 +1,23 @@
 /**
  * The whole demo page.
  *
- * It signs in, builds one transport, and mounts the generated components under
- * it. There is no router, no navigation and no layout system, because the page
- * exists to judge the components and is deleted afterward.
+ * It signs in by cookie, builds one transport, and mounts the generated
+ * components under it. There is no router, no navigation and no layout system,
+ * because the page exists to judge the components and is deleted afterward.
  */
 
 import { For, Show, createMemo, createSignal } from "solid-js";
 
 import { Button, useColorMode } from "@wamn/ui";
-import { createTransport, type Outcome, type Transport } from "@wamn/web-runtime";
+import {
+  createTransport,
+  environments,
+  keepSession,
+  type Environment,
+  type Outcome,
+  type SessionKeeper,
+  type Transport,
+} from "@wamn/web-runtime";
 import {
   LocationListTable,
   PurchaseOrderGetDetail,
@@ -22,13 +30,23 @@ import {
   ReceivingRecordReceiptForm,
 } from "@wamn/receiving-client/components/index.js";
 
-import { environments, session, type Environment } from "./session.js";
+/**
+ * The environment this page signed in to, from the address.
+ *
+ * The page keeps nothing in browser storage, so a reload reads the audience
+ * from the fragment that the sign in wrote, and the keeper renews from the
+ * renewal cookie.
+ */
+function addressedAudience(): string | null {
+  const aud = new URLSearchParams(window.location.hash.slice(1)).get("aud");
+  return aud === null || aud === "" ? null : aud;
+}
 
 export function App() {
   const [email, setEmail] = createSignal("receiving-demo@wamn.dev");
   const [password, setPassword] = createSignal("");
   const [reachable, setReachable] = createSignal<Environment[]>([]);
-  const [token, setToken] = createSignal<string | null>(null);
+  const [signedIn, setSignedIn] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string | null>(null);
   const [outcome, setOutcome] = createSignal<string | null>(null);
   // One purchase order and one receipt feed every screen that needs a record.
@@ -36,12 +54,31 @@ export function App() {
   const [order, setOrder] = createSignal("");
   const [receipt, setReceipt] = createSignal("");
 
+  let keeper: SessionKeeper | null = null;
+  function keep(aud: string): SessionKeeper {
+    keeper?.stop();
+    keeper = keepSession({
+      aud,
+      onState: (state) => {
+        setSignedIn(state.status === "signedIn");
+        if (state.status === "failed") {
+          setTrouble(state.reason);
+        }
+      },
+    });
+    return keeper;
+  }
+  const addressed = addressedAudience();
+  if (addressed !== null) {
+    keep(addressed);
+  }
+
   // The page is one origin, so the transport needs no base URL. The proxy
-  // carries each generated path to the release.
-  const transport = createMemo(() => {
-    const credential = token();
-    return credential === null ? null : createTransport({ baseUrl: "", credential });
-  });
+  // carries each generated path to the release, and the browser carries the
+  // session cookie.
+  const transport = createMemo(() =>
+    signedIn() ? createTransport({ baseUrl: "", cookie: true }) : null,
+  );
 
   async function attempt(work: () => Promise<void>) {
     setTrouble(null);
@@ -50,6 +87,10 @@ export function App() {
     } catch (error) {
       setTrouble(String(error));
     }
+  }
+
+  async function signOut() {
+    await keeper?.signOut();
   }
 
   const read = (result: Outcome<unknown>) => setOutcome(describe(result));
@@ -62,7 +103,7 @@ export function App() {
         {colorMode() === "dark" ? "light mode" : "dark mode"}
       </Button>
 
-      <Show when={token() === null}>
+      <Show when={!signedIn()}>
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -98,7 +139,9 @@ export function App() {
                   type="button"
                   onClick={() =>
                     void attempt(async () => {
-                      setToken(await session(email(), password(), environment.aud));
+                      const fragment = new URLSearchParams({ aud: environment.aud });
+                      window.location.hash = fragment.toString();
+                      await keep(environment.aud).signIn(email(), password());
                     })
                   }
                 >
@@ -117,7 +160,10 @@ export function App() {
       <Show when={transport()}>
         {(ready) => (
           <div>
-            <p>signed in, and the token is held in memory</p>
+            <p>signed in, and the browser holds the session in an HttpOnly cookie</p>
+            <Button variant="outline" onClick={() => void attempt(signOut)}>
+              sign out
+            </Button>
             <Show when={outcome()}>
               <p>last outcome: {outcome()}</p>
             </Show>
