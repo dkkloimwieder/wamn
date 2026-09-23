@@ -183,7 +183,7 @@ fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
     ] {
         assert!(
             detail.contains(&format!(
-                "<dt>{label}</dt>\n        <dd>{{cellText(readMember(record(), {member}), {cell:?})}}</dd>"
+                "<DetailItem term={label:?}>{{cellText(readMember(record(), {member}), {cell:?})}}</DetailItem>"
             )),
             "{label} is one plan column"
         );
@@ -328,7 +328,9 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "a refusal that names a member reaches that member"
     );
     assert!(
-        create.contains("<Show when={refusalMarks(refusal()?.member ?? null, \"code\")}>"),
+        create.contains(
+            "error={refusalMarks(refusal()?.member ?? null, \"code\") ? (refusal()?.code ?? \"refused\") : null}"
+        ),
         "the control states the path it declares, and the runtime decides"
     );
 
@@ -345,9 +347,44 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         .nth(1)
         .expect("the update form exists");
     assert!(
-        update.contains("<Show when={refusalMarks(refusal()?.member ?? null, \"change.code\")}>"),
+        update.contains("error={refusalMarks(refusal()?.member ?? null, \"change.code\") ?"),
         "a nested control states its whole declared path"
     );
+}
+
+/// A form renders its controls through the UI package, which owns the label,
+/// the refusal mark and how they look.
+#[test]
+fn a_form_renders_through_the_ui_fields_and_states_no_class() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let batch = widget
+        .split("export function WidgetRecordBatchForm")
+        .nth(1)
+        .and_then(|rest| rest.split("\nexport ").next())
+        .expect("the record batch form exists");
+    assert!(
+        batch.contains("<TextField\n") && batch.contains("label=\"Batch note\""),
+        "a text input is a text field with its label"
+    );
+    assert!(
+        batch.contains("<FieldError>{refusal()?.code}</FieldError>"),
+        "a refusal that names no member reads above the controls"
+    );
+    assert!(
+        batch.contains("<FieldSet>") && batch.contains("<FieldGroup>"),
+        "a repeated group is one field set, with one group for each line"
+    );
+    assert!(
+        batch.contains("                  <Button\n                    type=\"button\"\n")
+            && batch.contains(">\n                    remove\n                  </Button>")
+            && batch.contains(">\n              add\n            </Button>"),
+        "adding and removing a line are buttons"
+    );
+    assert!(batch.contains("<Button type=\"submit\">submit</Button>"));
+    for markup in ["<fieldset", "<legend", "class=", "className="] {
+        assert!(!batch.contains(markup), "the UI package owns {markup}");
+    }
 }
 
 /// A refusal that names a path inside a repeated group marks the control of the
@@ -368,13 +405,13 @@ fn a_repeated_control_states_its_declared_path_and_its_index() {
     );
     assert!(
         batch.contains(concat!(
-            "<Show when={refusalMarks(refusal()?.member ?? null, ",
-            "\"value.line[].amount\", index())}>"
+            "error={refusalMarks(refusal()?.member ?? null, ",
+            "\"value.line[].amount\", index()) ?"
         )),
         "a control inside the group states its declared path and its index"
     );
     assert!(
-        batch.contains("<Show when={refusalMarks(refusal()?.member ?? null, \"value.note\")}>"),
+        batch.contains("error={refusalMarks(refusal()?.member ?? null, \"value.note\") ?"),
         "a control outside the group states no index"
     );
 }
@@ -675,17 +712,17 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         "a table column header reads the authored label"
     );
     assert!(
-        widget.contains("        <dt>Widget code</dt>"),
+        widget.contains("        <DetailItem term=\"Widget code\">"),
         "a detail term reads the authored label"
     );
     assert!(
-        widget.contains("        <dt>created at</dt>"),
+        widget.contains("        <DetailItem term=\"created at\">"),
         "a column with no authored label keeps its derived name"
     );
 
     // A form control, and one inside a repeated group.
     assert!(
-        widget.contains("      Batch note"),
+        widget.contains("  label=\"Batch note\""),
         "a form control reads the authored label"
     );
     assert!(
@@ -693,7 +730,7 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         "a control inside a repeated group reads its own authored label"
     );
     assert!(
-        widget.contains("            <legend>Batch lines</legend>"),
+        widget.contains("            <FieldLegend>Batch lines</FieldLegend>"),
         "a repeated group reads the label its line bound declares"
     );
 
@@ -810,9 +847,9 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
         .expect("the form ends");
     assert!(
         create.contains(concat!(
-            "            Widget code\n",
-            "            <input\n",
-            "              type=\"text\"\n",
+            "          <TextField\n",
+            "            label=\"Widget code\"\n",
+            "            type=\"text\"\n",
         )),
         "an input that names no record stays a text control"
     );
@@ -882,7 +919,7 @@ fn a_repeated_group_states_its_label_its_bounds_and_its_spellings() {
 
     // wamn-j3yr: the line bound declares the group, so the legend is authored.
     assert!(
-        widget.contains("            <legend>Batch lines</legend>"),
+        widget.contains("            <FieldLegend>Batch lines</FieldLegend>"),
         "the group reads the label its line bound declares"
     );
 
