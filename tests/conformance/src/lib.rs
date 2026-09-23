@@ -5,10 +5,8 @@
 pub mod catalog;
 pub mod invocation;
 pub mod kubernetes_gate_verdict;
+pub mod repo_policy;
 pub mod socket_test;
-
-#[cfg(test)]
-mod docker_component_provenance;
 
 #[cfg(test)]
 mod ip_name_lookup;
@@ -21,6 +19,3 @@ mod runtime_policy;
 
 #[cfg(test)]
 mod schema_drift;
-
-#[cfg(test)]
-mod version_identity;

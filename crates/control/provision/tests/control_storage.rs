@@ -1,84 +1,17 @@
 //! Storage-schema tests for the T1 control-plane registry (wamn-q3n.3;
 //! generalized in wamn-8df.3; org-scoped policies + templates in wamn-8df.4).
 //!
-//! - the **request-path-free** invariant (1): a static grep asserting no
-//!   data-plane manifest references the T1 cluster / system DB;
-//! - a **live-apply gate** (invariants 2/3 + placement/env FK integrity + the
-//!   template stamp insert-if-absent semantics + the real registry reads and
-//!   saga builders), on a test database of the test PostgreSQL server (a
-//!   superuser URL — the harness provisions the `wamn_system` owner role).
+//! A live-apply gate (invariants 2/3 + placement/env FK integrity + the template
+//! stamp insert-if-absent semantics + the real registry reads and saga builders),
+//! on a test database of the test PostgreSQL server (a superuser URL — the
+//! harness provisions the `wamn_system` owner role). Invariant 1 (no data-plane
+//! manifest names the system cluster) is a repo-policy lint.
 
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::process::{Command as Proc, Stdio};
 
-use std::path::Path;
-
 use wamn_control_registry::Template;
-
-fn deploy_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
-}
-
-// --- invariant 1: request-path-free ----------------------------------------
-
-/// Invariant 1 (system cluster absent from ALL request paths): a static grep of
-/// the deploy manifests. Only the T1 cluster definition itself
-/// (`wamn-sysdb.yaml`) may reference the system cluster / DB; NO data-plane
-/// workload (host / webhook) may.
-#[test]
-fn no_data_plane_manifest_references_the_system_cluster() {
-    // M1 supplies its system registry from an emptyDir-backed loopback PG18
-    // sidecar, so only the T1 cluster definition itself may name shared sysdb.
-    const ALLOWLIST: &[&str] = &["wamn-sysdb.yaml"];
-
-    let mut offenders = Vec::new();
-    let mut scanned = 0usize;
-    let mut stack = vec![deploy_dir()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read deploy/") {
-            let path = entry.expect("dir entry").path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
-                continue;
-            }
-            scanned += 1;
-            let name = path.file_name().unwrap().to_str().unwrap().to_string();
-            if ALLOWLIST.contains(&name.as_str()) {
-                continue;
-            }
-            let body = std::fs::read_to_string(&path).expect("read manifest");
-            // Comments are stripped first, because the invariant is about the
-            // REQUEST PATH and a comment is not one. Naming `wamn-sysdb.yaml`
-            // as the R8b precedent while documenting a Secret reference is
-            // exactly the prose a credential-hygiene change should carry, and
-            // tripping on it pushes the next author toward the ALLOWLIST --
-            // which is the one edit that genuinely weakens this guard.
-            let body = body
-                .lines()
-                .map(|line| line.split_once('#').map_or(line, |(rendered, _)| rendered))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if body.contains("wamn-sysdb") || body.contains("wamn_system") {
-                offenders.push(name);
-            }
-        }
-    }
-    // The tiered deploy/ layout ships ~50 manifests; a low count means the walk
-    // went vacuous (the pre-tiering flat read_dir bug class).
-    assert!(
-        scanned >= 10,
-        "deploy/ manifest walk saw only {scanned} yaml files"
-    );
-    assert!(
-        offenders.is_empty(),
-        "these deploy manifests reference the T1 system cluster/DB (request-path-free \
-         invariant 1) — add to the allowlist only if they are control-plane tooling: {offenders:?}"
-    );
-}
 
 // --- live-apply gate: invariants 2/3 + placement/env FK + seed + saga --------
 

@@ -2,13 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-fn repository() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("tests/conformance lives two levels below the repository root")
-        .to_path_buf()
-}
+use super::Problems;
 
 fn production_sql_fragments(
     repository: &Path,
@@ -416,115 +410,26 @@ fn function_body(normalized: &str, name: &str) -> Option<std::ops::Range<usize>>
 ///
 /// Keep the existing SQL-text scope: production Rust literals, deployment SQL,
 /// and application SQL. Test modules, examples, and fixture inputs stay excluded.
-#[test]
-fn session_forgeable_claims_have_no_authorization_reader_while_the_claim_escape_is_open() {
-    // A fence that has quietly stopped matching is the failure this one exists
-    // to prevent, so show the discrimination before trusting the scan.
-    assert!(
-        forgeable_claim_reads(
-            "select set_config('app.role', $5, true), set_config('app.user_id', $6, true), \
-             set_config('app.operation', $7, true)"
-        )
-        .is_empty(),
-        "the fence must not fire on the GUEST_CLAIM_SQL binding, which writes \
-         the claims (wamn-0h0g.23.1 ruled that deliberate)"
-    );
-    let policy = "create policy p on t using (owner = nullif(current_setting(''app.user_id'', true), '''')::uuid)";
-    assert_eq!(
-        forgeable_claim_reads(policy).len(),
-        1,
-        "the fence must see a claim read, including one nested in an EXECUTE string"
-    );
-    let operation_policy =
-        "create policy p on t using (current_setting('app.operation', true) = 'x')";
-    assert_eq!(
-        forgeable_claim_reads(operation_policy).len(),
-        1,
-        "the fence must see an app.operation read"
-    );
-    assert_eq!(
-        forgeable_claim_reads(&strip_sql_comments(
-            "raise hint 'use --tenant'; \
-             create policy p on t using (current_setting('app.role', true) = 'x');"
-        ))
-        .len(),
-        1,
-        "a double dash inside a string literal must not hide a later claim read"
-    );
-    assert!(
-        forgeable_claim_reads(&strip_sql_comments(
-            "select 'it''s'; -- don't current_setting('app.role', true)"
-        ))
-        .is_empty(),
-        "a real comment must still hide a claim read"
-    );
-    let trigger_file = "create function wamn_history.stamp_row() returns trigger \
-         language plpgsql set search_path = pg_catalog as $stamp_row$ begin \
-         perform current_setting('app.user_id', true); \
-         perform current_setting('app.operation', true); \
-         perform current_setting('app.role', true); \
-         end $stamp_row$; \
-         create policy p on t using (owner = current_setting('app.user_id', true)::uuid);";
-    let admitted = |path: &str, sql: &str| {
-        forgeable_claim_reads(sql)
-            .into_iter()
-            .map(|(claim, _, offset)| is_platform_trigger_read(path, sql, claim, offset))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        admitted("deploy/sql/record-history.sql", trigger_file),
-        [true, true, false, false],
-        "the allowlist must admit only the app.user_id and app.operation reads \
-         inside the named trigger function body, and still refuse app.role and \
-         a policy reader"
-    );
-    assert_eq!(
-        admitted("deploy/sql/app-schema.sql", trigger_file),
-        [false, false, false, false],
-        "the allowlist must not admit the named function outside its file"
-    );
-    assert_eq!(
-        admitted("deploy/sql/record-history.sql", policy),
-        [false],
-        "the allowlist must refuse a policy reader in the trigger file"
-    );
-    assert_eq!(
-        admitted("deploy/sql/record-history.sql", operation_policy),
-        [false],
-        "the allowlist must refuse an app.operation policy reader in the trigger file"
-    );
-
-    let repository = repository();
+pub(super) fn check(root: &Path, problems: &mut Problems) {
     let roots = ["crates", "services", "apps", "deploy/sql"];
-    let readers = production_sql_fragments(&repository, &roots)
-        .expect("scan production SQL")
-        .into_iter()
-        .flat_map(|(path, line, sql)| {
-            forgeable_claim_reads(&sql)
-                .into_iter()
-                .filter(|(claim, _, offset)| !is_platform_trigger_read(&path, &sql, claim, *offset))
-                .map(|(claim, call, _)| format!("  {path}:{line} reads {claim} — {call}"))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-
-    assert!(
-        readers.is_empty(),
-        "production SQL must not read the session-forgeable claims `app.role`, \
-         `app.user_id`, or `app.operation` for authorization or row security \
-         while wamn-0h0g.22 is OPEN.\n\n\
-         wamn-0h0g.22 records that a guest session rewrites `app.role` and \
-         `app.user_id` past the claim blocklist with a DO-wrapped EXECUTE, then \
-         reads and zeroes another user's rows. The same rewrite reaches \
-         `app.operation`. A policy or check that reads any of these claims makes \
-         that hole reachable. Settle wamn-0h0g.22 first. The owner ruling of \
-         2026-09-04 re-keys the per-user layer onto something the session cannot \
-         rewrite.\n\n\
-         The owner narrowing of 2026-09-13 admits only the platform trigger \
-         functions in PLATFORM_TRIGGER_READERS, which read app.user_id and \
-         app.operation to record the actor and the operation of a write. Do not \
-         add an authorization or RLS reader to that list.\n\n\
-         production readers found:\n{}",
-        readers.join("\n")
-    );
+    let fragments = match production_sql_fragments(root, &roots) {
+        Ok(fragments) => fragments,
+        Err(problem) => {
+            problems.push(format!("scan production SQL: {problem}"));
+            return;
+        }
+    };
+    for (path, line, sql) in fragments {
+        for (claim, call, offset) in forgeable_claim_reads(&sql) {
+            if !is_platform_trigger_read(&path, &sql, claim, offset) {
+                problems.push(format!(
+                    "{path}:{line} reads the session-forgeable claim {claim} ({call}). \
+                     Production SQL must not read app.role, app.user_id or app.operation \
+                     for authorization or row security while wamn-0h0g.22 is open. Only \
+                     the platform trigger functions in PLATFORM_TRIGGER_READERS may read \
+                     app.user_id and app.operation, to record the actor of a write."
+                ));
+            }
+        }
+    }
 }

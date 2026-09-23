@@ -74,7 +74,7 @@ cargo test --locked --offline -p wamn-receiving-tests \
 
 The application READMEs identify additional tests and binary owners.
 Use `tools/repo-lint dry-run` to see its exact commands without executing them.
-`tools/repo-lint run` runs the source guard, formatting, and Clippy across all three workspaces.
+`tools/repo-lint run` runs the source guard, formatting, and Clippy across all three workspaces, and then the repository policy lints of the `repo-policy` binary.
 It reports each command and returns a nonzero status if any command fails.
 
 ## What a test asserts

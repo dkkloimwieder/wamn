@@ -291,7 +291,7 @@ Every stamp in one transaction carries the same instant, and that instant is not
 
 The function reads no users row, and no stamp column has a foreign key.
 Only the platform trigger functions read `app.user_id`, and no authorization or row policy reads it.
-The [claims fence](../../tests/conformance/tests/session_claims.rs) admits those readers by name, and it admits `wamn_history.log_row_change` as the reader of `app.operation`.
+The [claims lint](../../tests/conformance/src/repo_policy/session_claims.rs) admits those readers by name, and it admits `wamn_history.log_row_change` as the reader of `app.operation`.
 
 After the migrations apply, apply-package installs one `wamn_record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
 The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.

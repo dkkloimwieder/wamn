@@ -90,6 +90,13 @@ readonly -a WAMN_NO_STD_WASM_CLIPPY=(
   --target wasm32-wasip2 -- -D warnings
 )
 
+# The repository policy lints: checks of source and repository files, which
+# are lints rather than tests (docs/operations/running-tests.md).
+readonly -a WAMN_REPOSITORY_POLICY=(
+  run --manifest-path "$WAMN_ROOT_MANIFEST" --locked --quiet
+  --package wamn-conformance-tests --bin repo-policy -- "$WAMN_REPOSITORY_ROOT"
+)
+
 wamn_print_plan() {
   local -r label="$1"
   shift
@@ -117,6 +124,7 @@ wamn_dry_run() {
   printf ' %q' "$WAMN_CARGO" "${WAMN_NO_STD_NATIVE_CLIPPY[@]}"
   printf '\n'
   wamn_print_plan 'no-std-wasm-clippy' "${WAMN_NO_STD_WASM_CLIPPY[@]}"
+  wamn_print_plan 'repository-policy' "${WAMN_REPOSITORY_POLICY[@]}"
 }
 
 wamn_require_cargo() {
@@ -299,6 +307,7 @@ case "$WAMN_COMMAND" in
     wamn_run 'components wasm Clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
     wamn_run_no_std_native_clippy
     wamn_run 'no-std wasm Clippy' "${WAMN_NO_STD_WASM_CLIPPY[@]}"
+    wamn_run 'repository policy' "${WAMN_REPOSITORY_POLICY[@]}"
     ((WAMN_ANY_LEG_FAILED == 0))
     ;;
   *)
