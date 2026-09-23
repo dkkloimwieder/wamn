@@ -216,18 +216,33 @@ function fakeClock(start: number): Clock & { advance(to: number): void; pending(
   };
 }
 
-/** Let every settled promise run its continuation. */
+/**
+ * Let every pending continuation run.
+ *
+ * One macrotask turn drains the whole microtask queue, however many steps a
+ * renewal takes. The fake clock uses no real timer, so nothing else runs here.
+ */
 async function settle(): Promise<void> {
-  for (let turn = 0; turn < 10; turn += 1) {
-    await Promise.resolve();
-  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * A reply whose body reads in one microtask.
+ *
+ * A real `Response` reads its body through the platform stream, whose timing
+ * depends on the runtime. The keeper reads only these three members.
+ */
+function reply(status: number, document?: unknown): () => Response {
+  return () =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: () => Promise.resolve(document),
+    }) as Response;
 }
 
 function times(expiresAt: number): () => Response {
-  return () =>
-    new Response(JSON.stringify({ expires_at: expiresAt, login_expires_at: 28_000 }), {
-      status: 200,
-    });
+  return reply(200, { expires_at: expiresAt, login_expires_at: 28_000 });
 }
 
 describe("the session keeper", () => {
@@ -261,7 +276,7 @@ describe("the session keeper", () => {
 
   it("stops after a refused renewal", async () => {
     const clock = fakeClock(0);
-    const stub = stubFetch([() => new Response(null, { status: 401 })]);
+    const stub = stubFetch([reply(401)]);
     const states: SessionState[] = [];
     keepSession({ aud: "aud-1", fetch: stub.fetch, clock, onState: (state) => states.push(state) });
     await settle();
@@ -272,9 +287,9 @@ describe("the session keeper", () => {
   it("keeps a new sign in and stops after sign out", async () => {
     const clock = fakeClock(0);
     const stub = stubFetch([
-      () => new Response(null, { status: 401 }),
+      reply(401),
       times(1_000),
-      () => new Response(null, { status: 204 }),
+      reply(204),
     ]);
     const states: SessionState[] = [];
     const keeper = keepSession({
@@ -310,7 +325,7 @@ describe("the session keeper", () => {
       new Promise((resolve) => {
         answer = resolve;
       }),
-      Promise.resolve(new Response(null, { status: 204 })),
+      Promise.resolve(reply(204)()),
     ];
     const states: SessionState[] = [];
     const keeper = keepSession({
