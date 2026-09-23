@@ -409,7 +409,7 @@ async fn assert_missing_first_beat(
 ) -> anyhow::Result<()> {
     use std::sync::Arc;
 
-    use wamn_runtime::lifecycle::{bounded_cleanup, watch_liveness};
+    use wamn_engine::lifecycle::{bounded_cleanup, watch_liveness};
     use wash_runtime::host::probes::{Liveness, ProbeState};
     use wash_runtime::washlet::{ClusterHostBuilder, liveness_silence};
 

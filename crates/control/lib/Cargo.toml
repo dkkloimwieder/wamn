@@ -52,6 +52,7 @@ wamn-run-state = { workspace = true }
 # push_component is the sole production caller of byte admission and shares
 # the immutable OCI media/reference contract with the runtime pull side.
 wamn-runtime = { workspace = true }
+wamn-engine = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }

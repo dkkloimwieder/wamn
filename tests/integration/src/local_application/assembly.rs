@@ -18,6 +18,7 @@ use wamn_control_provision::{
     CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleScope,
     system_reader_generation_role, workload_generation_role,
 };
+use wamn_engine::engine::build_engine;
 use wamn_execution_host::{
     RouterDeliveryBridge, RouterDriver, RouterDriverConfig, RouterReadinessProbe,
     RouterReadinessStatus, WiringCacheCapacity,
@@ -27,7 +28,6 @@ use wamn_platform_identity::{
 };
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_artifact_source::{ComponentArtifactSource, local_component_path};
-use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::flow_http_routing::{
     FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,

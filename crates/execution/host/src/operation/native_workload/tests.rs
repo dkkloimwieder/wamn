@@ -84,7 +84,7 @@ async fn load_with_reuse(
     host_interfaces: Vec<WitInterface>,
 ) -> anyhow::Result<NativeWorkload> {
     load_native_workload(
-        Arc::new(wamn_runtime::build_engine(&[]).expect("production engine")),
+        Arc::new(wamn_engine::build_engine(&[]).expect("production engine")),
         NativeWorkloadSpec {
             warm_reuse,
             id: "native-import-admission-test".into(),

@@ -14,7 +14,7 @@
 use std::time::Instant;
 
 use anyhow::Context as _;
-use wamn_runtime::engine::build_engine;
+use wamn_engine::engine::build_engine;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, Linker};

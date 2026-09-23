@@ -11,6 +11,7 @@ wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }
 anyhow = { workspace = true }
 serde_json = { workspace = true }

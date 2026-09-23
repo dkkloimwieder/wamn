@@ -18,7 +18,7 @@ use super::credential_exactness::{
     AmbientCredentialState, ExpectedCredentialIdentity, MembershipExpectation, MembershipMode,
     credential_exactness_probe, explicit_credential_source,
 };
-use crate::engine::MAX_HOST_CALL_DURATION;
+use wamn_engine::engine::MAX_HOST_CALL_DURATION;
 
 const DEFAULT_GUEST_POOL_MAX_SIZE: usize = 14;
 const DEFAULT_PLATFORM_POOL_MAX_SIZE: usize = 2;

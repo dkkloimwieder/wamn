@@ -5736,6 +5736,7 @@ dependencies = [
  "uuid",
  "wamn-catalog",
  "wamn-component-policy",
+ "wamn-engine",
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-gate-harness",
@@ -5776,6 +5777,7 @@ dependencies = [
  "wamn-client-terminal",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-engine",
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-contract",
@@ -5869,6 +5871,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "tracing",
+ "wash-runtime",
+ "wasmtime",
+ "wat",
+ "wit-component 0.252.0",
+ "wit-parser 0.252.0",
+]
+
+[[package]]
 name = "wamn-event-reg"
 version = "0.1.0"
 dependencies = [
@@ -5925,6 +5941,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-fixture-package",
@@ -6062,6 +6079,7 @@ dependencies = [
  "url",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-engine",
  "wamn-execution-host",
  "wamn-platform-identity",
  "wamn-runtime",
@@ -6139,6 +6157,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-engine",
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-contract",
@@ -6237,6 +6256,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-execution-host",
@@ -6349,6 +6369,7 @@ dependencies = [
  "wamn-component-policy",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-pg-core",

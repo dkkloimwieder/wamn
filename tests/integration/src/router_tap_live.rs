@@ -23,8 +23,8 @@ mod tests {
     use http_body_util::{BodyExt as _, Full};
     use hyper::{Method, Request, StatusCode};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use wamn_engine::engine::build_engine;
     use wamn_execution_host::{ROUTER_DELIVERY_ID, RouterDeliveryBridge};
-    use wamn_runtime::engine::build_engine;
     use wamn_runtime::plugins::flow_http_routing::FLOW_HTTP_ROUTING_ID;
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
     use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream};

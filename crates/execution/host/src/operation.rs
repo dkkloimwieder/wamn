@@ -21,10 +21,10 @@ use wamn_catalog::{
     AdmittedComponent, ArtifactHash, ComponentOperationDependency, ComponentSqlField,
     ComponentSqlValueType, ServingComponent, ServingComponentOperation,
 };
+use wamn_engine::engine::MAX_HOST_CALL_DURATION;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::component_artifact_source::ComponentArtifactSource;
-use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{

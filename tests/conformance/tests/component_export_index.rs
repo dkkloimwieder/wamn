@@ -5,7 +5,7 @@
 //! an index minted by one compiled component cannot resolve against another
 //! component, even when both export the same name.
 
-use wamn_runtime::engine::build_engine;
+use wamn_engine::engine::build_engine;
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 

@@ -98,7 +98,7 @@ fn capability_registry_wasi_rows_match_the_pinned_adapter() {
     let adapter = virtualizer
         .finish()
         .expect("generate the pinned WASI adapter");
-    let engine = wamn_runtime::build_engine(&[]).expect("build the production engine");
+    let engine = wamn_engine::build_engine(&[]).expect("build the production engine");
     let component =
         Component::new(engine.inner(), &adapter.adapter).expect("compile the pinned WASI adapter");
     let imports: Vec<String> = component

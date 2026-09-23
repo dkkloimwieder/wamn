@@ -760,7 +760,7 @@ impl Fixture {
             (NATIVE_POLICY_ID, Arc::clone(&policy) as Arc<dyn HostPlugin>),
             (observer.id(), observer as Arc<dyn HostPlugin>),
         ]);
-        let engine = Arc::new(wamn_runtime::build_engine(&[]).expect("production native engine"));
+        let engine = Arc::new(wamn_engine::build_engine(&[]).expect("production native engine"));
         let application = load_native_application(
             Arc::clone(&engine),
             NativeWorkloadSpec {
@@ -1289,7 +1289,7 @@ async fn assert_postgres_bind_warns() {
     )));
     let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
         HashMap::from([(WAMN_POSTGRES_ID, Arc::clone(&wash) as Arc<dyn HostPlugin>)]);
-    let resolved = wamn_runtime::build_engine(&[])
+    let resolved = wamn_engine::build_engine(&[])
         .expect("production engine")
         .initialize_workload(
             "wash-postgres-bind",

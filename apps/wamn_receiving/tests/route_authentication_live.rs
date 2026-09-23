@@ -51,6 +51,9 @@ use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTa
 use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
+use wamn_engine::engine::{
+    build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,
+};
 use wamn_execution_host::{
     RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
 };
@@ -60,9 +63,6 @@ use wamn_platform_identity::{
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
-use wamn_runtime::engine::{
-    build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,
 };
 use wamn_runtime::plugins::WamnJetstream;
 use wamn_runtime::plugins::flow_http_routing::{

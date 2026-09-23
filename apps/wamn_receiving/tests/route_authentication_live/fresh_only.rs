@@ -846,7 +846,7 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
         operations == ["counter.get".to_owned()].into(),
         "fixture must declare exactly the generated counter read it exercises"
     );
-    let engine = wamn_runtime::engine::build_engine(&[])?;
+    let engine = wamn_engine::engine::build_engine(&[])?;
     let declaration: ComponentDeclaration = serde_json::from_value(json!({
         "scope": {"tenant-id": "fixture", "package-id": PACKAGE, "package-version": VERSION},
         "component": WIRING, "interface-version": "0.1.0", "connections": [],

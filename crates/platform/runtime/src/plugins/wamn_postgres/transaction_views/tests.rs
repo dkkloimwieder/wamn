@@ -16,7 +16,6 @@ use wash_runtime::wasmtime::component::{Accessor, Instance, Val};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use super::{PgError, StatementError};
-use crate::engine::build_engine;
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
 };
@@ -31,6 +30,7 @@ use crate::plugins::wamn_postgres::{
     ClassCredentials, SessionClaims, StatementField, StatementValueType, VerifiedStatement,
     WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
+use wamn_engine::engine::build_engine;
 
 const CANCEL_OWNER: &str = "transaction-view-cancel-owner";
 const CANCEL_PARTICIPANT: &str = "transaction-view-cancel-participant";

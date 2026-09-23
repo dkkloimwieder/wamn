@@ -53,7 +53,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use wamn_runtime::engine::build_engine;
+use wamn_engine::engine::build_engine;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging, WamnLoggingConfig};

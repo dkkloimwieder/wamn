@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout_at};
-use wamn_runtime::engine::{build_engine_with_host_memory, host_memory_budgets};
+use wamn_engine::engine::{build_engine_with_host_memory, host_memory_budgets};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};

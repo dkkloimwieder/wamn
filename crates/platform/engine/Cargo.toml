@@ -1,0 +1,25 @@
+[package]
+name = "wamn-engine"
+description = "The native Wasmtime and wash-runtime engine, with no network-service plugin."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# No `oci` feature here: the registry source lives in wamn-runtime.
+wash-runtime = { workspace = true }
+wasmtime = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
+# The engine tests encode their guests from WAT in-process. Same exact pins as
+# wamn-runtime.
+wat = "=1.252.0"
+wit-component = "=0.252.0"
+wit-parser = "=0.252.0"
+
+[lints]
+workspace = true

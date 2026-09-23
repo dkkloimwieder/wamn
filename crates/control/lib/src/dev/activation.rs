@@ -537,7 +537,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
     }
     let component_bytes = std::fs::read(&local.flow_http_component).map_err(stage_error)?;
     let checked = (|| -> anyhow::Result<()> {
-        let engine = wamn_runtime::engine::build_engine(&[])?;
+        let engine = wamn_engine::engine::build_engine(&[])?;
         let component =
             wash_runtime::wasmtime::component::Component::new(engine.inner(), &component_bytes)?;
         anyhow::ensure!(

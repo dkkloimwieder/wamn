@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let result = runtime.block_on(async_main(cli));
-    runtime.shutdown_timeout(wamn_runtime::lifecycle::RUNTIME_SHUTDOWN_BUDGET);
+    runtime.shutdown_timeout(wamn_engine::lifecycle::RUNTIME_SHUTDOWN_BUDGET);
     result
 }
 
@@ -59,5 +59,5 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Command::Host(args) => Box::pin(host::run(*args)).await,
     };
 
-    wamn_runtime::lifecycle::finish(result).await
+    wamn_engine::lifecycle::finish(result).await
 }

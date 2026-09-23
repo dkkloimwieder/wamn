@@ -409,7 +409,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let declaration: ComponentDeclaration = serde_json::from_slice(&declaration_bytes)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
 
-    let engine = wamn_runtime::build_engine(&[]).context("build component admission engine")?;
+    let engine = wamn_engine::build_engine(&[]).context("build component admission engine")?;
     let facts = validate_component_admission(
         &engine,
         &component_bytes,
@@ -3211,7 +3211,7 @@ mod tests {
             .validate(true)
             .encode()
             .expect("fixture component encodes");
-        let engine = wamn_runtime::build_engine(&[]).expect("component admission engine builds");
+        let engine = wamn_engine::build_engine(&[]).expect("component admission engine builds");
         let component = validate_component_admission(
             &engine,
             &component_bytes,

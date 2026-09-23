@@ -20,7 +20,7 @@
 use anyhow::bail;
 use clap::Args;
 use wamn_component_policy::{EgressGuardError, PolicyProfile, analyze};
-use wamn_runtime::engine::build_engine;
+use wamn_engine::engine::build_engine;
 
 #[derive(Args, Debug)]
 pub struct SocketTestArgs {

@@ -40,6 +40,7 @@ use wamn_control::push_component::admitted_projection_hash;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
+use wamn_engine::engine::build_engine;
 use wamn_execution_host::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
@@ -49,7 +50,6 @@ use wamn_runtime::component_artifact::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
@@ -927,6 +927,7 @@ mod tests {
     use wamn_control_provision::{
         CredentialGeneration, SystemReader, WorkloadRoleFamily, system_reader_generation_role,
     };
+    use wamn_engine::engine::build_engine;
     use wamn_execution_host::{
         CandidateCaseRequest, CandidateWiringTarget, RouterDelivery, RouterDriver,
         RouterDriverConfig, RouterDriverRequest, WiringCacheCapacity,
@@ -940,7 +941,6 @@ mod tests {
     use wamn_runtime::component_artifact_source::{
         ComponentArtifactSource, ComponentArtifactSourceConfig,
     };
-    use wamn_runtime::engine::build_engine;
     use wamn_runtime::plugins::connection_http::transport::HttpTransport;
     use wamn_runtime::plugins::flow_http_routing::{
         AuthenticatedCaller, FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,

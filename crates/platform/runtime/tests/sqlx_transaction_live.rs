@@ -15,7 +15,7 @@ use opentelemetry_sdk::trace::{
 };
 use tokio_postgres::{Client, NoTls};
 use tracing_subscriber::layer::SubscriberExt as _;
-use wamn_runtime::engine::build_engine;
+use wamn_engine::engine::build_engine;
 use wamn_runtime::plugins::wamn_postgres::{
     self, ClassCredentials, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };

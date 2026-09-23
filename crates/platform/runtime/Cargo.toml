@@ -14,7 +14,10 @@ wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements
 wamn-control-provision = { workspace = true }
 boon = { workspace = true }
 object_store = { workspace = true }
-wash-runtime = { workspace = true }
+# `oci`: the registry artifact source loads components through wash-runtime's
+# OCI client. wamn-engine links wash-runtime without it.
+wash-runtime = { workspace = true, features = ["oci"] }
+wamn-engine = { workspace = true }
 wasmtime = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-catalog = { workspace = true }

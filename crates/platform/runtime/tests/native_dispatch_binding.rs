@@ -162,7 +162,7 @@ async fn resolve(
     if duplicate_child {
         components.push(component("other-child", &child_wat(92)));
     }
-    let engine = wamn_runtime::build_engine(&[]).expect("production engine");
+    let engine = wamn_engine::build_engine(&[]).expect("production engine");
     let workload = engine
         .initialize_workload(
             "native-binding-test",

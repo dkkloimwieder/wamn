@@ -7,9 +7,7 @@ pub mod component_artifact;
 pub mod component_artifact_source;
 pub mod connection_authority;
 pub mod connection_generation;
-pub mod engine;
 pub mod expected_router;
-pub mod lifecycle;
 pub mod local_application;
 pub mod plugins;
 pub mod registry_credentials;
@@ -23,11 +21,6 @@ pub mod wiring_lowering;
 
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
-
-pub use engine::{
-    DEFAULT_CORE_INSTANCES, HostMemoryBudgets, MEMORY_CAP_BYTES, build_engine,
-    build_engine_with_host_memory, default_host_memory_budgets, host_memory_budgets,
-};
 
 /// Compile a component and return its ordered top-level world imports.
 pub fn component_imports(

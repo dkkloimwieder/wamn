@@ -111,7 +111,7 @@ pub(super) async fn run(
     assert_eq!(before.get::<_, String>(0), "running");
     let generation: i64 = before.get(1);
     stop.send(true)?;
-    let error = wamn_runtime::lifecycle::bounded_cleanup(
+    let error = wamn_engine::lifecycle::bounded_cleanup(
         wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
         &mut queue,
     )

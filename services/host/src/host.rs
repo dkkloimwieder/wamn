@@ -24,6 +24,10 @@ use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_n
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
 use wamn_control_registry::Triple;
+use wamn_engine::engine::{
+    DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
+    build_engine_with_host_memory_and_compilation_cache,
+};
 use wamn_execution_host::{
     DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, ROUTER_DELIVERY_ID,
     RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV,
@@ -32,10 +36,6 @@ use wamn_execution_host::{
 use wamn_platform_identity::route_caller_subject;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
-use wamn_runtime::engine::{
-    DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
-    build_engine_with_host_memory_and_compilation_cache,
 };
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::flow_http_routing::{
@@ -1152,7 +1152,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         };
         if let Err(error) = started {
             let _ = stop_queue.send(true);
-            wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, async {
+            wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
                 let had_ingress = ingress_handler.is_some();
                 let explicit_stop = match ingress_handler.as_ref() {
                     Some(handler) => handler.stop().await.context("stop HTTP admission"),
@@ -1198,7 +1198,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     return std::future::pending::<anyhow::Error>().await;
                 };
                 let liveness = queue.liveness();
-                wamn_runtime::lifecycle::watch_liveness(
+                wamn_engine::lifecycle::watch_liveness(
                     &liveness,
                     None,
                     Duration::from_millis(args.queue_lease_ttl_ms).saturating_mul(3),
@@ -1210,7 +1210,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 _ = sigterm.recv() => Ok(()),
                 error = identity_failure => Err(error),
                 error = queue_failure => Err(error),
-                error = wamn_runtime::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
+                error = wamn_engine::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
                 () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
                 task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
                     Err(probe_listener_failure(task.as_ref()))
@@ -1248,7 +1248,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     drop(queue);
     // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
-    let identity_result = wamn_runtime::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
+    let identity_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         if let Some(mut connection) = identity_connection.take() {
             connection.shutdown().await;
         }
@@ -1256,7 +1256,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     })
     .await;
     probe_tasks.abort_all();
-    let probe_result = wamn_runtime::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
+    let probe_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         while probe_tasks.join_next().await.is_some() {}
         Ok(())
     })
@@ -1417,7 +1417,7 @@ where
         Duration::ZERO
     };
     tracing::info!("shutting down wamn-host");
-    let cleanup_result = wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, async {
+    let cleanup_result = wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
         // Admission closes completely before either execution drain is polled.
         let ingress_result = stop_ingress.await;
         let queue_cleanup = async {

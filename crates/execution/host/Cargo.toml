@@ -18,6 +18,7 @@ wamn-project-state = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-router = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-engine = { workspace = true }
 wash-runtime = { workspace = true }
 futures-util = { workspace = true }
 anyhow = { workspace = true }

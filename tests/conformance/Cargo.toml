@@ -25,6 +25,7 @@ wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-runtime = { workspace = true }
+wamn-engine = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 wasm-encoder = { workspace = true }

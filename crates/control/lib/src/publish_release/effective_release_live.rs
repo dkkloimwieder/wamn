@@ -174,7 +174,7 @@ async fn admit_components(
     project: &mut Client,
     inputs: &[PackageInput],
 ) -> BTreeMap<String, String> {
-    let engine = wamn_runtime::build_engine(&[]).expect("build the production admission engine");
+    let engine = wamn_engine::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
     // The test admits packages in dependency order, base before overlay, so
     // the fact a dependency resolves to is already in hand when the component
