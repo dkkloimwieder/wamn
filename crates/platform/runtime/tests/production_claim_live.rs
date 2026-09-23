@@ -23,11 +23,7 @@ use std::collections::BTreeSet;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_run_state::{
-    RunStore as _,
-    queue::select_production_claim_sql,
-    schema_drift::{Need, assert_run_state_stand_in},
-};
+use wamn_run_state::{RunStore as _, queue::select_production_claim_sql};
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimErrorKind, ProductionClaimResult, ProductionReapResult,
 };
@@ -42,31 +38,10 @@ use common::{
     ready_run, release_record, seed_exhausted_run, seed_run, teardown,
 };
 
-#[test]
-fn production_claim_run_state_stand_in_tracks_schema_of_record() {
-    let stand_in = common::run_state_stand_in_ddl();
-    let fixture_schema = format!("{SCHEMA}.");
-    assert_eq!(stand_in.matches(&fixture_schema).count(), 2);
-    let normalized = stand_in.replace(&fixture_schema, "wamn_run.");
-
-    assert_run_state_stand_in(
-        "production-claim",
-        &normalized,
-        &[
-            ("environment_policies", Need::AbsentByDesign),
-            ("runs", Need::Required),
-            ("effect_attempts", Need::Required),
-            ("effect_attempt_dispatches", Need::AbsentByDesign),
-            ("effect_attempt_outcomes", Need::AbsentByDesign),
-            ("operator_run_actions", Need::AbsentByDesign),
-        ],
-    );
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_claim_live() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
+    let database = wamn_catalog::test_database::tenant();
     let url = database.url();
     let fixture = install_fixture(url).await?;
     let admin = &fixture.admin;
@@ -157,11 +132,11 @@ async fn production_claim_live() -> anyhow::Result<()> {
                    (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
                     environment,wiring_id,wiring_version,input_json,state_json,invocation_context, \
                     trigger_source,event_source_run_id,event_root_run_id,event_depth, \
-                    admission_context_version,platform_revision,capture_mode,idempotency_key, \
+                    admission_context_version,platform_revision,idempotency_key, \
                     response_deadline_at,run_deadline_at) \
                  VALUES ($1,'pre-effect','root',1,'running','cat_main',1,'test',$2,$3, \
                     '{{\"input\":7}}','{{\"cursor\":9}}','{{\"source\":{{\"case\":\"a\"}}}}', \
-                    'event','source-run','root-run',3,'0.1','platform-a','full','idem-a', \
+                    'event','source-run','root-run',3,'0.1','platform-a','idem-a', \
                     '2030-01-01','2030-01-02')"
             ),
             &[&TENANT, &WIRING_ID, &WIRING_VERSION],
@@ -367,7 +342,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &format!(
                 "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
-                        attempts=max_attempts-1 \
+                        attempts=2, max_attempts=3 \
                   WHERE tenant_id=$1 AND run_id='grant-refused'"
             ),
             &[&TENANT],

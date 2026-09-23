@@ -41,7 +41,7 @@ use common::{
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_claim_durable_live() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
+    let database = wamn_catalog::test_database::tenant();
     let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
@@ -64,9 +64,10 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
-                    environment,wiring_id,wiring_version,trigger_source,durability_class) \
-                 VALUES ($1,'effect-race','root',1,'running',$2,1,'test',$3,$4,'http', \
-                         'durable')"
+                    environment,wiring_id,wiring_version,input_json,trigger_source, \
+                    durability_class) \
+                 VALUES ($1,'effect-race','root',1,'running',$2,1,'test',$3,$4, \
+                         '{{\"input\":true}}','http','durable')"
             ),
             &[&TENANT, &PACKAGE_ID, &WIRING_ID, &WIRING_VERSION],
         )
@@ -240,15 +241,6 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         "run-release-record-immutable"
     );
     assert_eq!(release_record(admin, "effect-pin").await?, recorded);
-    admin
-        .execute(
-            &format!(
-                "DELETE FROM {SCHEMA}.effect_attempts \
-                  WHERE tenant_id=$1 AND run_id='effect-pin'"
-            ),
-            &[&TENANT],
-        )
-        .await?;
 
     teardown(fixture).await
 }

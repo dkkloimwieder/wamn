@@ -28,7 +28,7 @@ pub const PACKAGE_ID: &str = "cat_main";
 pub const ENVIRONMENT: &str = "test";
 /// A second pod carrying a different effective release — the mismatch case.
 pub const ROLLED_COMPONENT: &str = "claim-live-runner-next";
-pub const SCHEMA: &str = "wamn_claim_live";
+pub const SCHEMA: &str = "wamn_run";
 /// The exact effective release pinned on every ordinarily seeded run.
 pub const POD_EFFECTIVE_RELEASE_ID: i32 = 1;
 pub const POD_MANIFEST_DIGEST: &str =
@@ -51,10 +51,6 @@ pub async fn connect(url: &str) -> anyhow::Result<Client> {
         }
     });
     Ok(client)
-}
-
-pub fn quote_identifier(identifier: &str) -> String {
-    format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 pub fn quote_literal(value: &str) -> String {
@@ -83,137 +79,19 @@ pub async fn insert_effect_attempt(
     Ok(())
 }
 
-pub fn run_state_stand_in_ddl() -> String {
-    format!(
-        "CREATE TABLE {SCHEMA}.runs ( \
-           tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-           flow_version int NOT NULL, package_id text NOT NULL, effective_release_id int NOT NULL, \
-           environment text NOT NULL, \
-           attachment_id text, registration_id text, \
-           event_source_run_id text, event_root_run_id text, event_depth int, \
-           status text NOT NULL \
-             CHECK (status IN ('dispatched', 'running', 'completed', 'failed', \
-                               'infrastructure-failure', 'effect-uncertain')), \
-           trigger_source text, capture_mode text, \
-           durability_class text NOT NULL DEFAULT 'standard' \
-             CHECK (durability_class IN ('standard', 'durable')), \
-           wiring_id text, wiring_version int, \
-           wiring_hash text, binding_world_json jsonb, \
-           manifest_digest text, service_principal_id uuid, \
-           input_json jsonb NOT NULL DEFAULT '{{}}', result_json jsonb, deadline_adjustments_json jsonb, state_json jsonb, \
-           invocation_context jsonb NOT NULL DEFAULT '{{}}', \
-           admission_context_version text, platform_revision text, idempotency_key text, \
-           caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
-           caller_release_node_id text, caller_outcome_hash text, \
-           caller_released_at timestamptz, response_deadline_at timestamptz, \
-           run_deadline_at timestamptz, terminal_reason text, \
-           fail_kind text, \
-           created_at timestamptz NOT NULL DEFAULT now(), \
-           updated_at timestamptz NOT NULL DEFAULT now(), \
-           CONSTRAINT runs_release_record_check CHECK ( \
-             manifest_digest IS NULL \
-             OR manifest_digest ~ '^sha256:[0-9a-f]{{64}}$'), \
-           CONSTRAINT runs_wiring_identity_check CHECK ( \
-             (wiring_id IS NULL AND wiring_version IS NULL) \
-             OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL \
-                 AND wiring_id <> '' AND wiring_version > 0)), \
-           PRIMARY KEY (tenant_id, run_id)); \
-         CREATE TABLE {SCHEMA}.effect_attempts ( \
-           tenant_id text NOT NULL, attempt_id uuid NOT NULL DEFAULT gen_random_uuid(), \
-           run_id text NOT NULL, root_plan_hash text NOT NULL, current_plan_hash text NOT NULL, \
-           frame_id bigint NOT NULL, parent_frame_id bigint, call_site_id text, \
-           local_node_id text NOT NULL, source_artifact_hash text NOT NULL, \
-           requirement_name text NOT NULL, occurrence int NOT NULL, seq int NOT NULL, \
-           generation_fact_kind text NOT NULL, connection_name text, \
-           connection_generation text, credential_generation text, \
-           verified_author_principal text, verified_publisher_principal text, \
-           attempt_started_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
-           attempt_deadline_at timestamptz NOT NULL, attempt_input_ref text NOT NULL, \
-           created_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
-           PRIMARY KEY (tenant_id, attempt_id), \
-           UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence));"
-    )
-}
+const RUN_STATE_SQL: &str = include_str!("../../../../../deploy/sql/run-state.sql");
+const RUN_QUEUE_SQL: &str = include_str!("../../../../../deploy/sql/run-queue.sql");
 
+/// Apply the run plane of record on the tenant floor, with the two effective
+/// releases the pods mount.
 pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
-    let run_state_stand_in = run_state_stand_in_ddl();
+    client.batch_execute(RUN_STATE_SQL).await?;
+    client.batch_execute(RUN_QUEUE_SQL).await?;
     client
         .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             CREATE SCHEMA {SCHEMA}; \
-             CREATE SCHEMA catalog; \
-             {run_state_stand_in} \
-             CREATE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable() \
-               RETURNS trigger LANGUAGE plpgsql AS $guard$ \
-               BEGIN \
-                 IF NEW.package_id IS DISTINCT FROM OLD.package_id \
-                    OR NEW.effective_release_id IS DISTINCT FROM OLD.effective_release_id \
-                    OR NEW.environment IS DISTINCT FROM OLD.environment \
-                    OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode \
-                    OR NEW.durability_class IS DISTINCT FROM OLD.durability_class \
-                    OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id \
-                    OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version THEN \
-                   RAISE EXCEPTION USING ERRCODE = '55000', \
-                     MESSAGE = 'run-admission-pin-immutable'; \
-                 END IF; \
-                 IF OLD.manifest_digest IS NOT NULL THEN \
-                   IF NEW.manifest_digest IS NULL THEN \
-                     IF NEW.status NOT IN ('dispatched', 'running') \
-                        OR EXISTS (SELECT 1 FROM {SCHEMA}.effect_attempts AS effect \
-                                    WHERE effect.tenant_id = OLD.tenant_id \
-                                      AND effect.run_id = OLD.run_id \
-                                      AND OLD.durability_class = 'durable') THEN \
-                       RAISE EXCEPTION USING ERRCODE = '55000', \
-                         MESSAGE = 'run-release-record-immutable'; \
-                     END IF; \
-                   ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN \
-                     RAISE EXCEPTION USING ERRCODE = '55000', \
-                       MESSAGE = 'run-release-record-immutable'; \
-                   END IF; \
-                 END IF; \
-                 RETURN NEW; \
-               END $guard$; \
-             CREATE TRIGGER runs_admission_pins_immutable \
-               BEFORE UPDATE OF package_id, effective_release_id, environment, \
-                                capture_mode, durability_class, wiring_id, wiring_version, \
-                                manifest_digest \
-               ON {SCHEMA}.runs FOR EACH ROW \
-               EXECUTE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
-             CREATE TABLE {SCHEMA}.run_queue ( \
-               tenant_id text NOT NULL, run_id text NOT NULL, priority int NOT NULL DEFAULT 0, \
-               available_at timestamptz NOT NULL DEFAULT now(), stream_seq bigint NOT NULL DEFAULT 0, \
-               lease_owner text, lease_expires_at timestamptz, \
-               lease_generation bigint NOT NULL DEFAULT 0, attempts int NOT NULL DEFAULT 0, \
-               max_attempts int NOT NULL DEFAULT 3, enqueued_at timestamptz NOT NULL DEFAULT now(), \
-               PRIMARY KEY (tenant_id, run_id), \
-               FOREIGN KEY (tenant_id, run_id) REFERENCES {SCHEMA}.runs); \
-             CREATE TABLE catalog.connection_bindings ( \
-               tenant_id text NOT NULL, effective_release_id int NOT NULL, \
-               component_digest text NOT NULL, store_alias text NOT NULL, \
-               environment text NOT NULL, instance_id text NOT NULL, \
-               binding_status text NOT NULL, validation_status text NOT NULL, \
-               validation_hash text NOT NULL); \
-             CREATE TABLE catalog.connection_instances ( \
-               tenant_id text NOT NULL, environment text NOT NULL, instance_id text NOT NULL, \
-               requirement_type text NOT NULL, contract text NOT NULL, lifecycle_status text NOT NULL, \
-               active_generation bigint NOT NULL, PRIMARY KEY (tenant_id, environment, instance_id)); \
-             CREATE TABLE catalog.connection_generations ( \
-               tenant_id text NOT NULL, environment text NOT NULL, instance_id text NOT NULL, \
-               generation bigint NOT NULL, PRIMARY KEY (tenant_id, environment, instance_id, generation)); \
-             ALTER TABLE {SCHEMA}.runs ENABLE ROW LEVEL SECURITY; \
-             ALTER TABLE {SCHEMA}.runs FORCE ROW LEVEL SECURITY; \
-             CREATE POLICY runs_tenant ON {SCHEMA}.runs \
-               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
-             ALTER TABLE {SCHEMA}.run_queue ENABLE ROW LEVEL SECURITY; \
-             ALTER TABLE {SCHEMA}.run_queue FORCE ROW LEVEL SECURITY; \
-             CREATE POLICY run_queue_tenant ON {SCHEMA}.run_queue \
-               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
-             ALTER TABLE {SCHEMA}.effect_attempts ENABLE ROW LEVEL SECURITY; \
-             ALTER TABLE {SCHEMA}.effect_attempts FORCE ROW LEVEL SECURITY; \
-             CREATE POLICY effect_attempts_tenant ON {SCHEMA}.effect_attempts \
-               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')) \
-               WITH CHECK (tenant_id=NULLIF(current_setting('app.tenant',true),''));"
+            "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
+             VALUES ('{TENANT}', {POD_EFFECTIVE_RELEASE_ID}, '{ENVIRONMENT}'), \
+                    ('{TENANT}', {ROLLED_EFFECTIVE_RELEASE_ID}, '{ENVIRONMENT}');"
         ))
         .await?;
     Ok(())
@@ -221,10 +99,7 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
 
 /// Mint the executor generation separately from the fixture's administrator.
 async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(String, String)> {
-    use wamn_control_provision::sql::{
-        EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS, EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS,
-        normalize_workload_generation_membership_sql,
-    };
+    use wamn_control_provision::sql::prepare_workload_generation_sql;
     use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role};
 
     let database: String = client
@@ -242,36 +117,15 @@ async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(S
         },
         wamn_control_provision::CredentialGeneration::A,
     )?;
-    let role_identifier = quote_identifier(&role);
-    let acl_role = quote_identifier(family.acl_role());
-    let run_update = EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS
-        .iter()
-        .map(|column| quote_identifier(column))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let queue_update = EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS
-        .iter()
-        .map(|column| quote_identifier(column))
-        .collect::<Vec<_>>()
-        .join(", ");
-    // The fixture has only the catalog relations the claim query reads. Keep
-    // its executor writes at the production column grain and grant no INSERT.
+    // The production builder: the stable executor surface, the `wamn_platform`
+    // group edge, the generation login and its `CONNECT`.
     client
-        .batch_execute(&format!(
-            "CREATE ROLE {role_identifier} LOGIN PASSWORD {password} \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
-             {membership} \
-             GRANT CONNECT ON DATABASE {database} TO {role_identifier}; \
-             GRANT USAGE ON SCHEMA {SCHEMA}, catalog TO {acl_role}; \
-             GRANT SELECT ON TABLE {SCHEMA}.runs, {SCHEMA}.run_queue, \
-               {SCHEMA}.effect_attempts, catalog.connection_bindings, \
-               catalog.connection_instances, catalog.connection_generations TO {acl_role}; \
-             GRANT UPDATE ({run_update}) ON TABLE {SCHEMA}.runs TO {acl_role}; \
-             GRANT UPDATE ({queue_update}) ON TABLE {SCHEMA}.run_queue TO {acl_role}; \
-             GRANT DELETE ON TABLE {SCHEMA}.run_queue TO {acl_role};",
-            password = quote_literal(EXECUTOR_PASSWORD),
-            membership = normalize_workload_generation_membership_sql(family, &role, true),
-            database = quote_identifier(&database),
+        .batch_execute(&prepare_workload_generation_sql(
+            family,
+            &database,
+            &role,
+            EXECUTOR_PASSWORD,
+            "2099-01-01T00:00:00Z",
         ))
         .await?;
     let mut url = Url::parse(admin_url)?;

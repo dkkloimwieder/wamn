@@ -76,7 +76,6 @@ hyper = { workspace = true, features = ["server"] }
 base64 = { workspace = true }
 ring = { workspace = true }
 rcgen = { workspace = true }
-wamn-run-state = { workspace = true, features = ["test-util"] }
 # M-TEST-UTIL: the release-manifest reader's test fixtures build manifests from
 # parts, which wamn-catalog gates behind `test-util`. A DEV-dependency feature
 # does not reach the production graph, so this crate's own build still cannot
