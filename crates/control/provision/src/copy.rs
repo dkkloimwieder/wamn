@@ -336,8 +336,8 @@ mod tests {
         assert!(list.contains("schemaname = $1"));
         assert!(list.contains("ORDER BY tablename"));
         assert_eq!(
-            count_rows_sql("public", "receipts"),
-            "SELECT count(*) FROM \"public\".\"receipts\""
+            count_rows_sql("public", "widgets"),
+            "SELECT count(*) FROM \"public\".\"widgets\""
         );
     }
 

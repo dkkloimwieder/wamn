@@ -167,12 +167,12 @@ mod tests {
 
     #[test]
     fn tenant_identity_compares_every_declared_coordinate() {
-        let recorded = Triple::new("acme", "receiving", "dev");
+        let recorded = Triple::new("acme", "widgets", "dev");
         assert!(check_tenant_environment_identity("tenant-a", &recorded, &recorded).is_ok());
         for presented in [
-            Triple::new("other", "receiving", "dev"),
+            Triple::new("other", "widgets", "dev"),
             Triple::new("acme", "shipping", "dev"),
-            Triple::new("acme", "receiving", "prod"),
+            Triple::new("acme", "widgets", "prod"),
         ] {
             let error =
                 check_tenant_environment_identity("tenant-a", &recorded, &presented).unwrap_err();
@@ -183,7 +183,7 @@ mod tests {
             assert_eq!(
                 error.to_string(),
                 format!(
-                    "tenant-environment-identity-projection-content-conflict: tenant=tenant-a recorded=acme/receiving/dev presented={presented}"
+                    "tenant-environment-identity-projection-content-conflict: tenant=tenant-a recorded=acme/widgets/dev presented={presented}"
                 )
             );
         }

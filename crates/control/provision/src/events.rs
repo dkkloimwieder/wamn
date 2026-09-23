@@ -93,13 +93,13 @@ mod tests {
 
     #[test]
     fn event_names_and_subjects_use_the_same_declared_triple() {
-        let scope = Triple::new("acme", "receiving", "dev");
+        let scope = Triple::new("acme", "widgets", "dev");
         let source = source_stream_config(&scope, 3, Duration::from_secs(120));
         assert_eq!(
             source.name,
-            wamn_event_wire::stream_name("acme", "receiving", "dev")
+            wamn_event_wire::stream_name("acme", "widgets", "dev")
         );
-        assert_eq!(source.subjects, ["evt.acme.receiving.dev.>"]);
+        assert_eq!(source.subjects, ["evt.acme.widgets.dev.>"]);
         let advisory = advisory_stream_config(&scope, 3);
         assert_eq!(advisory.name, delivery_advisory_stream(&source.name));
         assert_eq!(advisory.subjects, delivery_advisory_subjects(&source.name));
@@ -112,8 +112,8 @@ mod tests {
             DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT
         );
         for other in [
-            Triple::new("acme", "wms", "dev"),
-            Triple::new("acme", "receiving", "prod"),
+            Triple::new("acme", "billing", "dev"),
+            Triple::new("acme", "widgets", "prod"),
         ] {
             assert!(!stream_config_matches(
                 &source,
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn source_comparison_refuses_foreign_inputs_and_changed_delivery_policy() {
         let expected = source_stream_config(
-            &Triple::new("acme", "receiving", "dev"),
+            &Triple::new("acme", "widgets", "dev"),
             3,
             Duration::from_secs(120),
         );
@@ -208,7 +208,7 @@ mod tests {
     fn consumer_comparison_refuses_foreign_delivery_and_changed_bounds() {
         let expected = materializer_consumer_config(
             "mat_t_pkg_r1",
-            "evt.acme.receiving.dev.receipt.>",
+            "evt.acme.widgets.dev.widget.>",
             Duration::from_secs(30),
             5,
         );
@@ -228,7 +228,7 @@ mod tests {
                 ..stored.clone()
             },
             consumer::Config {
-                filter_subjects: vec!["evt.acme.wms.dev.>".into()],
+                filter_subjects: vec!["evt.acme.billing.dev.>".into()],
                 ..stored.clone()
             },
             consumer::Config {

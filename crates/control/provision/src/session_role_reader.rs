@@ -181,10 +181,10 @@ pub fn parse_session_role_reader_url(
 mod tests {
     use super::*;
 
-    const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+    const DATABASE: &str = "wamn-db-acme--widgets--dev--k3m9x2p7";
     const SCOPE: WorkloadRoleScope<'_> = WorkloadRoleScope::ProjectEnvironment {
         org: "acme",
-        project: "receiving",
+        project: "widgets",
         environment: "dev",
         database: DATABASE,
     };
@@ -199,7 +199,7 @@ mod tests {
     }
 
     fn parse(raw: &str) -> Result<SessionRoleReaderConnection, SessionRoleReaderUrlError> {
-        parse_session_role_reader_url(raw, "acme", "receiving", "dev", DATABASE)
+        parse_session_role_reader_url(raw, "acme", "widgets", "dev", DATABASE)
     }
 
     #[test]
@@ -251,14 +251,14 @@ mod tests {
             CredentialGeneration::A,
         );
         for (org, project, environment, database) in [
-            ("other", "receiving", "dev", DATABASE),
+            ("other", "widgets", "dev", DATABASE),
             ("acme", "other", "dev", DATABASE),
-            ("acme", "receiving", "prod", DATABASE),
+            ("acme", "widgets", "prod", DATABASE),
             (
                 "acme",
-                "receiving",
+                "widgets",
                 "dev",
-                "wamn-db-acme--receiving--dev--z9z9z9z9",
+                "wamn-db-acme--widgets--dev--z9z9z9z9",
             ),
         ] {
             assert!(
@@ -266,7 +266,7 @@ mod tests {
             );
         }
         let mut changed = Url::parse(&raw).unwrap();
-        changed.set_path("/wamn-db-acme--receiving--dev--z9z9z9z9");
+        changed.set_path("/wamn-db-acme--widgets--dev--z9z9z9z9");
         assert_eq!(
             parse(changed.as_str()).unwrap_err().kind(),
             SessionRoleReaderUrlErrorKind::Database

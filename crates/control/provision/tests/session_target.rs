@@ -14,7 +14,7 @@ const PASSWORD: &str = "fixture-secret-do-not-log";
 fn triple(org: &str, env: &str) -> Triple {
     Triple {
         org: org.into(),
-        project: "receiving".into(),
+        project: "widgets".into(),
         env: env.into(),
     }
 }
@@ -79,7 +79,7 @@ fn refused(document: &Value) {
 fn audience_spelling_and_each_environment_instance_are_exact() {
     assert_eq!(
         session_audience(&triple("acme", "dev"), INSTANCE).unwrap(),
-        "urn:wamn:project-env:acme:receiving:dev:k3m9x2p7"
+        "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7"
     );
     let mut audiences = BTreeSet::new();
     let mut databases = BTreeSet::new();
@@ -92,7 +92,7 @@ fn audience_spelling_and_each_environment_instance_are_exact() {
                 let b = target(&coordinates, instance, CredentialGeneration::B);
                 assert_eq!(
                     a.audience(),
-                    format!("urn:wamn:project-env:{org}:receiving:{env}:{instance}")
+                    format!("urn:wamn:project-env:{org}:widgets:{env}:{instance}")
                 );
                 assert_eq!(
                     b.audience(),
@@ -132,7 +132,7 @@ fn exact_credential_bearing_wire_shape_round_trips_both_generations() {
         let original = SessionTarget::new(&coordinates, INSTANCE, "t1", &url).unwrap();
         let encoded = original.to_json().unwrap();
         let expected = format!(
-            "{{\"audience\":\"urn:wamn:project-env:acme:receiving:dev:k3m9x2p7\",\"org\":\"acme\",\"project\":\"receiving\",\"env\":\"dev\",\"instance_suffix\":\"k3m9x2p7\",\"tenant_id\":\"t1\",\"database\":\"wamn-db-acme--receiving--dev--k3m9x2p7\",\"database_url\":\"{url}\"}}"
+            "{{\"audience\":\"urn:wamn:project-env:acme:widgets:dev:k3m9x2p7\",\"org\":\"acme\",\"project\":\"widgets\",\"env\":\"dev\",\"instance_suffix\":\"k3m9x2p7\",\"tenant_id\":\"t1\",\"database\":\"wamn-db-acme--widgets--dev--k3m9x2p7\",\"database_url\":\"{url}\"}}"
         );
         assert_eq!(
             encoded, expected,
@@ -183,17 +183,17 @@ fn malformed_missing_duplicate_and_extra_fields_refuse() {
 #[test]
 fn forged_audience_database_coordinates_and_incarnation_refuse() {
     for (field, value) in [
-        ("audience", "receiving"),
+        ("audience", "widgets"),
         (
             "audience",
-            "urn:wamn:project-env:globex:receiving:dev:k3m9x2p7",
+            "urn:wamn:project-env:globex:widgets:dev:k3m9x2p7",
         ),
         (
             "audience",
-            "urn:wamn:project-env:acme:receiving:dev:k3m9x2p7/",
+            "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7/",
         ),
         ("database", "wamn_system"),
-        ("database", "wamn-db-acme--receiving--prod--k3m9x2p7"),
+        ("database", "wamn-db-acme--widgets--prod--k3m9x2p7"),
         ("org", "globex"),
         ("project", "other"),
         ("env", "prod"),
@@ -219,7 +219,7 @@ fn invalid_coordinates_and_instance_spelling_refuse_before_use() {
         ("org", ""),
         ("org", "acme:other"),
         ("org", "Acme"),
-        ("project", "receiving--other"),
+        ("project", "widgets--other"),
         ("project", "wamn-system"),
         ("env", "dev/prod"),
         ("env", ""),
@@ -256,7 +256,7 @@ fn wrong_reader_families_and_url_overrides_refuse() {
     for url in [
         format!("{raw}?options=-crole=postgres"),
         format!("{raw}#override"),
-        raw.replace("/wamn-db-acme--receiving--dev--k3m9x2p7", "/wamn_system"),
+        raw.replace("/wamn-db-acme--widgets--dev--k3m9x2p7", "/wamn_system"),
     ] {
         let mut forged = document();
         forged["database_url"] = json!(url);

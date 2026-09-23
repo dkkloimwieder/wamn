@@ -271,14 +271,14 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         "seed materializer registration inputs",
         "INSERT INTO catalog.packages \
            (tenant_id, package_id, package_version, manifest_sha256) VALUES \
-           ('t1', 'receiving', '1.0.0', \
+           ('t1', 'widgets', '1.0.0', \
             'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
            ('t2', 'foreign', '1.0.0', \
             'sha256:1111111111111111111111111111111111111111111111111111111111111111'); \
          INSERT INTO catalog.event_registrations \
            (tenant_id, package_id, registration_id, entity_id, registration) VALUES \
-           ('t1', 'overlay', 'quality.create_inspection', 'receipt', '{}'), \
-           ('t2', 'foreign', 'foreign', 'receipt', '{}');",
+           ('t1', 'overlay', 'quality.create_inspection', 'widget', '{}'), \
+           ('t2', 'foreign', 'foreign', 'widget', '{}');",
     );
     let as_materializer = role_url(&admin, &login, GENERATION_PW);
     assert_eq!(
@@ -289,7 +289,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
                FROM catalog.packages \
               WHERE tenant_id = current_setting('app.tenant', true)"
         ),
-        "receiving@1.0.0"
+        "widgets@1.0.0"
     );
     assert_eq!(
         query(
@@ -306,7 +306,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
             &as_materializer,
             "INSERT INTO catalog.event_registrations \
                (tenant_id, package_id, registration_id, entity_id, registration) \
-             VALUES ('t1', 'overlay', 'forged', 'receipt', '{}');"
+             VALUES ('t1', 'overlay', 'forged', 'widget', '{}');"
         )
         .as_deref(),
         Some("42501")
@@ -630,7 +630,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         &format!(
             "INSERT INTO catalog.packages \
                (tenant_id, package_id, package_version, manifest_sha256) \
-             VALUES ('t1', 'receiving', '1.0.0', 'sha256:{package_hash}');\n\
+             VALUES ('t1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              INSERT INTO catalog.effective_releases \
                (tenant_id, effective_release_id, environment) \
              VALUES ('t1', 1, 'dev');\n\
@@ -641,7 +641,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
                (tenant_id, run_id, package_id, effective_release_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \
                 binding_world_json, input_json) \
-             VALUES ('t1', 'r1', 'receiving', 1, 'dev', 'dispatched', 'internal', \
+             VALUES ('t1', 'r1', 'widgets', 1, 'dev', 'dispatched', 'internal', \
                      'w', 1, 'sha256:{hash}', '[]', '{{\"a\":1}}');\n",
             hash = "c".repeat(64),
             package_hash = "d".repeat(64),
@@ -900,7 +900,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'route-caller');\n\
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
              VALUES ('tenant-a', 'route-caller', \
-                     'wamn-receiving:purchase-order/get@1.0.0');\n\
+                     'wamn-widgets:widget/get@1.0.0');\n\
              COMMIT;\n"
         ),
     );
@@ -934,7 +934,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             &as_login,
             "SELECT count(*) FROM app_system.permissions \
               WHERE role_name = 'route-caller' \
-                AND permission = 'wamn-receiving:purchase-order/get@1.0.0'"
+                AND permission = 'wamn-widgets:widget/get@1.0.0'"
         ),
         "1",
         "the callable-HTTP generation cannot read the exact operation grant"
@@ -948,7 +948,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              WHERE u.tenant_id = 'tenant-a' AND u.id = '00000000-0000-4000-8000-000000000001' \
                AND u.status = 'active'"
         ),
-        "wamn-receiving:purchase-order/get@1.0.0",
+        "wamn-widgets:widget/get@1.0.0",
         "the callable-HTTP generation cannot read the human user's fresh permission"
     );
 }

@@ -219,12 +219,12 @@ $shape$;
 
 INSERT INTO catalog.packages
   (tenant_id, package_id, package_version, manifest_sha256, predecessor_version)
-VALUES ('tenant-a', 'receiving', '1.0.0', 'sha256:' || repeat('a', 64), NULL);
+VALUES ('tenant-a', 'widgets', '1.0.0', 'sha256:' || repeat('a', 64), NULL);
 
 INSERT INTO catalog.package_migrations
   (tenant_id, package_id, package_version, ordinal, relative_path, sha256)
 VALUES
-  ('tenant-a', 'receiving', '1.0.0', 1, 'migrations/0001_initial.sql',
+  ('tenant-a', 'widgets', '1.0.0', 1, 'migrations/0001_initial.sql',
    'sha256:' || repeat('c', 64));
 DO $immutable$ BEGIN
   BEGIN
@@ -239,7 +239,7 @@ INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environ
 INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) VALUES ('tenant-a', 1, 'dev') ON CONFLICT (tenant_id, effective_release_id) DO NOTHING;
 INSERT INTO catalog.effective_release_packages
   (tenant_id, effective_release_id, package_id, package_version)
-VALUES ('tenant-a', 1, 'receiving', '1.0.0');
+VALUES ('tenant-a', 1, 'widgets', '1.0.0');
 INSERT INTO catalog.effective_release_heads
   (tenant_id, environment, effective_release_id)
 VALUES ('tenant-a', 'dev', 1);
@@ -255,8 +255,8 @@ INSERT INTO catalog.component_library
   (tenant_id, environment_instance, package_id, package_version, component,
    interface_version, operations, component_digest, projection_hash, imports,
    imports_fingerprint, effects)
-VALUES ('tenant-a', '', 'receiving', '1.0.0', 'receiving', '0.1.0',
-        '{"wamn-receiving:purchase-order/get@1.0.0": {}}'::jsonb,
+VALUES ('tenant-a', '', 'widgets', '1.0.0', 'widgets', '0.1.0',
+        '{"wamn-widgets:widget/get@1.0.0": {}}'::jsonb,
         'sha256:' || repeat('1', 64), 'sha256:' || repeat('2', 64),
         '[]'::jsonb, 'sha256:' || repeat('3', 64), '[]'::jsonb);
 
@@ -275,7 +275,7 @@ DO $unprojected_is_frozen$ BEGIN
 END
 $unprojected_is_frozen$;
 
-INSERT INTO catalog.tenant_environments (tenant_id, org, project, env, instance_suffix, disposable, environment_instance) VALUES ('tenant-a', 'acme', 'receiving', 'dev', 'abcd1234', false, '');
+INSERT INTO catalog.tenant_environments (tenant_id, org, project, env, instance_suffix, disposable, environment_instance) VALUES ('tenant-a', 'acme', 'widgets', 'dev', 'abcd1234', false, '');
 DO $durable_is_frozen$ BEGIN
   ASSERT (SELECT environment_instance FROM catalog.tenant_environments
            WHERE tenant_id = 'tenant-a') = '',
@@ -316,8 +316,8 @@ INSERT INTO catalog.component_library
   (tenant_id, environment_instance, package_id, package_version, component,
    interface_version, operations, component_digest, projection_hash, imports,
    imports_fingerprint, effects)
-VALUES ('tenant-a', '16384', 'receiving', '1.0.0', 'receiving', '0.1.0',
-        '{"wamn-receiving:purchase-order/get@1.0.0": {}}'::jsonb,
+VALUES ('tenant-a', '16384', 'widgets', '1.0.0', 'widgets', '0.1.0',
+        '{"wamn-widgets:widget/get@1.0.0": {}}'::jsonb,
         'sha256:' || repeat('4', 64), 'sha256:' || repeat('5', 64),
         '[]'::jsonb, 'sha256:' || repeat('3', 64), '[]'::jsonb);
 DO $each_creation_keeps_its_own_fact$ BEGIN
@@ -354,7 +354,7 @@ fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
     let database = database(&url);
     let author_a = wamn_control_provision::control_author_generation_role(
         "acme",
-        "receiving",
+        "widgets",
         "dev",
         &database,
         wamn_control_provision::CredentialGeneration::A,
@@ -388,12 +388,12 @@ fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
 SET ROLE wamn_system;
 INSERT INTO wamn_authority.author_login_tenants
   (login_identity, tenant_id, org_id, project_id, environment)
-VALUES ('{author_a}', 'tenant-a', 'acme', 'receiving', 'dev'),
+VALUES ('{author_a}', 'tenant-a', 'acme', 'widgets', 'dev'),
        ('{author_b}', 'tenant-b', 'acme', 'shipping', 'dev');
 DO $seed$ DECLARE tenant text; package text; release int; BEGIN
   FOR tenant, package, release IN
     SELECT * FROM (VALUES
-      ('tenant-a', 'receiving', 1), ('tenant-b', 'shipping', 2)
+      ('tenant-a', 'widgets', 1), ('tenant-b', 'shipping', 2)
     ) AS seed(tenant, package, release)
   LOOP
     PERFORM set_config('app.tenant', tenant, false);
@@ -457,7 +457,7 @@ INSERT INTO catalog.authoring_command_audit
    request_hash, outcome_bytes)
 VALUES
   ('tenant-a', 'command-1', 'gate', 'principal-1', 'human', 'someone',
-   'project-author', 'acme', 'receiving', 'dev', 'receiving@1.0.0',
+   'project-author', 'acme', 'widgets', 'dev', 'widgets@1.0.0',
    'sha256:' || repeat('1', 64), '\x7b7d'::bytea);
 INSERT INTO wamn_run.gate_reports
   (tenant_id, wiring_hash, passed, summary)

@@ -330,7 +330,7 @@ mod tests {
     use super::*;
 
     const ORG: &str = "acme";
-    const PROJECT: &str = "receiving";
+    const PROJECT: &str = "widgets";
     const ENVIRONMENT: &str = "dev";
     const DATABASE: &str = "wamn_system";
 
@@ -429,7 +429,7 @@ mod tests {
             SystemReader::Registry,
             &url(
                 &role(SystemReader::Registry, CredentialGeneration::A),
-                "wamn-db-acme--receiving--dev",
+                "wamn-db-acme--widgets--dev",
             ),
         )
         .expect_err("a project-database URL was accepted");

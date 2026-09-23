@@ -274,10 +274,10 @@ mod tests {
     use crate::{APP_ROLE, MANAGEMENT_ADMITTER_ROLE};
 
     const ORG: &str = "acme";
-    const PROJECT: &str = "receiving";
+    const PROJECT: &str = "widgets";
     const ENVIRONMENT: &str = "dev";
     /// The project-environment database, suffixed exactly as provisioning mints it.
-    const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+    const DATABASE: &str = "wamn-db-acme--widgets--dev--k3m9x2p7";
 
     fn role(generation: CredentialGeneration) -> String {
         management_admitter_generation_role(ORG, PROJECT, ENVIRONMENT, DATABASE, generation)

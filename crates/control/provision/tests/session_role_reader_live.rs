@@ -97,7 +97,7 @@ fn role(generation: CredentialGeneration) -> String {
         FAMILY,
         WorkloadRoleScope::ProjectEnvironment {
             org: "acme",
-            project: "receiving",
+            project: "widgets",
             environment: "dev",
             database: DATABASE,
         },
@@ -239,7 +239,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             (&b_url, CredentialGeneration::B),
         ] {
             assert_eq!(
-                parse_session_role_reader_url(url, "acme", "receiving", "dev", DATABASE)
+                parse_session_role_reader_url(url, "acme", "widgets", "dev", DATABASE)
                     .unwrap()
                     .generation(),
                 generation

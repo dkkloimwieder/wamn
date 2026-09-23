@@ -246,13 +246,13 @@ mod tests {
 
     #[test]
     fn session_reader_secret_round_trips_the_checked_target() {
-        let triple = Triple::new("acme", "receiving", "dev");
-        let database = crate::project_env_database_name("acme", "receiving", "dev", "k3m9x2p7");
+        let triple = Triple::new("acme", "widgets", "dev");
+        let database = crate::project_env_database_name("acme", "widgets", "dev", "k3m9x2p7");
         let role = crate::workload_generation_role(
             WorkloadRoleFamily::SessionRoleReader,
             crate::WorkloadRoleScope::ProjectEnvironment {
                 org: "acme",
-                project: "receiving",
+                project: "widgets",
                 environment: "dev",
                 database: &database,
             },
@@ -274,7 +274,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             parsed.audience(),
-            "urn:wamn:project-env:acme:receiving:dev:k3m9x2p7"
+            "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7"
         );
         assert_eq!(parsed.tenant_id(), "t1");
         assert_eq!(parsed.connection().url(), url);
@@ -307,14 +307,27 @@ mod tests {
 
     #[test]
     fn control_author_secret_matches_the_scenario_worker_mount() {
-        let triple = Triple::new("acme", "receiving", "dev");
+        let triple = Triple::new("acme", "widgets", "dev");
         let url = "postgres://wamn_control_author_scope_a:secret@control-rw/wamn-system";
         let secret = render_control_author_secret_manifest(&triple, "wamn-system", url);
         assert_eq!(
             secret["metadata"]["name"],
-            "wamn-authoring-acme--receiving--dev"
+            "wamn-authoring-acme--widgets--dev"
         );
         assert_eq!(secret["stringData"]["url"], url);
+    }
+
+    /// The scope the scenario-worker Deployment serves, read from its own
+    /// `serve` arguments rather than restated here.
+    fn scenario_worker_triple(deployment: &str) -> Triple {
+        let arg = |flag: &str| {
+            deployment
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("- ")?.strip_prefix(flag))
+                .unwrap_or_else(|| panic!("scenario-worker states {flag}"))
+                .to_owned()
+        };
+        Triple::new(arg("--org="), arg("--project="), arg("--environment="))
     }
 
     /// `wamn-0h0g.8.5.3` landed the consuming half — a `secretKeyRef` in
@@ -333,9 +346,9 @@ mod tests {
         const SCENARIO_WORKER: &str =
             include_str!("../../../../deploy/platform/scenario-worker.yaml");
 
-        let triple = Triple::new("acme", "receiving", "dev");
+        let triple = scenario_worker_triple(SCENARIO_WORKER);
         let url = "postgres://wamn_mgmt_admitter_scope_a:pw@acme-dev-rw:5432/\
-                   wamn-db-acme--receiving--dev--k3m9x2p7";
+                   wamn-db-acme--widgets--dev--k3m9x2p7";
         let secret = render_management_admitter_secret_manifest(&triple, "wamn-system", url);
         assert_eq!(secret["kind"], "Secret");
         assert_eq!(secret["type"], "Opaque");
@@ -397,7 +410,7 @@ mod tests {
         const SCENARIO_WORKER: &str =
             include_str!("../../../../deploy/platform/scenario-worker.yaml");
 
-        let triple = Triple::new("acme", "receiving", "dev");
+        let triple = scenario_worker_triple(SCENARIO_WORKER);
         let url = "postgres://wamn_identity_reader_scope_a:pw@wamn-sysdb-rw:5432/wamn_system";
         let secret = render_workload_secret_manifest(
             WorkloadRoleFamily::IdentityReader,

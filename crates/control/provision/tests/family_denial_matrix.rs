@@ -475,13 +475,13 @@ DO $seed$ DECLARE t text; a uuid; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.packages
     (tenant_id, package_id, package_version, manifest_sha256)
-    VALUES (t, 'receiving', '1.0.0', 'sha256:'||repeat('f',64));
+    VALUES (t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
   INSERT INTO catalog.effective_releases
     (tenant_id, effective_release_id, environment)
     VALUES (t, 1, 'dev');
   INSERT INTO catalog.effective_release_packages
     (tenant_id, effective_release_id, package_id, package_version)
-    VALUES (t, 1, 'receiving', '1.0.0');
+    VALUES (t, 1, 'widgets', '1.0.0');
   INSERT INTO catalog.effective_release_heads
     (tenant_id, environment, effective_release_id)
     VALUES (t, 'dev', 1);
@@ -490,7 +490,7 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO wamn_run.runs
     (tenant_id, run_id, package_id, effective_release_id, environment, status, trigger_source,
      wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
-    VALUES (t, 'r1', 'receiving', 1, 'dev', 'dispatched', 'internal', 'w', 1,
+    VALUES (t, 'r1', 'widgets', 1, 'dev', 'dispatched', 'internal', 'w', 1,
             'sha256:'||repeat('c',64), '[]', '{\"a\":1}');
   a := gen_random_uuid();
   INSERT INTO wamn_run.effect_attempts

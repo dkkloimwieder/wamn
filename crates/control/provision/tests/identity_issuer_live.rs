@@ -119,7 +119,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
     let reader = system_reader_generation_role(
         SystemReader::Identity,
         "acme",
-        "receiving",
+        "widgets",
         "dev",
         "wamn_system",
         CredentialGeneration::A,
@@ -303,14 +303,14 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                     url,
                     "SELECT EXISTS(SELECT 1 FROM identity.project_env_memberships \
                 WHERE principal_id = '00000000-0000-0000-0000-000000000001' \
-                  AND org = 'acme' AND project = 'receiving' AND env = 'dev');"
+                  AND org = 'acme' AND project = 'widgets' AND env = 'dev');"
                 ),
                 "f"
             );
             run(
                 url,
                 "SELECT org, project, env, instance_suffix FROM registry.project_envs \
-                WHERE org = 'acme' AND project = 'receiving' AND env = 'dev';",
+                WHERE org = 'acme' AND project = 'widgets' AND env = 'dev';",
             );
             for statement in [
                 "SELECT secret_name FROM registry.project_envs",
@@ -322,7 +322,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "INSERT INTO identity.pats (created_at) VALUES (DEFAULT)",
                 "INSERT INTO identity.pats (revoked_at) VALUES (NULL)",
                 "INSERT INTO identity.principals (kind, subject, display_name) VALUES ('human', 'escape', 'Escape')",
-                "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'receiving', 'dev')",
+                "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'widgets', 'dev')",
                 "DELETE FROM identity.project_env_memberships",
                 "UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'",
             ] {

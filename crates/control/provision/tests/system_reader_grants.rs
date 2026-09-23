@@ -33,7 +33,7 @@ use wamn_control_provision::{
 };
 
 const ORG: &str = "acme";
-const PROJECT: &str = "receiving";
+const PROJECT: &str = "widgets";
 const ENV: &str = "dev";
 const READER_PW: &str = "wamn_system_reader_pw";
 
@@ -553,10 +553,10 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
          WHERE identity.pats.token_prefix = '0123456789abcdef'",
         "SELECT role FROM identity.project_roles \
          WHERE principal_id = '00000000-0000-4000-8000-000000000000'::uuid \
-           AND org = 'acme' AND project = 'receiving' ORDER BY role",
+           AND org = 'acme' AND project = 'widgets' ORDER BY role",
         "SELECT EXISTS (SELECT 1 FROM identity.project_env_memberships \
          WHERE principal_id = '00000000-0000-4000-8000-000000000000'::uuid \
-           AND org = 'acme' AND project = 'receiving' AND env = 'dev')",
+           AND org = 'acme' AND project = 'widgets' AND env = 'dev')",
     ] {
         assert_eq!(
             reader_sqlstate(identity_url, statement),
@@ -579,7 +579,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         ),
         (
             "INSERT INTO identity.project_roles (principal_id, org, project, role) \
-             VALUES ('00000000-0000-4000-8000-000000000000'::uuid, 'acme', 'receiving', \
+             VALUES ('00000000-0000-4000-8000-000000000000'::uuid, 'acme', 'widgets', \
                      'project-admin')",
             "self-grant a project role",
         ),
@@ -589,7 +589,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         ),
         (
             "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
-             VALUES ('00000000-0000-4000-8000-000000000000'::uuid, 'acme', 'receiving', 'dev')",
+             VALUES ('00000000-0000-4000-8000-000000000000'::uuid, 'acme', 'widgets', 'dev')",
             "self-grant environment membership",
         ),
         (

@@ -108,7 +108,7 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
         &db_url,
         &format!(
             r"
-CREATE TABLE {schema}.receipts (id uuid PRIMARY KEY, qty numeric(8,3));
+CREATE TABLE {schema}.widgets (id uuid PRIMARY KEY, qty numeric(8,3));
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM pg_publication WHERE pubname = '{cdc}') = 1,
     'the publication exists exactly once (idempotent re-apply)';
@@ -118,7 +118,7 @@ DO $$ BEGIN
             FROM pg_publication WHERE pubname = '{cdc}'),
     'the publication carries insert/update/delete and EXCLUDES truncate';
   ASSERT (SELECT count(*) FROM pg_publication_tables
-            WHERE pubname = '{cdc}' AND schemaname = '{schema}' AND tablename = 'receipts') = 1,
+            WHERE pubname = '{cdc}' AND schemaname = '{schema}' AND tablename = 'widgets') = 1,
     'FOR TABLES IN SCHEMA auto-includes a table created AFTER the publication';
   ASSERT (SELECT count(*) FROM pg_replication_slots WHERE slot_name = '{cdc}') = 1,
     'the failover slot exists exactly once (idempotent re-apply)';
@@ -139,7 +139,7 @@ DO $$ BEGIN
     'the role may CONNECT to the project-env database';
   ASSERT has_schema_privilege('{cdc}', '{schema}', 'USAGE'),
     'the role has USAGE on the app schema';
-  ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT') = false,
+  ASSERT has_table_privilege('{cdc}', '{schema}.widgets'::regclass, 'SELECT') = false,
     'a table created AFTER the grant is not retro-granted (decoding needs no SELECT)';
   ASSERT has_table_privilege('{cdc}', '{schema}.wamn_entities'::regclass, 'SELECT'),
     'the role reads the decode-time entity map';
@@ -203,13 +203,13 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables()
         &db_url,
         &format!(
             "{schema_guard};\n\
-             CREATE TABLE {schema_ident}.receipts (id int PRIMARY KEY, tenant_secret text);\n\
+             CREATE TABLE {schema_ident}.widgets (id int PRIMARY KEY, tenant_secret text);\n\
              {entity_map};\n\
              {exclusion_map};\n\
              GRANT USAGE ON SCHEMA {schema_ident} TO \"{cdc}\";\n\
              GRANT SELECT ON ALL TABLES IN SCHEMA {schema_ident} TO \"{cdc}\";\n\
              DO $$ BEGIN \
-               ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT'), \
+               ASSERT has_table_privilege('{cdc}', '{schema}.widgets'::regclass, 'SELECT'), \
                  'the pre-narrowing blanket grant must really be in place'; \
              END $$;\n",
             schema_guard = sql::ensure_schema_sql(schema),
@@ -233,7 +233,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables()
     // Changes to decode, on the table the role must NOT be able to read.
     run_ok(
         &db_url,
-        &format!("INSERT INTO {schema}.receipts VALUES (1, 'tenant-secret');\n"),
+        &format!("INSERT INTO {schema}.widgets VALUES (1, 'tenant-secret');\n"),
     );
 
     run_ok(
@@ -241,7 +241,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables()
         &format!(
             r#"
 DO $$ BEGIN
-  ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT') = false,
+  ASSERT has_table_privilege('{cdc}', '{schema}.widgets'::regclass, 'SELECT') = false,
     'the retroactive REVOKE removed the blanket read an old environment already had';
   ASSERT has_table_privilege('{cdc}', '{schema}.wamn_entities'::regclass, 'SELECT'),
     'the entity map survives the REVOKE that precedes it';
@@ -258,7 +258,7 @@ END $$;
 SET ROLE "{cdc}";
 DO $$ BEGIN
   BEGIN
-    PERFORM count(*) FROM {schema}.receipts;
+    PERFORM count(*) FROM {schema}.widgets;
     RAISE EXCEPTION 'the CDC credential must not be able to plain-SQL read a tenant table';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;

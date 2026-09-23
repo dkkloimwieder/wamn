@@ -1012,8 +1012,8 @@ mod tests {
     #[test]
     fn the_management_admitter_secret_name_is_frozen_and_its_own_tier() {
         assert_eq!(
-            management_admitter_secret_name("acme", "receiving", "dev"),
-            "wamn-mgmt-admitter-acme--receiving--dev"
+            management_admitter_secret_name("acme", "widgets", "dev"),
+            "wamn-mgmt-admitter-acme--widgets--dev"
         );
         assert_eq!(
             management_admitter_secret_name("acme", "billing", "prod"),
@@ -1022,16 +1022,16 @@ mod tests {
         // Every identity component participates, so two environments never share
         // one Secret.
         assert_ne!(
-            management_admitter_secret_name("acme", "receiving", "dev"),
-            management_admitter_secret_name("acme", "receiving", "prod")
+            management_admitter_secret_name("acme", "widgets", "dev"),
+            management_admitter_secret_name("acme", "widgets", "prod")
         );
         // R8b: a distinct credential tier is a distinct Secret. None of the
         // sibling names can collide with it for the same triple.
-        let admitter = management_admitter_secret_name("acme", "receiving", "dev");
+        let admitter = management_admitter_secret_name("acme", "widgets", "dev");
         for sibling in [
-            control_author_secret_name("acme", "receiving", "dev"),
-            project_env_secret_name("acme", "receiving", "dev"),
-            project_env_cdc_secret_name("acme", "receiving", "dev"),
+            control_author_secret_name("acme", "widgets", "dev"),
+            project_env_secret_name("acme", "widgets", "dev"),
+            project_env_cdc_secret_name("acme", "widgets", "dev"),
         ] {
             assert_ne!(admitter, sibling);
         }

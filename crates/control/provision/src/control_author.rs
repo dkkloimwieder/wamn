@@ -265,7 +265,7 @@ mod tests {
     use crate::CONTROL_AUTHOR_ROLE;
 
     const ORG: &str = "acme";
-    const PROJECT: &str = "receiving";
+    const PROJECT: &str = "widgets";
     const ENVIRONMENT: &str = "dev";
     const DATABASE: &str = "wamn-system";
 
@@ -410,7 +410,7 @@ mod tests {
         // The project database with this scope's control role: the database name
         // is inside the digest, so the role no longer matches.
         let error = parse_control_authoring_url(
-            &url(&admitted, "wamn-db-acme--receiving--dev"),
+            &url(&admitted, "wamn-db-acme--widgets--dev"),
             ORG,
             PROJECT,
             ENVIRONMENT,
