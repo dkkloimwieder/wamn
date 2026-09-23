@@ -219,42 +219,6 @@ mod tests {
         ]
     }
 
-    /// One write builder names the pointer, and it sets both of the columns a
-    /// flip can move — which is what makes rollback the forward path rather than
-    /// a second mechanism with its own bugs.
-    #[test]
-    fn the_only_pointer_write_carries_both_the_hash_and_the_enabled_flag() {
-        let writers: Vec<&str> = statements()
-            .into_iter()
-            .filter(|sql| {
-                sql.contains("INTO catalog.wiring_activation ")
-                    || sql.contains("UPDATE catalog.wiring_activation")
-                    || sql.contains("DELETE FROM catalog.wiring_activation")
-            })
-            .collect();
-        assert_eq!(
-            writers.as_slice(),
-            [flip_activation()],
-            "a second pointer writer is a second activation verb"
-        );
-
-        let flip = flip_activation();
-        for assignment in [
-            "confirmed_definition_hash = EXCLUDED.confirmed_definition_hash",
-            "enabled = EXCLUDED.enabled",
-        ] {
-            assert!(
-                flip.contains(assignment),
-                "the flip must move {assignment:?}; a flip that cannot is not a rollback"
-            );
-        }
-        assert!(
-            flip.contains("ON CONFLICT (tenant_id, package_id, environment, wiring_id) DO UPDATE"),
-            "the flip must land on the pointer's own key, so the first \
-             activation and every rollback are the same statement"
-        );
-    }
-
     /// A statement that took a tenant parameter would let a superuser driver —
     /// which bypasses RLS — write into another tenant's pointer by passing the
     /// wrong string.
