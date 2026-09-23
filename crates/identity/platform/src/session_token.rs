@@ -60,6 +60,9 @@ pub struct SessionClaims {
     pub jti: String,
     /// Current server-side authority, checked for every new admission.
     pub authority: SessionAuthority,
+    /// SHA-256 hex of the CSRF token, on a token that a cookie carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csrf: Option<String>,
 }
 
 /// Host-configured scope; no field is inferred from the token or its key ID.
@@ -286,6 +289,12 @@ fn validate_claim_shape(claims: &SessionClaims) -> Result<(), IdentityError> {
             .roles
             .iter()
             .any(|role| !crate::canonical_role(role).is_ok_and(|canonical| canonical == *role))
+        || claims.csrf.as_deref().is_some_and(|csrf| {
+            csrf.len() != 64
+                || !csrf
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
     {
         return Err(refused());
     }

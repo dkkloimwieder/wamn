@@ -249,6 +249,7 @@ async fn operator_pat_issuance_over_https() {
             authority: wamn_platform_identity::session_token::SessionAuthority::Login(
                 "ed7056a9-5639-455f-9640-4678458794c0".into(),
             ),
+            csrf: None,
         },
         started,
     )

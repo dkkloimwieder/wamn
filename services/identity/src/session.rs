@@ -174,6 +174,7 @@ pub(super) async fn claims_for_principal(
         iat: 0,
         jti,
         authority,
+        csrf: None,
     })
 }
 

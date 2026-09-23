@@ -341,3 +341,25 @@ fn token_serialization_has_all_required_claims_and_rejects_duplicate_claims() {
         assert!(verify_session_token(token, &key, scope(), 1000).is_err());
     }
 }
+
+#[test]
+fn csrf_claim_is_optional_and_refuses_anything_but_a_sha256_hex_digest() {
+    let (pair, key, header, mut claims) = fixture();
+    let digest = "a".repeat(64);
+    claims["csrf"] = json!(digest);
+    let token = signed(&pair, &header, &claims);
+    let verified = verify_session_token(&token, &key, scope(), 1000).unwrap();
+    assert_eq!(verified.csrf.as_deref(), Some(digest.as_str()));
+    assert_eq!(serde_json::to_value(verified).unwrap(), claims);
+    for malformed in [
+        String::new(),
+        "a".repeat(63),
+        "a".repeat(65),
+        "A".repeat(64),
+        "g".repeat(64),
+    ] {
+        claims["csrf"] = json!(malformed);
+        let token = signed(&pair, &header, &claims);
+        assert!(verify_session_token(&token, &key, scope(), 1000).is_err());
+    }
+}
