@@ -110,7 +110,7 @@ pub const WIDGET_MAKER_LIST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchem
 pub const WIDGET_MAKER_LIST_KIND: &str = "projection";
 pub const WIDGET_MAKER_LIST_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_MAKER_LIST_REPLAY: Option<&str> = None;
-pub const WIDGET_MAKER_LIST_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_MAKER_LIST_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_MAKER_LIST_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget-maker/list@1.0.0`.
 pub const WIDGET_MAKER_LIST_GRANT: &str = "platform-fixture:widget-maker/list@1.0.0";
@@ -405,7 +405,7 @@ pub const WIDGET_MAKER_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSche
 pub const WIDGET_MAKER_QUERY_KIND: &str = "query";
 pub const WIDGET_MAKER_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_MAKER_QUERY_REPLAY: Option<&str> = None;
-pub const WIDGET_MAKER_QUERY_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_MAKER_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_MAKER_QUERY_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget-maker/query@1.0.0`.
 pub const WIDGET_MAKER_QUERY_GRANT: &str = "platform-fixture:widget-maker/query@1.0.0";

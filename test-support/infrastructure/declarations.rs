@@ -119,7 +119,7 @@ mod tests {
     use super::*;
 
     const OVERLAY: &str = include_str!(
-        "../../apps/platform_fixture_overlay/publication/components/platform_fixture_overlay.json.in"
+        "../../apps/platform_fixture_overlay/publication/components/fixture_overlay.json.in"
     );
     const LABEL: &str = include_str!("../../apps/platform/no-std/label-render/declaration.json.in");
     const BLOB: &str = include_str!("../../apps/platform/execution/blob-put/declaration.json.in");

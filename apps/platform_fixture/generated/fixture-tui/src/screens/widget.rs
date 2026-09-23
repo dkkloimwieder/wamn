@@ -10,7 +10,7 @@ pub static ARCHIVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     input: crate::widget::WIDGET_ARCHIVE_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_ARCHIVE_RESULT_SCHEMA,
         result_class: Some("one"),
@@ -78,7 +78,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     input: crate::widget::WIDGET_CREATE_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_CREATE_RESULT_SCHEMA,
         result_class: Some("one"),
@@ -169,7 +169,7 @@ pub static DELETE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     input: crate::widget::WIDGET_DELETE_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_DELETE_RESULT_SCHEMA,
         result_class: Some("one"),
@@ -251,7 +251,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_GET_RESULT_SCHEMA,
         result_class: Some("one"),
@@ -321,7 +321,7 @@ pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     input: crate::widget::WIDGET_LIST_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_LIST_RESULT_SCHEMA,
         result_class: Some("bounded_list"),
@@ -384,7 +384,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         "{\"items\":{\"properties\":{\"cursor\":{\"type\":\"string\"},\"filter\":{\"properties\":{\"code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"type\":\"integer\"},\"request_id\":{\"type\":\"string\"},\"sort\":{\"properties\":{\"direction\":{\"type\":\"string\"},\"field\":{\"type\":\"string\"}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_QUERY_RESULT_SCHEMA,
         result_class: Some("page"),
@@ -451,7 +451,7 @@ pub static RECORD_BATCH_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"line\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"string\"},\"widget_id\":{\"format\":\"uuid\",\"type\":\"string\"}},\"required\":[\"widget_id\",\"amount\"],\"type\":\"object\"},\"maxItems\":10,\"minItems\":1,\"type\":\"array\"},\"maker_id\":{\"format\":\"uuid\",\"type\":[\"string\",\"null\"]},\"note\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"idempotency_key\",\"line\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_RECORD_BATCH_RESULT_SCHEMA,
         result_class: Some("one"),
@@ -531,7 +531,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         "{\"items\":{\"properties\":{\"change\":{\"properties\":{\"code\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"maker_id\":{\"format\":\"uuid\",\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"note\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"}},\"type\":\"object\"},\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"format\":\"uuid\",\"type\":\"string\"},\"request_id\":{\"type\":\"string\"}},\"required\":[\"id\",\"expected_edit_version\",\"request_id\"],\"type\":\"object\"},\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget::WIDGET_UPDATE_RESULT_SCHEMA,
         result_class: Some("one"),

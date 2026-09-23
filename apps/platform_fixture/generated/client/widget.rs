@@ -189,7 +189,7 @@ pub const WIDGET_ARCHIVE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
 pub const WIDGET_ARCHIVE_KIND: &str = "command";
 pub const WIDGET_ARCHIVE_REQUIRES_COMPOSITION: bool = true;
 pub const WIDGET_ARCHIVE_REPLAY: Option<&str> = Some("state");
-pub const WIDGET_ARCHIVE_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_ARCHIVE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_ARCHIVE_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget/archive@1.0.0`.
 pub const WIDGET_ARCHIVE_GRANT: &str = "platform-fixture:widget/archive@1.0.0";
@@ -479,7 +479,7 @@ pub const WIDGET_CREATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
 pub const WIDGET_CREATE_KIND: &str = "create";
 pub const WIDGET_CREATE_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_CREATE_REPLAY: Option<&str> = Some("claim");
-pub const WIDGET_CREATE_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_CREATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_CREATE_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget/create@1.0.0`.
 pub const WIDGET_CREATE_GRANT: &str = "platform-fixture:widget/create@1.0.0";
@@ -628,7 +628,7 @@ pub const WIDGET_DELETE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
 pub const WIDGET_DELETE_KIND: &str = "delete";
 pub const WIDGET_DELETE_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_DELETE_REPLAY: Option<&str> = None;
-pub const WIDGET_DELETE_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_DELETE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_DELETE_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget/delete@1.0.0`.
 pub const WIDGET_DELETE_GRANT: &str = "platform-fixture:widget/delete@1.0.0";
@@ -858,7 +858,7 @@ pub const WIDGET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
 pub const WIDGET_GET_KIND: &str = "get";
 pub const WIDGET_GET_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_GET_REPLAY: Option<&str> = None;
-pub const WIDGET_GET_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_GET_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget/get@1.0.0`.
 pub const WIDGET_GET_GRANT: &str = "platform-fixture:widget/get@1.0.0";
@@ -1067,7 +1067,7 @@ pub const WIDGET_LIST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
 pub const WIDGET_LIST_KIND: &str = "projection";
 pub const WIDGET_LIST_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_LIST_REPLAY: Option<&str> = None;
-pub const WIDGET_LIST_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_LIST_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_LIST_RESULT_OPAQUE: bool = true;
 /// The grant a caller presents to invoke `platform-fixture:widget/list@1.0.0`.
 pub const WIDGET_LIST_GRANT: &str = "platform-fixture:widget/list@1.0.0";
@@ -1422,7 +1422,7 @@ pub const WIDGET_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
 pub const WIDGET_QUERY_KIND: &str = "query";
 pub const WIDGET_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_QUERY_REPLAY: Option<&str> = None;
-pub const WIDGET_QUERY_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_QUERY_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget/query@1.0.0`.
 pub const WIDGET_QUERY_GRANT: &str = "platform-fixture:widget/query@1.0.0";
@@ -1665,7 +1665,7 @@ pub const WIDGET_RECORD_BATCH_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSch
 pub const WIDGET_RECORD_BATCH_KIND: &str = "command";
 pub const WIDGET_RECORD_BATCH_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_RECORD_BATCH_REPLAY: Option<&str> = Some("claim");
-pub const WIDGET_RECORD_BATCH_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_RECORD_BATCH_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_RECORD_BATCH_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget/record-batch@1.0.0`.
 pub const WIDGET_RECORD_BATCH_GRANT: &str = "platform-fixture:widget/record-batch@1.0.0";
@@ -1997,7 +1997,7 @@ pub const WIDGET_UPDATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
 pub const WIDGET_UPDATE_KIND: &str = "update";
 pub const WIDGET_UPDATE_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_UPDATE_REPLAY: Option<&str> = None;
-pub const WIDGET_UPDATE_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_UPDATE_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget/update@1.0.0`.
 pub const WIDGET_UPDATE_GRANT: &str = "platform-fixture:widget/update@1.0.0";

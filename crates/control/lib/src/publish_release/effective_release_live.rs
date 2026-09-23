@@ -82,7 +82,7 @@ fn packages() -> [PackageInput; 2] {
             id: wamn_fixture_package::OVERLAY_PACKAGE_ID,
             version: PACKAGE_VERSION,
             component_declaration: overlay
-                .join("publication/components/platform_fixture_overlay.json.in"),
+                .join("publication/components/fixture_overlay.json.in"),
             root: overlay,
             component_bytes: std::env::var_os(OVERLAY_WASM_ENV)
                 .map(PathBuf::from)

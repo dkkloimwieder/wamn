@@ -12,7 +12,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         "{\"items\":{\"properties\":{\"change\":{\"properties\":{\"label\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"}},\"type\":\"object\"},\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"format\":\"uuid\",\"type\":\"string\"},\"request_id\":{\"type\":\"string\"}},\"required\":[\"id\",\"expected_edit_version\",\"request_id\"],\"type\":\"object\"},\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget_tag::WIDGET_TAG_UPDATE_RESULT_SCHEMA,
         result_class: Some("one"),

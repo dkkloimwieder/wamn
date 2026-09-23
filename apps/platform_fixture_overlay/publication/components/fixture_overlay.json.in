@@ -1,0 +1,34 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "platform_fixture_overlay",
+    "package-version": "1.0.0"
+  },
+  "component": "fixture_overlay",
+  "interface-version": "0.1.0",
+  "operations": {
+    "platform-fixture-overlay:widget/get@1.0.0": {
+      "registered-operation": "platform-fixture-overlay:widget/get@1.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["request_id", "id"],
+            "additionalProperties": false,
+            "properties": {
+              "request_id": {"type": "string", "minLength": 1},
+              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+            }
+          }
+        }
+      }],
+      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+      "parameters": []
+    }
+  },
+  "connections": []
+}

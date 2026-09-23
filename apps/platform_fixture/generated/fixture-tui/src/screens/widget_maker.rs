@@ -10,7 +10,7 @@ pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     input: crate::widget_maker::WIDGET_MAKER_LIST_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget_maker::WIDGET_MAKER_LIST_RESULT_SCHEMA,
         result_class: Some("bounded_list"),
@@ -73,7 +73,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         "{\"items\":{\"properties\":{\"cursor\":{\"type\":\"string\"},\"filter\":{\"properties\":{\"name\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"type\":\"integer\"},\"request_id\":{\"type\":\"string\"},\"sort\":{\"properties\":{\"direction\":{\"type\":\"string\"},\"field\":{\"type\":\"string\"}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
-        schema: None,
+        schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
         fields: crate::widget_maker::WIDGET_MAKER_QUERY_RESULT_SCHEMA,
         result_class: Some("page"),

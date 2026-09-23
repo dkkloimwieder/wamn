@@ -248,12 +248,54 @@ mod tests {
     fn overlay_declaration_template() -> PathBuf {
         overlay_package_root()
             .join("publication/components")
-            .join("platform_fixture_overlay.json.in")
+            .join("fixture_overlay.json.in")
+    }
+
+    /// A declaration template with one dependency on the fixture base.
+    ///
+    /// The shipped overlay guest imports no base operation, so its template
+    /// declares no dependency. The rendering rule is stated on this template,
+    /// which leaves one `platform_fixture@1.0.0` digest as the placeholder.
+    fn base_dependency_template(name: &str) -> PathBuf {
+        let template = serde_json::json!({
+            "scope": {
+                "tenant-id": COMPONENT_DECLARATION_PLACEHOLDER,
+                "package-id": "platform_fixture_overlay",
+                "package-version": "1.0.0"
+            },
+            "component": "fixture_overlay",
+            "interface-version": "0.1.0",
+            "operations": {
+                "platform-fixture-overlay:widget/get@1.0.0": {
+                    "registered-operation": "platform-fixture-overlay:widget/get@1.0.0",
+                    "dependencies": [{
+                        "package": "platform_fixture",
+                        "version": "1.0.0",
+                        "digest": COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
+                        "operation": "platform-fixture:widget/archive@1.0.0"
+                    }],
+                    "input-ports": [],
+                    "output-ports": [],
+                    "parameters": []
+                }
+            },
+            "connections": []
+        });
+        let path = std::env::temp_dir().join(format!(
+            "wamn-control-declaration-{name}-{}.json.in",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&template).expect("serialize the template"),
+        )
+        .expect("write the base dependency template");
+        path
     }
 
     /// The rendered declaration names the bytes this run built.
     ///
-    /// The shipped overlay template leaves its base dependency digest as a
+    /// A declaration template leaves its base dependency digest as a
     /// placeholder, and Generate never rewrites that file. Once an author edits
     /// the base package, the authored pin names bytes that no longer exist, and
     /// every consumer of the admitted fact resolves the dependency to zero
@@ -262,7 +304,7 @@ mod tests {
     /// the validator made tolerant.
     #[test]
     fn a_disposable_target_renders_the_base_digest_it_built_into_the_declaration() {
-        let template = overlay_declaration_template();
+        let template = base_dependency_template("disposable");
         let authored = authored_base_digests(&overlay_package_root())
             .expect("read the shipped overlay manifest pin");
         assert_eq!(
@@ -301,6 +343,7 @@ mod tests {
             Some("tenant-a"),
             "the tenant placeholder is still filled"
         );
+        let _ = fs::remove_file(&template);
     }
 
     /// The digest is authored ONCE, and no second copy can hide in the tree.
@@ -325,20 +368,20 @@ mod tests {
 
         let document: Value =
             serde_json::from_slice(&bytes).expect("parse the shipped declaration template");
-        assert_eq!(
-            dependency_digests(&document),
-            vec![COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER.to_owned()],
+        assert!(
+            dependency_digests(&document)
+                .iter()
+                .all(|digest| digest == COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER),
             "the template leaves every dependency digest as the placeholder"
         );
 
-        let restated = String::from_utf8_lossy(&bytes).replace(
-            COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
-            &authored["platform_fixture@1.0.0"],
-        );
-        let hand_written = std::env::temp_dir().join(format!(
-            "wamn-control-declaration-{}.json.in",
-            std::process::id()
-        ));
+        let hand_written = base_dependency_template("restated");
+        let restated = fs::read_to_string(&hand_written)
+            .expect("read the base dependency template")
+            .replace(
+                COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
+                &authored["platform_fixture@1.0.0"],
+            );
         fs::write(&hand_written, restated.as_bytes()).expect("write the control template");
         let refusal = render_declaration_document(&hand_written, "tenant-a", &authored)
             .expect_err("a restated digest is refused");

@@ -210,7 +210,7 @@ pub const WIDGET_TAG_UPDATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchem
 pub const WIDGET_TAG_UPDATE_KIND: &str = "update";
 pub const WIDGET_TAG_UPDATE_REQUIRES_COMPOSITION: bool = true;
 pub const WIDGET_TAG_UPDATE_REPLAY: Option<&str> = None;
-pub const WIDGET_TAG_UPDATE_RESPONSE_CONTRACT: Option<&str> = None;
+pub const WIDGET_TAG_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_TAG_UPDATE_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `platform-fixture:widget-tag/update@1.0.0`.
 pub const WIDGET_TAG_UPDATE_GRANT: &str = "platform-fixture:widget-tag/update@1.0.0";
