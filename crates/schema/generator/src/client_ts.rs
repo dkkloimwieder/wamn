@@ -186,6 +186,16 @@ pub const RUNTIME_PACKAGE: &str = "@wamn/web-runtime";
 /// against this release states the range here rather than guessing.
 pub const RUNTIME_VERSION_RANGE: &str = "^0.1.0";
 
+/// The hand-written package that generated components render through.
+///
+/// It holds the UI components, the theme and the table features. `web/ui` is
+/// its source. A component names its exports, and the package owns how they
+/// look.
+pub const UI_PACKAGE: &str = "@wamn/ui";
+
+/// The UI package version that generated components require.
+pub const UI_VERSION_RANGE: &str = "^0.1.0";
+
 /// Words that cannot name a TypeScript function or constant.
 ///
 /// A contract name that takes one keeps it and gains a trailing underscore, in
@@ -302,11 +312,13 @@ pub const PACKAGE_JSON_PATH: &str = "generated/client-ts/package.json";
 #[must_use]
 pub fn emit_ts_package_json(client_package: &str, version: &str) -> GeneratedFile {
     let source = format!(
-        "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }},\n  \"dependencies\": {{\n    {runtime}: {range}\n  }}\n}}\n",
+        "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }},\n  \"dependencies\": {{\n    {runtime}: {range},\n    {ui}: {ui_range}\n  }}\n}}\n",
         name = serde_json::Value::String(client_package.to_owned()),
         version = serde_json::Value::String(version.to_owned()),
         runtime = serde_json::Value::String(RUNTIME_PACKAGE.to_owned()),
         range = serde_json::Value::String(RUNTIME_VERSION_RANGE.to_owned()),
+        ui = serde_json::Value::String(UI_PACKAGE.to_owned()),
+        ui_range = serde_json::Value::String(UI_VERSION_RANGE.to_owned()),
     );
     GeneratedFile::new(
         PACKAGE_JSON_PATH.into(),

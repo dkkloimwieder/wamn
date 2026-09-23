@@ -17,6 +17,7 @@ export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 export { Skeleton } from "./components/ui/skeleton";
 export { Toaster } from "./components/ui/toast";
 export { ColorModeProvider, getClientColorMode, useColorMode } from "./components/color-mode";
+export { ChoiceField, TextField, type Choice, type ChoiceFieldProps, type TextFieldProps } from "./fields";
 export { gridFeatures, type GridFeatures } from "./grid";
 export { announceOutcome } from "./outcome";
 export { RecordSelect, SEARCH_PAUSE_MS, type RecordSelectProps } from "./record-select";
