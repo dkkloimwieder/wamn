@@ -489,12 +489,12 @@ mod tests {
             format_version: RouterTapFormatVersion::V1,
             outcome: None,
             over_ceiling_bytes: None,
-            payload: json!({"receipt": "r-1"}),
+            payload: json!({"rack": "r-1"}),
             phase: RouterTapRecordPhase::Accepted,
             redacted: false,
             source_id: "route-1".into(),
             source_kind: RouterTapSourceKind::Attachment,
-            wiring_id: "receipt".into(),
+            wiring_id: "rack".into(),
             wiring_version: 1,
         };
         let bytes = serde_json::to_vec(&record).expect("serialize typed tap");
@@ -502,7 +502,7 @@ mod tests {
             "tenant-a",
             "project-a",
             "dev",
-            "tap.tenant-a.project-a.dev.receipt.delivery-1",
+            "tap.tenant-a.project-a.dev.rack.delivery-1",
             &bytes,
         )
         .expect("matching typed tap is admitted");

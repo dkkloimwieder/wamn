@@ -1,38 +1,38 @@
 {
   "package": {
-    "id": "client_acme_receiving",
+    "id": "client_overlay_inventory",
     "version": "3.0.0"
   },
   "base_dependencies": {
-    "base_receiving": {
-      "package": "wamn_receiving",
+    "base_inventory": {
+      "package": "wamn_inventory",
       "version": "1.0.0",
       "digest": "sha256:370ae9416719ca4cec3ed033749dec2676cead0345462cb6a401fb3aa044d42a",
       "operations": [
-        "purchase_order.get"
+        "panel.get"
       ]
     }
   },
   "required_platform_policy_contract": {
-    "id": "receiving_data_access",
+    "id": "inventory_data_access",
     "state": "satisfied"
   },
   "models": {
-    "purchase_order": {
-      "schema": "receiving",
-      "table": "purchase_order",
-      "owner": "wamn_receiving",
+    "panel": {
+      "schema": "inventory",
+      "table": "panel",
+      "owner": "wamn_inventory",
       "field_owners": {
-        "acme_inspection_required": "client_acme_receiving",
-        "acme_quality_status": "client_acme_receiving"
+        "overlay_inspection_required": "client_overlay_inventory",
+        "overlay_quality_status": "client_overlay_inventory"
       },
       "constraint_owners": {
-        "purchase_order_acme_quality_status_check": "client_acme_receiving"
+        "panel_overlay_quality_status_check": "client_overlay_inventory"
       },
       "server_owned_fields": [
         "id",
-        "purchase_order_number",
-        "supplier_id",
+        "panel_number",
+        "stock_id",
         "status",
         "row_version"
       ],
@@ -42,7 +42,7 @@
           "complete",
           "cancelled"
         ],
-        "acme_quality_status": [
+        "overlay_quality_status": [
           "not_required",
           "pending",
           "approved"
@@ -50,14 +50,14 @@
       },
       "operations": {
         "get": {
-          "permission": "purchase_order.get",
+          "permission": "panel.get",
           "result": "one"
         },
         "update": {
-          "permission": "purchase_order.update",
+          "permission": "panel.update",
           "writable_fields": [
-            "acme_inspection_required",
-            "acme_quality_status"
+            "overlay_inspection_required",
+            "overlay_quality_status"
           ],
           "revision_field": "row_version",
           "result": "one"
@@ -65,11 +65,11 @@
       }
     },
     "quality_inspection": {
-      "schema": "receiving",
+      "schema": "inventory",
       "table": "quality_inspection",
-      "owner": "client_acme_receiving",
+      "owner": "client_overlay_inventory",
       "server_owned_fields": [
-        "receipt_id",
+        "rack_id",
         "status",
         "row_version"
       ],
@@ -122,11 +122,11 @@
       "constraint_errors": {},
       "relations": [
         {
-          "schema": "receiving",
-          "table": "receipt",
+          "schema": "inventory",
+          "table": "rack",
           "select_fields": [
             "id",
-            "purchase_order_id"
+            "panel_id"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -134,11 +134,11 @@
           "constraints": []
         },
         {
-          "schema": "receiving",
-          "table": "purchase_order",
+          "schema": "inventory",
+          "table": "panel",
           "select_fields": [
             "id",
-            "acme_inspection_required"
+            "overlay_inspection_required"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -146,18 +146,18 @@
           "constraints": []
         },
         {
-          "schema": "receiving",
+          "schema": "inventory",
           "table": "quality_inspection",
           "select_fields": [
-            "receipt_id"
+            "rack_id"
           ],
           "insert_fields": [
-            "receipt_id"
+            "rack_id"
           ],
           "update_fields": [],
           "lock": false,
           "constraints": [
-            "quality_inspection_receipt_id_pkey"
+            "quality_inspection_rack_id_pkey"
           ]
         }
       ],
@@ -167,14 +167,14 @@
           "fetch": "optional_one",
           "parameters": [
             {
-              "name": "receipt_id",
+              "name": "rack_id",
               "type": "uuid",
               "nullable": false
             }
           ],
           "row": [
             {
-              "name": "receipt_id",
+              "name": "rack_id",
               "type": "uuid",
               "nullable": false
             }
@@ -185,14 +185,14 @@
           "fetch": "optional_one",
           "parameters": [
             {
-              "name": "receipt_id",
+              "name": "rack_id",
               "type": "uuid",
               "nullable": false
             }
           ],
           "row": [
             {
-              "name": "receipt_id",
+              "name": "rack_id",
               "type": "uuid",
               "nullable": false
             }
@@ -200,8 +200,8 @@
         }
       },
       "registration": {
-        "source_package": "wamn_receiving",
-        "entity": "receipt",
+        "source_package": "wamn_inventory",
+        "entity": "rack",
         "ops": [
           "insert"
         ]
@@ -212,7 +212,7 @@
     "postgres"
   ],
   "components": {
-    "client_acme_receiving": {
+    "client_overlay_inventory": {
       "connections": [
         "postgres"
       ]

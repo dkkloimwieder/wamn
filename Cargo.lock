@@ -5779,6 +5779,7 @@ dependencies = [
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-fixture-package",
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-project-state",

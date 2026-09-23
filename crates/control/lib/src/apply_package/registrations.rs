@@ -86,9 +86,9 @@ mod tests {
         let declarations = derive_catalog_registrations(&manifest);
         let registration = &declarations["quality.create_inspection"];
         assert_eq!(registration.registration_id, "quality.create_inspection");
-        assert_eq!(registration.package_id, "client_acme_receiving");
-        assert_eq!(registration.source_package_id, "wamn_receiving");
-        assert_eq!(registration.entity, "receipt");
+        assert_eq!(registration.package_id, "client_overlay_inventory");
+        assert_eq!(registration.source_package_id, "wamn_inventory");
+        assert_eq!(registration.entity, "rack");
         assert_eq!(registration.ops, [wamn_event_reg::Op::Insert]);
     }
 }

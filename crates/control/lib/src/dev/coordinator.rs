@@ -1,4 +1,4 @@
-//! Production stage coordinator for the canonical Receiving development loop.
+//! Production stage coordinator for the canonical development loop.
 //!
 //! This module carries exact outputs between existing owners. It does not
 //! reproduce migration, generation, admission, publication, release, or
@@ -2473,7 +2473,7 @@ mod tests {
     fn package(id: &str, version: &str, component: &str) -> PackageInput {
         let manifest = serde_json::from_value(serde_json::json!({
             "package": {"id": id, "version": version},
-            "required_platform_policy_contract": {"id": "receiving_data_access", "state": "satisfied"},
+            "required_platform_policy_contract": {"id": "fixture_data_access", "state": "satisfied"},
             "models": {},
             "connections": ["postgres"],
             "components": {(component): {"connections": ["postgres"]}}
@@ -2495,7 +2495,7 @@ mod tests {
     #[test]
     fn a_failed_stage_names_its_whole_cause_chain_after_the_top_context() {
         let source = anyhow::Error::msg("schema has an explicit ACL")
-            .context("PostgreSQL introspection refused (unsupported-acl) in schema receiving")
+            .context("PostgreSQL introspection refused (unsupported-acl) in schema inventory")
             .context("introspect package schemas");
 
         let error = ProductionDevStageError::owner("introspect package", source);
@@ -2503,7 +2503,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "dev-stage-owner-failed while introspect package: introspect package schemas: \
-             PostgreSQL introspection refused (unsupported-acl) in schema receiving: \
+             PostgreSQL introspection refused (unsupported-acl) in schema inventory: \
              schema has an explicit ACL"
         );
         assert_eq!(
@@ -2518,21 +2518,36 @@ mod tests {
     ///
     /// Measured live on 2026-09-08: without this, a second run replayed all
     /// fourteen publish commands, wrote nothing, and Release refused with
-    /// "has no wiring purchase_order_get version 1" against a database the run
+    /// "has no wiring widget_get version 1" against a database the run
     /// had just recreated. The control database held one audit row per command
     /// for two runs. A third run with NO edit failed identically, so the wall
     /// was the recreate and not the edit.
     #[test]
     fn a_recreated_target_is_a_different_command_and_a_durable_one_is_unchanged() {
-        let document = serde_json::json!({"wiring": "purchase_order_get", "version": 1});
+        let document = serde_json::json!({"wiring": "widget_get", "version": 1});
 
-        let durable = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None);
-        let first_instance =
-            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, Some("16394"));
-        let same_instance =
-            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, Some("16394"));
-        let next_instance =
-            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, Some("16512"));
+        let durable = authoring_command_id("gate", "platform_fixture", "1.0.0", &document, None);
+        let first_instance = authoring_command_id(
+            "gate",
+            "platform_fixture",
+            "1.0.0",
+            &document,
+            Some("16394"),
+        );
+        let same_instance = authoring_command_id(
+            "gate",
+            "platform_fixture",
+            "1.0.0",
+            &document,
+            Some("16394"),
+        );
+        let next_instance = authoring_command_id(
+            "gate",
+            "platform_fixture",
+            "1.0.0",
+            &document,
+            Some("16512"),
+        );
 
         assert_eq!(
             first_instance, same_instance,
@@ -2890,13 +2905,10 @@ mod tests {
                 "platform_catalog_overlay".to_owned(),
             );
         let base_exclusion = Exclusion::new(
-            "record_supplier_id_excl",
+            "record_maker_id_excl",
             ExclusionAccessMethod::Gist,
-            vec![ExclusionKey::new(
-                ExclusionElement::column("supplier_id"),
-                "=",
-            )],
-            ["supplier_id"],
+            vec![ExclusionKey::new(ExclusionElement::column("maker_id"), "=")],
+            ["maker_id"],
         )
         .expect("base exclusion");
         let overlay_exclusion = Exclusion::new(
@@ -2915,7 +2927,7 @@ mod tests {
                 "record",
                 vec![
                     Column::new("id", ColumnType::Uuid, false, None, None),
-                    Column::new("supplier_id", ColumnType::Uuid, false, None, None),
+                    Column::new("maker_id", ColumnType::Uuid, false, None, None),
                     Column::new("created_at", ColumnType::Timestamptz, false, None, None),
                     Column::new("created_by", ColumnType::Uuid, false, None, None),
                     Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
@@ -2981,7 +2993,7 @@ mod tests {
                 "created_at",
                 "created_by",
                 "id",
-                "supplier_id",
+                "maker_id",
                 "updated_at",
                 "updated_by"
             ]
@@ -3000,7 +3012,7 @@ mod tests {
                 .iter()
                 .map(wamn_schema_introspection::ir::Exclusion::name)
                 .collect::<Vec<_>>(),
-            ["record_supplier_id_excl"]
+            ["record_maker_id_excl"]
         );
 
         let overlay_catalog = project_catalog_for_package(&catalog, &overlay.manifest, &installed)
@@ -3020,7 +3032,7 @@ mod tests {
                 "record",
                 vec![
                     Column::new("id", ColumnType::Uuid, false, None, None),
-                    Column::new("supplier_id", ColumnType::Uuid, false, None, None),
+                    Column::new("maker_id", ColumnType::Uuid, false, None, None),
                     Column::new("created_at", ColumnType::Timestamptz, false, None, None),
                     Column::new("created_by", ColumnType::Uuid, false, None, None),
                     Column::new("updated_at", ColumnType::Timestamptz, false, None, None),

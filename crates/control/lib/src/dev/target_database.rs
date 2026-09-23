@@ -622,8 +622,8 @@ mod tests {
     /// Catalogs that hold every tagged and flattened IR shape the record carries.
     fn record_catalogs() -> anyhow::Result<BTreeMap<String, CatalogIr>> {
         let order = Table::new(
-            "receiving",
-            "purchase_order",
+            "inventory",
+            "panel",
             vec![
                 Column::new(
                     "id",
@@ -652,16 +652,16 @@ mod tests {
                 Column::new("ends_at", ColumnType::Timestamptz, true, None, None),
             ],
             vec![
-                Constraint::primary_key("purchase_order_id_pkey", ["id"])?,
-                Constraint::check("purchase_order_status_check", "status <> ''")?,
+                Constraint::primary_key("panel_id_pkey", ["id"])?,
+                Constraint::check("panel_status_check", "status <> ''")?,
             ],
             vec![Index::new(
-                "purchase_order_number_idx",
+                "panel_code_idx",
                 vec![IndexColumn::new("number", IndexDirection::Desc)],
             )?],
         )
         .with_exclusions(vec![Exclusion::new(
-            "purchase_order_no_overlap",
+            "panel_no_overlap",
             ExclusionAccessMethod::Gist,
             vec![
                 ExclusionKey::new(ExclusionElement::column("id"), "="),
@@ -673,21 +673,21 @@ mod tests {
             ["id", "starts_at", "ends_at"],
         )?]);
         let line = Table::new(
-            "receiving",
-            "purchase_order_line",
+            "inventory",
+            "panel_line",
             vec![Column::new("order_id", ColumnType::Uuid, false, None, None)],
             vec![Constraint::foreign_key(
-                "purchase_order_line_order_id_fkey",
+                "panel_line_order_id_fkey",
                 vec![ForeignKeyColumn::new("order_id", "id")],
-                "receiving",
-                "purchase_order",
+                "inventory",
+                "panel",
                 ForeignKeyAction::NoAction,
                 ForeignKeyAction::Cascade,
             )?],
             Vec::new(),
         );
         Ok(BTreeMap::from([(
-            "wamn-receiving".to_owned(),
+            "wamn-fixture".to_owned(),
             CatalogIr::new(vec![order, line]),
         )]))
     }

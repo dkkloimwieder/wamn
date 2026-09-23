@@ -1,13 +1,13 @@
-ALTER TABLE receiving.purchase_order
-    ADD COLUMN acme_inspection_required boolean
+ALTER TABLE inventory.panel
+    ADD COLUMN overlay_inspection_required boolean
     NOT NULL DEFAULT false;
 
-ALTER TABLE receiving.purchase_order
-    ADD COLUMN acme_quality_status text
+ALTER TABLE inventory.panel
+    ADD COLUMN overlay_quality_status text
     NOT NULL DEFAULT 'not_required';
 
-ALTER TABLE receiving.purchase_order
-    ADD CONSTRAINT purchase_order_acme_quality_status_check
-    CHECK (acme_quality_status IN (
+ALTER TABLE inventory.panel
+    ADD CONSTRAINT panel_overlay_quality_status_check
+    CHECK (overlay_quality_status IN (
         'not_required', 'pending', 'approved'
     ));

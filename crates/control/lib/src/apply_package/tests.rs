@@ -38,8 +38,8 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     manifest["models"]
         .as_object_mut()
         .unwrap()
-        .remove("receipt_line")
-        .expect("the package fixture models receipt_line");
+        .remove("rack_line")
+        .expect("the package fixture models rack_line");
     directory.manifest_bytes = serde_json::to_vec(&manifest).unwrap();
     let root =
         std::env::temp_dir().join(format!("wamn-local-configuration-{}", std::process::id()));

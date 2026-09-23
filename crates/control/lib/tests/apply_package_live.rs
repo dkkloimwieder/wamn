@@ -30,7 +30,7 @@ async fn connect(url: &str) -> Client {
 async fn install(client: &Client) {
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS race_alpha CASCADE; \
              DROP SCHEMA IF EXISTS race_beta CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
@@ -181,21 +181,21 @@ fn set_audit_log_retention(root: &Path, model_id: &str, retention: &str) {
     .expect("write retention manifest");
 }
 
-/// Every user trigger in the receiving schema, as the server renders it, with
+/// Every user trigger in the inventory schema, as the server renders it, with
 /// the identity of its catalog row.
-async fn receiving_triggers(client: &Client) -> Vec<(String, String)> {
+async fn inventory_triggers(client: &Client) -> Vec<(String, String)> {
     client
         .query(
             "SELECT pg_catalog.pg_get_triggerdef(t.oid), t.oid::text || ':' || t.xmin::text \
                FROM pg_catalog.pg_trigger AS t \
                JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid \
                JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-              WHERE n.nspname = 'receiving' AND NOT t.tgisinternal \
+              WHERE n.nspname = 'inventory' AND NOT t.tgisinternal \
               ORDER BY c.relname, t.tgname",
             &[],
         )
         .await
-        .expect("read installed receiving triggers")
+        .expect("read installed inventory triggers")
         .into_iter()
         .map(|row| (row.get(0), row.get(1)))
         .collect()
@@ -240,7 +240,7 @@ fn copy_base_fixture_as(root: &Path, package_id: &str, schema: &str) {
     let migration_path = root.join("migrations/0001_initial.sql");
     let migration = std::fs::read_to_string(&migration_path)
         .expect("read copied package migration")
-        .replace("receiving.", &format!("{schema}."));
+        .replace("inventory.", &format!("{schema}."));
     std::fs::write(migration_path, migration).expect("write copied package migration");
 }
 
@@ -264,11 +264,11 @@ fn copy_mutated_overlay_fixture(
         "version": "3.0.0"
     });
     manifest["base_dependencies"] = serde_json::json!({
-        "base_receiving": {
-            "package": "wamn_receiving",
+        "base_inventory": {
+            "package": "wamn_inventory",
             "version": "1.0.0",
             "digest": format!("sha256:{}", "a".repeat(64)),
-            "operations": ["purchase_order.get"]
+            "operations": ["panel.get"]
         }
     });
     manifest["custom_operations"] = serde_json::json!({});
@@ -281,7 +281,7 @@ fn copy_mutated_overlay_fixture(
     let model = models
         .get_mut(model_id)
         .expect("selected base model exists");
-    model["owner"] = serde_json::Value::String("wamn_receiving".into());
+    model["owner"] = serde_json::Value::String("wamn_inventory".into());
     model
         .as_object_mut()
         .expect("overlay model is an object")
@@ -358,9 +358,9 @@ fn declare_ownership_only_model(root: &Path, model_id: &str, table: &str) {
     )
     .expect("parse package manifest model vocabulary");
     manifest["models"][model_id] = serde_json::json!({
-        "schema": "receiving",
+        "schema": "inventory",
         "table": table,
-        "owner": "wamn_receiving",
+        "owner": "wamn_inventory",
         "server_owned_fields": ["id"],
         "enum_fields": {},
         "audit_log": {"columns": [], "retention": "none"},
@@ -528,10 +528,10 @@ async fn write_identity(client: &Client) -> Vec<String> {
                  FROM catalog.package_definition_owners WHERE tenant_id = $1 \
                UNION ALL \
                SELECT 'entity:' || package_id || ':' || entity_id || ':' || xmin::text \
-                 FROM receiving.wamn_entities \
+                 FROM inventory.wamn_entities \
                UNION ALL \
                SELECT 'excluded:' || package_id || ':' || relation_id || ':' || xmin::text \
-                 FROM receiving.wamn_cdc_exclusions \
+                 FROM inventory.wamn_cdc_exclusions \
                UNION ALL \
                SELECT 'role:' || name || ':' || xmin::text \
                  FROM app_system.roles WHERE tenant_id = $1 \
@@ -566,22 +566,22 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     copy_base_fixture(&distinct_identity);
     rename_internal_relation(
         &distinct_identity,
-        "record_receipt_command",
-        "receipt_command_record",
+        "record_rack_command",
+        "rack_command_record",
     );
     apply(&url, &distinct_identity)
         .await
         .expect("apply a relation whose manifest identity differs from its table");
     let mapping = client
         .query_one(
-            "SELECT relation_id, table_name FROM receiving.wamn_cdc_exclusions \
+            "SELECT relation_id, table_name FROM inventory.wamn_cdc_exclusions \
               WHERE table_name NOT LIKE '%\\_history'",
             &[],
         )
         .await
         .expect("read distinct internal relation identity");
-    assert_eq!(mapping.get::<_, String>(0), "receipt_command_record");
-    assert_eq!(mapping.get::<_, String>(1), "record_receipt_command");
+    assert_eq!(mapping.get::<_, String>(0), "rack_command_record");
+    assert_eq!(mapping.get::<_, String>(1), "record_rack_command");
     std::fs::remove_dir_all(&distinct_identity).expect("remove distinct internal-relation fixture");
     install(&client).await;
 
@@ -592,7 +592,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     copy_base_fixture(&undeclared);
     std::fs::write(
         undeclared.join("migrations/0002_undeclared.sql"),
-        "CREATE TABLE receiving.undeclared_relation (id int);",
+        "CREATE TABLE inventory.undeclared_relation (id int);",
     )
     .expect("write undeclared-relation fixture");
     let error = apply(&url, &undeclared)
@@ -605,7 +605,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert!(
         !client
             .query_one(
-                "SELECT to_regclass('receiving.undeclared_relation') IS NOT NULL",
+                "SELECT to_regclass('inventory.undeclared_relation') IS NOT NULL",
                 &[],
             )
             .await
@@ -626,7 +626,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     )
     .expect("parse missing-exclusion manifest");
     manifest["internal_relations"]["missing_command"] = serde_json::json!({
-        "schema": "receiving",
+        "schema": "inventory",
         "table": "missing_command",
         "cdc": "excluded"
     });
@@ -664,8 +664,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
              INSERT INTO app_system.roles (tenant_id, name, is_system) \
                  VALUES ('{TENANT}', 'route-caller', false); \
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-                 ('{TENANT}', 'route-caller', 'wamn-receiving:obsolete/operation@1.0.0'), \
-                 ('{TENANT}', 'route-caller', 'client-overlay:receipt/get@1.0.0'); \
+                 ('{TENANT}', 'route-caller', 'wamn-inventory:obsolete/operation@1.0.0'), \
+                 ('{TENANT}', 'route-caller', 'client-overlay:rack/get@1.0.0'); \
              COMMIT;"
         ))
         .await
@@ -679,7 +679,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT apply_effective_role::text = current_user::text \
                    FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.0' AND ordinal = 1",
                 &[&TENANT],
             )
@@ -697,7 +697,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                FROM pg_catalog.pg_namespace AS namespace \
                JOIN pg_catalog.pg_class AS relation \
                  ON relation.relnamespace = namespace.oid \
-              WHERE namespace.nspname = 'receiving' \
+              WHERE namespace.nspname = 'inventory' \
                 AND relation.relkind = 'r' \
                 AND relation.relname NOT IN ('wamn_entities', 'wamn_cdc_exclusions') \
               GROUP BY namespace.nspowner",
@@ -725,7 +725,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .query(
             "SELECT permission FROM app_system.permissions \
               WHERE tenant_id = $1 AND role_name = 'route-caller' \
-                AND permission LIKE 'wamn-receiving:%@1.0.0'",
+                AND permission LIKE 'wamn-inventory:%@1.0.0'",
             &[&TENANT],
         )
         .await
@@ -743,7 +743,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT count(*) FROM app_system.permissions \
                   WHERE tenant_id = $1 AND role_name = 'route-caller' \
-                    AND permission = 'client-overlay:receipt/get@1.0.0'",
+                    AND permission = 'client-overlay:rack/get@1.0.0'",
                 &[&TENANT],
             )
             .await
@@ -754,7 +754,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     );
     assert!(
         client
-            .query_one("SELECT to_regnamespace('receiving') IS NOT NULL", &[])
+            .query_one("SELECT to_regnamespace('inventory') IS NOT NULL", &[])
             .await
             .unwrap()
             .get::<_, bool>(0),
@@ -762,7 +762,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     );
     assert_eq!(
         client
-            .query_one("SELECT count(*) FROM receiving.wamn_entities", &[])
+            .query_one("SELECT count(*) FROM inventory.wamn_entities", &[])
             .await
             .expect("count package entity mappings")
             .get::<_, i64>(0),
@@ -772,7 +772,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let exclusion = client
         .query_one(
             "SELECT package_id, relation_id, table_name \
-               FROM receiving.wamn_cdc_exclusions \
+               FROM inventory.wamn_cdc_exclusions \
               WHERE table_name NOT LIKE '%\\_history'",
             &[],
         )
@@ -785,17 +785,14 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             exclusion.get::<_, String>(2),
         ),
         (
-            "wamn_receiving".into(),
-            "record_receipt_command".into(),
-            "record_receipt_command".into(),
+            "wamn_inventory".into(),
+            "record_rack_command".into(),
+            "record_rack_command".into(),
         )
     );
     assert!(
         client
-            .query_one(
-                "SELECT to_regclass('receiving.purchase_order') IS NOT NULL",
-                &[]
-            )
+            .query_one("SELECT to_regclass('inventory.panel') IS NOT NULL", &[])
             .await
             .unwrap()
             .get::<_, bool>(0)
@@ -805,7 +802,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
                  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
-                &[&TENANT, &"wamn_receiving", &"1.0.0"],
+                &[&TENANT, &"wamn_inventory", &"1.0.0"],
             )
             .await
             .unwrap()
@@ -822,12 +819,12 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         fixture_root().with_file_name(format!("apply-package-alter-base-{}", std::process::id()));
     copy_mutated_overlay_fixture(
         &alter_base,
-        "client_alter_receiving",
-        "purchase_order",
-        "purchase_order.update",
+        "client_alter_inventory",
+        "panel",
+        "panel.update",
         &[],
         &[],
-        "ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'complete';",
+        "ALTER TABLE inventory.panel ALTER COLUMN status SET DEFAULT 'complete';",
     );
     let alter_error = apply(&url, &alter_base)
         .await
@@ -839,16 +836,16 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         alter_error.kind(),
         apply_package::ApplyPackageErrorKind::BaseDefinitionMutation
     );
-    assert_eq!(alter_error.schema(), Some("receiving"));
-    assert_eq!(alter_error.relation(), Some("purchase_order"));
+    assert_eq!(alter_error.schema(), Some("inventory"));
+    assert_eq!(alter_error.relation(), Some("panel"));
     assert_eq!(alter_error.definition(), Some("status"));
-    assert_eq!(alter_error.owner_package(), Some("wamn_receiving"));
+    assert_eq!(alter_error.owner_package(), Some("wamn_inventory"));
     assert_eq!(write_identity(&client).await, first_identity);
     assert_eq!(
         client
             .query_one(
                 "SELECT column_default FROM information_schema.columns \
-                  WHERE table_schema = 'receiving' AND table_name = 'purchase_order' \
+                  WHERE table_schema = 'inventory' AND table_name = 'panel' \
                     AND column_name = 'status'",
                 &[],
             )
@@ -863,12 +860,12 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         fixture_root().with_file_name(format!("apply-package-drop-base-{}", std::process::id()));
     copy_mutated_overlay_fixture(
         &drop_base,
-        "client_drop_receiving",
-        "purchase_order",
-        "purchase_order.update",
+        "client_drop_inventory",
+        "panel",
+        "panel.update",
         &[],
         &[],
-        "ALTER TABLE receiving.purchase_order DROP COLUMN status;",
+        "ALTER TABLE inventory.panel DROP COLUMN status;",
     );
     let drop_error = apply(&url, &drop_base)
         .await
@@ -886,7 +883,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                  WHERE table_schema = 'receiving' AND table_name = 'purchase_order' \
+                  WHERE table_schema = 'inventory' AND table_name = 'panel' \
                     AND column_name = 'status')",
                 &[],
             )
@@ -901,12 +898,12 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     ));
     copy_mutated_overlay_fixture(
         &nonextensible,
-        "client_receipt_extension",
-        "receipt",
-        "receipt.get",
-        &["acme_receipt_flag"],
+        "client_rack_extension",
+        "rack",
+        "rack.get",
+        &["overlay_rack_flag"],
         &[],
-        "ALTER TABLE receiving.receipt ADD COLUMN acme_receipt_flag boolean NOT NULL DEFAULT false;",
+        "ALTER TABLE inventory.rack ADD COLUMN overlay_rack_flag boolean NOT NULL DEFAULT false;",
     );
     let nonextensible_error = apply(&url, &nonextensible)
         .await
@@ -929,7 +926,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let registration: String = client
         .query_one(
             "SELECT registration::text FROM catalog.event_registrations \
-              WHERE tenant_id = $1 AND package_id = 'client_acme_receiving' \
+              WHERE tenant_id = $1 AND package_id = 'client_overlay_inventory' \
                 AND registration_id = 'quality.create_inspection'",
             &[&TENANT],
         )
@@ -939,8 +936,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let registration: serde_json::Value =
         serde_json::from_str(&registration).expect("parse projected registration");
     assert_eq!(registration["registration-id"], "quality.create_inspection");
-    assert_eq!(registration["source-package-id"], "wamn_receiving");
-    assert_eq!(registration["entity"], "receipt");
+    assert_eq!(registration["source-package-id"], "wamn_inventory");
+    assert_eq!(registration["entity"], "rack");
     assert_eq!(registration["ops"], serde_json::json!(["insert"]));
     assert!(registration.get("flow-id").is_none());
     assert_eq!(
@@ -949,13 +946,13 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                 "SELECT definition_kind, definition_name, owner_package_id, \
                         client_field_extensible \
                    FROM catalog.package_definition_owners \
-                  WHERE tenant_id = $1 AND schema_name = 'receiving' \
-                    AND relation_name = 'purchase_order' \
-                    AND ((definition_kind = 'relation' AND definition_name = 'purchase_order') \
+                  WHERE tenant_id = $1 AND schema_name = 'inventory' \
+                    AND relation_name = 'panel' \
+                    AND ((definition_kind = 'relation' AND definition_name = 'panel') \
                       OR (definition_kind = 'field' AND definition_name IN \
-                          ('status', 'acme_inspection_required', 'acme_quality_status')) \
+                          ('status', 'overlay_inspection_required', 'overlay_quality_status')) \
                       OR (definition_kind = 'constraint' AND definition_name = \
-                          'purchase_order_acme_quality_status_check')) \
+                          'panel_overlay_quality_status_check')) \
                   ORDER BY definition_kind, definition_name COLLATE \"C\"",
                 &[&TENANT],
             )
@@ -974,32 +971,32 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         vec![
             (
                 "constraint".into(),
-                "purchase_order_acme_quality_status_check".into(),
-                "client_acme_receiving".into(),
+                "panel_overlay_quality_status_check".into(),
+                "client_overlay_inventory".into(),
                 false,
             ),
             (
                 "field".into(),
-                "acme_inspection_required".into(),
-                "client_acme_receiving".into(),
+                "overlay_inspection_required".into(),
+                "client_overlay_inventory".into(),
                 false,
             ),
             (
                 "field".into(),
-                "acme_quality_status".into(),
-                "client_acme_receiving".into(),
+                "overlay_quality_status".into(),
+                "client_overlay_inventory".into(),
                 false,
             ),
             (
                 "field".into(),
                 "status".into(),
-                "wamn_receiving".into(),
+                "wamn_inventory".into(),
                 false,
             ),
             (
                 "relation".into(),
-                "purchase_order".into(),
-                "wamn_receiving".into(),
+                "panel".into(),
+                "wamn_inventory".into(),
                 true,
             ),
         ]
@@ -1007,14 +1004,14 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query_one(
-                "SELECT package_id FROM receiving.wamn_entities \
-                  WHERE entity_id = 'purchase_order'",
+                "SELECT package_id FROM inventory.wamn_entities \
+                  WHERE entity_id = 'panel'",
                 &[],
             )
             .await
             .expect("read shared relation source identity")
             .get::<_, String>(0),
-        "wamn_receiving",
+        "wamn_inventory",
         "definition ownership must not rebind the base CDC entity identity"
     );
     let overlay_identity = write_identity(&client).await;
@@ -1026,9 +1023,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .execute(
-                "UPDATE receiving.wamn_entities \
-                    SET table_name = 'stale_purchase_order' \
-                  WHERE package_id = 'wamn_receiving' AND entity_id = 'purchase_order'",
+                "UPDATE inventory.wamn_entities \
+                    SET table_name = 'stale_panel' \
+                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'",
                 &[],
             )
             .await
@@ -1041,22 +1038,22 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query_one(
-                "SELECT table_name FROM receiving.wamn_entities \
-                  WHERE package_id = 'wamn_receiving' AND entity_id = 'purchase_order'",
+                "SELECT table_name FROM inventory.wamn_entities \
+                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'",
                 &[],
             )
             .await
             .expect("read converged entity map")
             .get::<_, String>(0),
-        "purchase_order"
+        "panel"
     );
 
     assert_eq!(
         client
             .execute(
-                "UPDATE receiving.wamn_entities \
+                "UPDATE inventory.wamn_entities \
                     SET package_id = 'foreign_package' \
-                  WHERE package_id = 'wamn_receiving' AND entity_id = 'purchase_order'",
+                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'",
                 &[],
             )
             .await
@@ -1066,8 +1063,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .execute(
-                &wamn_control_provision::sql::upsert_entity_map_sql("receiving"),
-                &[&"wamn_receiving", &"purchase_order", &"purchase_order"],
+                &wamn_control_provision::sql::upsert_entity_map_sql("inventory"),
+                &[&"wamn_inventory", &"panel", &"panel"],
             )
             .await
             .expect("run guarded generated entity-map upsert"),
@@ -1081,8 +1078,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query_one(
-                "SELECT package_id FROM receiving.wamn_entities \
-                  WHERE entity_id = 'purchase_order'",
+                "SELECT package_id FROM inventory.wamn_entities \
+                  WHERE entity_id = 'panel'",
                 &[],
             )
             .await
@@ -1093,9 +1090,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .execute(
-                "UPDATE receiving.wamn_entities \
-                    SET package_id = 'wamn_receiving' \
-                  WHERE package_id = 'foreign_package' AND entity_id = 'purchase_order'",
+                "UPDATE inventory.wamn_entities \
+                    SET package_id = 'wamn_inventory' \
+                  WHERE package_id = 'foreign_package' AND entity_id = 'panel'",
                 &[],
             )
             .await
@@ -1106,10 +1103,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .execute(
-                "UPDATE receiving.wamn_cdc_exclusions \
-                    SET table_name = 'stale_record_receipt_command' \
-                  WHERE package_id = 'wamn_receiving' \
-                    AND relation_id = 'record_receipt_command'",
+                "UPDATE inventory.wamn_cdc_exclusions \
+                    SET table_name = 'stale_record_rack_command' \
+                  WHERE package_id = 'wamn_inventory' \
+                    AND relation_id = 'record_rack_command'",
                 &[],
             )
             .await
@@ -1122,24 +1119,24 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query_one(
-                "SELECT table_name FROM receiving.wamn_cdc_exclusions \
-                  WHERE package_id = 'wamn_receiving' \
-                    AND relation_id = 'record_receipt_command'",
+                "SELECT table_name FROM inventory.wamn_cdc_exclusions \
+                  WHERE package_id = 'wamn_inventory' \
+                    AND relation_id = 'record_rack_command'",
                 &[],
             )
             .await
             .expect("read converged CDC exclusion map")
             .get::<_, String>(0),
-        "record_receipt_command"
+        "record_rack_command"
     );
 
     assert_eq!(
         client
             .execute(
-                "UPDATE receiving.wamn_cdc_exclusions \
+                "UPDATE inventory.wamn_cdc_exclusions \
                     SET package_id = 'foreign_package', relation_id = 'foreign_relation' \
-                  WHERE package_id = 'wamn_receiving' \
-                    AND relation_id = 'record_receipt_command'",
+                  WHERE package_id = 'wamn_inventory' \
+                    AND relation_id = 'record_rack_command'",
                 &[],
             )
             .await
@@ -1149,11 +1146,11 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .execute(
-                &wamn_control_provision::sql::upsert_cdc_exclusion_map_sql("receiving"),
+                &wamn_control_provision::sql::upsert_cdc_exclusion_map_sql("inventory"),
                 &[
-                    &"wamn_receiving",
-                    &"record_receipt_command",
-                    &"record_receipt_command",
+                    &"wamn_inventory",
+                    &"record_rack_command",
+                    &"record_rack_command",
                 ],
             )
             .await
@@ -1167,8 +1164,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert!(format!("{rebind:#}").contains("package-cdc-exclusion-oid-rebind-refused"));
     let refused = client
         .query_one(
-            "SELECT package_id, relation_id FROM receiving.wamn_cdc_exclusions \
-              WHERE table_name = 'record_receipt_command'",
+            "SELECT package_id, relation_id FROM inventory.wamn_cdc_exclusions \
+              WHERE table_name = 'record_rack_command'",
             &[],
         )
         .await
@@ -1178,9 +1175,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .execute(
-                "UPDATE receiving.wamn_cdc_exclusions \
-                    SET package_id = 'wamn_receiving', \
-                        relation_id = 'record_receipt_command' \
+                "UPDATE inventory.wamn_cdc_exclusions \
+                    SET package_id = 'wamn_inventory', \
+                        relation_id = 'record_rack_command' \
                   WHERE package_id = 'foreign_package' \
                     AND relation_id = 'foreign_relation'",
                 &[],
@@ -1206,13 +1203,13 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     std::fs::write(
         package.join("migrations/0002_candidate.sql"),
-        "ALTER TABLE receiving.receipt \
+        "ALTER TABLE inventory.rack \
            ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write the first pending migration");
     std::fs::write(
         package.join("migrations/0003_failure.sql"),
-        "ALTER TABLE receiving.receipt \
+        "ALTER TABLE inventory.rack \
            ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write the server-refused migration after it");
@@ -1224,7 +1221,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT EXISTS ( \
                    SELECT 1 FROM information_schema.columns \
-                    WHERE table_schema = 'receiving' AND table_name = 'receipt' \
+                    WHERE table_schema = 'inventory' AND table_name = 'rack' \
                       AND column_name = 'rollback_probe')",
                 &[],
             )
@@ -1237,7 +1234,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
                  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
-                &[&TENANT, &"wamn_receiving", &"1.0.0"],
+                &[&TENANT, &"wamn_inventory", &"1.0.0"],
             )
             .await
             .unwrap()
@@ -1263,13 +1260,13 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             "INSERT INTO catalog.effective_release_packages \
                  (tenant_id, effective_release_id, package_id, package_version) \
              VALUES ($1, $2, $3, $4)",
-            &[&TENANT, &1_i32, &"wamn_receiving", &"1.0.0"],
+            &[&TENANT, &1_i32, &"wamn_inventory", &"1.0.0"],
         )
         .await
         .expect("seal the applied package coordinate through release membership");
     std::fs::write(
         package.join("migrations/0002_after_seal.sql"),
-        "ALTER TABLE receiving.receipt \
+        "ALTER TABLE inventory.rack \
            ADD COLUMN sealed_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write a migration after the package coordinate was sealed");
@@ -1283,7 +1280,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         sealed.kind(),
         apply_package::ApplyPackageErrorKind::PackageVersionSealed
     );
-    assert_eq!(sealed.coordinate(), "wamn_receiving@1.0.0");
+    assert_eq!(sealed.coordinate(), "wamn_inventory@1.0.0");
     assert!(
         sealed
             .to_string()
@@ -1294,7 +1291,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT EXISTS ( \
                    SELECT 1 FROM information_schema.columns \
-                    WHERE table_schema = 'receiving' AND table_name = 'receipt' \
+                    WHERE table_schema = 'inventory' AND table_name = 'rack' \
                       AND column_name = 'sealed_probe')",
                 &[]
             )
@@ -1307,7 +1304,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.0'",
                 &[&TENANT],
             )
@@ -1321,7 +1318,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     declare_ownership_only_model(&package, "after_seal", "after_seal");
     std::fs::write(
         package.join("migrations/0002_after_seal.sql"),
-        "CREATE TABLE receiving.after_seal (id int);",
+        "CREATE TABLE inventory.after_seal (id int);",
     )
     .expect("replace the refused suffix with the new version's declared model");
     let undeclared = apply(&url, &package)
@@ -1334,7 +1331,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         undeclared.kind(),
         apply_package::ApplyPackageErrorKind::PredecessorNotCurrent
     );
-    assert_eq!(undeclared.coordinate(), "wamn_receiving@1.0.1");
+    assert_eq!(undeclared.coordinate(), "wamn_inventory@1.0.1");
     assert_eq!(undeclared.predecessor_version(), None);
     assert_eq!(undeclared.current_version(), Some("1.0.0"));
     assert_eq!(undeclared.path(), None);
@@ -1350,7 +1347,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         absent.kind(),
         apply_package::ApplyPackageErrorKind::PredecessorNotCurrent
     );
-    assert_eq!(absent.coordinate(), "wamn_receiving@1.0.1");
+    assert_eq!(absent.coordinate(), "wamn_inventory@1.0.1");
     assert_eq!(absent.predecessor_version(), Some("0.9.0"));
     assert_eq!(absent.current_version(), Some("1.0.0"));
     assert_eq!(absent.path(), None);
@@ -1375,7 +1372,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         !client
             .query_one(
                 "SELECT EXISTS (SELECT 1 FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.1')",
                 &[&TENANT],
             )
@@ -1387,7 +1384,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert!(
         !client
             .query_one(
-                "SELECT to_regclass('receiving.after_seal') IS NOT NULL",
+                "SELECT to_regclass('inventory.after_seal') IS NOT NULL",
                 &[]
             )
             .await
@@ -1403,7 +1400,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert!(
         client
             .query_one(
-                "SELECT to_regclass('receiving.after_seal') IS NOT NULL",
+                "SELECT to_regclass('inventory.after_seal') IS NOT NULL",
                 &[]
             )
             .await
@@ -1414,7 +1411,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.1'",
                 &[&TENANT],
             )
@@ -1427,7 +1424,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT predecessor_version FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.1'",
                 &[&TENANT],
             )
@@ -1447,7 +1444,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                     AND new.package_id = old.package_id \
                     AND new.ordinal = old.ordinal \
                   WHERE old.tenant_id = $1 \
-                    AND old.package_id = 'wamn_receiving' \
+                    AND old.package_id = 'wamn_inventory' \
                     AND old.package_version = '1.0.0' \
                     AND new.package_version = '1.0.1' \
                     AND old.ordinal = 1",
@@ -1470,10 +1467,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("a fresh target executes the complete cumulative stream");
     assert!(
         client
-            .query_one(
-                "SELECT to_regclass('receiving.purchase_order') IS NOT NULL",
-                &[],
-            )
+            .query_one("SELECT to_regclass('inventory.panel') IS NOT NULL", &[],)
             .await
             .unwrap()
             .get::<_, bool>(0),
@@ -1482,7 +1476,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert!(
         client
             .query_one(
-                "SELECT to_regclass('receiving.after_seal') IS NOT NULL",
+                "SELECT to_regclass('inventory.after_seal') IS NOT NULL",
                 &[]
             )
             .await
@@ -1494,7 +1488,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.1'",
                 &[&TENANT],
             )
@@ -1506,7 +1500,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
@@ -1531,21 +1525,21 @@ async fn record_history_triggers_follow_the_declaration() {
         std::process::id()
     ));
     copy_base_fixture(&package);
-    set_audit_log_columns(&package, "purchase_order", &["updated_at", "created_at"]);
-    set_audit_log_columns(&package, "receipt", &[]);
+    set_audit_log_columns(&package, "panel", &["updated_at", "created_at"]);
+    set_audit_log_columns(&package, "rack", &[]);
 
     apply(&url, &package)
         .await
         .expect("apply a declaration that selects stamp columns");
-    let installed = receiving_triggers(&client).await;
+    let installed = inventory_triggers(&client).await;
     assert_eq!(
         trigger_definitions(&installed),
         [
             "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
-             ON receiving.purchase_order FOR EACH ROW \
+             ON inventory.panel FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')",
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-             ON receiving.purchase_order_line FOR EACH ROW \
+             ON inventory.panel_line FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
         ],
         "one stamp trigger for the relation that selects columns, none for [], \
@@ -1575,32 +1569,32 @@ async fn record_history_triggers_follow_the_declaration() {
     apply(&url, &package)
         .await
         .expect("an exact replay keeps the installed trigger");
-    assert_eq!(receiving_triggers(&client).await, installed);
+    assert_eq!(inventory_triggers(&client).await, installed);
 
     set_package_identity(&package, "1.0.1", Some("1.0.0"));
-    set_audit_log_columns(&package, "purchase_order", &[]);
-    set_audit_log_columns(&package, "receipt", &["created_at"]);
+    set_audit_log_columns(&package, "panel", &[]);
+    set_audit_log_columns(&package, "rack", &["created_at"]);
     apply(&url, &package)
         .await
         .expect("an upgrade moves the trigger with its declaration");
     assert_eq!(
-        trigger_definitions(&receiving_triggers(&client).await),
+        trigger_definitions(&inventory_triggers(&client).await),
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-             ON receiving.purchase_order_line FOR EACH ROW \
+             ON inventory.panel_line FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
             "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
-             ON receiving.receipt FOR EACH ROW \
+             ON inventory.rack FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.stamp_row('created_at')",
         ],
         "the trigger that the declaration no longer needs is removed"
     );
-    let upgraded = receiving_triggers(&client).await;
+    let upgraded = inventory_triggers(&client).await;
 
     set_package_identity(&package, "1.0.2", Some("1.0.1"));
     std::fs::write(
         package.join("migrations/0002_trigger.sql"),
-        "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+        "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.ingot \
            FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');",
     )
     .expect("write a migration that carries a trigger");
@@ -1614,7 +1608,7 @@ async fn record_history_triggers_follow_the_declaration() {
         Some(MigrationPolicyErrorKind::RuledOperation),
         "unexpected migration refusal: {refused:#}"
     );
-    assert_eq!(receiving_triggers(&client).await, upgraded);
+    assert_eq!(inventory_triggers(&client).await, upgraded);
     std::fs::remove_file(package.join("migrations/0002_trigger.sql"))
         .expect("remove the refused trigger migration");
 
@@ -1623,7 +1617,7 @@ async fn record_history_triggers_follow_the_declaration() {
         .batch_execute(
             "CREATE FUNCTION public.record_history_foreign() RETURNS trigger \
                LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'; \
-             CREATE TRIGGER foreign_trigger BEFORE INSERT ON receiving.item \
+             CREATE TRIGGER foreign_trigger BEFORE INSERT ON inventory.ingot \
                FOR EACH ROW EXECUTE FUNCTION public.record_history_foreign();",
         )
         .await
@@ -1638,7 +1632,7 @@ async fn record_history_triggers_follow_the_declaration() {
 
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
@@ -1650,9 +1644,9 @@ async fn record_history_triggers_follow_the_declaration() {
     std::fs::remove_dir_all(package).expect("remove record-history package fixture");
 }
 
-/// The log triggers in the receiving schema, as the server renders them.
-async fn receiving_log_triggers(client: &Client) -> Vec<String> {
-    receiving_triggers(client)
+/// The log triggers in the inventory schema, as the server renders them.
+async fn inventory_log_triggers(client: &Client) -> Vec<String> {
+    inventory_triggers(client)
         .await
         .into_iter()
         .map(|(definition, _)| definition)
@@ -1660,25 +1654,25 @@ async fn receiving_log_triggers(client: &Client) -> Vec<String> {
         .collect()
 }
 
-/// Each history table in the receiving schema with its owner and entry count.
-async fn receiving_history_tables(client: &Client) -> Vec<(String, String, i64)> {
+/// Each history table in the inventory schema with its owner and entry count.
+async fn inventory_history_tables(client: &Client) -> Vec<(String, String, i64)> {
     let tables = client
         .query(
             "SELECT c.relname::text, pg_catalog.pg_get_userbyid(c.relowner)::text \
                FROM pg_catalog.pg_class AS c \
                JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-              WHERE n.nspname = 'receiving' AND c.relkind = 'r' \
+              WHERE n.nspname = 'inventory' AND c.relkind = 'r' \
                 AND c.relname LIKE '%\\_history' \
               ORDER BY c.relname",
             &[],
         )
         .await
-        .expect("read receiving history tables");
+        .expect("read inventory history tables");
     let mut observed = Vec::new();
     for table in tables {
         let name = table.get::<_, String>(0);
         let entries = client
-            .query_one(&format!("SELECT count(*) FROM receiving.{name}"), &[])
+            .query_one(&format!("SELECT count(*) FROM inventory.{name}"), &[])
             .await
             .expect("count history entries")
             .get::<_, i64>(0);
@@ -1687,17 +1681,17 @@ async fn receiving_history_tables(client: &Client) -> Vec<(String, String, i64)>
     observed
 }
 
-/// Every CDC exclusion row in the receiving schema, with whether its OID names its table.
-async fn receiving_cdc_exclusions(client: &Client) -> Vec<(String, String, String, bool)> {
+/// Every CDC exclusion row in the inventory schema, with whether its OID names its table.
+async fn inventory_cdc_exclusions(client: &Client) -> Vec<(String, String, String, bool)> {
     client
         .query(
             "SELECT table_name, package_id, relation_id, \
-                    relation_oid = pg_catalog.to_regclass('receiving.' || table_name)::oid \
-               FROM receiving.wamn_cdc_exclusions ORDER BY table_name",
+                    relation_oid = pg_catalog.to_regclass('inventory.' || table_name)::oid \
+               FROM inventory.wamn_cdc_exclusions ORDER BY table_name",
             &[],
         )
         .await
-        .expect("read receiving CDC exclusions")
+        .expect("read inventory CDC exclusions")
         .into_iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .collect()
@@ -1728,11 +1722,11 @@ async fn audit_retention_grants(client: &Client) -> Vec<String> {
 /// The audit retention grants on the history table of one P<n>D relation.
 fn retention_grants_on(history: &str) -> Vec<String> {
     vec![
-        format!("column receiving.{history}.changed_at SELECT"),
-        format!("column receiving.{history}.position SELECT"),
-        format!("column receiving.{history}.row_key SELECT"),
-        format!("relation receiving.{history} DELETE"),
-        "schema receiving.receiving USAGE".to_owned(),
+        format!("column inventory.{history}.changed_at SELECT"),
+        format!("column inventory.{history}.position SELECT"),
+        format!("column inventory.{history}.row_key SELECT"),
+        format!("relation inventory.{history} DELETE"),
+        "schema inventory.inventory USAGE".to_owned(),
     ]
 }
 
@@ -1750,56 +1744,56 @@ async fn record_history_log_follows_the_declaration() {
         std::process::id()
     ));
     copy_base_fixture(&package);
-    set_audit_log_retention(&package, "purchase_order", "unlimited");
-    set_audit_log_retention(&package, "purchase_order_line", "P30D");
+    set_audit_log_retention(&package, "panel", "unlimited");
+    set_audit_log_retention(&package, "panel_line", "P30D");
 
     apply(&url, &package)
         .await
         .expect("apply declarations that keep a log");
     assert_eq!(
-        receiving_log_triggers(&client).await,
+        inventory_log_triggers(&client).await,
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-             ON receiving.purchase_order FOR EACH ROW \
+             ON inventory.panel FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('unlimited')",
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-             ON receiving.purchase_order_line FOR EACH ROW \
+             ON inventory.panel_line FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
         ]
     );
     let owner = wamn_control_provision::DB_OWNER_ROLE.to_owned();
     assert_eq!(
-        receiving_history_tables(&client).await,
+        inventory_history_tables(&client).await,
         [
-            ("purchase_order_history".to_owned(), owner.clone(), 0),
-            ("purchase_order_line_history".to_owned(), owner.clone(), 0),
+            ("panel_history".to_owned(), owner.clone(), 0),
+            ("panel_line_history".to_owned(), owner.clone(), 0),
         ]
     );
     let exclusions = [
         (
-            "purchase_order_history".to_owned(),
-            "wamn_receiving".to_owned(),
-            "purchase_order_history".to_owned(),
+            "panel_history".to_owned(),
+            "wamn_inventory".to_owned(),
+            "panel_history".to_owned(),
             true,
         ),
         (
-            "purchase_order_line_history".to_owned(),
-            "wamn_receiving".to_owned(),
-            "purchase_order_line_history".to_owned(),
+            "panel_line_history".to_owned(),
+            "wamn_inventory".to_owned(),
+            "panel_line_history".to_owned(),
             true,
         ),
         (
-            "record_receipt_command".to_owned(),
-            "wamn_receiving".to_owned(),
-            "record_receipt_command".to_owned(),
+            "record_rack_command".to_owned(),
+            "wamn_inventory".to_owned(),
+            "record_rack_command".to_owned(),
             true,
         ),
     ];
-    assert_eq!(receiving_cdc_exclusions(&client).await, exclusions);
+    assert_eq!(inventory_cdc_exclusions(&client).await, exclusions);
     // Spec test 20: the unlimited history table carries no retention grant.
     assert_eq!(
         audit_retention_grants(&client).await,
-        retention_grants_on("purchase_order_line_history")
+        retention_grants_on("panel_line_history")
     );
 
     // A fixture write binds a test principal and an administrative operation.
@@ -1808,12 +1802,12 @@ async fn record_history_log_follows_the_declaration() {
             "BEGIN; \
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
-             INSERT INTO receiving.item (id, item_number) \
-               VALUES ('00000000-0000-4000-8000-00000000a001', 'history-item'); \
-             INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) \
+             INSERT INTO inventory.ingot (id, ingot_number) \
+               VALUES ('00000000-0000-4000-8000-00000000a001', 'history-ingot'); \
+             INSERT INTO inventory.panel (id, panel_number, stock_id) \
                VALUES ('00000000-0000-4000-8000-00000000a002', 'history-po', gen_random_uuid()); \
-             INSERT INTO receiving.purchase_order_line \
-               (id, purchase_order_id, line_number, item_id, ordered_quantity) \
+             INSERT INTO inventory.panel_line \
+               (id, panel_id, line_number, ingot_id, ordered_quantity) \
                VALUES ('00000000-0000-4000-8000-00000000a003', \
                        '00000000-0000-4000-8000-00000000a002', 1, \
                        '00000000-0000-4000-8000-00000000a001', 5); \
@@ -1822,31 +1816,31 @@ async fn record_history_log_follows_the_declaration() {
         .await
         .expect("write logged rows as the fixture principal");
     assert_eq!(
-        receiving_history_tables(&client).await,
+        inventory_history_tables(&client).await,
         [
-            ("purchase_order_history".to_owned(), owner.clone(), 1),
-            ("purchase_order_line_history".to_owned(), owner.clone(), 1),
+            ("panel_history".to_owned(), owner.clone(), 1),
+            ("panel_line_history".to_owned(), owner.clone(), 1),
         ]
     );
 
-    let installed = receiving_triggers(&client).await;
+    let installed = inventory_triggers(&client).await;
     apply(&url, &package)
         .await
         .expect("an exact replay keeps the log triggers and the history tables");
-    assert_eq!(receiving_triggers(&client).await, installed);
+    assert_eq!(inventory_triggers(&client).await, installed);
 
     // Spec test 14: a retention of none removes the trigger and keeps the table.
     set_package_identity(&package, "1.0.1", Some("1.0.0"));
-    set_audit_log_retention(&package, "purchase_order", "P90D");
-    set_audit_log_retention(&package, "purchase_order_line", "none");
+    set_audit_log_retention(&package, "panel", "P90D");
+    set_audit_log_retention(&package, "panel_line", "none");
     apply(&url, &package)
         .await
         .expect("an upgrade moves the log triggers with the declarations");
     assert_eq!(
-        receiving_log_triggers(&client).await,
+        inventory_log_triggers(&client).await,
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-          ON receiving.purchase_order FOR EACH ROW \
+          ON inventory.panel FOR EACH ROW \
           EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
         ]
     );
@@ -1855,32 +1849,32 @@ async fn record_history_log_follows_the_declaration() {
             "BEGIN; \
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
-             UPDATE receiving.purchase_order_line SET received_quantity = 1 \
+             UPDATE inventory.panel_line SET received_quantity = 1 \
               WHERE id = '00000000-0000-4000-8000-00000000a003'; \
              COMMIT;"
         ))
         .await
         .expect("write a relation that no longer keeps a log");
     assert_eq!(
-        receiving_history_tables(&client).await,
+        inventory_history_tables(&client).await,
         [
-            ("purchase_order_history".to_owned(), owner.clone(), 1),
-            ("purchase_order_line_history".to_owned(), owner.clone(), 1),
+            ("panel_history".to_owned(), owner.clone(), 1),
+            ("panel_line_history".to_owned(), owner.clone(), 1),
         ],
         "the history table and its entries stay, and the relation writes no new entry"
     );
-    assert_eq!(receiving_cdc_exclusions(&client).await, exclusions);
+    assert_eq!(inventory_cdc_exclusions(&client).await, exclusions);
     // unlimited to P90D grants, and P30D to none revokes.
     assert_eq!(
         audit_retention_grants(&client).await,
-        retention_grants_on("purchase_order_history")
+        retention_grants_on("panel_history")
     );
 
     // apply-package compares the installed retention with the declaration.
     client
         .batch_execute(
             "CREATE OR REPLACE TRIGGER wamn_record_history_log \
-               AFTER INSERT OR UPDATE OR DELETE ON receiving.purchase_order \
+               AFTER INSERT OR UPDATE OR DELETE ON inventory.panel \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P1D')",
         )
         .await
@@ -1889,10 +1883,10 @@ async fn record_history_log_follows_the_declaration() {
         .await
         .expect("a replay repairs the installed retention");
     assert_eq!(
-        receiving_log_triggers(&client).await,
+        inventory_log_triggers(&client).await,
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-          ON receiving.purchase_order FOR EACH ROW \
+          ON inventory.panel FOR EACH ROW \
           EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
         ]
     );
@@ -1900,8 +1894,8 @@ async fn record_history_log_follows_the_declaration() {
     // A grant outside the exact set does not survive a replay.
     client
         .batch_execute(
-            "GRANT SELECT ON receiving.purchase_order_line_history TO wamn_audit_retention; \
-             GRANT UPDATE (after) ON receiving.purchase_order_history TO wamn_audit_retention;",
+            "GRANT SELECT ON inventory.panel_line_history TO wamn_audit_retention; \
+             GRANT UPDATE (after) ON inventory.panel_history TO wamn_audit_retention;",
         )
         .await
         .expect("widen the audit retention grants outside apply-package");
@@ -1910,12 +1904,12 @@ async fn record_history_log_follows_the_declaration() {
         .expect("a replay repairs the audit retention grants");
     assert_eq!(
         audit_retention_grants(&client).await,
-        retention_grants_on("purchase_order_history")
+        retention_grants_on("panel_history")
     );
 
     // P90D to unlimited revokes.
     set_package_identity(&package, "1.0.2", Some("1.0.1"));
-    set_audit_log_retention(&package, "purchase_order", "unlimited");
+    set_audit_log_retention(&package, "panel", "unlimited");
     apply(&url, &package)
         .await
         .expect("an upgrade to unlimited retention revokes the retention grants");
@@ -1925,8 +1919,8 @@ async fn record_history_log_follows_the_declaration() {
     set_package_identity(&package, "1.0.3", Some("1.0.2"));
     std::fs::write(
         package.join("migrations/0002_history.sql"),
-        "CREATE TABLE receiving.receipt_history (\
-           id uuid CONSTRAINT receipt_history_id_pkey PRIMARY KEY);",
+        "CREATE TABLE inventory.rack_history (\
+           id uuid CONSTRAINT rack_history_id_pkey PRIMARY KEY);",
     )
     .expect("write a migration that creates a history name");
     let refused = apply(&url, &package)
@@ -1939,7 +1933,7 @@ async fn record_history_log_follows_the_declaration() {
     assert!(
         client
             .query_one(
-                "SELECT pg_catalog.to_regclass('receiving.receipt_history') IS NULL",
+                "SELECT pg_catalog.to_regclass('inventory.rack_history') IS NULL",
                 &[],
             )
             .await
@@ -1950,7 +1944,7 @@ async fn record_history_log_follows_the_declaration() {
 
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
@@ -2003,16 +1997,16 @@ fn package_migration_error(
         .kind()
 }
 
-async fn receiving_column_present(client: &Client, table: &str, column: &str) -> bool {
+async fn inventory_column_present(client: &Client, table: &str, column: &str) -> bool {
     client
         .query_one(
             "SELECT EXISTS ( \
                SELECT 1 FROM information_schema.columns \
-                WHERE table_schema = 'receiving' AND table_name = $1 AND column_name = $2)",
+                WHERE table_schema = 'inventory' AND table_name = $1 AND column_name = $2)",
             &[&table, &column],
         )
         .await
-        .expect("read receiving column")
+        .expect("read inventory column")
         .get(0)
 }
 
@@ -2038,7 +2032,7 @@ async fn record_after_seal(
             .execute(
                 "INSERT INTO catalog.package_migrations \
                      (tenant_id, package_id, package_version, ordinal, relative_path, sha256) \
-                 VALUES ($1, 'wamn_receiving', '1.0.0', 99, 'migrations/0099_seal_probe.sql', $2)",
+                 VALUES ($1, 'wamn_inventory', '1.0.0', 99, 'migrations/0099_seal_probe.sql', $2)",
                 &[&TENANT, &format!("sha256:{}", "0".repeat(64))],
             )
             .await
@@ -2096,7 +2090,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
             .expect("parse the marker");
         comment
             .manifests
-            .insert("wamn_receiving@1.0.0".to_owned(), hash.to_owned());
+            .insert("wamn_inventory@1.0.0".to_owned(), hash.to_owned());
         comment.to_string()
     };
 
@@ -2110,10 +2104,10 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     );
 
     // Before release membership: an audit_log change and an appended column.
-    set_audit_log_retention(&package, "location", "unlimited");
+    set_audit_log_retention(&package, "dock", "unlimited");
     std::fs::write(
-        package.join("migrations/0002_location_description.sql"),
-        "ALTER TABLE receiving.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';",
+        package.join("migrations/0002_dock_description.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN description text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append the column migration");
     let refused = apply(&url, &package)
@@ -2133,11 +2127,11 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         database_comment(&client).await,
         Some(recorded_comment(&second))
     );
-    assert!(receiving_column_present(&client, "location", "description").await);
+    assert!(inventory_column_present(&client, "dock", "description").await);
     assert!(
         client
             .query_one(
-                "SELECT pg_catalog.to_regclass('receiving.location_history') IS NOT NULL",
+                "SELECT pg_catalog.to_regclass('inventory.dock_history') IS NOT NULL",
                 &[],
             )
             .await
@@ -2149,7 +2143,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         client
             .query_one(
                 "SELECT manifest_sha256 FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.0'",
                 &[&TENANT],
             )
@@ -2173,7 +2167,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         .execute(
             "INSERT INTO catalog.effective_release_packages \
                  (tenant_id, effective_release_id, package_id, package_version) \
-             VALUES ($1, 1, 'wamn_receiving', '1.0.0')",
+             VALUES ($1, 1, 'wamn_inventory', '1.0.0')",
             &[&TENANT],
         )
         .await
@@ -2199,13 +2193,13 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     ));
     copy_base_fixture(&first_bytes_package);
     std::fs::copy(
-        package.join("migrations/0002_location_description.sql"),
-        first_bytes_package.join("migrations/0002_location_description.sql"),
+        package.join("migrations/0002_dock_description.sql"),
+        first_bytes_package.join("migrations/0002_dock_description.sql"),
     )
     .expect("copy the applied column migration");
     std::fs::write(
-        first_bytes_package.join("migrations/0003_location_note.sql"),
-        "ALTER TABLE receiving.location ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
+        first_bytes_package.join("migrations/0003_dock_note.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration after the seal");
     let sealed = apply(&url, &first_bytes_package)
@@ -2222,8 +2216,8 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
 
     // After release membership: another appended migration and manifest change.
     std::fs::write(
-        package.join("migrations/0003_location_note.sql"),
-        "ALTER TABLE receiving.location ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
+        package.join("migrations/0003_dock_note.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration after the seal");
     let mut changed = std::fs::read(package.join("wamn.json")).expect("read manifest");
@@ -2237,14 +2231,14 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         database_comment(&client).await,
         Some(recorded_comment(&third))
     );
-    assert!(receiving_column_present(&client, "location", "note").await);
+    assert!(inventory_column_present(&client, "dock", "note").await);
 
     // An edited or removed applied migration still refuses.
-    let edited_path = package.join("migrations/0002_location_description.sql");
+    let edited_path = package.join("migrations/0002_dock_description.sql");
     let edited_bytes = std::fs::read(&edited_path).expect("read applied migration");
     std::fs::write(
         &edited_path,
-        b"ALTER TABLE receiving.location ADD COLUMN detail text NOT NULL DEFAULT 'not_required';",
+        b"ALTER TABLE inventory.dock ADD COLUMN detail text NOT NULL DEFAULT 'not_required';",
     )
     .expect("edit an applied migration");
     let edited = apply_local()
@@ -2255,7 +2249,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         wamn_schema_control::PackageMigrationErrorKind::MigrationDrift
     );
     std::fs::write(&edited_path, edited_bytes).expect("restore the edited migration");
-    let removed_path = package.join("migrations/0003_location_note.sql");
+    let removed_path = package.join("migrations/0003_dock_note.sql");
     let removed_bytes = std::fs::read(&removed_path).expect("read applied migration");
     std::fs::remove_file(&removed_path).expect("remove an applied migration");
     let removed = apply_local()
@@ -2273,8 +2267,8 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
 
     // A comment with only the marker prefix, or no comment, is not a local target.
     std::fs::write(
-        package.join("migrations/0004_location_code.sql"),
-        "ALTER TABLE receiving.location ADD COLUMN code text NOT NULL DEFAULT 'not_required';",
+        package.join("migrations/0004_dock_code.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN code text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration for the unmarked cases");
     for comment in [Some("wamn-local-target:"), None] {
@@ -2292,11 +2286,11 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
             wamn_schema_control::PackageMigrationErrorKind::ManifestDrift
         );
     }
-    assert!(!receiving_column_present(&client, "location", "code").await);
+    assert!(!inventory_column_present(&client, "dock", "code").await);
 
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
@@ -2320,8 +2314,8 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
         std::process::id()
     ));
     copy_base_fixture(&package);
-    set_audit_log_retention(&package, "item", "unlimited");
-    set_audit_log_retention(&package, "location", "unlimited");
+    set_audit_log_retention(&package, "ingot", "unlimited");
+    set_audit_log_retention(&package, "dock", "unlimited");
     apply(&url, &package)
         .await
         .expect("apply declarations that keep a log");
@@ -2335,29 +2329,29 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
             "BEGIN; \
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
-             INSERT INTO receiving.location (id, location_code) \
+             INSERT INTO inventory.dock (id, dock_code) \
                VALUES ('00000000-0000-4000-8000-00000000b001', 'DOCK-1'); \
              COMMIT;"
         ))
         .await
-        .expect("write a logged location row as the fixture principal");
-    set_audit_log_retention(&package, "item", "none");
+        .expect("write a logged dock row as the fixture principal");
+    set_audit_log_retention(&package, "ingot", "none");
     assert_eq!(
         reason().await.expect("check an empty history table"),
         None,
         "an empty history table whose model keeps no log keeps the target"
     );
-    set_audit_log_retention(&package, "location", "none");
+    set_audit_log_retention(&package, "dock", "none");
     let history = reason()
         .await
         .expect("check a history table with rows")
         .expect("a history table with rows whose model keeps no log recreates the target");
-    assert!(history.contains("receiving.location_history"), "{history}");
-    set_audit_log_retention(&package, "location", "unlimited");
+    assert!(history.contains("inventory.dock_history"), "{history}");
+    set_audit_log_retention(&package, "dock", "unlimited");
 
     std::fs::write(
-        package.join("migrations/0002_location_note.sql"),
-        "ALTER TABLE receiving.location ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
+        package.join("migrations/0002_dock_note.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration");
     assert_eq!(
@@ -2380,7 +2374,7 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
 
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
@@ -2404,8 +2398,8 @@ async fn one_apply_takes_a_created_relation_and_its_later_column() {
     ));
     copy_base_fixture(&package);
     std::fs::write(
-        package.join("migrations/0002_location_note.sql"),
-        "ALTER TABLE receiving.location ADD COLUMN note text;\n",
+        package.join("migrations/0002_dock_note.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN note text;\n",
     )
     .expect("append a migration to the stream");
     let outcome = apply(&url, &package)
@@ -2415,8 +2409,8 @@ async fn one_apply_takes_a_created_relation_and_its_later_column() {
     let owned: bool = client
         .query_one(
             "SELECT count(*) = 1 FROM catalog.package_definition_owners \
-             WHERE relation_name = 'location' AND definition_kind = 'field' \
-               AND definition_name = 'note' AND owner_package_id = 'wamn_receiving'",
+             WHERE relation_name = 'dock' AND definition_kind = 'field' \
+               AND definition_name = 'note' AND owner_package_id = 'wamn_inventory'",
             &[],
         )
         .await
@@ -2426,7 +2420,7 @@ async fn one_apply_takes_a_created_relation_and_its_later_column() {
 
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \

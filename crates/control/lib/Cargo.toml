@@ -57,6 +57,7 @@ wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 
 [dev-dependencies]
+wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tokio-rustls = { workspace = true }

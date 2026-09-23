@@ -1584,8 +1584,10 @@ pub(crate) mod tests {
 
     const ENDPOINT_COUNT: usize = 11;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
-    const OVERLAY_MANIFEST: &[u8] =
-        include_bytes!("../../../../../apps/client_acme_receiving/wamn.json");
+    /// The overlay manifest of the platform fixture application.
+    fn overlay_manifest() -> Vec<u8> {
+        wamn_fixture_package::overlay_manifest_bytes()
+    }
 
     struct TempPackage {
         root: PathBuf,
@@ -1617,10 +1619,13 @@ pub(crate) mod tests {
         }
     }
 
+    /// The fixture application, or its overlay, as a repository package.
     fn repository_package(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../apps")
-            .join(name)
+        if name == wamn_fixture_package::OVERLAY_PACKAGE_ID {
+            wamn_fixture_package::overlay_root()
+        } else {
+            wamn_fixture_package::package_root()
+        }
     }
 
     pub(crate) fn complete_document(addresses: &[SocketAddr; ENDPOINT_COUNT]) -> Value {
@@ -1644,7 +1649,7 @@ pub(crate) mod tests {
             (TEMPO_QUERY_URL): format!("http://{}", addresses[9]),
             (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[10]),
             (GATE_BEARER_TOKEN): "gate-super-secret",
-            (ROUTE_HOST): "receiving.localhost",
+            (ROUTE_HOST): "fixture.localhost",
             (PLATFORM_DOMAIN): "example.invalid",
             (LOCAL_ARTIFACTS): {"directory": "/tmp/wamn-local-candidate",
                 "flow_http_component": "/tmp/wamn-flow-http.wasm"},
@@ -1652,13 +1657,13 @@ pub(crate) mod tests {
             (EFFECTIVE_RELEASE_ID): 1,
             (TENANT): "00000000-0000-0000-0000-000000000001",
             (CATALOG): "default",
-            (ENVIRONMENT): "receiving-dev",
+            (ENVIRONMENT): "fixture-dev",
             (ORG): "acme",
-            (PROJECT): "receiving",
-            (SCHEMA): "receiving",
-            (HOST_GROUP): "wamn-dev-receiving",
-            (HOST_NAME): "wamn-dev-receiving-1",
-            (RUNNER): "wamn-dev-receiving-1",
+            (PROJECT): "fixture",
+            (SCHEMA): "inventory",
+            (HOST_GROUP): "wamn-dev-fixture",
+            (HOST_NAME): "wamn-dev-fixture-1",
+            (RUNNER): "wamn-dev-fixture-1",
             (HOST_BINARY): "/opt/wamn/bin/wamn-host",
             (WASMTIME_CACHE_DIR): "/tmp/wamn-dev-cache",
         })
@@ -1879,8 +1884,8 @@ pub(crate) mod tests {
     #[test]
     fn overlay_dependencies_resolve_by_coordinate_and_report_ignored_sources() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
-        let overlay_root = repository_package("client_acme_receiving");
-        let base_root = repository_package("wamn_receiving");
+        let overlay_root = repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID);
+        let base_root = repository_package(wamn_fixture_package::PACKAGE_ID);
         let ignored_root = overlay_root.clone();
         let mut document = complete_document(&addresses);
         document[PACKAGE_SOURCES] = json!([ignored_root, base_root]);
@@ -1893,31 +1898,34 @@ pub(crate) mod tests {
         assert_eq!(resolved.overlay_root(), overlay_root);
         assert_eq!(
             resolved.overlay_manifest().package.id,
-            "client_acme_receiving"
+            wamn_fixture_package::OVERLAY_PACKAGE_ID
         );
         assert_eq!(resolved.base_packages().len(), 1);
         assert_eq!(resolved.ignored_package_source_count(), 1);
         assert_eq!(resolved.ignored_package_sources(), [overlay_root]);
         let base = &resolved.base_packages()[0];
-        assert_eq!(base.alias(), "base_receiving");
-        assert_eq!(base.root(), repository_package("wamn_receiving"));
-        assert_eq!(base.manifest().package.id, "wamn_receiving");
+        assert_eq!(base.alias(), "base_fixture");
+        assert_eq!(
+            base.root(),
+            repository_package(wamn_fixture_package::PACKAGE_ID)
+        );
+        assert_eq!(base.manifest().package.id, wamn_fixture_package::PACKAGE_ID);
         assert_eq!(
             base.component_digest().expected(),
-            resolved.overlay_manifest().base_dependencies["base_receiving"].digest
+            resolved.overlay_manifest().base_dependencies["base_fixture"].digest
         );
 
         let verified = base
             .component_digest()
             .verify(base.component_digest().expected());
-        assert_eq!(verified.coordinate(), "wamn_receiving@1.0.0");
+        assert_eq!(verified.coordinate(), "platform_fixture@1.0.0");
         assert_eq!(verified.digest(), base.component_digest().expected());
         assert_eq!(verified.superseded_pin(), None);
     }
 
     fn moved_digest_expectation() -> (BaseComponentDigestExpectation, String) {
         let expectation = BaseComponentDigestExpectation {
-            coordinate: "wamn_receiving@1.0.0".into(),
+            coordinate: "platform_fixture@1.0.0".into(),
             expected: format!("sha256:{}", "a".repeat(64)).into_boxed_str(),
         };
         let observed = format!("sha256:{}", "b".repeat(64));
@@ -1950,12 +1958,12 @@ pub(crate) mod tests {
     #[test]
     fn missing_and_ambiguous_dependencies_name_the_complete_search() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
-        let overlay_root = repository_package("client_acme_receiving");
-        let base_root = repository_package("wamn_receiving");
-        let expected = wamn_schema_generator::PackageManifest::from_slice(OVERLAY_MANIFEST)
+        let overlay_root = repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID);
+        let base_root = repository_package(wamn_fixture_package::PACKAGE_ID);
+        let expected = wamn_schema_generator::PackageManifest::from_slice(&overlay_manifest())
             .expect("parse repository overlay")
             .base_dependencies
-            .remove("base_receiving")
+            .remove("base_fixture")
             .expect("overlay declares its base");
 
         let mut missing_document = complete_document(&addresses);
@@ -1967,7 +1975,7 @@ pub(crate) mod tests {
         let error = resolve_dev_packages(&missing_config, &overlay_root)
             .expect_err("zero coordinate matches must refuse");
         assert_eq!(error.kind(), DevPackageErrorKind::BaseDependencyMissing);
-        assert_eq!(error.coordinate(), Some("wamn_receiving@1.0.0"));
+        assert_eq!(error.coordinate(), Some("platform_fixture@1.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(error.searched_roots(), std::slice::from_ref(&overlay_root));
 
@@ -1980,17 +1988,17 @@ pub(crate) mod tests {
         .expect("duplicate coordinates are a resolution concern");
         let error = resolve_dev_packages(
             &ambiguous_config,
-            &repository_package("client_acme_receiving"),
+            &repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID),
         )
         .expect_err("multiple coordinate matches must refuse");
         assert_eq!(error.kind(), DevPackageErrorKind::BaseDependencyAmbiguous);
-        assert_eq!(error.coordinate(), Some("wamn_receiving@1.0.0"));
+        assert_eq!(error.coordinate(), Some("platform_fixture@1.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(
             error.searched_roots(),
             [
                 base_root.clone(),
-                repository_package("client_acme_receiving"),
+                repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID),
                 base_root
             ]
         );
@@ -2000,7 +2008,7 @@ pub(crate) mod tests {
     fn overlay_manifest_is_parsed_through_the_strict_package_parser() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let mut overlay: Value =
-            serde_json::from_slice(OVERLAY_MANIFEST).expect("parse overlay fixture");
+            serde_json::from_slice(&overlay_manifest()).expect("parse overlay fixture");
         overlay["environment_url"] = json!("https://must-not-enter-a-package.invalid");
         let overlay = TempPackage::with_manifest(
             &serde_json::to_vec(&overlay).expect("serialize invalid overlay"),

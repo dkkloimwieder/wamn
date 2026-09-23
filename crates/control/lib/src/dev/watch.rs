@@ -1172,14 +1172,11 @@ mod tests {
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
             fs::write(
                 self.package().join("wamn.json"),
-                include_bytes!("../../../../../apps/wamn_receiving/wamn.json"),
+                wamn_fixture_package::manifest_bytes(),
             )
             .expect("write package manifest");
-            fs::write(
-                self.package().join("query/open_purchase_order.sql"),
-                "SELECT 1",
-            )
-            .expect("write authored SQL");
+            fs::write(self.package().join("query/widget.sql"), "SELECT 1")
+                .expect("write authored SQL");
             fs::write(self.component().join("src/lib.rs"), "pub fn value() {}")
                 .expect("write component source");
             fs::write(self.root.join(".gitignore"), "ignored\n").expect("write ignore rules");
@@ -1234,9 +1231,9 @@ mod tests {
         for input in [
             "wamn.json",
             "migrations/0002.sql",
-            "query/open_purchase_order.sql",
-            "publication/components/receiving.json.in",
-            "publication/wirings/receiving.json",
+            "query/widget.sql",
+            "publication/components/fixture.json.in",
+            "publication/wirings/widget_get.json",
             "publication/attachments.json",
             "ui",
             "ui/Cargo.toml",
@@ -1297,7 +1294,7 @@ mod tests {
             !source.roots.is_input(
                 &repository
                     .package()
-                    .join("generated/receiving-tui/src/main.rs")
+                    .join("generated/fixture-tui/src/main.rs")
             )
         );
 
@@ -1485,10 +1482,10 @@ mod tests {
         let paths = [
             repository
                 .package()
-                .join("generated/receiving-tui/Cargo.toml"),
+                .join("generated/fixture-tui/Cargo.toml"),
             repository
                 .package()
-                .join("generated/receiving-tui/src/lib.rs"),
+                .join("generated/fixture-tui/src/lib.rs"),
             repository.package().join("generated/client/location.rs"),
         ];
         for path in &paths {
@@ -1751,7 +1748,7 @@ mod tests {
 
         let emitted = repository
             .package()
-            .join("generated/receiving-tui/src/lib.rs");
+            .join("generated/fixture-tui/src/lib.rs");
         fs::create_dir_all(emitted.parent().expect("generated source parent"))
             .expect("create first generated native source directory");
         fs::write(emitted, "own first emission").expect("emit native source before Build");
@@ -1910,11 +1907,8 @@ mod tests {
                 .all(|event| *event == DevInvalidation::Ignore)
         );
 
-        fs::write(
-            repository.package().join("query/open_purchase_order.sql"),
-            "SELECT 2",
-        )
-        .expect("edit authored SQL");
+        fs::write(repository.package().join("query/widget.sql"), "SELECT 2")
+            .expect("edit authored SQL");
         let first = tokio::time::timeout(Duration::from_secs(2), source.next())
             .await
             .expect("authored SQL event arrived")

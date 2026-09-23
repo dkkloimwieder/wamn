@@ -1,17 +1,17 @@
 {
   "package": {
-    "id": "wamn_receiving",
+    "id": "wamn_inventory",
     "version": "1.0.0"
   },
   "required_platform_policy_contract": {
-    "id": "receiving_data_access",
+    "id": "inventory_data_access",
     "state": "satisfied"
   },
   "models": {
-    "item": {
-      "schema": "receiving",
-      "table": "item",
-      "owner": "wamn_receiving",
+    "ingot": {
+      "schema": "inventory",
+      "table": "ingot",
+      "owner": "wamn_inventory",
       "server_owned_fields": [
         "id"
       ],
@@ -22,10 +22,10 @@
       },
       "operations": {}
     },
-    "location": {
-      "schema": "receiving",
-      "table": "location",
-      "owner": "wamn_receiving",
+    "dock": {
+      "schema": "inventory",
+      "table": "dock",
+      "owner": "wamn_inventory",
       "server_owned_fields": [
         "id"
       ],
@@ -36,14 +36,14 @@
       },
       "operations": {}
     },
-    "purchase_order": {
-      "schema": "receiving",
-      "table": "purchase_order",
-      "owner": "wamn_receiving",
+    "panel": {
+      "schema": "inventory",
+      "table": "panel",
+      "owner": "wamn_inventory",
       "client_field_extensible": true,
       "server_owned_fields": [
         "id",
-        "purchase_order_number",
+        "panel_number",
         "status",
         "row_version",
         "created_at",
@@ -67,23 +67,23 @@
       },
       "operations": {
         "get": {
-          "permission": "purchase_order.get",
+          "permission": "panel.get",
           "result": "one"
         },
         "update": {
-          "permission": "purchase_order.update",
+          "permission": "panel.update",
           "writable_fields": [
-            "supplier_id"
+            "stock_id"
           ],
           "revision_field": "row_version",
           "result": "one"
         }
       }
     },
-    "purchase_order_line": {
-      "schema": "receiving",
-      "table": "purchase_order_line",
-      "owner": "wamn_receiving",
+    "panel_line": {
+      "schema": "inventory",
+      "table": "panel_line",
+      "owner": "wamn_inventory",
       "server_owned_fields": [
         "id"
       ],
@@ -94,15 +94,15 @@
       },
       "operations": {}
     },
-    "receipt": {
-      "schema": "receiving",
-      "table": "receipt",
-      "owner": "wamn_receiving",
+    "rack": {
+      "schema": "inventory",
+      "table": "rack",
+      "owner": "wamn_inventory",
       "server_owned_fields": [
         "id",
         "idempotency_key",
-        "purchase_order_id",
-        "receipt_reference",
+        "panel_id",
+        "rack_reference",
         "occurred_at",
         "created_at"
       ],
@@ -116,15 +116,15 @@
       },
       "operations": {
         "get": {
-          "permission": "receipt.get",
+          "permission": "rack.get",
           "result": "one"
         }
       }
     },
-    "receipt_line": {
-      "schema": "receiving",
-      "table": "receipt_line",
-      "owner": "wamn_receiving",
+    "rack_line": {
+      "schema": "inventory",
+      "table": "rack_line",
+      "owner": "wamn_inventory",
       "server_owned_fields": [
         "id"
       ],
@@ -137,9 +137,9 @@
     }
   },
   "internal_relations": {
-    "record_receipt_command": {
-      "schema": "receiving",
-      "table": "record_receipt_command",
+    "record_rack_command": {
+      "schema": "inventory",
+      "table": "record_rack_command",
       "cdc": "excluded"
     }
   },
@@ -148,7 +148,7 @@
     "postgres"
   ],
   "components": {
-    "receiving": {
+    "inventory": {
       "connections": [
         "postgres"
       ]

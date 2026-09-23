@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn missing_relative_and_conflicting_executables_refuse() {
         let packages = artifact_targets().into_iter().take(1).collect::<Vec<_>>();
-        for executable in [Value::Null, json!("target/debug/wamn-receiving")] {
+        for executable in [Value::Null, json!("target/debug/wamn-fixture")] {
             assert!(
                 artifact_paths(
                     &packages,
