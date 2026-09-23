@@ -139,7 +139,7 @@ The admission test at `component_admission.rs:710` calls `wiring_lowering::proje
 
 ## 6. Issues
 
-Each issue names the files it moves. Each ends with the workspace building, clippy and fmt clean, and the workspace sweep count unchanged from main (2490 pass after `wamn-11tj`). A move commit is a `git mv` with no content change. Import and doc-link fixes go in the next commit.
+Each issue names the files it moves. Each ends with the workspace building, clippy and fmt clean, and the tests of the crates it touches passing. The full workspace sweep runs once, in `wamn-3lw7.8`, and its count stays at 2490 (main after `wamn-11tj`). A move commit is a `git mv` with no content change. Import and doc-link fixes go in the next commit.
 
 1. `wamn-3lw7.1` Run-state storage traits, Postgres adapter behind `RunStore`. Declares `RunStore` and `IntentStore` in run-state. `WamnPostgres` implements `RunStore` with today's `production_claim.rs` bodies. `queue.rs` calls through the trait. The empty `IntentStore` in `operation.rs` goes, and `invoke_operation` takes run-state's trait. The run-state live tests, `production_claim_live.rs`, `production_claim_durable_live.rs`, and `executor_platform_surface_live.rs` pass unchanged.
 3. `wamn-3lw7.3` Create `wamn-engine` with `engine.rs` and `lifecycle.rs`, and the dependency test. The workspace `wash-runtime` entry drops `oci`, and `wamn-runtime` adds it. The lib.rs header lists what the crate exports and what it refuses.
