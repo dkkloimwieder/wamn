@@ -835,6 +835,20 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "WAMN_HTTP_ADMITTER_PG_URL",
         "WAMN_EVENT_MATERIALIZER_PG_URL",
     ];
+    // The generic host reads its event stream identity from the Secret. The
+    // Receiving overlay states the same five entries as fixed project values.
+    let event_identity = [
+        ("WAMN_EVT_ORG", "acme"),
+        ("WAMN_EVT_PROJECT", "receiving"),
+        ("WAMN_EVT_ENV", "dev"),
+        ("WAMN_EVT_STREAM_REPLICAS", "3"),
+        ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
+    ];
+    let is_event_identity = |entry: &&Value| {
+        entry["name"]
+            .as_str()
+            .is_some_and(|name| event_identity.iter().any(|(event, _)| *event == name))
+    };
     let base_env = base_container["env"]
         .as_array()
         .expect("rendered generic host carries env");
@@ -847,12 +861,29 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
                 .as_str()
                 .is_none_or(|name| !receiving_names.contains(&name))
         })
+        .filter(|entry| !is_event_identity(entry))
         .collect::<Vec<_>>();
     assert_eq!(
         inherited_env,
-        base_env.iter().collect::<Vec<_>>(),
+        base_env
+            .iter()
+            .filter(|entry| !is_event_identity(entry))
+            .collect::<Vec<_>>(),
         "Receiving overlay changed or dropped a generic host environment entry"
     );
+    for (name, expected) in event_identity {
+        assert!(
+            environment_entry(base_container, name).is_some_and(
+                |entry| entry["valueFrom"]["secretKeyRef"]["name"] == "wamn-event-nats"
+            ),
+            "generic host must read {name} from the event Secret"
+        );
+        assert_eq!(
+            environment_entry(receiving_container, name).and_then(|entry| entry["value"].as_str()),
+            Some(expected),
+            "Receiving host rendered the wrong event identity {name}"
+        );
+    }
     assert_eq!(
         receiving_container["env"]
             .as_array()
