@@ -17,7 +17,11 @@
     "types": [],
     "baseUrl": ".",
     "paths": {
-      "@wamn/web-runtime": ["../runtime/src/index.ts"]
+      "@wamn/web-runtime": ["../runtime/src/index.ts"],
+      "@wamn/ui": ["../ui/src/index.ts"],
+      "solid-js": ["./node_modules/solid-js"],
+      "solid-js/*": ["./node_modules/solid-js/*"],
+      "@tanstack/solid-table": ["./node_modules/@tanstack/solid-table"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "fixture/**/*.ts", "fixture/**/*.tsx"]

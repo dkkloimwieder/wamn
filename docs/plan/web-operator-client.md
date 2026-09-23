@@ -67,7 +67,7 @@ Facts from the code at `cdb6dd1e`, after Epics 1, 2, 3A, and 3B.
 - `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (Rust bindings), `client_ts.rs` (TypeScript bindings), `client_component.rs` (SolidJS components), `client_route.rs`, `client_tui.rs`.
 - A package opts in with `client_package` in its manifest. Receiving declares `@wamn/receiving-client`. WMS and Acme declare none and generate no TypeScript.
 - `generated/client-ts/` holds one module per model, an index, and a `package.json`. Its `components/` directory holds one component module per model and its own index.
-- The wire contract and the transport are hand-written in `web/runtime`, as the package `@wamn/web-runtime`. Every generated module imports it by name. The emitted `package.json` declares it and the framework packages.
+- The wire contract and the transport are hand-written in `web/runtime`, as the package `@wamn/web-runtime`. Every generated module imports it by name. The emitted `package.json` declares it and `@wamn/ui`, the package in `web/ui` that the components render through.
 - The runtime classifies one reply into the four outcomes. It supplies the request identity, the idempotency key and the start time. It also holds the page state, the draft members and the cell text.
 - One case table at `crates/client/tui/tests/data/classification-cases.json` holds both clients to one rule. A Rust test and the runtime's own tests read it.
 - The browser trusts the platform for the values inside a reply. A reply whose value violates its own field contract reads as completed there and as uncertain in the terminal.

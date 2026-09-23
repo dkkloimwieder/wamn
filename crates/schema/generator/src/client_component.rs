@@ -25,7 +25,7 @@ use crate::client_ir::{FieldIr, leaf_fields};
 use crate::client_plan::{
     ClientPlan, ModelPlan, PopulatedInput, Role, Rows, ScreenPlan, SuppliedKind,
 };
-use crate::client_ts::{RUNTIME_PACKAGE, ts_type};
+use crate::client_ts::{RUNTIME_PACKAGE, UI_PACKAGE, ts_type};
 use crate::generate::GeneratedFile;
 
 /// Why a component could not be emitted.
@@ -193,6 +193,8 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     // Types of another model's components, which a prefill hands over.
     let mut sibling: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut solid = BTreeSet::new();
+    // Exports of `@wamn/ui` this module renders through.
+    let mut ui = BTreeSet::new();
     let mut table = false;
     let mut form = false;
     let mut narrowed = false;
@@ -200,8 +202,15 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         match screen.role {
             Role::Table => {
                 table = true;
-                solid.extend(["createSignal", "For", "Show"]);
-                emit_table(&mut body, screen, &mut runtime, &mut bindings, &mut sibling)?;
+                solid.extend(["createSignal", "Show"]);
+                emit_table(
+                    &mut body,
+                    screen,
+                    &mut runtime,
+                    &mut ui,
+                    &mut bindings,
+                    &mut sibling,
+                )?;
             }
             Role::Detail => {
                 solid.extend(["createResource", "Show"]);
@@ -264,10 +273,10 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         solid.iter().copied().collect::<Vec<_>>().join(", ")
     )
     .expect("writing to a String cannot fail");
+    // Version 9 declares a table's features up front. Every table takes the
+    // one bundle `@wamn/ui` exports, so each has the type the data grid reads.
     if table {
-        source.push_str(
-            "import {\n  columnVisibilityFeature,\n  createTable,\n  flexRender,\n  rowPaginationFeature,\n  tableFeatures,\n  type ColumnDef,\n} from \"@tanstack/solid-table\";\n",
-        );
+        source.push_str("import { createTable, type ColumnDef } from \"@tanstack/solid-table\";\n");
     }
     if form {
         // A narrowed selector follows the form's own values, so it reads the
@@ -289,6 +298,18 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             .join("\n")
     )
     .expect("writing to a String cannot fail");
+    // The UI a component renders through. The package owns how each one looks.
+    if !ui.is_empty() {
+        writeln!(
+            source,
+            "import {{\n{}\n}} from \"{UI_PACKAGE}\";",
+            ui.iter()
+                .map(|name| format!("  {name},"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+        .expect("writing to a String cannot fail");
+    }
     writeln!(
         source,
         "import {{\n{}\n}} from \"../{}.js\";",
@@ -327,11 +348,6 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     // Version 9 declares each table's features up front. A row reads its
     // cells through the visibility feature, and the pagination feature takes
     // `manualPagination`, because the release pages by cursor.
-    if table {
-        source.push_str(
-            "\n/** The table features every table of this module declares. */\nconst TABLE_FEATURES = tableFeatures({ columnVisibilityFeature, rowPaginationFeature });\n",
-        );
-    }
     // The spellings this module's schemas name. Only the ones it uses are
     // written, so a module carries no rule it does not apply.
     for (name, pattern, meaning) in WIRE_SPELLINGS {
@@ -442,6 +458,7 @@ fn emit_table(
     source: &mut String,
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
+    ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
     sibling: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), ClientComponentError> {
@@ -449,6 +466,14 @@ fn emit_table(
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
     })?;
+    ui.extend([
+        "Button",
+        "DataGrid",
+        "DataGridContainer",
+        "DataGridTable",
+        "gridFeatures",
+        "type GridFeatures",
+    ]);
     // A bounded list states no paging at all, so it renders no control and
     // asks for no next page.
     let paging = screen.paging.as_ref();
@@ -502,7 +527,7 @@ fn emit_table(
     .expect("write");
     writeln!(
         source,
-        "const {}_COLUMNS: ColumnDef<typeof TABLE_FEATURES, {stem}Row>[] = [",
+        "const {}_COLUMNS: ColumnDef<GridFeatures, {stem}Row>[] = [",
         screen.name.to_uppercase()
     )
     .expect("write");
@@ -510,12 +535,25 @@ fn emit_table(
         writeln!(source, "  {{").expect("write");
         writeln!(source, "    accessorKey: {:?},", accessor(&column.path)).expect("write");
         writeln!(source, "    header: {:?},", label(column)).expect("write");
-        writeln!(
-            source,
-            "    cell: (cell) => cellText(cell.getValue() as JsonValue, {:?}),",
-            cell_type(column)
-        )
-        .expect("write");
+        if column.values.is_empty() {
+            writeln!(
+                source,
+                "    cell: (cell) => cellText(cell.getValue() as JsonValue, {:?}),",
+                cell_type(column)
+            )
+            .expect("write");
+        } else {
+            // A declared value domain reads as a badge. An absent value shows
+            // nothing, the same as any other cell.
+            ui.insert("Badge");
+            writeln!(
+                source,
+                "    cell: (cell) => (\n      <Show when={{cellText(cell.getValue() as JsonValue, {:?}) !== \"\"}}>\n        <Badge variant=\"outline\">{{cellText(cell.getValue() as JsonValue, {:?})}}</Badge>\n      </Show>\n    ),",
+                cell_type(column),
+                cell_type(column)
+            )
+            .expect("write");
+        }
         writeln!(source, "  }},").expect("write");
     }
     source.push_str("];\n");
@@ -664,55 +702,64 @@ fn emit_table(
         source.push_str("    setControls((current) => writeMember(current, path, value));\n");
         source.push_str("    restart();\n  };\n");
     }
-    source.push_str("\n  const table = createTable({\n    features: TABLE_FEATURES,\n");
+    // The grid renders every cell of a row from the column list, so a row link
+    // and a row form are each one column. Each reads a callback the page
+    // supplied, so these columns are built inside the component.
+    let columns = if screen.row_links.is_empty() && screen.row_forms.is_empty() {
+        format!("{}_COLUMNS", screen.name.to_uppercase())
+    } else {
+        writeln!(
+            source,
+            "\n  const columns: ColumnDef<GridFeatures, {stem}Row>[] = [\n    ...{}_COLUMNS,",
+            screen.name.to_uppercase()
+        )
+        .expect("write");
+        for link in &screen.row_links {
+            let target = crate::client_ts::operation_stem(link.operation);
+            writeln!(
+                source,
+                "    {{\n      id: \"open{target}\",\n      header: \"\",\n      cell: (cell) => (\n        <Show when={{props.onOpen{target}}}>\n          <Button\n            type=\"button\"\n            variant=\"outline\"\n            size=\"sm\"\n            onClick={{() => props.onOpen{target}?.(cell.row.original)}}\n          >\n            {}\n          </Button>\n        </Show>\n      ),\n    }},",
+                link_label(link.operation)
+            )
+            .expect("write");
+        }
+        for form in &screen.row_forms {
+            let target = crate::client_ts::operation_stem(form.operation);
+            let mut initial = format!("{{}} as {target}FormInitial");
+            for (field, input) in &form.pairs {
+                initial = format!(
+                    "writeMember({initial}, {}, cell.row.original.{})",
+                    member_literal(input),
+                    crate::client_ts::to_camel(field),
+                );
+            }
+            runtime.insert("writeMember");
+            writeln!(
+                source,
+                "    {{\n      id: \"fill{target}\",\n      header: \"\",\n      cell: (cell) => (\n        <Show when={{props.onFill{target}}}>\n          <Button\n            type=\"button\"\n            variant=\"outline\"\n            size=\"sm\"\n            onClick={{() => props.onFill{target}?.({initial})}}\n          >\n            {}\n          </Button>\n        </Show>\n      ),\n    }},",
+                link_label(form.operation)
+            )
+            .expect("write");
+        }
+        source.push_str("  ];\n");
+        "columns".to_owned()
+    };
+    source.push_str("\n  const table = createTable({\n    features: gridFeatures,\n");
     source.push_str("    get data() {\n      return page().rows as ");
     writeln!(source, "{stem}Row[];\n    }},").expect("write");
-    writeln!(
-        source,
-        "    columns: {}_COLUMNS,",
-        screen.name.to_uppercase()
-    )
-    .expect("write");
+    writeln!(source, "    columns: {columns},").expect("write");
     // A keyset page has no index and no total, so the table never pages the
     // rows it holds.
     source.push_str("    manualPagination: true,\n  });\n");
 
     // The markup.
     source.push_str("\n  return (\n    <section>\n      <form\n        onSubmit={(event) => {\n          event.preventDefault();\n          restart();\n        }}\n      >\n");
-    emit_controls(source, screen);
-    source.push_str("        <button type=\"submit\">read</button>\n      </form>\n");
-    source.push_str("      <table>\n        <thead>\n          <For each={table.getHeaderGroups()}>\n            {(group) => (\n              <tr>\n                <For each={group.headers}>\n                  {(header) => (\n                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>\n                  )}\n                </For>\n              </tr>\n            )}\n          </For>\n        </thead>\n        <tbody>\n          <For each={table.getRowModel().rows}>\n            {(row) => (\n              <tr onClick={() => props.onRowSelect?.(row.original)}>\n                <For each={row.getVisibleCells()}>\n                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}\n                </For>\n");
-    for link in &screen.row_links {
-        let target = crate::client_ts::operation_stem(link.operation);
-        writeln!(
-            source,
-            "                <td>\n                  <Show when={{props.onOpen{target}}}>\n                    <button type=\"button\" onClick={{() => props.onOpen{target}?.(row.original)}}>\n                      {}\n                    </button>\n                  </Show>\n                </td>",
-            link_label(link.operation)
-        )
-        .expect("write");
-    }
-    for form in &screen.row_forms {
-        let target = crate::client_ts::operation_stem(form.operation);
-        let mut initial = format!("{{}} as {target}FormInitial");
-        for (field, input) in &form.pairs {
-            initial = format!(
-                "writeMember({initial}, {}, row.original.{})",
-                member_literal(input),
-                crate::client_ts::to_camel(field),
-            );
-        }
-        runtime.insert("writeMember");
-        writeln!(
-            source,
-            "                <td>\n                  <Show when={{props.onFill{target}}}>\n                    <button\n                      type=\"button\"\n                      onClick={{() => props.onFill{target}?.({initial})}}\n                    >\n                      {}\n                    </button>\n                  </Show>\n                </td>",
-            link_label(form.operation)
-        )
-        .expect("write");
-    }
-    source.push_str(
-        "              </tr>\n            )}\n          </For>\n        </tbody>\n      </table>\n",
-    );
-    source.push_str("      <Show when={hasNextPage(page())}>\n        <button type=\"button\" onClick={() => void read(page().cursor)}>\n          next page\n        </button>\n      </Show>\n    </section>\n  );\n}\n");
+    emit_controls(source, screen, ui);
+    source.push_str("        <Button type=\"submit\">read</Button>\n      </form>\n");
+    // The skeleton stands in for rows only while the first page is read, so a
+    // next page appends below the rows already shown.
+    source.push_str("      <DataGrid\n        table={table}\n        recordCount={page().rows.length}\n        isLoading={page().busy && page().rows.length === 0}\n        onRowClick={(row) => props.onRowSelect?.(row)}\n      >\n        <DataGridContainer>\n          <DataGridTable />\n        </DataGridContainer>\n      </DataGrid>\n");
+    source.push_str("      <Show when={hasNextPage(page())}>\n        <Button type=\"button\" variant=\"outline\" onClick={() => void read(page().cursor)}>\n          next page\n        </Button>\n      </Show>\n    </section>\n  );\n}\n");
     Ok(())
 }
 
@@ -1922,73 +1969,86 @@ fn local_name(identity: &str) -> &str {
 }
 
 /// One control for each page control the plan names.
-fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>) {
+///
+/// Each one is a field from `@wamn/ui`, which owns the label, the control and
+/// how they look. A control commits its value when the operator leaves it.
+fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>, ui: &mut BTreeSet<&'static str>) {
     let Some(paging) = screen.paging.as_ref() else {
         return;
     };
     for path in &paging.filter_inputs {
         let repeated = path.ends_with("[]");
-        writeln!(source, "        <label>").expect("write");
-        writeln!(source, "          {}", control_label(screen, path)).expect("write");
         let value = if repeated {
             format!(
-                "change({}, event.currentTarget.value.split(\",\").filter((part) => part !== \"\"))",
+                "change({}, value.split(\",\").filter((part) => part !== \"\"))",
                 member_literal(path)
             )
         } else {
-            format!(
-                "change({}, event.currentTarget.value)",
-                member_literal(path)
-            )
+            format!("change({}, value)", member_literal(path))
         };
+        ui.insert("TextField");
         writeln!(
             source,
-            "          <input type=\"text\" onChange={{(event) => {value}}} />"
+            "        <TextField\n          label={:?}\n          type=\"text\"\n          onChange={{(value) => {value}}}\n        />",
+            control_label(screen, path)
         )
         .expect("write");
-        writeln!(source, "        </label>").expect("write");
     }
     if let (Some(path), Some(sort)) = (paging.sort_field_input, paging.sort) {
-        emit_select(source, path, &sort.fields, &control_label(screen, path));
+        emit_select(source, path, &sort.fields, &control_label(screen, path), ui);
     }
     if let (Some(path), Some(sort)) = (paging.sort_direction_input, paging.sort) {
-        emit_select(source, path, &sort.directions, &control_label(screen, path));
+        emit_select(
+            source,
+            path,
+            &sort.directions,
+            &control_label(screen, path),
+            ui,
+        );
     }
     if let (Some(path), Some(limit)) = (paging.limit_input, paging.limit) {
-        writeln!(source, "        <label>").expect("write");
-        writeln!(source, "          {}", control_label(screen, path)).expect("write");
+        ui.insert("TextField");
         writeln!(
             source,
-            "          <input\n            type=\"number\"\n            min={{{}}}\n            max={{{}}}\n            value={{{}}}\n            onChange={{(event) => change({}, event.currentTarget.value)}}\n          />",
+            "        <TextField\n          label={:?}\n          type=\"number\"\n          min={{{}}}\n          max={{{}}}\n          value=\"{}\"\n          onChange={{(value) => change({}, value)}}\n        />",
+            control_label(screen, path),
             limit.minimum,
             limit.maximum,
             limit.default,
             member_literal(path)
         )
         .expect("write");
-        writeln!(source, "        </label>").expect("write");
     }
 }
 
-/// One select whose options are exactly what the contract permits.
-fn emit_select(source: &mut String, path: &str, values: &[String], text: &str) {
-    writeln!(source, "        <label>").expect("write");
-    writeln!(source, "          {text}").expect("write");
+/// One choice whose values are exactly what the contract permits.
+///
+/// The value is the exact contract literal, and the text shows it with spaces.
+fn emit_select(
+    source: &mut String,
+    path: &str,
+    values: &[String],
+    text: &str,
+    ui: &mut BTreeSet<&'static str>,
+) {
+    ui.insert("ChoiceField");
     writeln!(
         source,
-        "          <select onChange={{(event) => change({}, event.currentTarget.value)}}>",
-        member_literal(path)
+        "        <ChoiceField\n          label={text:?}\n          allowEmpty={{true}}\n          choices={{["
     )
     .expect("write");
-    source.push_str("            <option value=\"\"></option>\n");
     for value in values {
         writeln!(
             source,
-            "            <option value={value:?}>{}</option>",
+            "            {{ value: {value:?}, text: {:?} }},",
             value.replace('_', " ")
         )
         .expect("write");
     }
-    source.push_str("          </select>\n");
-    writeln!(source, "        </label>").expect("write");
+    writeln!(
+        source,
+        "          ]}}\n          onChange={{(value) => change({}, value)}}\n        />",
+        member_literal(path)
+    )
+    .expect("write");
 }

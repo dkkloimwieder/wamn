@@ -580,12 +580,13 @@ It shows that the CSS entry compiles.
 
 ### Generated components
 
-A generated component imports SolidJS, TanStack Table, TanStack Form, and zod.
+A generated component imports SolidJS, TanStack Table, TanStack Form, zod, and `@wamn/ui`.
 `web/components` installs those libraries once and holds the harness that checks the components.
-Install its dependencies:
+The harness resolves `@wamn/ui` from `web/ui`, so install both:
 
 ```bash
 cd web/components && npm install
+cd ../ui && npm install
 ```
 
 To write the fixture components, type-check them, and run their tests, run:
