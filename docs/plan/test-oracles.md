@@ -14,6 +14,15 @@ The expected value of the test (its oracle) must be independent of the code unde
 
 Issue 1 adds this rule to [running tests](../operations/running-tests.md).
 
+The owner keep list stays untouched:
+
+- the golden bytes of `serving_manifest_digest`
+- the two-checkout and two-profile identical-digest tests of `guest_workspace_closure`
+- `port_constant_agreement`
+- `host_image_digest_survives_chart_values` in rendering
+- `disposable_component_declarations_follow_built_base_bytes` in `route_authentication_live`
+- `session_claims`, as a lint
+
 ## 2. Scope
 
 The targets are in crates that Epic 12 (`wamn-3lw7`) does not move, with one exception.
@@ -48,9 +57,10 @@ Rewritten 4, kept 6. All four rewrites go into `app_schema_applies_and_enforces_
 
 ### 3.3 `crates/control/provision/tests/control_storage.rs`
 
-Deleted 7, rewritten 2, kept 1. The live test `system_schema_applies_and_enforces_invariants_on_postgres` stays and takes the rewrites.
+Deleted 6, rewritten 2, moved to lint 1, kept 1. The live test `system_schema_applies_and_enforces_invariants_on_postgres` stays and takes the rewrites.
 
-- Deleted: `system_schema_sql_mirrors_the_model`, `retired_configurable_publish_policy_stays_deleted`, `upsert_org_sql_matches_the_placement_columns`, `event_readers_table_and_builders_match_the_columns`, `placement_check_is_present_and_tier_checks_are_gone`, `charset_length_checks_backstop_the_stored_slug_names`, `no_data_plane_manifest_references_the_system_cluster`.
+- Deleted: `system_schema_sql_mirrors_the_model`, `retired_configurable_publish_policy_stays_deleted`, `upsert_org_sql_matches_the_placement_columns`, `event_readers_table_and_builders_match_the_columns`, `placement_check_is_present_and_tier_checks_are_gone`, `charset_length_checks_backstop_the_stored_slug_names`.
+- `no_data_plane_manifest_references_the_system_cluster`: moved to lint by issue 9, in the `repo-policy` binary of 3.9. Nothing else covers the rule that no data-plane manifest names the system cluster.
 - `upsert_project_and_project_env_sql_match_the_columns`: rewritten. The live test runs `select_org_placement_sql`, `select_env_policies_sql`, `select_retired_project_envs_sql` and `select_org_project_envs_sql`. It asserts the rows, the order, and that no row of another org returns.
 - `saga_sql_builders_match_the_core_saga_contract`: rewritten. The live test runs the `saga` builders: create twice is one row, a step moves forward, and select reads the result.
 - Uncovered rules that get a live probe: core `sagas` refuses kind `copy`. The name boundaries that the live test does not reach: env name and project id over 40, `pool_cluster` over 63, an id of exactly `wamn`.
@@ -99,9 +109,10 @@ Deleted 1. This target waits for Epic 12.
 
 ### 3.9 `tests/conformance`
 
-Deleted 2, rewritten 1, moved to lint 8.
+Deleted 2, rewritten 1, moved to lint 8, plus the manifest lint of 3.3.
 
 The lints stay in Rust as one binary, `repo-policy`, in the conformance package, and `tools/repo-lint` runs it as a leg.
+Issue 9 also moves `no_data_plane_manifest_references_the_system_cluster` of 3.3 into this binary, because issue 9 makes the binary.
 `tests/conformance/tests/repo_lint.rs` names the new leg.
 
 - `docker_component_provenance.rs`: its 4 tests move to lint. The synthetic scanner checks inside them go.
