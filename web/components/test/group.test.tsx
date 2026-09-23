@@ -72,11 +72,13 @@ describe("a repeated group", () => {
     fireEvent.input(quantity, { target: { value: "1e5" } });
     fireEvent.submit(screen.getByRole("button", { name: "submit" }).closest("form")!);
 
+    // The refusal marks the quantity control in place.
     await waitFor(() =>
-      expect(screen.getAllByRole("emphasis").map((mark) => mark.textContent)).toContain(
+      expect(screen.getAllByRole("alert").map((mark) => mark.textContent)).toContain(
         "expected decimal text",
       ),
     );
+    expect(quantity.getAttribute("aria-invalid")).toBe("true");
     expect(sent.filter((request) => request.operation.includes("record-batch"))).toHaveLength(0);
   });
 });

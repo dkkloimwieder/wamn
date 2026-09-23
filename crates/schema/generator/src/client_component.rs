@@ -214,7 +214,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             }
             Role::Detail => {
                 solid.extend(["createResource", "Show"]);
-                emit_detail(&mut body, screen, &mut runtime, &mut bindings)?;
+                emit_detail(&mut body, screen, &mut runtime, &mut ui, &mut bindings)?;
             }
             Role::Form => {
                 form = true;
@@ -239,6 +239,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                     &mut body,
                     screen,
                     &mut runtime,
+                    &mut ui,
                     &mut bindings,
                     &mut foreign,
                     &records,
@@ -768,8 +769,10 @@ fn emit_detail(
     source: &mut String,
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
+    ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
 ) -> Result<(), ClientComponentError> {
+    ui.extend(["DetailItem", "DetailList", "FieldError"]);
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
@@ -842,18 +845,18 @@ fn emit_detail(
     )
     .expect("write");
     source.push_str("  const state = () => outcome()?.status;\n");
-    source.push_str("\n  return (\n    <section>\n      <Show when={state() !== undefined && state() !== \"completed\"}>\n        <p>{state()}</p>\n      </Show>\n      <dl>\n");
+    source.push_str("\n  return (\n    <section>\n      <Show when={state() !== undefined && state() !== \"completed\"}>\n        <FieldError>{state()}</FieldError>\n      </Show>\n      <DetailList loading={outcome.loading}>\n");
     for column in &screen.columns {
-        writeln!(source, "        <dt>{}</dt>", label(column)).expect("write");
         writeln!(
             source,
-            "        <dd>{{cellText(readMember(record(), {}), {:?})}}</dd>",
+            "        <DetailItem term={:?}>{{cellText(readMember(record(), {}), {:?})}}</DetailItem>",
+            label(column),
             member_literal(&column.path),
             cell_type(column)
         )
         .expect("write");
     }
-    source.push_str("      </dl>\n    </section>\n  );\n}\n");
+    source.push_str("      </DetailList>\n    </section>\n  );\n}\n");
     Ok(())
 }
 
@@ -1108,6 +1111,7 @@ fn emit_form(
     source: &mut String,
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
+    ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
     foreign: &mut BTreeMap<String, BTreeSet<String>>,
     records: &BTreeMap<String, String>,
@@ -1369,9 +1373,10 @@ fn emit_form(
         emit_selector_state(source, populated, runtime);
     }
 
-    // The markup.
+    // The markup. A refusal that names no member reads above the controls.
+    ui.extend(["Button", "FieldError"]);
     source.push_str(
-        "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <p>{refusal()?.code}</p>\n      </Show>\n",
+        "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <FieldError>{refusal()?.code}</FieldError>\n      </Show>\n",
     );
     let inputs = operator_inputs(screen);
     let mut repeated_written: Vec<String> = Vec::new();
@@ -1390,6 +1395,7 @@ fn emit_form(
                 6,
                 None,
                 populated(screen, &input.path),
+                ui,
             ),
             Some(ancestor) => {
                 let ancestor = ancestor.to_owned();
@@ -1397,11 +1403,11 @@ fn emit_form(
                     continue;
                 }
                 repeated_written.push(ancestor.clone());
-                emit_repeated_group(source, screen, &inputs, &ancestor, &stem);
+                emit_repeated_group(source, screen, &inputs, &ancestor, &stem, ui);
             }
         }
     }
-    source.push_str("      <button type=\"submit\">submit</button>\n    </form>\n  );\n}\n");
+    source.push_str("      <Button type=\"submit\">submit</Button>\n    </form>\n  );\n}\n");
     Ok(())
 }
 
@@ -1651,26 +1657,30 @@ fn emit_field(
     indent: usize,
     index: Option<&str>,
     populated: Option<&PopulatedInput<'_>>,
+    ui: &mut BTreeSet<&'static str>,
 ) {
     let pad = " ".repeat(indent);
     let declared = input.path.as_str();
     let element = index.map_or_else(String::new, |index| format!(", {index}"));
+    let marks = format!("refusalMarks(refusal()?.member ?? null, {declared:?}{element})");
     writeln!(source, "{pad}<form.Field name={{`{name}`}}>").expect("write");
     writeln!(source, "{pad}  {{(field) => (").expect("write");
-    writeln!(source, "{pad}    <label>").expect("write");
-    writeln!(source, "{pad}      {}", label(input)).expect("write");
     match populated {
         // An input that names a record is chosen from the list that offers
         // it, never typed. The options come from one read of that list.
-        Some(populated) => emit_selector_control(source, populated, indent + 6, &label(input)),
-        None => emit_input_control(source, input, indent + 6),
+        Some(populated) => {
+            writeln!(source, "{pad}    <label>").expect("write");
+            writeln!(source, "{pad}      {}", label(input)).expect("write");
+            emit_selector_control(source, populated, indent + 6, &label(input));
+            writeln!(
+                source,
+                "{pad}      <Show when={{{marks}}}>\n{pad}        <em>{{refusal()?.code}}</em>\n{pad}      </Show>"
+            )
+            .expect("write");
+            writeln!(source, "{pad}    </label>").expect("write");
+        }
+        None => emit_input_control(source, input, indent + 4, &marks, ui),
     }
-    writeln!(
-        source,
-        "{pad}      <Show when={{refusalMarks(refusal()?.member ?? null, {declared:?}{element})}}>\n{pad}        <em>{{refusal()?.code}}</em>\n{pad}      </Show>"
-    )
-    .expect("write");
-    writeln!(source, "{pad}    </label>").expect("write");
     writeln!(source, "{pad}  )}}").expect("write");
     writeln!(source, "{pad}</form.Field>").expect("write");
 }
@@ -1685,7 +1695,9 @@ fn emit_repeated_group(
     inputs: &[&FieldIr],
     ancestor: &str,
     stem: &str,
+    ui: &mut BTreeSet<&'static str>,
 ) {
+    ui.extend(["Button", "FieldGroup", "FieldLegend", "FieldSet"]);
     let member = member_path(ancestor).join(".");
     let element = element_type(stem, &member_path(ancestor));
     let members: Vec<&&FieldIr> = inputs
@@ -1702,14 +1714,14 @@ fn emit_repeated_group(
         "      <form.Field name={{\"{member}\"}} mode=\"array\">"
     )
     .expect("write");
-    source.push_str("        {(group) => (\n          <fieldset>\n");
+    source.push_str("        {(group) => (\n          <FieldSet>\n");
     writeln!(
         source,
-        "            <legend>{}</legend>",
+        "            <FieldLegend>{}</FieldLegend>",
         group.map_or_else(|| derived_label(ancestor), label)
     )
     .expect("write");
-    source.push_str("            <For each={group().state.value ?? []}>\n              {(_, index) => (\n                <fieldset>\n");
+    source.push_str("            <For each={group().state.value ?? []}>\n              {(_, index) => (\n                <FieldGroup>\n");
     for input in &members {
         let leaf = input
             .path
@@ -1728,50 +1740,67 @@ fn emit_repeated_group(
             18,
             Some("index()"),
             populated(screen, &input.path),
+            ui,
         );
     }
     writeln!(
         source,
-        "                  <button\n                    type=\"button\"\n                    disabled={{!canRemove(group().state.value ?? [], {minimum})}}\n                    onClick={{() => group().removeValue(index())}}\n                  >\n                    remove\n                  </button>\n                </fieldset>\n              )}}\n            </For>"
+        "                  <Button\n                    type=\"button\"\n                    variant=\"outline\"\n                    size=\"sm\"\n                    disabled={{!canRemove(group().state.value ?? [], {minimum})}}\n                    onClick={{() => group().removeValue(index())}}\n                  >\n                    remove\n                  </Button>\n                </FieldGroup>\n              )}}\n            </For>"
     )
     .expect("write");
     let bound = maximum.map_or_else(|| "null".to_owned(), |maximum| maximum.to_string());
     writeln!(
         source,
-        "            <button\n              type=\"button\"\n              disabled={{!canAdd(group().state.value ?? [], {bound})}}\n              onClick={{() => group().pushValue({{}} as {element})}}\n            >\n              add\n            </button>\n          </fieldset>\n        )}}\n      </form.Field>"
+        "            <Button\n              type=\"button\"\n              variant=\"outline\"\n              disabled={{!canAdd(group().state.value ?? [], {bound})}}\n              onClick={{() => group().pushValue({{}} as {element})}}\n            >\n              add\n            </Button>\n          </FieldSet>\n        )}}\n      </form.Field>"
     )
     .expect("write");
 }
 
 /// One control for one operator field, chosen by what the contract declares.
-fn emit_input_control(source: &mut String, input: &FieldIr, indent: usize) {
+///
+/// Each one is a field from `@wamn/ui`, which owns the label, the control, the
+/// refusal mark and how they look. `marks` is the expression that is true when
+/// the last refusal names this control.
+fn emit_input_control(
+    source: &mut String,
+    input: &FieldIr,
+    indent: usize,
+    marks: &str,
+    ui: &mut BTreeSet<&'static str>,
+) {
     let pad = " ".repeat(indent);
+    let text = label(input);
+    let error = format!("error={{{marks} ? (refusal()?.code ?? \"refused\") : null}}");
     if input.type_name == "boolean" {
+        ui.insert("CheckField");
         writeln!(
             source,
-            "{pad}<input\n{pad}  type=\"checkbox\"\n{pad}  checked={{field().state.value === true}}\n{pad}  onChange={{(event) => field().handleChange(event.currentTarget.checked)}}\n{pad}/>"
+            "{pad}<CheckField\n{pad}  label={text:?}\n{pad}  checked={{field().state.value === true}}\n{pad}  onChange={{(checked) => field().handleChange(checked)}}\n{pad}  {error}\n{pad}/>"
         )
         .expect("write");
         return;
     }
     if !input.values.is_empty() {
+        ui.insert("ChoiceField");
         writeln!(
             source,
-            "{pad}<select\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(event) => field().handleChange(event.currentTarget.value)}}\n{pad}>"
+            "{pad}<ChoiceField\n{pad}  label={text:?}\n{pad}  allowEmpty={{{}}}\n{pad}  choices={{[",
+            !input.required || input.nullable
         )
         .expect("write");
-        if !input.required || input.nullable {
-            writeln!(source, "{pad}  <option value=\"\"></option>").expect("write");
-        }
         for value in &input.values {
             writeln!(
                 source,
-                "{pad}  <option value={value:?}>{}</option>",
+                "{pad}    {{ value: {value:?}, text: {:?} }},",
                 value.replace('_', " ")
             )
             .expect("write");
         }
-        writeln!(source, "{pad}</select>").expect("write");
+        writeln!(
+            source,
+            "{pad}  ]}}\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(value) => field().handleChange(value)}}\n{pad}  {error}\n{pad}/>"
+        )
+        .expect("write");
         return;
     }
     let kind = if matches!(input.type_name.as_str(), "int32" | "float64") {
@@ -1779,9 +1808,10 @@ fn emit_input_control(source: &mut String, input: &FieldIr, indent: usize) {
     } else {
         "text"
     };
+    ui.insert("TextField");
     writeln!(
         source,
-        "{pad}<input\n{pad}  type=\"{kind}\"\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onInput={{(event) => field().handleChange(event.currentTarget.value)}}\n{pad}/>"
+        "{pad}<TextField\n{pad}  label={text:?}\n{pad}  type=\"{kind}\"\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onInput={{(value) => field().handleChange(value)}}\n{pad}  {error}\n{pad}/>"
     )
     .expect("write");
 }
