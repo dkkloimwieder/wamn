@@ -13,8 +13,8 @@ use wamn_client::{
     WamnClient,
 };
 
-#[path = "../../../../apps/wamn_receiving/generated/client/purchase_order.rs"]
-pub mod purchase_order;
+#[path = "../../../../apps/platform_fixture/generated/client/widget.rs"]
+pub mod widget;
 
 #[derive(Debug, Default)]
 struct RotatingCredential {
@@ -152,7 +152,7 @@ async fn captured_retries_preserve_actual_command_bytes_and_raw_response_evidenc
 }
 
 #[tokio::test]
-async fn generated_supplier_contract_preserves_absence_and_value_on_the_wire_and_blocks_null() {
+async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null() {
     let credentials = Arc::new(RotatingCredential::default());
     let transport = Arc::new(RecordingTransport {
         requests: Mutex::new(Vec::new()),
@@ -176,50 +176,51 @@ async fn generated_supplier_contract_preserves_absence_and_value_on_the_wire_and
         transport.clone(),
     );
     let attachments: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../apps/wamn_receiving/publication/attachments.json"
+        "../../../../apps/platform_fixture/publication/attachments.json"
     ))
-    .expect("read the Receiving serving schema");
-    let schema = &attachments["purchase-order-update-http"]["definition"]["input-schema"];
-    let fields = purchase_order::PURCHASE_ORDER_UPDATE_INPUT_SCHEMA;
-    let route = purchase_order::update_route();
-    let mut item = json!({"request_id":"supplier-absent", "id":"00000000-0000-0000-0000-000000000001",
-        "expected_row_version":4,"change":{}});
+    .expect("read the fixture serving schema");
+    let schema = &attachments["widget-update-http"]["definition"]["input-schema"];
+    let fields = widget::WIDGET_UPDATE_INPUT_SCHEMA;
+    let route = widget::update_route();
+    let mut item = json!({"request_id":"code-absent", "id":"00000000-0000-0000-0000-000000000001",
+        "expected_edit_version":4,"change":{}});
 
-    let absent = build_request(fields, &item, Some(schema)).expect("a supplier can stay absent");
+    let absent = build_request(fields, &item, Some(schema)).expect("a code can stay absent");
     client
         .submit(&route, &BTreeMap::new(), &absent)
         .await
-        .expect("send the absent supplier");
+        .expect("send the absent code");
 
-    item["request_id"] = json!("supplier-null");
-    item["change"]["supplier_id"] = serde_json::Value::Null;
+    item["request_id"] = json!("code-null");
+    item["change"]["code"] = serde_json::Value::Null;
     let error = build_request(fields, &item, Some(schema))
-        .expect_err("the generated supplier field refuses null");
+        .expect_err("the generated code field refuses null");
     assert_eq!(
         error.kind(),
         wamn_client::request::RequestErrorKind::NullNotAllowed
     );
-    assert_eq!(error.path(), "$.change.supplier_id");
+    assert_eq!(error.path(), "$.change.code");
     assert_eq!(transport.requests.lock().expect("read sent count").len(), 1);
     assert_eq!(credentials.calls.load(Ordering::Relaxed), 1);
 
-    item["request_id"] = json!("supplier-value");
-    item["change"]["supplier_id"] = json!("ABCDEF00000000000000000000000002");
-    let value = build_request(fields, &item, Some(schema)).expect("the supplier UUID is valid");
+    item["request_id"] = json!("code-value");
+    item["change"]["code"] = json!("priority");
+    item["change"]["maker_id"] = json!("ABCDEF00000000000000000000000002");
+    let value = build_request(fields, &item, Some(schema)).expect("the code and maker are valid");
     client
         .submit(&route, &BTreeMap::new(), &value)
         .await
-        .expect("send the supplier UUID");
+        .expect("send the code and the maker UUID");
 
     let requests = transport
         .requests
         .lock()
         .expect("read actual outgoing requests");
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].body, br#"[{"change":{},"expected_row_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"supplier-absent"}]"#);
-    assert_eq!(requests[1].body, br#"[{"change":{"supplier_id":"abcdef00-0000-0000-0000-000000000002"},"expected_row_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"supplier-value"}]"#);
+    assert_eq!(requests[0].body, br#"[{"change":{},"expected_edit_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"code-absent"}]"#);
+    assert_eq!(requests[1].body, br#"[{"change":{"code":"priority","maker_id":"abcdef00-0000-0000-0000-000000000002"},"expected_edit_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"code-value"}]"#);
     for request in requests.iter() {
-        assert_eq!(request.url, "http://127.0.0.1:12345/purchase_order/update");
+        assert_eq!(request.url, "http://127.0.0.1:12345/widget/update");
         assert_eq!(request.method, "POST");
     }
     assert_eq!(credentials.calls.load(Ordering::Relaxed), 2);

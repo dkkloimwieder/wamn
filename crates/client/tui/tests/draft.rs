@@ -24,7 +24,7 @@ const FIELDS: &[FieldSchema] = &[
             field("value.idempotency_key", "text"),
             field("value.occurred_at", "timestamptz"),
             field("value.expected_revision", "int64"),
-            field("value.supplier_id", "uuid"),
+            field("value.maker_id", "uuid"),
             FieldSchema {
                 required: false,
                 field: FieldDescriptor {
@@ -177,7 +177,7 @@ fn explicit_bindings_protect_only_declared_paths_and_their_containers() {
     }
     draft
         .edit(
-            "/value/supplier_id",
+            "/value/maker_id",
             FieldState::Value(json!("123e4567-e89b-12d3-a456-426614174000")),
         )
         .unwrap();

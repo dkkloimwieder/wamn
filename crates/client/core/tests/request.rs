@@ -59,33 +59,33 @@ fn required_and_nullable_form_four_independent_presence_contracts() {
 }
 
 #[test]
-fn supplier_omission_stays_absent_while_explicit_null_is_refused() {
+fn code_omission_stays_absent_while_explicit_null_is_refused() {
     const FIELDS: &[FieldSchema] = &[
         scalar("request_id", "string", true, false),
         scalar("id", "uuid", true, false),
-        scalar("expected_row_version", "int64", true, false),
+        scalar("expected_edit_version", "int64", true, false),
         FieldSchema {
-            children: &[scalar("change.supplier_id", "uuid", false, false)],
+            children: &[scalar("change.code", "text", false, false)],
             ..scalar("change", "object", true, false)
         },
     ];
     let attachments: Value = serde_json::from_str(include_str!(
-        "../../../../apps/wamn_receiving/publication/attachments.json"
+        "../../../../apps/platform_fixture/publication/attachments.json"
     ))
-    .expect("parse Receiving publication");
-    let schema = &attachments["purchase-order-update-http"]["definition"]["input-schema"];
+    .expect("parse the fixture publication");
+    let schema = &attachments["widget-update-http"]["definition"]["input-schema"];
     let mut item = json!({"request_id":"r1", "id":"00000000-0000-0000-0000-000000000001",
-        "expected_row_version": 4, "change": {}});
-    assert_eq!(build_request(FIELDS, &item, Some(schema)).expect("omit supplier without clearing it").body(),
-        br#"[{"change":{},"expected_row_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"r1"}]"#);
-    item["change"]["supplier_id"] = Value::Null;
+        "expected_edit_version": 4, "change": {}});
+    assert_eq!(build_request(FIELDS, &item, Some(schema)).expect("omit code without clearing it").body(),
+        br#"[{"change":{},"expected_edit_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"r1"}]"#);
+    item["change"]["code"] = Value::Null;
     let error =
         build_request(FIELDS, &item, Some(schema)).expect_err("explicit null is invalid_input");
     assert_eq!(error.kind(), RequestErrorKind::NullNotAllowed);
-    assert_eq!(error.path(), "$.change.supplier_id");
+    assert_eq!(error.path(), "$.change.code");
 }
 
-const RECEIPT_FIELDS: &[FieldSchema] = &[
+const BATCH_FIELDS: &[FieldSchema] = &[
     scalar("request_id", "string", true, false),
     FieldSchema {
         children: &[
@@ -93,7 +93,7 @@ const RECEIPT_FIELDS: &[FieldSchema] = &[
             scalar("value.occurred_at", "timestamptz", true, false),
             FieldSchema {
                 children: &[
-                    scalar("value.line[].purchase_order_line_id", "uuid", true, false),
+                    scalar("value.line[].widget_id", "uuid", true, false),
                     scalar("value.line[].quantity", "numeric", true, false),
                 ],
                 minimum: Some(1),
@@ -105,14 +105,14 @@ const RECEIPT_FIELDS: &[FieldSchema] = &[
     },
 ];
 
-fn receipt() -> Value {
+fn batch() -> Value {
     json!({"request_id": "r1", "value": {"idempotency_key": "intent-1",
     "occurred_at": "2026-09-08T08:30:00.123456-04:00", "line": [{
-        "purchase_order_line_id": "ABCDEF00000000000000000000000001", "quantity": "+0005.000"
+        "widget_id": "ABCDEF00000000000000000000000001", "quantity": "+0005.000"
     }]}})
 }
 
-fn receipt_schema() -> Value {
+fn batch_schema() -> Value {
     json!({"type":"array","minItems":1,"maxItems":1,"items":{
         "type":"object", "required":["request_id","value"],"additionalProperties":false,
         "properties":{"request_id":{"type":"string"},"value":{
@@ -121,9 +121,9 @@ fn receipt_schema() -> Value {
                 "idempotency_key":{"type":"string","minLength":1},
                 "occurred_at":{"type":"string","pattern":"Z$"},
                 "line":{"type":"array","minItems":1,"maxItems":2,"items":{
-                    "type":"object","required":["purchase_order_line_id","quantity"],"additionalProperties":false,
+                    "type":"object","required":["widget_id","quantity"],"additionalProperties":false,
                     "properties":{
-                        "purchase_order_line_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+                        "widget_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
                         "quantity":{"type":"string","pattern":"^[0-9]+(\\.[0-9]+)?$"}
                     }
                 }}
@@ -134,17 +134,13 @@ fn receipt_schema() -> Value {
 
 #[test]
 fn nested_request_bytes_canonicalize_uuid_time_and_numeric_once() {
-    let input = receipt();
+    let input = batch();
     let built =
-        build_request(RECEIPT_FIELDS, &input, Some(&receipt_schema())).expect("canonical request");
-    assert_eq!(built.body(), br#"[{"request_id":"r1","value":{"idempotency_key":"intent-1","line":[{"purchase_order_line_id":"abcdef00-0000-0000-0000-000000000001","quantity":"5.000"}],"occurred_at":"2026-09-08T12:30:00.123456Z"}}]"#);
+        build_request(BATCH_FIELDS, &input, Some(&batch_schema())).expect("canonical request");
+    assert_eq!(built.body(), br#"[{"request_id":"r1","value":{"idempotency_key":"intent-1","line":[{"quantity":"5.000","widget_id":"abcdef00-0000-0000-0000-000000000001"}],"occurred_at":"2026-09-08T12:30:00.123456Z"}}]"#);
+    assert_eq!(input, batch(), "building never changes the editable draft");
     assert_eq!(
-        input,
-        receipt(),
-        "building never changes the editable draft"
-    );
-    assert_eq!(
-        build_request(RECEIPT_FIELDS, built.item(), Some(&receipt_schema()))
+        build_request(BATCH_FIELDS, built.item(), Some(&batch_schema()))
             .expect("canonical values stay canonical")
             .body(),
         built.body()
@@ -153,25 +149,25 @@ fn nested_request_bytes_canonicalize_uuid_time_and_numeric_once() {
 
 #[test]
 fn nested_arrays_enforce_bounds_and_required_child_fields() {
-    let mut item = receipt();
+    let mut item = batch();
     item["value"]["line"] = json!([]);
     assert_eq!(
-        build_request(RECEIPT_FIELDS, &item, None)
+        build_request(BATCH_FIELDS, &item, None)
             .expect_err("too few lines")
             .kind(),
         RequestErrorKind::Bounds
     );
     item["value"]["line"] = json!([{}, {}, {}]);
     assert_eq!(
-        build_request(RECEIPT_FIELDS, &item, None)
+        build_request(BATCH_FIELDS, &item, None)
             .expect_err("too many lines")
             .kind(),
         RequestErrorKind::Bounds
     );
     item["value"]["line"] = json!([{}]);
-    let error = build_request(RECEIPT_FIELDS, &item, None).expect_err("missing nested field");
+    let error = build_request(BATCH_FIELDS, &item, None).expect_err("missing nested field");
     assert_eq!(error.kind(), RequestErrorKind::RequiredField);
-    assert_eq!(error.path(), "$.value.line[0].purchase_order_line_id");
+    assert_eq!(error.path(), "$.value.line[0].widget_id");
 }
 
 #[test]

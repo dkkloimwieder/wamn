@@ -51,7 +51,7 @@ impl Transport for FakeTransport {
 fn client(transport: Arc<FakeTransport>) -> WamnClient {
     WamnClient::new(
         "http://flow-http.wamn-system.svc/",
-        Some("receiving.localhost".to_owned()),
+        Some("fixture.localhost".to_owned()),
         Arc::new(StaticPat::new("pat-abc").expect("token")) as Arc<dyn CredentialProvider>,
         transport as Arc<dyn Transport>,
     )
@@ -60,7 +60,7 @@ fn client(transport: Arc<FakeTransport>) -> WamnClient {
 fn route() -> RouteMetadata {
     RouteMetadata {
         method: "POST".to_owned(),
-        template: "/purchase_order/update".to_owned(),
+        template: "/widget/update".to_owned(),
     }
 }
 
@@ -77,13 +77,10 @@ async fn the_request_carries_the_bearer_the_host_and_a_canonical_envelope() {
         .expect("the call succeeds");
 
     let sent = transport.request();
-    assert_eq!(
-        sent.url,
-        "http://flow-http.wamn-system.svc/purchase_order/update"
-    );
+    assert_eq!(sent.url, "http://flow-http.wamn-system.svc/widget/update");
     assert_eq!(sent.method, "POST");
     assert_eq!(sent.headers["authorization"], "Bearer pat-abc");
-    assert_eq!(sent.headers["host"], "receiving.localhost");
+    assert_eq!(sent.headers["host"], "fixture.localhost");
     assert_eq!(sent.headers["content-type"], "application/json");
 
     // The host header comes from the CLIENT's deployment config, not from the
@@ -151,7 +148,7 @@ async fn authentication_and_authorization_failures_differ_through_the_client() {
 
     let forbidden = client(FakeTransport::replying(
         403,
-        r#"{"operation":"purchase_order.update"}"#,
+        r#"{"operation":"widget.update"}"#,
     ))
     .invoke(&route(), &BTreeMap::new(), &[item("r1")])
     .await
@@ -159,7 +156,7 @@ async fn authentication_and_authorization_failures_differ_through_the_client() {
     assert_eq!(
         forbidden,
         ClientError::PermissionDenied {
-            operation: "purchase_order.update".to_owned(),
+            operation: "widget.update".to_owned(),
         }
     );
 }
@@ -220,7 +217,7 @@ async fn a_missing_route_parameter_refuses_before_sending() {
     let transport = FakeTransport::replying(200, "[]");
     let parameterised = RouteMetadata {
         method: "POST".to_owned(),
-        template: "/purchase_order/{id}".to_owned(),
+        template: "/widget/{id}".to_owned(),
     };
     let error = client(Arc::clone(&transport))
         .invoke(&parameterised, &BTreeMap::new(), &[item("r1")])
@@ -242,7 +239,7 @@ async fn a_missing_route_parameter_refuses_before_sending() {
 #[tokio::test]
 async fn the_same_route_reaches_different_hosts_from_different_clients() {
     let mut seen = Vec::new();
-    for host in ["receiving.localhost", "receiving.staging.internal"] {
+    for host in ["fixture.localhost", "fixture.staging.internal"] {
         let transport = FakeTransport::replying(200, r#"[{"request_id":"r1","value":null}]"#);
         WamnClient::new(
             "http://flow-http.wamn-system.svc",
@@ -255,7 +252,7 @@ async fn the_same_route_reaches_different_hosts_from_different_clients() {
         .expect("call");
         seen.push(transport.request().headers["host"].clone());
     }
-    assert_eq!(seen, ["receiving.localhost", "receiving.staging.internal"]);
+    assert_eq!(seen, ["fixture.localhost", "fixture.staging.internal"]);
 }
 
 /// A client with no host sends none. A deployment that routes by path alone

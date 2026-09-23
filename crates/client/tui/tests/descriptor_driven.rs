@@ -1,9 +1,9 @@
-//! The controls are driven by the descriptors the SHIPPED contracts declare.
+//! The controls are driven by the descriptors the GENERATED contracts declare.
 //!
 //! Every unit test in this crate hand-writes a descriptor to exercise one
-//! behaviour. This one projects the Receiving package's real contracts and
+//! behaviour. This one projects the platform fixture's generated contracts and
 //! renders the result, so "driven by IR descriptors rather than hand-written
-//! field lists" is tested against the corpus rather than against a fixture
+//! field lists" is tested against a real release rather than against a list
 //! shaped to agree — and a field added to a contract shows up here without
 //! anyone editing this file.
 //!
@@ -46,19 +46,19 @@ fn descriptor(field: &FieldIr) -> FieldDescriptor {
     }
 }
 
-/// The `purchase_order` model's fields, as the shipped release declares them.
-fn purchase_order_fields() -> Vec<FieldDescriptor> {
+/// The `widget` model's fields, as the fixture release declares them.
+fn widget_fields() -> Vec<FieldDescriptor> {
     let root = repository_root();
     let ir = ClientContractIr::from_release(
-        "receiving",
-        &root.join("apps/wamn_receiving/generated/contracts"),
-        &root.join("apps/wamn_receiving/publication/attachments.json"),
+        "platform_fixture",
+        &root.join("apps/platform_fixture/generated/contracts"),
+        &root.join("apps/platform_fixture/publication/attachments.json"),
     )
-    .expect("the shipped Receiving release projects");
+    .expect("the fixture release projects");
     ir.models
         .iter()
-        .find(|model| model.name == "purchase_order")
-        .expect("the shipped release has a purchase_order model")
+        .find(|model| model.name == "widget")
+        .expect("the fixture release has a widget model")
         .fields
         .iter()
         .map(descriptor)
@@ -67,7 +67,7 @@ fn purchase_order_fields() -> Vec<FieldDescriptor> {
 
 #[test]
 fn a_table_renders_every_contract_field_as_a_column() {
-    let fields = purchase_order_fields();
+    let fields = widget_fields();
     assert!(fields.len() >= 6, "the projection is suspiciously small");
 
     let rows = vec![
@@ -91,7 +91,7 @@ fn a_table_renders_every_contract_field_as_a_column() {
 /// operations, and before it merged by path a table rendered `id` twice.
 #[test]
 fn no_column_is_rendered_twice() {
-    let fields = purchase_order_fields();
+    let fields = widget_fields();
     let mut paths: Vec<&str> = fields.iter().map(|field| field.path).collect();
     let before = paths.len();
     paths.sort_unstable();
@@ -103,7 +103,7 @@ fn no_column_is_rendered_twice() {
 /// form marks exactly what the projection says is required.
 #[test]
 fn a_form_marks_exactly_the_contracts_required_fields() {
-    let fields = purchase_order_fields();
+    let fields = widget_fields();
     let height = u16::try_from(fields.len()).expect("small");
     let buffer = render_to_buffer(Form::new(&fields, &[]), 120, height);
     for (index, field) in fields.iter().enumerate() {
@@ -121,7 +121,7 @@ fn a_form_marks_exactly_the_contracts_required_fields() {
 /// model — closed becomes a choice, open becomes text.
 #[test]
 fn every_editor_follows_its_fields_declared_domain() {
-    for field in &purchase_order_fields() {
+    for field in &widget_fields() {
         let expected = if field.values.is_empty() {
             FieldEditor::Text
         } else {

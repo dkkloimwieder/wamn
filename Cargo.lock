@@ -5639,6 +5639,7 @@ dependencies = [
  "async-trait",
  "boon",
  "chrono",
+ "rust_decimal",
  "serde",
  "serde_json",
  "tokio",

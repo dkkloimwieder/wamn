@@ -76,8 +76,8 @@ mod tests {
     use super::*;
     use crate::{render_to_buffer, row_text};
 
-    const SUPPLIER: FieldDescriptor = FieldDescriptor {
-        path: "supplier_id",
+    const MAKER: FieldDescriptor = FieldDescriptor {
+        path: "maker_id",
         type_name: "uuid",
         nullable: true,
         values: &[],
@@ -91,20 +91,20 @@ mod tests {
 
     #[test]
     fn the_bar_lists_the_filterable_fields() {
-        const FIELDS: &[FieldDescriptor] = &[STATUS, SUPPLIER];
+        const FIELDS: &[FieldDescriptor] = &[STATUS, MAKER];
         let buffer = render_to_buffer(FilterBar::new(FIELDS, &[]), 60, 1);
-        assert_eq!(row_text(&buffer, 0), "status  supplier_id");
+        assert_eq!(row_text(&buffer, 0), "status  maker_id");
     }
 
     #[test]
     fn an_applied_filter_shows_its_value() {
-        const FIELDS: &[FieldDescriptor] = &[STATUS, SUPPLIER];
+        const FIELDS: &[FieldDescriptor] = &[STATUS, MAKER];
         let applied = [AppliedFilter {
             path: "status",
             value: "open".to_owned(),
         }];
         let buffer = render_to_buffer(FilterBar::new(FIELDS, &applied), 60, 1);
-        assert_eq!(row_text(&buffer, 0), "status=open  supplier_id");
+        assert_eq!(row_text(&buffer, 0), "status=open  maker_id");
     }
 
     /// "Cannot be filtered" and "no filter set" are different facts and must

@@ -14,7 +14,7 @@ use wamn_client::{
     Transport, WamnClient,
 };
 
-const AUDIENCE: &str = "acme/receiving/dev";
+const AUDIENCE: &str = "platform/fixture/dev";
 const OPAQUE_SESSION: &str = "opaque-session-not-a-jwt";
 const PRIVATE_PAT: &str = "private-pat-never-log";
 
@@ -221,7 +221,7 @@ async fn login_posts_to_the_configured_issuer_and_caches_an_opaque_bearer() {
                 ),
                 ("content-type".to_owned(), "application/json".to_owned()),
             ]),
-            body: br#"{"aud":"acme/receiving/dev"}"#.to_vec(),
+            body: br#"{"aud":"platform/fixture/dev"}"#.to_vec(),
         }]
     );
     assert_eq!(pat.ordinary_calls.load(Ordering::Relaxed), 0);
@@ -459,7 +459,7 @@ async fn legacy_fresh_invoke_and_submit_use_the_cached_session() {
     ]);
     let client = WamnClient::new(
         "https://routes.example/",
-        Some("receiving.localhost".to_owned()),
+        Some("fixture.localhost".to_owned()),
         credentials.clone(),
         operations.clone(),
     );
@@ -519,7 +519,7 @@ async fn legacy_fresh_invoke_and_submit_use_the_cached_session() {
                     format!("Bearer {OPAQUE_SESSION}")
                 ),
                 ("content-type".to_owned(), "application/json".to_owned()),
-                ("host".to_owned(), "receiving.localhost".to_owned()),
+                ("host".to_owned(), "fixture.localhost".to_owned()),
             ])
         );
     }
@@ -542,7 +542,7 @@ async fn nested_fresh_required_remains_visible_without_retrying_the_operation() 
     ]);
     let client = WamnClient::new(
         "https://routes.example",
-        Some("receiving.localhost".to_owned()),
+        Some("fixture.localhost".to_owned()),
         credentials,
         operations.clone(),
     );

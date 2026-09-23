@@ -78,16 +78,16 @@ mod tests {
     #[test]
     fn pending_and_done_name_the_operation() {
         let pending = StatusKind::Pending {
-            operation: "purchase_order.query".to_owned(),
+            operation: "widget.query".to_owned(),
         };
         let buffer = render_to_buffer(Status::new(&pending), 60, 1);
-        assert_eq!(row_text(&buffer, 0), "... purchase_order.query");
+        assert_eq!(row_text(&buffer, 0), "... widget.query");
 
         let done = StatusKind::Done {
-            operation: "purchase_order.update".to_owned(),
+            operation: "widget.update".to_owned(),
         };
         let buffer = render_to_buffer(Status::new(&done), 60, 1);
-        assert_eq!(row_text(&buffer, 0), "ok  purchase_order.update");
+        assert_eq!(row_text(&buffer, 0), "ok  widget.update");
     }
 
     /// A conflict must reach the screen with BOTH revisions: the expected one

@@ -162,10 +162,10 @@ mod tests {
         const FIELDS: &[FieldDescriptor] = &[NOTE];
         let values = [FormValue {
             path: "value.note",
-            value: "damaged pallet".to_owned(),
+            value: "damaged widget".to_owned(),
         }];
         let buffer = render_to_buffer(Form::new(FIELDS, &values), 40, 1);
-        assert_eq!(row_text(&buffer, 0), " note damaged pallet");
+        assert_eq!(row_text(&buffer, 0), " note damaged widget");
     }
 
     #[test]

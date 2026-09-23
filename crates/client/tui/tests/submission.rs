@@ -51,7 +51,7 @@ const INPUT: &[FieldSchema] = &[FieldSchema {
 }];
 const OUTPUT: &[FieldSchema] = &[FieldSchema {
     field: FieldDescriptor {
-        path: "receipt_id",
+        path: "widget_id",
         type_name: "uuid",
         nullable: false,
         values: &[],
@@ -89,7 +89,7 @@ fn contract(replay: Replay) -> ResponseContract {
 fn binding(instance: &str) -> SessionBinding {
     SessionBinding {
         url: "http://example.test".into(),
-        host: Some("receiving.test".into()),
+        host: Some("fixture.test".into()),
         target_instance: instance.into(),
     }
 }
@@ -111,7 +111,7 @@ fn response(status: u16, body: Value) -> Result<HttpResponse, ClientError> {
 fn denied() -> Result<HttpResponse, ClientError> {
     response(
         403,
-        json!({"error":{"code":"permission-denied","operation":"receiving.record_receipt"}}),
+        json!({"error":{"code":"permission-denied","operation":"widget.record_batch"}}),
     )
 }
 fn lost() -> Result<HttpResponse, ClientError> {
@@ -184,7 +184,7 @@ fn correlated_success_spends_the_submission_until_an_explicit_new_intent() {
     let contract = contract(Replay::Claim);
     let attempt = submission.begin(request(), &contract).unwrap();
     submission.resolve(attempt, &contract, response(200, json!([{
-        "request_id":"intent-1", "value":{"receipt_id":"33333333-0000-0000-0000-000000000009"}
+        "request_id":"intent-1", "value":{"widget_id":"33333333-0000-0000-0000-000000000009"}
     }])));
     assert!(matches!(
         submission.state(),
@@ -202,7 +202,7 @@ fn confirmed_partial_completion_spends_the_submission_and_keeps_both_results() {
     let mut submission = Submission::new(binding("one"));
     let contract = contract(Replay::Unknown);
     let attempt = submission.begin(request(), &contract).unwrap();
-    let committed_result = json!({"movement_id":"movement-1"});
+    let committed_result = json!({"batch_id":"batch-1"});
     let failed_outcome = json!({"operation":"label", "outcome":"refused"});
     submission.resolve_evidence(
         attempt,
@@ -227,12 +227,12 @@ fn malformed_unknown_and_ambiguous_outcomes_never_become_editable_refusals() {
     let contract = contract(Replay::Claim);
     for body in [
         json!([]),
-        json!([{"request_id":"another", "value":{"receipt_id":"33333333-0000-0000-0000-000000000009"}}]),
-        json!([{"request_id":"intent-1", "value":{"receipt_id":42}}]),
+        json!([{"request_id":"another", "value":{"widget_id":"33333333-0000-0000-0000-000000000009"}}]),
+        json!([{"request_id":"intent-1", "value":{"widget_id":42}}]),
         json!([{"request_id":"intent-1", "error":{"code":"new_literal","detail":{}}}]),
         json!([{"request_id":"intent-1", "error":{"code":"retry","detail":{}}}]),
         json!([{"request_id":"intent-1", "error":{"code":"quantity_exceeds_remaining","detail":{"field":"quantity"}}}]),
-        json!([{"request_id":"intent-1", "value":{"receipt_id":"33333333-0000-0000-0000-000000000009"}, "error":{"code":"quantity_exceeds_remaining","detail":{"field":"quantity","id":"line-1"}}}]),
+        json!([{"request_id":"intent-1", "value":{"widget_id":"33333333-0000-0000-0000-000000000009"}, "error":{"code":"quantity_exceeds_remaining","detail":{"field":"quantity","id":"line-1"}}}]),
         json!([{"request_id":"intent-1"}]),
     ] {
         assert!(
@@ -502,22 +502,22 @@ fn schema_and_correlation_failures_preserve_literals_without_proving_refusal() {
 }
 
 #[test]
-fn receiving_update_validates_the_public_success_row_without_sql_bookkeeping_columns() {
+fn widget_update_validates_the_public_success_row_without_sql_bookkeeping_columns() {
     use std::path::Path;
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let ir = ClientContractIr::from_release(
-        "receiving",
-        &root.join("apps/wamn_receiving/generated/contracts"),
-        &root.join("apps/wamn_receiving/publication/attachments.json"),
+        "platform_fixture",
+        &root.join("apps/platform_fixture/generated/contracts"),
+        &root.join("apps/platform_fixture/publication/attachments.json"),
     )
-    .expect("project regenerated Receiving release");
+    .expect("project the fixture release");
     let operation = ir
         .models
         .iter()
         .flat_map(|model| &model.operations)
-        .find(|operation| operation.operation == "wamn-receiving:purchase-order/update@1.0.0")
-        .expect("Receiving update operation");
+        .find(|operation| operation.operation == "platform-fixture:widget/update@1.0.0")
+        .expect("fixture update operation");
     let route = operation.route.as_ref().expect("served update route");
     let contract = ResponseContract {
         partial_schema: None,
@@ -543,14 +543,11 @@ fn receiving_update_validates_the_public_success_row_without_sql_bookkeeping_col
     };
     let public_row = json!({
         "id":"00000000-0000-0000-0000-000000000001",
-        "purchase_order_number":"PO-100",
-        "supplier_id":"00000000-0000-0000-0000-000000000002",
-        "status":"open",
-        "row_version":8,
-        "created_at":"2026-09-08T16:00:00.000000Z",
-        "created_by":"00000000-0000-0000-0000-000000000003",
-        "updated_at":"2026-09-08T17:00:00.000000Z",
-        "updated_by":"00000000-0000-0000-0000-000000000004"
+        "code":"standard",
+        "maker_id":"00000000-0000-0000-0000-000000000002",
+        "note":null,
+        "edit_version":8,
+        "created_at":"2026-09-08T16:00:00.000000Z"
     });
     assert!(matches!(
         classify(
@@ -569,7 +566,7 @@ fn receiving_update_validates_the_public_success_row_without_sql_bookkeeping_col
     malformed
         .as_object_mut()
         .expect("public row")
-        .remove("row_version");
+        .remove("edit_version");
     assert!(matches!(
         classify(
             &contract,
@@ -747,40 +744,55 @@ fn unknown_cardinality_does_not_invent_object_or_collection_requirements() {
     }
 }
 
-fn wms_move_contract() -> ResponseContract {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let ir = ClientContractIr::from_release(
-        "wms",
-        &root.join("apps/wamn_wms/generated/contracts"),
-        &root.join("apps/wamn_wms/publication/attachments.json"),
-    )
-    .expect("project WMS served response declarations");
-    let operation = ir
-        .models
-        .iter()
-        .flat_map(|model| &model.operations)
-        .find(|operation| operation.operation == "wamn-wms:inventory/move@1.0.0")
-        .expect("WMS move operation");
-    let route = operation.route.as_ref().expect("composed move route");
-    assert!(!route.direct);
-    assert!(route.replay.is_none());
+const fn served(path: &'static str, type_name: &'static str) -> FieldSchema {
+    FieldSchema {
+        field: FieldDescriptor {
+            path,
+            type_name,
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        children: &[],
+        minimum: None,
+        maximum: None,
+    }
+}
+
+// The composed route a release projects when a command feeds a label render
+// and a store node, and the response names the command as its committed
+// result. The generator crate states that projection on the fixture. This
+// test states the bytes the terminal classifies.
+const COMPOSED_FIELDS: &[FieldSchema] = &[
+    served("batch_id", "uuid"),
+    FieldSchema {
+        field: FieldDescriptor {
+            values: &["priority", "standard"],
+            ..served("code", "text").field
+        },
+        ..served("code", "text")
+    },
+    served("edit_version", "text"),
+    served("maker_id", "uuid"),
+    FieldSchema {
+        children: &[
+            served("stored.container", "text"),
+            served("stored.key", "text"),
+        ],
+        ..served("stored", "object")
+    },
+    served("widget_id", "uuid"),
+    served("zpl", "text"),
+];
+const COMPOSED_SCHEMA: &str = r#"{"items":{"additionalProperties":false,"oneOf":[{"not":{"required":["error"]},"required":["value"]},{"not":{"required":["value"]},"required":["error"]}],"properties":{"error":{"properties":{"code":{"minLength":1,"type":"string"},"detail":{"type":"object"}},"required":["code"],"type":"object"},"request_id":{"minLength":1,"type":"string"},"value":{"additionalProperties":false,"properties":{"maker_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"batch_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"widget_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"code":{"enum":["priority","standard"],"type":"string"},"edit_version":{"pattern":"^-?(0|[1-9][0-9]*)$","type":"string"},"stored":{"additionalProperties":false,"properties":{"container":{"type":"string"},"key":{"type":"string"}},"required":["container","key"],"type":"object"},"zpl":{"type":"string"}},"required":["batch_id","widget_id","maker_id","code","edit_version","zpl","stored"],"type":"object"}},"required":["request_id"],"type":"object"},"maxItems":100,"minItems":1,"type":"array"}"#;
+const COMPOSED_PARTIAL_SCHEMA: &str = r#"{"additionalProperties":false,"properties":{"committed_result":{"$id":"urn:wamn:committed-result","items":{"additionalProperties":false,"properties":{"request_id":{"minLength":1,"type":"string"},"value":{"additionalProperties":false,"properties":{"maker_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"batch_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"widget_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"code":{"enum":["priority","standard"],"type":"string"},"edit_version":{"pattern":"^-?(0|[1-9][0-9]*)$","type":"string"}},"required":["batch_id","widget_id","maker_id","code","edit_version"],"type":"object"}},"required":["request_id","value"],"type":"object"},"maxItems":100,"minItems":1,"type":"array"},"failed_outcome":{"additionalProperties":false,"properties":{"code":{"minLength":1,"type":"string"},"effect_outcome":{"enum":["refused-before-dispatch","responded","timeout","cancelled","effect-uncertain","response-lost"]},"message":{"type":"string"},"operation":{"type":"string"}},"required":["code"],"type":"object"}},"required":["committed_result","failed_outcome"],"type":"object"}"#;
+
+fn composed_contract() -> ResponseContract {
     ResponseContract {
-        schema: route
-            .response
-            .schema
-            .as_ref()
-            .map(|schema| &*Box::leak(schema.to_string().into_boxed_str())),
-        partial_schema: route
-            .response
-            .partial_schema
-            .as_ref()
-            .map(|schema| &*Box::leak(schema.to_string().into_boxed_str())),
-        fields: runtime_fields(&route.response.fields),
-        result_class: route
-            .response
-            .result_class
-            .as_ref()
-            .map(|class| &*Box::leak(class.clone().into_boxed_str())),
+        schema: Some(COMPOSED_SCHEMA),
+        partial_schema: Some(COMPOSED_PARTIAL_SCHEMA),
+        fields: COMPOSED_FIELDS,
+        result_class: Some("one"),
         errors: &[],
         kind: "command",
         transaction: Some("explicit_per_input"),
@@ -789,26 +801,26 @@ fn wms_move_contract() -> ResponseContract {
     }
 }
 
-fn movement_result() -> Value {
+fn batch_result() -> Value {
     json!({
-        "movement_id":"33333333-0000-0000-0000-000000000009",
-        "pallet_id":"33333333-0000-0000-0000-000000000002",
-        "location_id":"33333333-0000-0000-0000-000000000003",
-        "pallet_status":"available",
-        "row_version":"8"
+        "batch_id":"33333333-0000-0000-0000-000000000009",
+        "widget_id":"33333333-0000-0000-0000-000000000002",
+        "maker_id":"33333333-0000-0000-0000-000000000003",
+        "code":"standard",
+        "edit_version":"8"
     })
 }
 
 fn partial_body() -> Value {
     json!({
-        "committed_result":[{"request_id":"intent-1","value":movement_result()}],
+        "committed_result":[{"request_id":"intent-1","value":batch_result()}],
         "failed_outcome":{"code":"write_failed","message":"storage request failed","operation":"wamn:node/async-handler@0.1.0"}
     })
 }
 
 #[test]
 fn declared_partial_http_bytes_preserve_the_commit_and_disable_composed_replay() {
-    let contract = wms_move_contract();
+    let contract = composed_contract();
     for effect in [
         None,
         Some("refused-before-dispatch"),
@@ -828,7 +840,7 @@ fn declared_partial_http_bytes_preserve_the_commit_and_disable_composed_replay()
         assert_eq!(
             submission.state(),
             &State::PartiallyCompleted {
-                committed_result: movement_result(),
+                committed_result: batch_result(),
                 failed_outcome: body["failed_outcome"].clone()
             }
         );
@@ -846,7 +858,7 @@ fn declared_partial_http_bytes_preserve_the_commit_and_disable_composed_replay()
 
 #[test]
 fn partial_bytes_require_the_declared_shape_and_one_matching_successful_commit() {
-    let contract = wms_move_contract();
+    let contract = composed_contract();
     let good = partial_body();
     let mut malformed = Vec::new();
     for key in ["committed_result", "failed_outcome"] {
@@ -861,8 +873,8 @@ fn partial_bytes_require_the_declared_shape_and_one_matching_successful_commit()
             json!([good["committed_result"][0], good["committed_result"][0]]),
         ),
         ("/committed_result/0/request_id", json!("another-intent")),
-        ("/committed_result/0/value/movement_id", json!(7)),
-        ("/committed_result/0/value/row_version", json!(8)),
+        ("/committed_result/0/value/batch_id", json!(7)),
+        ("/committed_result/0/value/edit_version", json!(8)),
         ("/failed_outcome/code", json!("")),
     ] {
         let mut body = good.clone();
@@ -924,11 +936,11 @@ fn partial_bytes_require_the_declared_shape_and_one_matching_successful_commit()
 }
 
 #[test]
-fn wms_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_uncertain() {
-    let contract = wms_move_contract();
-    let mut value = movement_result();
+fn composed_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_uncertain() {
+    let contract = composed_contract();
+    let mut value = batch_result();
     value["zpl"] = json!("^XA^XZ");
-    value["stored"] = json!({"container":"labels","key":"movement-label"});
+    value["stored"] = json!({"container":"labels","key":"batch-label"});
     let body = json!([{"request_id":"intent-1","value":value}]);
     assert_eq!(
         classify(&contract, "intent-1", response(200, body.clone())),
@@ -954,7 +966,7 @@ fn wms_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_uncerta
     }
     for revision in [json!(8), json!(8.5), json!(u64::MAX)] {
         let mut malformed = body.clone();
-        malformed[0]["value"]["row_version"] = revision;
+        malformed[0]["value"]["edit_version"] = revision;
         assert!(matches!(
             classify(&contract, "intent-1", response(200, malformed)),
             Evidence::Uncertain(_)
@@ -967,7 +979,7 @@ fn wms_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_uncerta
             response(
                 200,
                 json!([{
-                    "request_id":"intent-1","value":movement_result()
+                    "request_id":"intent-1","value":batch_result()
                 }])
             )
         ),

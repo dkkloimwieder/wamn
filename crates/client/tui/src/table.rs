@@ -166,7 +166,7 @@ mod tests {
             FIELDS[0],
             FIELDS[1],
             FieldDescriptor {
-                path: "value.supplier",
+                path: "value.maker",
                 type_name: "text",
                 nullable: true,
                 values: &[],
@@ -175,16 +175,16 @@ mod tests {
         let rows = vec![vec![
             "3f8e".to_owned(),
             "open".to_owned(),
-            "acme".to_owned(),
+            "maker-one".to_owned(),
         ]];
         let buffer = render_to_buffer(Table::new(EXTENDED, &rows), 40, 3);
         assert!(
-            row_text(&buffer, 0).contains("supplier"),
+            row_text(&buffer, 0).contains("maker"),
             "{}",
             row_text(&buffer, 0)
         );
         assert!(
-            row_text(&buffer, 1).contains("acme"),
+            row_text(&buffer, 1).contains("maker-one"),
             "{}",
             row_text(&buffer, 1)
         );
@@ -249,7 +249,7 @@ mod tests {
             },
         ];
         let actor = "01234567-89ab-cdef-0123-456789abcdef";
-        let label = "Warehouse receiving service account";
+        let label = "Platform fixture service account";
         let rows = vec![vec![actor.to_owned(), label.to_owned()]];
         let buffer = render_to_buffer(Table::new(&fields, &rows).select(Some(0)), 100, 3);
         assert_eq!(row_text(&buffer, 1), format!(">{actor} {label}"));
