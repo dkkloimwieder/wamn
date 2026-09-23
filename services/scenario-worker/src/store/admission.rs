@@ -975,27 +975,6 @@ mod tests {
         );
     }
 
-    /// These Rust-built statements are the artifact: pin the full write and the
-    /// exact retry check so the green-report hash cannot be replaced on append.
-    #[test]
-    fn publication_append_uses_only_the_server_derived_exact_identity() {
-        assert_eq!(
-            INSERT_WIRING_SQL,
-            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
-             version, graph_json, wiring_hash) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
-             ON CONFLICT DO NOTHING"
-        );
-        assert_eq!(
-            EXACT_WIRING_SQL,
-            "SELECT EXISTS (SELECT 1 FROM catalog.wirings \
-             WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-             AND wiring_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
-             AND wiring_hash = $7)"
-        );
-        assert!(!INSERT_WIRING_SQL.contains("DO UPDATE"));
-    }
-
     /// The expected identity is DERIVED from the parsed connection, never
     /// hand-copied beside it.
     ///

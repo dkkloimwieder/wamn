@@ -2241,6 +2241,60 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(stored_wiring_count(&project).await, 1);
 
+    // ---- the append converges on an identical row and refuses a changed one ---
+    // A NEW command id carrying the identical document reaches the append
+    // itself: the row exists, the insert does nothing, and the exact check
+    // converges on the published result.
+    let published_row = stored_wiring(&project).await;
+    let identical = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-identical", PROJECT, &candidate_document),
+    )
+    .await;
+    assert_eq!(
+        outcome(&identical.body),
+        outcome(&published.body),
+        "{}",
+        identical.body
+    );
+    assert_eq!(stored_wiring_count(&project).await, 1);
+    assert_eq!(stored_wiring(&project).await, published_row);
+
+    // The same wiring identity with other content passes the green-report
+    // guard, so only the append can refuse it, and the stored row is unchanged.
+    let mut changed_document = candidate_document.clone();
+    changed_document["cases"][0]["input"]["name"] = serde_json::json!("changed");
+    let changed_hash = derived_hash(&changed_document);
+    assert_ne!(changed_hash, candidate_hash);
+    admin
+        .execute(
+            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+             VALUES ($1, $2, true, '{}'::jsonb)",
+            &[&TENANT, &changed_hash],
+        )
+        .await
+        .expect("seed the changed document's green report");
+    let changed = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-changed", PROJECT, &changed_document),
+    )
+    .await;
+    assert_eq!(
+        outcome(&changed.body)["value"],
+        serde_json::json!({
+            "command": "publish",
+            "reason": {"kind": "publish-executable-drift"},
+        }),
+        "{}",
+        changed.body
+    );
+    assert_eq!(stored_wiring_count(&project).await, 1);
+    assert_eq!(stored_wiring(&project).await, published_row);
+
     // ---- the command table is append-only -----------------------------------------
     let rewrite = admin
         .execute(
