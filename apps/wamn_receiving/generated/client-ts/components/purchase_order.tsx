@@ -3,13 +3,8 @@
 // `purchase_order` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { For, Show, createResource, createSignal } from "solid-js";
-import {
-  createSolidTable,
-  flexRender,
-  getCoreRowModel,
-  type ColumnDef,
-} from "@tanstack/solid-table";
+import { Show, createResource, createSignal } from "solid-js";
+import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
@@ -31,6 +26,22 @@ import {
   type Uuid,
   writeMember,
 } from "@wamn/web-runtime";
+import {
+  Badge,
+  Button,
+  ChoiceField,
+  DataGrid,
+  DataGridContainer,
+  DataGridTable,
+  DetailItem,
+  DetailList,
+  FieldError,
+  RecordSelect,
+  TextField,
+  announceOutcome,
+  gridFeatures,
+  type GridFeatures,
+} from "@wamn/ui";
 import {
   PURCHASE_ORDER_UPDATE_REQUEST_FIELDS,
   get,
@@ -88,6 +99,9 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
         { ...input, requestId: newRequestId() } as PurchaseOrderGetRequest,
       ]);
       props.onOutcome?.(read);
+      if (read.status !== "completed") {
+        announceOutcome(read, PurchaseOrderGetDetailLabel);
+      }
       return read;
     },
   );
@@ -100,34 +114,25 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
   return (
     <section>
       <Show when={state() !== undefined && state() !== "completed"}>
-        <p>{state()}</p>
+        <FieldError>{state()}</FieldError>
       </Show>
-      <dl>
-        <dt>Created</dt>
-        <dd>{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</dd>
-        <dt>Created by</dt>
-        <dd>{cellText(readMember(record(), ["createdBy"]), "uuid")}</dd>
-        <dt>id</dt>
-        <dd>{cellText(readMember(record(), ["id"]), "uuid")}</dd>
-        <dt>Order number</dt>
-        <dd>{cellText(readMember(record(), ["purchaseOrderNumber"]), "text")}</dd>
-        <dt>Revision</dt>
-        <dd>{cellText(readMember(record(), ["rowVersion"]), "int32")}</dd>
-        <dt>Status</dt>
-        <dd>{cellText(readMember(record(), ["status"]), "text")}</dd>
-        <dt>Supplier</dt>
-        <dd>{cellText(readMember(record(), ["supplierId"]), "uuid")}</dd>
-        <dt>Updated</dt>
-        <dd>{cellText(readMember(record(), ["updatedAt"]), "timestamptz")}</dd>
-        <dt>Updated by</dt>
-        <dd>{cellText(readMember(record(), ["updatedBy"]), "uuid")}</dd>
-      </dl>
+      <DetailList loading={outcome.loading}>
+        <DetailItem term="Created">{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</DetailItem>
+        <DetailItem term="Created by">{cellText(readMember(record(), ["createdBy"]), "uuid")}</DetailItem>
+        <DetailItem term="id">{cellText(readMember(record(), ["id"]), "uuid")}</DetailItem>
+        <DetailItem term="Order number">{cellText(readMember(record(), ["purchaseOrderNumber"]), "text")}</DetailItem>
+        <DetailItem term="Revision">{cellText(readMember(record(), ["rowVersion"]), "int32")}</DetailItem>
+        <DetailItem term="Status">{cellText(readMember(record(), ["status"]), "text")}</DetailItem>
+        <DetailItem term="Supplier">{cellText(readMember(record(), ["supplierId"]), "uuid")}</DetailItem>
+        <DetailItem term="Updated">{cellText(readMember(record(), ["updatedAt"]), "timestamptz")}</DetailItem>
+        <DetailItem term="Updated by">{cellText(readMember(record(), ["updatedBy"]), "uuid")}</DetailItem>
+      </DetailList>
     </section>
   );
 }
 
 /** Columns of `wamn-receiving:purchase-order/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<PurchaseOrderQueryRow, unknown>[] = [
+const QUERY_COLUMNS: ColumnDef<GridFeatures, PurchaseOrderQueryRow>[] = [
   {
     accessorKey: "createdAt",
     header: "Created",
@@ -156,7 +161,11 @@ const QUERY_COLUMNS: ColumnDef<PurchaseOrderQueryRow, unknown>[] = [
   {
     accessorKey: "status",
     header: "Status",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    cell: (cell) => (
+      <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
+        <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
+      </Show>
+    ),
   },
   {
     accessorKey: "supplierId",
@@ -218,6 +227,7 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
     const outcome = await query(props.transport, [sent]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
+      announceOutcome(outcome, PurchaseOrderQueryTableLabel);
       setPage({ ...page(), busy: false });
       return;
     }
@@ -235,12 +245,49 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
     restart();
   };
 
-  const table = createSolidTable({
+  const columns: ColumnDef<GridFeatures, PurchaseOrderQueryRow>[] = [
+    ...QUERY_COLUMNS,
+    {
+      id: "openPurchaseOrderGet",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onOpenPurchaseOrderGet}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onOpenPurchaseOrderGet?.(cell.row.original)}
+          >
+            get
+          </Button>
+        </Show>
+      ),
+    },
+    {
+      id: "fillReceivingRecordReceipt",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onFillReceivingRecordReceipt}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "purchaseOrderId"], cell.row.original.id))}
+          >
+            record-receipt
+          </Button>
+        </Show>
+      ),
+    },
+  ];
+
+  const table = createTable({
+    features: gridFeatures,
     get data() {
       return page().rows as PurchaseOrderQueryRow[];
     },
-    columns: QUERY_COLUMNS,
-    getCoreRowModel: getCoreRowModel(),
+    columns: columns,
+    manualPagination: true,
   });
 
   return (
@@ -251,94 +298,64 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
           restart();
         }}
       >
-        <label>
-          Order number
-          <input type="text" onChange={(event) => change(["filter", "purchaseOrderNumber"], event.currentTarget.value.split(",").filter((part) => part !== ""))} />
-        </label>
-        <label>
-          Status
-          <input type="text" onChange={(event) => change(["filter", "status"], event.currentTarget.value.split(",").filter((part) => part !== ""))} />
-        </label>
-        <label>
-          Supplier
-          <input type="text" onChange={(event) => change(["filter", "supplierId"], event.currentTarget.value.split(",").filter((part) => part !== ""))} />
-        </label>
-        <label>
-          field
-          <select onChange={(event) => change(["sort", "field"], event.currentTarget.value)}>
-            <option value=""></option>
-            <option value="created_at">created at</option>
-            <option value="purchase_order_number">purchase order number</option>
-            <option value="status">status</option>
-          </select>
-        </label>
-        <label>
-          direction
-          <select onChange={(event) => change(["sort", "direction"], event.currentTarget.value)}>
-            <option value=""></option>
-            <option value="ascending">ascending</option>
-            <option value="descending">descending</option>
-          </select>
-        </label>
-        <label>
-          limit
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={100}
-            onChange={(event) => change(["limit"], event.currentTarget.value)}
-          />
-        </label>
-        <button type="submit">read</button>
+        <TextField
+          label="Order number"
+          type="text"
+          onChange={(value) => change(["filter", "purchaseOrderNumber"], value.split(",").filter((part) => part !== ""))}
+        />
+        <TextField
+          label="Status"
+          type="text"
+          onChange={(value) => change(["filter", "status"], value.split(",").filter((part) => part !== ""))}
+        />
+        <TextField
+          label="Supplier"
+          type="text"
+          onChange={(value) => change(["filter", "supplierId"], value.split(",").filter((part) => part !== ""))}
+        />
+        <ChoiceField
+          label="field"
+          allowEmpty={true}
+          choices={[
+            { value: "created_at", text: "created at" },
+            { value: "purchase_order_number", text: "purchase order number" },
+            { value: "status", text: "status" },
+          ]}
+          onChange={(value) => change(["sort", "field"], value)}
+        />
+        <ChoiceField
+          label="direction"
+          allowEmpty={true}
+          choices={[
+            { value: "ascending", text: "ascending" },
+            { value: "descending", text: "descending" },
+          ]}
+          onChange={(value) => change(["sort", "direction"], value)}
+        />
+        <TextField
+          label="limit"
+          type="number"
+          min={1}
+          max={100}
+          value="100"
+          onChange={(value) => change(["limit"], value)}
+        />
+        <Button type="submit">read</Button>
       </form>
-      <table>
-        <thead>
-          <For each={table.getHeaderGroups()}>
-            {(group) => (
-              <tr>
-                <For each={group.headers}>
-                  {(header) => (
-                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>
-                  )}
-                </For>
-              </tr>
-            )}
-          </For>
-        </thead>
-        <tbody>
-          <For each={table.getRowModel().rows}>
-            {(row) => (
-              <tr onClick={() => props.onRowSelect?.(row.original)}>
-                <For each={row.getVisibleCells()}>
-                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
-                </For>
-                <td>
-                  <Show when={props.onOpenPurchaseOrderGet}>
-                    <button type="button" onClick={() => props.onOpenPurchaseOrderGet?.(row.original)}>
-                      get
-                    </button>
-                  </Show>
-                </td>
-                <td>
-                  <Show when={props.onFillReceivingRecordReceipt}>
-                    <button
-                      type="button"
-                      onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "purchaseOrderId"], row.original.id))}
-                    >
-                      record-receipt
-                    </button>
-                  </Show>
-                </td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+      <DataGrid
+        table={table}
+        recordCount={page().rows.length}
+        isLoading={page().busy && page().rows.length === 0}
+        onRowClick={(row) => props.onRowSelect?.(row)}
+      >
+        <DataGridContainer>
+          <DataGridTable />
+        </DataGridContainer>
+      </DataGrid>
       <Show when={hasNextPage(page())}>
-        <button type="button" onClick={() => void read(page().cursor)}>
+        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
           next page
-        </button>
+        </Button>
       </Show>
     </section>
   );
@@ -417,6 +434,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
       item = writeMember(item, ["expectedRowVersion"], readMember(record.value, ["rowVersion"]) ?? null);
       const outcome = await update(props.transport, [item]);
       props.onSubmitted?.(outcome);
+      announceOutcome(outcome, PurchaseOrderUpdateFormLabel);
       setRefusal(
         outcome.status === "refused"
           ? { code: outcome.code, member: refusedMember(outcome.detail) }
@@ -451,44 +469,24 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <p>{refusal()?.code}</p>
+        <FieldError>{refusal()?.code}</FieldError>
       </Show>
       <form.Field name={`change.supplierId`}>
         {(field) => (
-          <label>
-            Supplier
-            <select
-              value={String(field().state.value ?? "")}
-              onChange={(event) => field().handleChange(event.currentTarget.value)}
-            >
-              <option value=""></option>
-              <For each={supplierQueryOptions().rows}>
-                {(row) => (
-                  <option
-                    value={String(row.id)}
-                    selected={String(field().state.value ?? "") === String(row.id)}
-                  >
-                    {String(row.name)}
-                  </option>
-                )}
-              </For>
-            </select>
-            <Show when={hasNextPage(supplierQueryOptions())}>
-              <button
-                type="button"
-                aria-label="Supplier next page"
-                onClick={() => void readSupplierQueryOptions(supplierQueryOptions().cursor)}
-              >
-                next page
-              </button>
-            </Show>
-            <Show when={refusalMarks(refusal()?.member ?? null, "change.supplier_id")}>
-              <em>{refusal()?.code}</em>
-            </Show>
-          </label>
+          <RecordSelect
+            label="Supplier"
+            options={supplierQueryOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.name)}
+            value={field().state.value == null ? null : String(field().state.value)}
+            onChange={(value) => field().handleChange(value ?? "")}
+            hasNextPage={hasNextPage(supplierQueryOptions())}
+            onNextPage={() => void readSupplierQueryOptions(supplierQueryOptions().cursor)}
+            error={refusalMarks(refusal()?.member ?? null, "change.supplier_id") ? (refusal()?.code ?? "refused") : null}
+          />
         )}
       </form.Field>
-      <button type="submit">submit</button>
+      <Button type="submit">submit</Button>
     </form>
   );
 }

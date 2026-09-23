@@ -219,11 +219,10 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             Role::Form => {
                 form = true;
                 solid.extend(["createSignal", "Show"]);
-                if !screen.population.is_empty()
-                    || screen
-                        .inputs
-                        .iter()
-                        .any(|input| repeated_ancestor(&input.path).is_some())
+                if screen
+                    .inputs
+                    .iter()
+                    .any(|input| repeated_ancestor(&input.path).is_some())
                 {
                     solid.insert("For");
                 }

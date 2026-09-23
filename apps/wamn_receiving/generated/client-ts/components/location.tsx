@@ -3,13 +3,8 @@
 // `location` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { For, Show, createSignal } from "solid-js";
-import {
-  createSolidTable,
-  flexRender,
-  getCoreRowModel,
-  type ColumnDef,
-} from "@tanstack/solid-table";
+import { Show, createSignal } from "solid-js";
+import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import {
   appendPage,
   cellText,
@@ -25,6 +20,15 @@ import {
   writeMember,
 } from "@wamn/web-runtime";
 import {
+  Button,
+  DataGrid,
+  DataGridContainer,
+  DataGridTable,
+  announceOutcome,
+  gridFeatures,
+  type GridFeatures,
+} from "@wamn/ui";
+import {
   list,
   type LocationListRequest,
   type LocationListResult,
@@ -35,7 +39,7 @@ import {
 } from "./receiving.js";
 
 /** Columns of `wamn-receiving:location/list@1.0.0`, in contract order. */
-const LIST_COLUMNS: ColumnDef<LocationListRow, unknown>[] = [
+const LIST_COLUMNS: ColumnDef<GridFeatures, LocationListRow>[] = [
   {
     accessorKey: "id",
     header: "id",
@@ -89,6 +93,7 @@ export function LocationListTable(props: LocationListTableProps) {
     const outcome = await list(props.transport, [sent]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
+      announceOutcome(outcome, LocationListTableLabel);
       setPage({ ...page(), busy: false });
       return;
     }
@@ -101,12 +106,33 @@ export function LocationListTable(props: LocationListTableProps) {
     void read(null);
   };
 
-  const table = createSolidTable({
+  const columns: ColumnDef<GridFeatures, LocationListRow>[] = [
+    ...LIST_COLUMNS,
+    {
+      id: "fillReceivingRecordReceipt",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onFillReceivingRecordReceipt}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "locationId"], cell.row.original.id))}
+          >
+            record-receipt
+          </Button>
+        </Show>
+      ),
+    },
+  ];
+
+  const table = createTable({
+    features: gridFeatures,
     get data() {
       return page().rows as LocationListRow[];
     },
-    columns: LIST_COLUMNS,
-    getCoreRowModel: getCoreRowModel(),
+    columns: columns,
+    manualPagination: true,
   });
 
   return (
@@ -117,48 +143,22 @@ export function LocationListTable(props: LocationListTableProps) {
           restart();
         }}
       >
-        <button type="submit">read</button>
+        <Button type="submit">read</Button>
       </form>
-      <table>
-        <thead>
-          <For each={table.getHeaderGroups()}>
-            {(group) => (
-              <tr>
-                <For each={group.headers}>
-                  {(header) => (
-                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>
-                  )}
-                </For>
-              </tr>
-            )}
-          </For>
-        </thead>
-        <tbody>
-          <For each={table.getRowModel().rows}>
-            {(row) => (
-              <tr onClick={() => props.onRowSelect?.(row.original)}>
-                <For each={row.getVisibleCells()}>
-                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
-                </For>
-                <td>
-                  <Show when={props.onFillReceivingRecordReceipt}>
-                    <button
-                      type="button"
-                      onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "locationId"], row.original.id))}
-                    >
-                      record-receipt
-                    </button>
-                  </Show>
-                </td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+      <DataGrid
+        table={table}
+        recordCount={page().rows.length}
+        isLoading={page().busy && page().rows.length === 0}
+        onRowClick={(row) => props.onRowSelect?.(row)}
+      >
+        <DataGridContainer>
+          <DataGridTable />
+        </DataGridContainer>
+      </DataGrid>
       <Show when={hasNextPage(page())}>
-        <button type="button" onClick={() => void read(page().cursor)}>
+        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
           next page
-        </button>
+        </Button>
       </Show>
     </section>
   );

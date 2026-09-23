@@ -4,12 +4,7 @@
 // nothing else.
 
 import { For, Show, createEffect, createSignal } from "solid-js";
-import {
-  createSolidTable,
-  flexRender,
-  getCoreRowModel,
-  type ColumnDef,
-} from "@tanstack/solid-table";
+import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm, useStore } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
@@ -34,6 +29,22 @@ import {
   type Uuid,
   writeMember,
 } from "@wamn/web-runtime";
+import {
+  Badge,
+  Button,
+  DataGrid,
+  DataGridContainer,
+  DataGridTable,
+  FieldError,
+  FieldGroup,
+  FieldLegend,
+  FieldSet,
+  RecordSelect,
+  TextField,
+  announceOutcome,
+  gridFeatures,
+  type GridFeatures,
+} from "@wamn/ui";
 import {
   RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
   loadPurchaseOrderHistory,
@@ -67,7 +78,7 @@ const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 const NUMERIC_TEXT = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
 
 /** Columns of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`, in contract order. */
-const LOAD_PURCHASE_ORDER_HISTORY_COLUMNS: ColumnDef<ReceivingLoadPurchaseOrderHistoryRow, unknown>[] = [
+const LOAD_PURCHASE_ORDER_HISTORY_COLUMNS: ColumnDef<GridFeatures, ReceivingLoadPurchaseOrderHistoryRow>[] = [
   {
     accessorKey: "after",
     header: "After",
@@ -101,7 +112,11 @@ const LOAD_PURCHASE_ORDER_HISTORY_COLUMNS: ColumnDef<ReceivingLoadPurchaseOrderH
   {
     accessorKey: "kind",
     header: "Change",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    cell: (cell) => (
+      <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
+        <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
+      </Show>
+    ),
   },
   {
     accessorKey: "operation",
@@ -149,6 +164,7 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
     const outcome = await loadPurchaseOrderHistory(props.transport, [sent]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
+      announceOutcome(outcome, ReceivingLoadPurchaseOrderHistoryTableLabel);
       setPage({ ...page(), busy: false });
       return;
     }
@@ -161,12 +177,13 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
     void read(null);
   };
 
-  const table = createSolidTable({
+  const table = createTable({
+    features: gridFeatures,
     get data() {
       return page().rows as ReceivingLoadPurchaseOrderHistoryRow[];
     },
     columns: LOAD_PURCHASE_ORDER_HISTORY_COLUMNS,
-    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
   });
 
   return (
@@ -177,45 +194,29 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
           restart();
         }}
       >
-        <button type="submit">read</button>
+        <Button type="submit">read</Button>
       </form>
-      <table>
-        <thead>
-          <For each={table.getHeaderGroups()}>
-            {(group) => (
-              <tr>
-                <For each={group.headers}>
-                  {(header) => (
-                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>
-                  )}
-                </For>
-              </tr>
-            )}
-          </For>
-        </thead>
-        <tbody>
-          <For each={table.getRowModel().rows}>
-            {(row) => (
-              <tr onClick={() => props.onRowSelect?.(row.original)}>
-                <For each={row.getVisibleCells()}>
-                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
-                </For>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+      <DataGrid
+        table={table}
+        recordCount={page().rows.length}
+        isLoading={page().busy && page().rows.length === 0}
+        onRowClick={(row) => props.onRowSelect?.(row)}
+      >
+        <DataGridContainer>
+          <DataGridTable />
+        </DataGridContainer>
+      </DataGrid>
       <Show when={hasNextPage(page())}>
-        <button type="button" onClick={() => void read(page().cursor)}>
+        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
           next page
-        </button>
+        </Button>
       </Show>
     </section>
   );
 }
 
 /** Columns of `wamn-receiving:receiving/load-receipt-screen@1.0.0`, in contract order. */
-const LOAD_RECEIPT_SCREEN_COLUMNS: ColumnDef<ReceivingLoadReceiptScreenRow, unknown>[] = [
+const LOAD_RECEIPT_SCREEN_COLUMNS: ColumnDef<GridFeatures, ReceivingLoadReceiptScreenRow>[] = [
   {
     accessorKey: "itemId",
     header: "item id",
@@ -254,7 +255,11 @@ const LOAD_RECEIPT_SCREEN_COLUMNS: ColumnDef<ReceivingLoadReceiptScreenRow, unkn
   {
     accessorKey: "purchaseOrderStatus",
     header: "Status",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    cell: (cell) => (
+      <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
+        <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
+      </Show>
+    ),
   },
   {
     accessorKey: "receivedQuantity",
@@ -319,6 +324,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
     const outcome = await loadReceiptScreen(props.transport, [sent]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
+      announceOutcome(outcome, ReceivingLoadReceiptScreenTableLabel);
       setPage({ ...page(), busy: false });
       return;
     }
@@ -331,12 +337,33 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
     void read(null);
   };
 
-  const table = createSolidTable({
+  const columns: ColumnDef<GridFeatures, ReceivingLoadReceiptScreenRow>[] = [
+    ...LOAD_RECEIPT_SCREEN_COLUMNS,
+    {
+      id: "fillReceivingRecordReceipt",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onFillReceivingRecordReceipt}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "purchaseOrderLineId"], cell.row.original.lineId))}
+          >
+            record-receipt
+          </Button>
+        </Show>
+      ),
+    },
+  ];
+
+  const table = createTable({
+    features: gridFeatures,
     get data() {
       return page().rows as ReceivingLoadReceiptScreenRow[];
     },
-    columns: LOAD_RECEIPT_SCREEN_COLUMNS,
-    getCoreRowModel: getCoreRowModel(),
+    columns: columns,
+    manualPagination: true,
   });
 
   return (
@@ -347,48 +374,22 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
           restart();
         }}
       >
-        <button type="submit">read</button>
+        <Button type="submit">read</Button>
       </form>
-      <table>
-        <thead>
-          <For each={table.getHeaderGroups()}>
-            {(group) => (
-              <tr>
-                <For each={group.headers}>
-                  {(header) => (
-                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>
-                  )}
-                </For>
-              </tr>
-            )}
-          </For>
-        </thead>
-        <tbody>
-          <For each={table.getRowModel().rows}>
-            {(row) => (
-              <tr onClick={() => props.onRowSelect?.(row.original)}>
-                <For each={row.getVisibleCells()}>
-                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
-                </For>
-                <td>
-                  <Show when={props.onFillReceivingRecordReceipt}>
-                    <button
-                      type="button"
-                      onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "purchaseOrderLineId"], row.original.lineId))}
-                    >
-                      record-receipt
-                    </button>
-                  </Show>
-                </td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+      <DataGrid
+        table={table}
+        recordCount={page().rows.length}
+        isLoading={page().busy && page().rows.length === 0}
+        onRowClick={(row) => props.onRowSelect?.(row)}
+      >
+        <DataGridContainer>
+          <DataGridTable />
+        </DataGridContainer>
+      </DataGrid>
       <Show when={hasNextPage(page())}>
-        <button type="button" onClick={() => void read(page().cursor)}>
+        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
           next page
-        </button>
+        </Button>
       </Show>
     </section>
   );
@@ -467,6 +468,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
       const outcome = await recordReceipt(props.transport, [item]);
       props.onSubmitted?.(outcome);
+      announceOutcome(outcome, ReceivingRecordReceiptFormLabel);
       setRefusal(
         outcome.status === "refused"
           ? { code: outcome.code, member: refusedMember(outcome.detail) }
@@ -546,162 +548,106 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <p>{refusal()?.code}</p>
+        <FieldError>{refusal()?.code}</FieldError>
       </Show>
       <form.Field name={"value.line"} mode="array">
         {(group) => (
-          <fieldset>
-            <legend>Receipt lines</legend>
+          <FieldSet>
+            <FieldLegend>Receipt lines</FieldLegend>
             <For each={group().state.value ?? []}>
               {(_, index) => (
-                <fieldset>
+                <FieldGroup>
                   <form.Field name={`value.line[${index()}].locationId`}>
                     {(field) => (
-                      <label>
-                        Location
-                        <select
-                          value={String(field().state.value ?? "")}
-                          onChange={(event) => field().handleChange(event.currentTarget.value)}
-                        >
-                          <option value=""></option>
-                          <For each={locationListOptions().rows}>
-                            {(row) => (
-                              <option
-                                value={String(row.id)}
-                                selected={String(field().state.value ?? "") === String(row.id)}
-                              >
-                                {String(row.locationCode)}
-                              </option>
-                            )}
-                          </For>
-                        </select>
-                        <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index())}>
-                          <em>{refusal()?.code}</em>
-                        </Show>
-                      </label>
+                      <RecordSelect
+                        label="Location"
+                        options={locationListOptions().rows}
+                        optionValue={(row) => String(row.id)}
+                        optionLabel={(row) => String(row.locationCode)}
+                        value={field().state.value == null ? null : String(field().state.value)}
+                        onChange={(value) => field().handleChange(value ?? "")}
+                        error={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index()) ? (refusal()?.code ?? "refused") : null}
+                      />
                     )}
                   </form.Field>
                   <form.Field name={`value.line[${index()}].purchaseOrderLineId`}>
                     {(field) => (
-                      <label>
-                        Order line
-                        <select
-                          value={String(field().state.value ?? "")}
-                          onChange={(event) => field().handleChange(event.currentTarget.value)}
-                        >
-                          <option value=""></option>
-                          <For each={receivingLoadReceiptScreenOptions().rows}>
-                            {(row) => (
-                              <option
-                                value={String(row.lineId)}
-                                selected={String(field().state.value ?? "") === String(row.lineId)}
-                              >
-                                {String(row.itemNumber)}
-                              </option>
-                            )}
-                          </For>
-                        </select>
-                        <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index())}>
-                          <em>{refusal()?.code}</em>
-                        </Show>
-                      </label>
+                      <RecordSelect
+                        label="Order line"
+                        options={receivingLoadReceiptScreenOptions().rows}
+                        optionValue={(row) => String(row.lineId)}
+                        optionLabel={(row) => String(row.itemNumber)}
+                        value={field().state.value == null ? null : String(field().state.value)}
+                        onChange={(value) => field().handleChange(value ?? "")}
+                        error={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index()) ? (refusal()?.code ?? "refused") : null}
+                      />
                     )}
                   </form.Field>
                   <form.Field name={`value.line[${index()}].quantity`}>
                     {(field) => (
-                      <label>
-                        Quantity
-                        <input
-                          type="text"
-                          value={String(field().state.value ?? "")}
-                          onInput={(event) => field().handleChange(event.currentTarget.value)}
-                        />
-                        <Show when={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index())}>
-                          <em>{refusal()?.code}</em>
-                        </Show>
-                      </label>
+                      <TextField
+                        label="Quantity"
+                        type="text"
+                        value={String(field().state.value ?? "")}
+                        onInput={(value) => field().handleChange(value)}
+                        error={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index()) ? (refusal()?.code ?? "refused") : null}
+                      />
                     )}
                   </form.Field>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     disabled={!canRemove(group().state.value ?? [], 1)}
                     onClick={() => group().removeValue(index())}
                   >
                     remove
-                  </button>
-                </fieldset>
+                  </Button>
+                </FieldGroup>
               )}
             </For>
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={!canAdd(group().state.value ?? [], 100)}
               onClick={() => group().pushValue({} as NonNullable<NonNullable<NonNullable<ReceivingRecordReceiptRequest>["value"]>["line"]>[number])}
             >
               add
-            </button>
-          </fieldset>
+            </Button>
+          </FieldSet>
         )}
       </form.Field>
       <form.Field name={`value.purchaseOrderId`}>
         {(field) => (
-          <label>
-            Purchase order
-            <select
-              value={String(field().state.value ?? "")}
-              onChange={(event) => field().handleChange(event.currentTarget.value)}
-            >
-              <option value=""></option>
-              <For each={purchaseOrderQueryOptions().rows}>
-                {(row) => (
-                  <option
-                    value={String(row.id)}
-                    selected={String(field().state.value ?? "") === String(row.id)}
-                  >
-                    {String(row.purchaseOrderNumber)}
-                  </option>
-                )}
-              </For>
-            </select>
-            <input
-              type="search"
-              aria-label="Purchase order search"
-              value={purchaseOrderQuerySearch()}
-              onChange={(event) => {
-                setPurchaseOrderQuerySearch(event.currentTarget.value);
-                void readPurchaseOrderQueryOptions(null);
-              }}
-            />
-            <Show when={hasNextPage(purchaseOrderQueryOptions())}>
-              <button
-                type="button"
-                aria-label="Purchase order next page"
-                onClick={() => void readPurchaseOrderQueryOptions(purchaseOrderQueryOptions().cursor)}
-              >
-                next page
-              </button>
-            </Show>
-            <Show when={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id")}>
-              <em>{refusal()?.code}</em>
-            </Show>
-          </label>
+          <RecordSelect
+            label="Purchase order"
+            options={purchaseOrderQueryOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.purchaseOrderNumber)}
+            value={field().state.value == null ? null : String(field().state.value)}
+            onChange={(value) => field().handleChange(value ?? "")}
+            onSearch={(text) => {
+              setPurchaseOrderQuerySearch(text);
+              void readPurchaseOrderQueryOptions(null);
+            }}
+            hasNextPage={hasNextPage(purchaseOrderQueryOptions())}
+            onNextPage={() => void readPurchaseOrderQueryOptions(purchaseOrderQueryOptions().cursor)}
+            error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.code ?? "refused") : null}
+          />
         )}
       </form.Field>
       <form.Field name={`value.receiptReference`}>
         {(field) => (
-          <label>
-            Receipt reference
-            <input
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(event) => field().handleChange(event.currentTarget.value)}
-            />
-            <Show when={refusalMarks(refusal()?.member ?? null, "value.receipt_reference")}>
-              <em>{refusal()?.code}</em>
-            </Show>
-          </label>
+          <TextField
+            label="Receipt reference"
+            type="text"
+            value={String(field().state.value ?? "")}
+            onInput={(value) => field().handleChange(value)}
+            error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.code ?? "refused") : null}
+          />
         )}
       </form.Field>
-      <button type="submit">submit</button>
+      <Button type="submit">submit</Button>
     </form>
   );
 }

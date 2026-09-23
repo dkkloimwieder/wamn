@@ -150,6 +150,20 @@
 }
 
 
+/*
+ * The page takes the theme colors, so the dark mode reaches the page and not
+ * only the components. This is the base layer that a shadcn application CSS
+ * file carries, and no registry item writes it.
+ */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
 /* No font item is installed, so a heading takes the body font. */
 @theme inline {
   --font-heading: var(--font-sans);

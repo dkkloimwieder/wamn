@@ -3,13 +3,8 @@
 // `receipt` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { For, Show, createResource, createSignal } from "solid-js";
-import {
-  createSolidTable,
-  flexRender,
-  getCoreRowModel,
-  type ColumnDef,
-} from "@tanstack/solid-table";
+import { Show, createResource, createSignal } from "solid-js";
+import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import {
   appendPage,
   cellText,
@@ -26,6 +21,19 @@ import {
   type Uuid,
   writeMember,
 } from "@wamn/web-runtime";
+import {
+  Button,
+  DataGrid,
+  DataGridContainer,
+  DataGridTable,
+  DetailItem,
+  DetailList,
+  FieldError,
+  TextField,
+  announceOutcome,
+  gridFeatures,
+  type GridFeatures,
+} from "@wamn/ui";
 import {
   get,
   query,
@@ -68,6 +76,9 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
         { ...input, requestId: newRequestId() } as ReceiptGetRequest,
       ]);
       props.onOutcome?.(read);
+      if (read.status !== "completed") {
+        announceOutcome(read, ReceiptGetDetailLabel);
+      }
       return read;
     },
   );
@@ -80,30 +91,23 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
   return (
     <section>
       <Show when={state() !== undefined && state() !== "completed"}>
-        <p>{state()}</p>
+        <FieldError>{state()}</FieldError>
       </Show>
-      <dl>
-        <dt>Recorded</dt>
-        <dd>{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</dd>
-        <dt>Recorded by</dt>
-        <dd>{cellText(readMember(record(), ["createdBy"]), "uuid")}</dd>
-        <dt>id</dt>
-        <dd>{cellText(readMember(record(), ["id"]), "uuid")}</dd>
-        <dt>idempotency key</dt>
-        <dd>{cellText(readMember(record(), ["idempotencyKey"]), "text")}</dd>
-        <dt>Received at</dt>
-        <dd>{cellText(readMember(record(), ["occurredAt"]), "timestamptz")}</dd>
-        <dt>Purchase order</dt>
-        <dd>{cellText(readMember(record(), ["purchaseOrderId"]), "uuid")}</dd>
-        <dt>Receipt reference</dt>
-        <dd>{cellText(readMember(record(), ["receiptReference"]), "text")}</dd>
-      </dl>
+      <DetailList loading={outcome.loading}>
+        <DetailItem term="Recorded">{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</DetailItem>
+        <DetailItem term="Recorded by">{cellText(readMember(record(), ["createdBy"]), "uuid")}</DetailItem>
+        <DetailItem term="id">{cellText(readMember(record(), ["id"]), "uuid")}</DetailItem>
+        <DetailItem term="idempotency key">{cellText(readMember(record(), ["idempotencyKey"]), "text")}</DetailItem>
+        <DetailItem term="Received at">{cellText(readMember(record(), ["occurredAt"]), "timestamptz")}</DetailItem>
+        <DetailItem term="Purchase order">{cellText(readMember(record(), ["purchaseOrderId"]), "uuid")}</DetailItem>
+        <DetailItem term="Receipt reference">{cellText(readMember(record(), ["receiptReference"]), "text")}</DetailItem>
+      </DetailList>
     </section>
   );
 }
 
 /** Columns of `wamn-receiving:receipt/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<ReceiptQueryRow, unknown>[] = [
+const QUERY_COLUMNS: ColumnDef<GridFeatures, ReceiptQueryRow>[] = [
   {
     accessorKey: "createdAt",
     header: "Recorded",
@@ -182,6 +186,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     const outcome = await query(props.transport, [sent]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
+      announceOutcome(outcome, ReceiptQueryTableLabel);
       setPage({ ...page(), busy: false });
       return;
     }
@@ -199,12 +204,33 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     restart();
   };
 
-  const table = createSolidTable({
+  const columns: ColumnDef<GridFeatures, ReceiptQueryRow>[] = [
+    ...QUERY_COLUMNS,
+    {
+      id: "openReceiptGet",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onOpenReceiptGet}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onOpenReceiptGet?.(cell.row.original)}
+          >
+            get
+          </Button>
+        </Show>
+      ),
+    },
+  ];
+
+  const table = createTable({
+    features: gridFeatures,
     get data() {
       return page().rows as ReceiptQueryRow[];
     },
-    columns: QUERY_COLUMNS,
-    getCoreRowModel: getCoreRowModel(),
+    columns: columns,
+    manualPagination: true,
   });
 
   return (
@@ -215,55 +241,30 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
           restart();
         }}
       >
-        <label>
-          limit
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={100}
-            onChange={(event) => change(["limit"], event.currentTarget.value)}
-          />
-        </label>
-        <button type="submit">read</button>
+        <TextField
+          label="limit"
+          type="number"
+          min={1}
+          max={100}
+          value="100"
+          onChange={(value) => change(["limit"], value)}
+        />
+        <Button type="submit">read</Button>
       </form>
-      <table>
-        <thead>
-          <For each={table.getHeaderGroups()}>
-            {(group) => (
-              <tr>
-                <For each={group.headers}>
-                  {(header) => (
-                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>
-                  )}
-                </For>
-              </tr>
-            )}
-          </For>
-        </thead>
-        <tbody>
-          <For each={table.getRowModel().rows}>
-            {(row) => (
-              <tr onClick={() => props.onRowSelect?.(row.original)}>
-                <For each={row.getVisibleCells()}>
-                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
-                </For>
-                <td>
-                  <Show when={props.onOpenReceiptGet}>
-                    <button type="button" onClick={() => props.onOpenReceiptGet?.(row.original)}>
-                      get
-                    </button>
-                  </Show>
-                </td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+      <DataGrid
+        table={table}
+        recordCount={page().rows.length}
+        isLoading={page().busy && page().rows.length === 0}
+        onRowClick={(row) => props.onRowSelect?.(row)}
+      >
+        <DataGridContainer>
+          <DataGridTable />
+        </DataGridContainer>
+      </DataGrid>
       <Show when={hasNextPage(page())}>
-        <button type="button" onClick={() => void read(page().cursor)}>
+        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
           next page
-        </button>
+        </Button>
       </Show>
     </section>
   );

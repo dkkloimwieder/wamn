@@ -18,6 +18,7 @@
     "baseUrl": ".",
     "paths": {
       "@wamn/web-runtime": ["../runtime/src/index.ts"],
+      "@wamn/ui": ["../ui/src/index.ts"],
       "@wamn/receiving-client/*": ["../../apps/wamn_receiving/generated/client-ts/*"],
       "solid-js": ["./node_modules/solid-js"],
       "solid-js/*": ["./node_modules/solid-js/*"],

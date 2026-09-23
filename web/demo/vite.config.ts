@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import tailwindcss from "@tailwindcss/vite";
 import solid from "vite-plugin-solid";
 import { defineConfig, type ProxyOptions } from "vite";
 
@@ -51,19 +52,24 @@ export default defineConfig(() => {
     proxy[model] = { target: route, headers: { host: routeHost } };
   }
   return {
-    plugins: [solid()],
+    plugins: [solid(), tailwindcss()],
     // The generated modules live outside this package, so the names they
     // import are resolved here. A bare import from a generated file would
     // otherwise walk up a directory tree that installs nothing.
     resolve: {
       alias: [
         { find: "@wamn/web-runtime", replacement: local("../runtime/src/index.ts") },
+        { find: "@wamn/ui/styles.css", replacement: local("../ui/src/styles.css") },
+        { find: /^@wamn\/ui$/, replacement: local("../ui/src/index.ts") },
         { find: "@wamn/receiving-client", replacement: local("../../apps/wamn_receiving/generated/client-ts") },
         { find: /^solid-js$/, replacement: local("node_modules/solid-js") },
         { find: /^@tanstack\/solid-table$/, replacement: local("node_modules/@tanstack/solid-table") },
         { find: /^@tanstack\/solid-form$/, replacement: local("node_modules/@tanstack/solid-form") },
         { find: /^zod$/, replacement: local("node_modules/zod") },
       ],
+      // web/ui installs its own libraries, and they import solid-js. Two
+      // copies of solid-js break context and reactivity.
+      dedupe: ["solid-js", "@tanstack/solid-table"],
     },
     server: { port: 5180, proxy },
   };

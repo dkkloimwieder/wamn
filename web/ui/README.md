@@ -26,6 +26,7 @@ The copy changed these things:
 - `ComboboxContent` gained a `footer` slot below the list, for a next page control.
 - `src/lib/utils.ts` is the usual `cn`, because the CLI writes it only at `init`.
 - `src/styles.css` imports `tw-animate-css`, which `init` also adds, and names this package as its Tailwind source.
+- `src/styles.css` carries the shadcn base layer, which gives the page body the theme colors. No registry item writes it.
 
 To add an item, run the CLI in a scratch Vite SolidJS project with the Zaidan `components.json`.
 Then copy the new files here and make the same changes.
