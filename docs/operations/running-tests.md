@@ -77,6 +77,17 @@ Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 `tools/repo-lint run` runs the source guard, formatting, and Clippy across all three workspaces.
 It reports each command and returns a nonzero status if any command fails.
 
+## What a test asserts
+
+A test stays only if a realistic defect fails it, and nothing else rejects that defect more strongly.
+The expected value of the test must not come from the code under test.
+
+- No test compares source text, DDL text, or a generated file to a string.
+- A byte or digest test stays only when the bytes are a persisted or wire contract and the expected value is independent.
+- A source or repository policy check is a lint in `tools/repo-lint`, not a test.
+- A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.
+- A new live test must not repeat an existing one. Extend the existing test when a rule has no other check.
+
 ## Local application business tests
 
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.

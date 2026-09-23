@@ -188,6 +188,7 @@ async fn platform_pat_round_trip_on_postgres() {
         .await
         .expect("bind wamn:provisioning for the fixture session");
     platform_principal_cannot_hold_a_token(&client, &provisioning).await;
+    token_rows_refuse_malformed_values(&client, human.id(), &prefix).await;
 
     // An elapsed expiry refuses without any revocation. The stamp trigger keeps
     // created_at, so the fixture moves expires_at to just after it.
@@ -377,6 +378,83 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
             .expect_err("direct SQL must not bind a token to the platform principal");
         assert_eq!(error.code(), Some(&code), "{kind}");
     }
+}
+
+/// Direct SQL cannot store a token row that the presenter would never write:
+/// a reused lookup prefix, a digest or prefix outside lowercase hex of its
+/// length, or an expiry at its creation. A principal that holds a token cannot
+/// be deleted.
+async fn token_rows_refuse_malformed_values(
+    client: &Client,
+    principal: &PrincipalId,
+    issued_prefix: &str,
+) {
+    let (prefix, hash) = ("d".repeat(16), "d".repeat(64));
+    for (case, token_prefix, token_hash, expiry, code) in [
+        (
+            "reused prefix",
+            issued_prefix.to_owned(),
+            hash.clone(),
+            "now() + interval '1 hour'",
+            SqlState::UNIQUE_VIOLATION,
+        ),
+        (
+            "uppercase prefix",
+            "D".repeat(16),
+            hash.clone(),
+            "now() + interval '1 hour'",
+            SqlState::CHECK_VIOLATION,
+        ),
+        (
+            "short prefix",
+            "d".repeat(15),
+            hash.clone(),
+            "now() + interval '1 hour'",
+            SqlState::CHECK_VIOLATION,
+        ),
+        (
+            "uppercase hash",
+            prefix.clone(),
+            "D".repeat(64),
+            "now() + interval '1 hour'",
+            SqlState::CHECK_VIOLATION,
+        ),
+        (
+            "short hash",
+            prefix.clone(),
+            "d".repeat(63),
+            "now() + interval '1 hour'",
+            SqlState::CHECK_VIOLATION,
+        ),
+        (
+            "expiry at creation",
+            prefix.clone(),
+            hash.clone(),
+            "now()",
+            SqlState::CHECK_VIOLATION,
+        ),
+    ] {
+        let error = client
+            .execute(
+                &format!(
+                    "INSERT INTO identity.pats \
+                       (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
+                     VALUES ($1::text::uuid, 'human', $2, $3, 'malformed', {expiry})"
+                ),
+                &[&principal.as_str(), &token_prefix, &token_hash],
+            )
+            .await
+            .expect_err("a malformed token row must refuse");
+        assert_eq!(error.code(), Some(&code), "{case}");
+    }
+    let error = client
+        .execute(
+            "DELETE FROM identity.principals WHERE id = $1::text::uuid",
+            &[&principal.as_str()],
+        )
+        .await
+        .expect_err("a principal that holds a token must not be deleted");
+    assert_eq!(error.code(), Some(&SqlState::RESTRICT_VIOLATION));
 }
 
 fn flip_last_hex_digit(token: &str) -> String {

@@ -90,6 +90,10 @@ async fn platform_identity_round_trip_on_postgres() {
         .await
         .expect("create service principal");
     assert_eq!(service.kind(), PrincipalKind::Service);
+    let duplicate_service = create_service(&client, "agent-ci", "Second CI Agent")
+        .await
+        .expect_err("one subject admits one service");
+    assert_eq!(duplicate_service.kind(), IdentityErrorKind::Conflict);
     assert!(
         resolve_subject(&client, PrincipalKind::Service, "agent-ci")
             .await
@@ -131,6 +135,7 @@ async fn platform_identity_round_trip_on_postgres() {
     );
 
     project_environment_membership_round_trip(&client, &human, &service).await;
+    project_delete_removes_its_roles_and_memberships(&client, &human).await;
 
     let disabled = disable_principal(&client, human.id())
         .await
@@ -193,6 +198,44 @@ async fn one_address_admits_one_human(client: &tokio_postgres::Client) {
     .await
     .expect_err("one address admits one human");
     assert_eq!(second.kind(), IdentityErrorKind::Conflict);
+}
+
+/// A project delete takes the project's roles and environment memberships with
+/// it, and leaves every other project's rows in place.
+async fn project_delete_removes_its_roles_and_memberships(
+    client: &tokio_postgres::Client,
+    human: &Principal,
+) {
+    assign_project_role(client, human.id(), "demo", "inventory", "project-author")
+        .await
+        .expect("assign a role on the project to delete");
+    grant_project_env_membership(client, human.id(), "demo", "inventory", "dev")
+        .await
+        .expect("grant a membership on the project to delete");
+    let rows = |project: &'static str| async move {
+        client
+            .query_one(
+                "SELECT (SELECT count(*) FROM identity.project_roles \
+                         WHERE org = 'demo' AND project = $1), \
+                        (SELECT count(*) FROM identity.project_env_memberships \
+                         WHERE org = 'demo' AND project = $1)",
+                &[&project],
+            )
+            .await
+            .map(|row| (row.get::<_, i64>(0), row.get::<_, i64>(1)))
+            .expect("count project roles and memberships")
+    };
+    let widgets = rows("widgets").await;
+    assert_eq!(rows("inventory").await, (1, 1));
+    client
+        .execute(
+            "DELETE FROM registry.projects WHERE org = 'demo' AND id = 'inventory'",
+            &[],
+        )
+        .await
+        .expect("delete the project");
+    assert_eq!(rows("inventory").await, (0, 0));
+    assert_eq!(rows("widgets").await, widgets);
 }
 
 async fn project_environment_membership_round_trip(
