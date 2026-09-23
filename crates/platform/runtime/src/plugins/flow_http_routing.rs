@@ -1907,21 +1907,21 @@ mod tests {
     #[test]
     fn originating_caller_keeps_exact_permissions_only() {
         let caller = AuthenticatedCaller {
-            attachment_id: "receiving-http".into(),
+            attachment_id: "widget-http".into(),
             principal_id: "11111111-1111-4111-8111-111111111111".into(),
             credential_kind: CredentialKind::Pat,
             permissions: Arc::new(HashSet::from([
-                "wamn-receiving:receipt/get@1.0.0".to_string()
+                "platform-fixture:widget/get@1.0.0".to_string()
             ])),
         };
-        assert_eq!(caller.attachment_id(), "receiving-http");
+        assert_eq!(caller.attachment_id(), "widget-http");
         assert_eq!(
             caller.principal_id(),
             "11111111-1111-4111-8111-111111111111"
         );
-        assert!(caller.permits("wamn-receiving:receipt/get@1.0.0"));
-        assert!(!caller.permits("wamn-receiving:receipt/query@1.0.0"));
-        assert!(!caller.permits("receipt.get"));
+        assert!(caller.permits("platform-fixture:widget/get@1.0.0"));
+        assert!(!caller.permits("platform-fixture:widget/query@1.0.0"));
+        assert!(!caller.permits("widget.get"));
         assert_eq!(caller.credential_kind(), CredentialKind::Pat);
         for kind in [CredentialKind::Pat, CredentialKind::Session] {
             let caller = AuthenticatedCaller {
@@ -1931,7 +1931,7 @@ mod tests {
             let nested = caller.clone();
             assert_eq!(nested.credential_kind(), kind);
             assert_eq!(nested.principal_id(), caller.principal_id());
-            assert!(nested.permits("wamn-receiving:receipt/get@1.0.0"));
+            assert!(nested.permits("platform-fixture:widget/get@1.0.0"));
         }
     }
 
@@ -1958,17 +1958,17 @@ mod tests {
         let second = limiter.try_acquire("orders").expect("second slot");
         assert!(limiter.try_acquire("orders").is_none());
         let other = limiter
-            .try_acquire("receipts")
+            .try_acquire("widgets")
             .expect("another route has its own ceiling");
 
         assert_eq!(limiter.snapshot("orders"), Some((2, 1)));
-        assert_eq!(limiter.snapshot("receipts"), Some((1, 0)));
+        assert_eq!(limiter.snapshot("widgets"), Some((1, 0)));
 
         drop(first);
         assert_eq!(limiter.snapshot("orders"), Some((1, 1)));
         drop(second);
         drop(other);
         assert_eq!(limiter.snapshot("orders"), Some((0, 1)));
-        assert_eq!(limiter.snapshot("receipts"), Some((0, 0)));
+        assert_eq!(limiter.snapshot("widgets"), Some((0, 0)));
     }
 }

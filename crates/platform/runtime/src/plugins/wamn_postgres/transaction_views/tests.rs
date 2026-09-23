@@ -38,8 +38,8 @@ const CONTROL_OWNER: &str = "transaction-view-control-owner";
 const OWNER: &str = "transaction-view-owner";
 const PARTICIPANT: &str = "transaction-view-participant";
 const WRONG_PARTICIPANT: &str = "transaction-view-wrong-participant";
-const OWNER_OPERATION: &str = "base:receipt/record@1.0.0";
-const PARTICIPANT_OPERATION: &str = "acme:receipt/participate@1.0.0";
+const OWNER_OPERATION: &str = "base:widget/record@1.0.0";
+const PARTICIPANT_OPERATION: &str = "peer:widgets/participate@1.0.0";
 const PARTICIPANT_CALL: &str = "test:transaction-view/participant@1.0.0";
 const DISPATCH_ID: &str = "transaction-view-test-dispatch";
 const TENANT: &str = "transactionview";
@@ -55,7 +55,7 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
             operation: OWNER_OPERATION.into(),
         },
         package_id: package_id.into(),
-        wiring_id: "receipt".into(),
+        wiring_id: "widget".into(),
         wiring_version: 1,
         node_id: "record".into(),
         occurrence: 0,
@@ -193,7 +193,7 @@ fn owner_component() -> &'static str {
     (export "run" (func async (result bool)))))
   (core module $memory
     (memory (export "memory") 1)
-    (data (i32.const 16) "acme:receipt/participate@1.0.0")
+    (data (i32.const 16) "peer:widgets/participate@1.0.0")
     (global $next (mut i32) (i32.const 1024))
     (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
       (local $ptr i32)
@@ -457,8 +457,8 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
     let release = ManifestDigest::parse(format!("sha256:{}", "c".repeat(64))).unwrap();
     for (scope, operation, package) in [
         (OWNER, OWNER_OPERATION, "base"),
-        (PARTICIPANT, PARTICIPANT_OPERATION, "acme"),
-        (WRONG_PARTICIPANT, PARTICIPANT_OPERATION, "acme"),
+        (PARTICIPANT, PARTICIPANT_OPERATION, "peer"),
+        (WRONG_PARTICIPANT, PARTICIPANT_OPERATION, "peer"),
     ] {
         postgres
             .bind_session_claims(
@@ -733,7 +733,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
 
     for (scope, operation, package) in [
         (CANCEL_OWNER, OWNER_OPERATION, "base"),
-        (CANCEL_PARTICIPANT, PARTICIPANT_OPERATION, "acme"),
+        (CANCEL_PARTICIPANT, PARTICIPANT_OPERATION, "peer"),
     ] {
         postgres
             .bind_session_claims(

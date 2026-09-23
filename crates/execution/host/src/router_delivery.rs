@@ -1061,7 +1061,7 @@ mod tests {
 
     #[test]
     fn nested_permission_denial_uses_the_direct_call_wire_contract() {
-        let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let operation = "platform-fixture:widget/record-batch@1.0.0";
         let error = anyhow::Error::new(OperationRefusal::new(
             OperationRefusalKind::PermissionDenied,
             operation,
@@ -1081,7 +1081,7 @@ mod tests {
 
     #[test]
     fn nested_fresh_only_refusal_retains_its_exact_wire_contract() {
-        let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let operation = "platform-fixture:widget/record-batch@1.0.0";
         let error = anyhow::Error::new(OperationRefusal::new(
             OperationRefusalKind::FreshCredentialRequired,
             operation,

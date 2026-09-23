@@ -217,12 +217,12 @@ mod tests {
         vec![
             ManagedModel {
                 model_id: "orders".into(),
-                schema: "receiving".into(),
+                schema: "store".into(),
                 table: "sales_orders".into(),
             },
             ManagedModel {
                 model_id: "lines".into(),
-                schema: "receiving".into(),
+                schema: "store".into(),
                 table: "line_items".into(),
             },
             ManagedModel {
@@ -327,13 +327,10 @@ mod tests {
         )];
         let current = BTreeMap::from([
             (
-                ("receiving".into(), "sales_orders".into()),
+                ("store".into(), "sales_orders".into()),
                 ReplicaIdentity::Default,
             ),
-            (
-                ("receiving".into(), "line_items".into()),
-                ReplicaIdentity::Full,
-            ),
+            (("store".into(), "line_items".into()), ReplicaIdentity::Full),
         ]);
         let plan = reconcile_replica_identity("shop", &models(), &registrations, &current);
         assert_eq!(plan.flips.len(), 2);
@@ -348,7 +345,7 @@ mod tests {
         assert_eq!(up.to, ReplicaIdentity::Full);
         assert_eq!(
             up.sql,
-            "ALTER TABLE \"receiving\".\"sales_orders\" REPLICA IDENTITY FULL"
+            "ALTER TABLE \"store\".\"sales_orders\" REPLICA IDENTITY FULL"
         );
         let down = plan
             .flips
@@ -367,10 +364,8 @@ mod tests {
             vec![Op::Insert],
             None,
         )];
-        let current = BTreeMap::from([(
-            ("receiving".into(), "line_items".into()),
-            ReplicaIdentity::Full,
-        )]);
+        let current =
+            BTreeMap::from([(("store".into(), "line_items".into()), ReplicaIdentity::Full)]);
         let plan = reconcile_replica_identity("shop", &models(), &registrations, &current);
         assert_eq!(plan.flips.len(), 1);
         assert_eq!(plan.flips[0].to, ReplicaIdentity::Default);
@@ -386,11 +381,11 @@ mod tests {
     fn reconcile_at_the_target_is_a_noop() {
         let converged = BTreeMap::from([
             (
-                ("receiving".into(), "sales_orders".into()),
+                ("store".into(), "sales_orders".into()),
                 ReplicaIdentity::Full,
             ),
             (
-                ("receiving".into(), "line_items".into()),
+                ("store".into(), "line_items".into()),
                 ReplicaIdentity::Default,
             ),
             (("audit".into(), "notes".into()), ReplicaIdentity::Default),

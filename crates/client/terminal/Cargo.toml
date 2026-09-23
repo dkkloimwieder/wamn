@@ -21,13 +21,5 @@ tokio = { workspace = true, features = ["macros", "signal"] }
 uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true, features = ["clock", "std"] }
 
-[dev-dependencies]
-# The live example composes generated WMS screens through the shared driver.
-wamn-generated-wms-tui = { workspace = true }
-
 [lints]
 workspace = true
-
-[[example]]
-name = "wms_move"
-path = "../../../apps/wamn_wms/examples/wms_move.rs"

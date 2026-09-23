@@ -773,12 +773,12 @@ mod tests {
         assert!(bare.manifests.is_empty());
         let mut recorded = bare;
         recorded.manifests.insert(
-            "wamn_receiving@1.0.0".to_owned(),
+            "platform_fixture@1.0.0".to_owned(),
             format!("sha256:{}", "1".repeat(64)),
         );
         recorded
             .manifests
-            .insert("client_acme@1 beta".to_owned(), "sha256:2".to_owned());
+            .insert("fixture_overlay@1 beta".to_owned(), "sha256:2".to_owned());
         let written = recorded.to_string();
         assert_eq!(
             super::parse_local_target_comment(&written).unwrap(),

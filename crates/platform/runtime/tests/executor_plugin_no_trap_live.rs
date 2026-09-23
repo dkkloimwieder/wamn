@@ -462,7 +462,7 @@ fn postgres_guest() -> String {
 async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
     postgres
-        .set_tenant(GUEST_ID, "acme")
+        .set_tenant(GUEST_ID, "tenant-a")
         .expect("tenant claim registers");
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(
@@ -606,8 +606,8 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
                 .expect("HTTP transport"),
         ),
         Arc::new(WamnCredentials::empty()),
-        "acme",
-        "receiving",
+        "tenant-a",
+        "fixture",
         allowed_hosts,
         None,
     ));

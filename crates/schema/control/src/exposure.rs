@@ -105,8 +105,8 @@ mod tests {
 
     #[test]
     fn normalization_uppercases_the_method_and_trims_the_trailing_slash() {
-        let normalized = normalize_http_route(&route("/receipts/", "post"), "receive").unwrap();
-        assert_eq!(normalized.path, "/receipts");
+        let normalized = normalize_http_route(&route("/widgets/", "post"), "create").unwrap();
+        assert_eq!(normalized.path, "/widgets");
         assert_eq!(normalized.method, "POST");
     }
 
@@ -114,7 +114,7 @@ mod tests {
     fn a_hostname_cannot_reach_an_authored_route() {
         let authored = serde_json::json!({
             "host": "package.example",
-            "path": "/receipts",
+            "path": "/widgets",
             "method": "POST"
         });
         serde_json::from_value::<HttpRoute>(authored)
@@ -124,13 +124,13 @@ mod tests {
     #[test]
     fn a_malformed_method_or_path_is_refused_by_name() {
         assert_eq!(
-            normalize_http_route(&route("/receipts", "po st"), "receive")
+            normalize_http_route(&route("/widgets", "po st"), "create")
                 .unwrap_err()
                 .code,
             "invalid-http-method"
         );
         assert_eq!(
-            normalize_http_route(&route("receipts", "POST"), "receive")
+            normalize_http_route(&route("widgets", "POST"), "create")
                 .unwrap_err()
                 .code,
             "invalid-http-path-template"
@@ -141,7 +141,7 @@ mod tests {
     fn the_collision_key_drops_parameter_names() {
         assert_eq!(canonical_http_route_template("/{id}"), "/{}");
         assert_eq!(
-            canonical_http_route_template("/{receipt}"),
+            canonical_http_route_template("/{widget}"),
             canonical_http_route_template("/{id}")
         );
         assert_eq!(

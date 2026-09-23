@@ -28,7 +28,7 @@ needle = b'let revision = row["row_version"].clone();'
 replacement = b'let revision = serde_json::json!((row["row_version"].as_str().unwrap().parse::<i64>().unwrap() + 1).to_string());'
 assert original.count(needle) == 1, 'mutate only the read-to-command revision binding'
 mutated = original.replace(needle, replacement)
-command = ['cargo', 'test', '--locked', '--offline', '-p', 'wamn-client-terminal', '--example', 'wms_move',
+command = ['cargo', 'test', '--locked', '--offline', '-p', 'wamn-wms-tests', '--example', 'wms_move',
            'tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key', '--', '--exact', '--include-ignored']
 env = os.environ.copy()
 env.pop('CARGO_TARGET_DIR', None)

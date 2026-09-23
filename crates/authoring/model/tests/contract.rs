@@ -7,7 +7,7 @@ use wamn_authoring_model::{
 };
 
 fn scope() -> Value {
-    json!({"project-id": "receiving", "environment": "dev"})
+    json!({"project-id": "orders", "environment": "dev"})
 }
 
 /// One wiring document, exactly as `catalog.wirings.graph_json` stores it.
@@ -287,7 +287,7 @@ fn the_effect_free_clause_has_a_typed_refusal_on_the_wire() {
                     "command": "gate",
                     "reason": {
                         "kind": "effectful-component-reached",
-                        "components": ["acme:accounting", "acme:mailer"]
+                        "components": ["example:accounting", "example:mailer"]
                     }
                 }
             }
@@ -350,7 +350,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
                     "command": "publish",
                     "reason": {
                         "kind": "effectful-component-reached",
-                        "components": ["acme:accounting"]
+                        "components": ["example:accounting"]
                     }
                 }
             }

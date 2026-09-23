@@ -1394,7 +1394,7 @@ fn legacy_partition_plane_plans_one_leading_cutover() {
         .insert("outbox".into(), BTreeSet::from(["id".into()]));
     obs.tables
         .insert("evt_shadow".into(), BTreeSet::from(["id".into()]));
-    obs.outbox_trigger_tables = vec!["receipts".into()];
+    obs.outbox_trigger_tables = vec!["widgets".into()];
     obs.outbox_function_present = true;
     obs.stale_registration_key_rows = 2;
 
@@ -1480,7 +1480,7 @@ fn legacy_partition_plane_plans_one_leading_cutover() {
     }));
     assert!(sqls.contains(&"DROP TABLE IF EXISTS \"demo\".\"outbox\""));
     assert!(sqls.contains(&"DROP TABLE IF EXISTS \"demo\".\"evt_shadow\""));
-    assert!(sqls.contains(&"DROP TRIGGER IF EXISTS wamn_outbox_event ON \"demo\".\"receipts\""));
+    assert!(sqls.contains(&"DROP TRIGGER IF EXISTS wamn_outbox_event ON \"demo\".\"widgets\""));
     assert!(sqls.contains(&"DROP FUNCTION IF EXISTS \"demo\".wamn_outbox_event()"));
     // Trigger drops precede the RESTRICT function drop.
     let trig = kinds
@@ -2713,9 +2713,9 @@ fn extra_record_check_is_removed_but_floor_check_is_untouched() {
         "CHECK (true)".to_string(),
     );
     obs.tables
-        .insert("receipts".to_string(), ["id".to_string()].into());
+        .insert("widgets".to_string(), ["id".to_string()].into());
     obs.checks.insert(
-        ("receipts".to_string(), "receipts_check".to_string()),
+        ("widgets".to_string(), "widgets_check".to_string()),
         "CHECK (true)".to_string(),
     );
 
@@ -2992,8 +2992,8 @@ fn extra_record_trigger_is_removed_but_floor_trigger_is_untouched() {
         "CREATE TRIGGER legacy_runs_trigger".to_string(),
     );
     obs.triggers.insert(
-        ("receipts".to_string(), "receipts_trigger".to_string()),
-        "CREATE TRIGGER receipts_trigger".to_string(),
+        ("widgets".to_string(), "widgets_trigger".to_string()),
+        "CREATE TRIGGER widgets_trigger".to_string(),
     );
     let plan = plan_run_plane(&schema("demo"), &obs);
     let drops: Vec<&RunPlaneAction> = plan

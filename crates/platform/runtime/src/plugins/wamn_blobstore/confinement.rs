@@ -103,8 +103,8 @@ mod tests {
     #[test]
     fn an_ordinary_key_lands_under_the_prefix() {
         assert_eq!(
-            resolve_key("acme/labels", "pallet/PAL-000042.zpl").expect("ordinary key resolves"),
-            "acme/labels/pallet/PAL-000042.zpl"
+            resolve_key("tenant-a/labels", "widget/W-000042.zpl").expect("ordinary key resolves"),
+            "tenant-a/labels/widget/W-000042.zpl"
         );
     }
 
@@ -115,12 +115,12 @@ mod tests {
     #[test]
     fn a_trailing_prefix_slash_does_not_double_the_separator() {
         assert_eq!(
-            resolve_key("acme/labels/", "a.zpl").expect("resolves"),
-            "acme/labels/a.zpl"
+            resolve_key("tenant-a/labels/", "a.zpl").expect("resolves"),
+            "tenant-a/labels/a.zpl"
         );
         assert_eq!(
-            resolve_key("acme/labels", "a.zpl").expect("resolves"),
-            resolve_key("acme/labels/", "a.zpl").expect("resolves"),
+            resolve_key("tenant-a/labels", "a.zpl").expect("resolves"),
+            resolve_key("tenant-a/labels/", "a.zpl").expect("resolves"),
             "the two prefix spellings must resolve identically"
         );
     }
@@ -143,7 +143,7 @@ mod tests {
             ("a\nb", KeyRefusal::ControlCharacter),
         ] {
             assert_eq!(
-                resolve_key("acme/labels", key),
+                resolve_key("tenant-a/labels", key),
                 Err(expected),
                 "key {key:?} must be refused as {expected:?}"
             );
@@ -189,9 +189,9 @@ mod tests {
             "with space.txt",
             "unicode-\u{e9}\u{fc}.txt",
         ] {
-            let resolved = resolve_key("acme/labels", key).expect("valid key");
+            let resolved = resolve_key("tenant-a/labels", key).expect("valid key");
             assert!(
-                resolved.starts_with("acme/labels/"),
+                resolved.starts_with("tenant-a/labels/"),
                 "{key:?} resolved to {resolved:?}, outside the prefix"
             );
         }

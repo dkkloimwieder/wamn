@@ -754,7 +754,7 @@ mod tests {
 
     fn manifest(version: &str) -> Vec<u8> {
         format!(
-            r#"{{"package":{{"id":"orders","version":"{version}"}},"required_platform_policy_contract":{{"id":"orders_access","state":"unsatisfied"}},"models":{{"purchase_order":{{"schema":"receiving","table":"purchase_order","owner":"orders","audit_log":{{"columns":[],"retention":"none"}},"operations":{{"get":{{"permission":"purchase_order.get","result":"one"}}}}}}}},"connections":["postgres"],"components":{{"data":{{"connections":["postgres"]}}}}}}"#
+            r#"{{"package":{{"id":"orders","version":"{version}"}},"required_platform_policy_contract":{{"id":"orders_access","state":"unsatisfied"}},"models":{{"widget_tag":{{"schema":"fixture","table":"widget_tag","owner":"orders","audit_log":{{"columns":[],"retention":"none"}},"operations":{{"get":{{"permission":"widget_tag.get","result":"one"}}}}}}}},"connections":["postgres"],"components":{{"data":{{"connections":["postgres"]}}}}}}"#
         )
         .into_bytes()
     }
@@ -776,7 +776,7 @@ mod tests {
         PackageDirectory {
             manifest_bytes: manifest("1.0.0"),
             migrations: vec![
-                source("migrations/0002_add_receipt.sql", "SELECT 2;"),
+                source("migrations/0002_add_tag.sql", "SELECT 2;"),
                 source("migrations/0001_initial.sql", "SELECT 1;"),
             ],
         }
@@ -791,9 +791,9 @@ mod tests {
         const PINNED_MANIFEST: &str = concat!(
             r#"{"package":{"id":"orders","version":"1.0.0"},"#,
             r#""required_platform_policy_contract":{"id":"orders_access","state":"unsatisfied"},"#,
-            r#""models":{"purchase_order":{"schema":"receiving","table":"purchase_order","#,
+            r#""models":{"widget_tag":{"schema":"fixture","table":"widget_tag","#,
             r#""owner":"orders","audit_log":{"columns":[],"retention":"none"},"#,
-            r#""operations":{"get":{"permission":"purchase_order.get","#,
+            r#""operations":{"get":{"permission":"widget_tag.get","#,
             r#""result":"one"}}}},"#,
             r#""connections":["postgres"],"#,
             r#""components":{"data":{"connections":["postgres"]}}}"#,
@@ -808,7 +808,7 @@ mod tests {
 
         assert_eq!(
             plan.manifest_sha256,
-            "sha256:31ede60a43f1acbf644936a11fefb496dd36562f1cc0f64255dad2a011163354"
+            "sha256:7930243b154d14acce3e440e2647a82d17ca7611347326d4da549f7909d5218a"
         );
         assert_eq!(
             plan.pending[0].sha256,
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn registration_preserves_replay_conflicts_and_current_predecessor() {
-        let coordinate = PackageCoordinate::new("receiving", "2.0.0").unwrap();
+        let coordinate = PackageCoordinate::new("orders", "2.0.0").unwrap();
         assert!(plan_package_registration(&coordinate, "hash", Some("1.0.0"), None, None).unwrap());
         assert!(
             plan_package_registration(&coordinate, "hash", Some("1.0.0"), None, Some("1.0.0"))
@@ -893,10 +893,10 @@ mod tests {
         );
         assert_eq!(
             first.pending[1].relative_path,
-            "migrations/0002_add_receipt.sql"
+            "migrations/0002_add_tag.sql"
         );
         assert!(!first.is_noop());
-        assert_eq!(first.models[0].model_id, "purchase_order");
+        assert_eq!(first.models[0].model_id, "widget_tag");
         assert_eq!(first.predecessor_version, None);
 
         let applied = AppliedPackage {
@@ -971,7 +971,7 @@ mod tests {
         cumulative.manifest_bytes = manifest_with_predecessor("1.1.0", "1.0.0");
         cumulative
             .migrations
-            .push(source("migrations/0003_add_supplier.sql", "SELECT 3;"));
+            .push(source("migrations/0003_add_maker.sql", "SELECT 3;"));
 
         let fresh = plan_package_migrations(&cumulative, None).unwrap();
         assert!(fresh.verified_prefix.is_empty());
@@ -985,15 +985,12 @@ mod tests {
                 .iter()
                 .map(|migration| migration.relative_path.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "migrations/0001_initial.sql",
-                "migrations/0002_add_receipt.sql"
-            ]
+            ["migrations/0001_initial.sql", "migrations/0002_add_tag.sql"]
         );
         assert_eq!(upgrade.pending.len(), 1);
         assert_eq!(
             upgrade.pending[0].relative_path,
-            "migrations/0003_add_supplier.sql"
+            "migrations/0003_add_maker.sql"
         );
         assert!(!upgrade.is_noop());
     }
@@ -1028,7 +1025,7 @@ mod tests {
             error.kind(),
             PackageMigrationErrorKind::PredecessorPrefixMismatch
         );
-        assert_eq!(error.path(), Some("migrations/0002_add_receipt.sql"));
+        assert_eq!(error.path(), Some("migrations/0002_add_tag.sql"));
 
         cumulative
             .migrations
@@ -1067,7 +1064,7 @@ mod tests {
     fn gaps_duplicates_and_applied_byte_drift_are_distinct() {
         let mut gap = directory();
         gap.migrations
-            .retain(|migration| migration.relative_path == "migrations/0002_add_receipt.sql");
+            .retain(|migration| migration.relative_path == "migrations/0002_add_tag.sql");
         assert_eq!(
             plan_package_migrations(&gap, None).unwrap_err().kind(),
             PackageMigrationErrorKind::Gap
@@ -1112,7 +1109,7 @@ mod tests {
                     },
                     RecordedMigration {
                         ordinal: 1,
-                        relative_path: "migrations/0002_add_receipt.sql".into(),
+                        relative_path: "migrations/0002_add_tag.sql".into(),
                         sha256: first.pending[1].sha256.clone(),
                     },
                 ],
@@ -1121,7 +1118,7 @@ mod tests {
             (
                 vec![RecordedMigration {
                     ordinal: 2,
-                    relative_path: "migrations/0002_add_receipt.sql".into(),
+                    relative_path: "migrations/0002_add_tag.sql".into(),
                     sha256: first.pending[1].sha256.clone(),
                 }],
                 PackageMigrationErrorKind::Gap,
@@ -1157,9 +1154,9 @@ mod tests {
         assert_eq!(
             plan.cdc_excluded_relations,
             [CdcExcludedRelation {
-                relation_id: "purchase_order_history".into(),
-                schema: "receiving".into(),
-                table: "purchase_order_history".into(),
+                relation_id: "widget_tag_history".into(),
+                schema: "fixture".into(),
+                table: "widget_tag_history".into(),
             }]
         );
     }
@@ -1167,12 +1164,9 @@ mod tests {
     #[test]
     fn model_relation_identifiers_follow_the_canonical_snake_case_law() {
         for (valid, invalid) in [
-            ("\"purchase_order\":{", "\"purchase_order_\":{"),
-            ("\"schema\":\"receiving\"", "\"schema\":\"receiving__data\""),
-            (
-                "\"table\":\"purchase_order\"",
-                "\"table\":\"PurchaseOrder\"",
-            ),
+            ("\"widget_tag\":{", "\"widget_tag_\":{"),
+            ("\"schema\":\"fixture\"", "\"schema\":\"fixture__data\""),
+            ("\"table\":\"widget_tag\"", "\"table\":\"WidgetTag\""),
         ] {
             let mut refused = directory();
             let manifest = String::from_utf8(refused.manifest_bytes).expect("manifest is UTF-8");

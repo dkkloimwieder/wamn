@@ -757,10 +757,10 @@ mod tests {
     async fn ingest_enriches_from_host_claim_over_guest_context() {
         let (plugin, capture) =
             WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
-        plugin.set_claim("comp-1", "acme", "receiving");
+        plugin.set_claim("comp-1", "tenant-a", "fixture");
         // The context carries a SPOOFED tenant the guest must not be able to set.
         let ctx = format!(
-            r#"{{"flow":"receipt-flow","run":"run-9","node":"log-node","seq":7,"tenant":"evil-tenant","traceparent":"{VALID_TP}"}}"#
+            r#"{{"flow":"widget-flow","run":"run-9","node":"log-node","seq":7,"tenant":"evil-tenant","traceparent":"{VALID_TP}"}}"#
         );
         plugin.ingest("comp-1", Level::Info, &ctx, "hello".into());
         wait_drained(&plugin).await;
@@ -769,11 +769,11 @@ mod tests {
         assert_eq!(recs.len(), 1, "one emitted record");
         let r = &recs[0];
         assert_eq!(
-            r.tenant, "acme",
+            r.tenant, "tenant-a",
             "tenant is the host claim, NOT the guest's"
         );
-        assert_eq!(r.project, "receiving");
-        assert_eq!(r.flow, "receipt-flow");
+        assert_eq!(r.project, "fixture");
+        assert_eq!(r.flow, "widget-flow");
         assert_eq!(r.run, "run-9");
         assert_eq!(r.node, "log-node");
         assert_eq!(r.seq, Some(7));
@@ -791,7 +791,7 @@ mod tests {
     async fn clearing_a_claim_returns_the_scope_to_the_unregistered_sentinel() {
         let (plugin, capture) =
             WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
-        plugin.set_claim("comp-1", "acme", "receiving");
+        plugin.set_claim("comp-1", "tenant-a", "fixture");
         plugin.set_claim("comp-2", "globex", "shipping");
 
         plugin.clear_claim("comp-1");
@@ -822,7 +822,7 @@ mod tests {
     async fn traceparent_sets_trace_id_on_record() {
         let (plugin, capture) =
             WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
-        plugin.set_claim("comp-1", "acme", "receiving");
+        plugin.set_claim("comp-1", "tenant-a", "fixture");
         let with_tp =
             format!(r#"{{"flow":"f","run":"r","node":"n","seq":0,"traceparent":"{VALID_TP}"}}"#);
         plugin.ingest("comp-1", Level::Info, &with_tp, "traced".into());

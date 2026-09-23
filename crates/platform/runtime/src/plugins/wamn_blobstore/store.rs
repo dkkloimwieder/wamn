@@ -301,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_get_delete_list_round_trip() {
-        let (container, _store) = bound("acme/labels");
+        let (container, _store) = bound("tenant-a/labels");
 
         assert!(!container.has("a.zpl").await.expect("has succeeds"));
         container
@@ -327,21 +327,21 @@ mod tests {
         let (container, _store) = bound("p");
 
         container
-            .put("pallet/PAL-42.zpl", b"first".to_vec())
+            .put("widget/W-42.zpl", b"first".to_vec())
             .await
             .expect("put");
         container
-            .put("pallet/PAL-42.zpl", b"second".to_vec())
+            .put("widget/W-42.zpl", b"second".to_vec())
             .await
             .expect("redelivery");
 
         assert_eq!(
             container.list().await.expect("list"),
-            vec!["pallet/PAL-42.zpl".to_string()],
+            vec!["widget/W-42.zpl".to_string()],
             "a redelivery under the same key must not create a second object"
         );
         assert_eq!(
-            container.get("pallet/PAL-42.zpl").await.expect("get"),
+            container.get("widget/W-42.zpl").await.expect("get"),
             b"second"
         );
     }
@@ -351,7 +351,7 @@ mod tests {
     /// wall exists to hide.
     #[tokio::test]
     async fn listing_returns_author_relative_keys_and_never_the_prefix() {
-        let (container, _store) = bound("acme/labels");
+        let (container, _store) = bound("tenant-a/labels");
         container.put("a.zpl", b"x".to_vec()).await.expect("put");
         container
             .put("deep/b.zpl", b"x".to_vec())
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(keys, vec!["a.zpl".to_string(), "deep/b.zpl".to_string()]);
         for key in &keys {
             assert!(
-                !key.contains("acme/labels"),
+                !key.contains("tenant-a/labels"),
                 "listing leaked the bound prefix in {key:?}"
             );
         }

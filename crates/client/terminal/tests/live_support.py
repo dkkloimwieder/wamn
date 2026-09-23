@@ -20,7 +20,7 @@ def require(condition, message):
 def load_terminal(root):
     sys.dont_write_bytecode = True
     path = root / "crates/client/terminal/tests/operator_pty.py"
-    spec = importlib.util.spec_from_file_location("receiving_terminal_test", path)
+    spec = importlib.util.spec_from_file_location("operator_terminal_test", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

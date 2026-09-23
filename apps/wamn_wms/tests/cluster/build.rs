@@ -69,7 +69,7 @@ pub(super) async fn build(
             "--locked",
             "--offline",
             "-p",
-            "wamn-client-terminal",
+            "wamn-wms-tests",
             "--example",
             "wms_move",
         ]);

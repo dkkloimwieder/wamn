@@ -300,9 +300,9 @@ mod tests {
             );
         }
         assert_eq!(
-            ClientError::from_status(403, r#"{"operation":"purchase_order.update"}"#),
+            ClientError::from_status(403, r#"{"operation":"widget.update"}"#),
             ClientError::PermissionDenied {
-                operation: "purchase_order.update".to_owned(),
+                operation: "widget.update".to_owned(),
             }
         );
     }

@@ -509,8 +509,8 @@ mod tests {
             );
         }
         for application in [
-            "acme:orders/record@1.0.0",
-            "wamn-receiving:receiving/record-receipt@1.0.0",
+            "example:orders/record@1.0.0",
+            "platform-fixture:widget/record-batch@1.0.0",
         ] {
             assert!(
                 super::is_application_operation_import(application),
@@ -560,18 +560,18 @@ mod tests {
             "package wamn:postgres@0.1.0; interface client { query: func(); }",
         ),
         (
-            "wamn-receiving.wit",
-            "package wamn-receiving:receiving@1.0.0; \
-             interface record-receipt { \
+            "platform-fixture.wit",
+            "package platform-fixture:widget@1.0.0; \
+             interface record-batch { \
                use wamn:node/types@0.1.0.{node-context, emission, node-error}; \
                run: func(ctx: node-context, input: string) -> result<emission, node-error>; \
              } \
-             interface wrong-receipt { run: func(); }",
+             interface wrong-batch { run: func(); }",
         ),
     ];
 
-    const DEPENDENCY_OPERATION: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
-    const WRONG_DEPENDENCY_OPERATION: &str = "wamn-receiving:receiving/wrong-receipt@1.0.0";
+    const DEPENDENCY_OPERATION: &str = "platform-fixture:widget/record-batch@1.0.0";
+    const WRONG_DEPENDENCY_OPERATION: &str = "platform-fixture:widget/wrong-batch@1.0.0";
 
     fn component_bytes(imports: &str) -> Vec<u8> {
         component_bytes_with_exports(imports, "")
@@ -685,7 +685,7 @@ mod tests {
     fn dependency(operation: &str) -> ComponentOperationDependency {
         ComponentOperationDependency {
             participant: None,
-            package: "wamn_receiving".to_string(),
+            package: "platform_fixture".to_string(),
             version: "1.0.0".to_string(),
             digest: format!("sha256:{}", "c".repeat(64)),
             operation: operation.to_string(),
@@ -826,7 +826,7 @@ mod tests {
 
     #[test]
     fn typed_async_operation_requires_owned_values() {
-        const TYPED_OPERATION: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+        const TYPED_OPERATION: &str = "platform-fixture:widget/record-batch@1.0.0";
         let engine = crate::build_engine(&[]).expect("engine builds");
         for (input, output, expected, imported) in [
             ("list<item>", "list<item>", true, false),
@@ -843,9 +843,9 @@ mod tests {
                 "run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;"
             };
             let fixture = if imported {
-                "import record-receipt; export wamn:node/handler@0.1.0;"
+                "import record-batch; export wamn:node/handler@0.1.0;"
             } else {
-                "export record-receipt;"
+                "export record-batch;"
             };
             let mut resolve = Resolve::new();
             resolve
@@ -855,8 +855,8 @@ mod tests {
                 )
                 .unwrap();
             let package = resolve.push_str("typed.wit", &format!(r"
-                package wamn-receiving:receiving@1.0.0;
-                interface record-receipt {{
+                package platform-fixture:widget@1.0.0;
+                interface record-batch {{
                     use wamn:node/types@0.1.0.{{node-context, node-error, emission}};
                     resource handle;
                     record item {{ request-id: string, quantity: string }}
@@ -1037,9 +1037,7 @@ mod tests {
             .operations
             .get_mut(OPERATION)
             .expect("fixture operation exists")
-            .dependencies = vec![dependency(
-            "wamn-receiving:receiving/load-purchase-order@1.0.0",
-        )];
+            .dependencies = vec![dependency("platform-fixture:widget/load-maker@1.0.0")];
         let mismatch = validate_component_admission(
             &engine,
             &component_bytes(&format!("import {DEPENDENCY_OPERATION};")),
@@ -1161,7 +1159,7 @@ mod tests {
         assert_eq!(
             component.effects,
             [AdmittedComponentEffect {
-                package: "wamn-receiving:receiving".to_string(),
+                package: "platform-fixture:widget".to_string(),
                 provenance: ComponentEffectProvenance::Inherited,
                 interfaces: Vec::new(),
             }]

@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn omission_does_not_permit_a_null_writable_value() {
         let fields = input_fields_of(&json!({"writable_fields":[{
-            "field":"supplier_id","type":"uuid","omitted":"unchanged","explicit_null":"invalid_input"
+            "field":"maker_id","type":"uuid","omitted":"unchanged","explicit_null":"invalid_input"
         }]}));
         assert!(!fields[0].required);
         assert!(!fields[0].nullable);

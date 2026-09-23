@@ -2146,8 +2146,8 @@ mod tests {
     fn package_scope_requires_at_least_one_canonical_identity() {
         assert!(!valid_package_scope(&[]));
         assert!(!valid_package_scope(&[String::new()]));
-        assert!(!valid_package_scope(&[" receiving".to_owned()]));
-        assert!(!valid_package_scope(&["receiving\0overlay".to_owned()]));
+        assert!(!valid_package_scope(&[" fixture".to_owned()]));
+        assert!(!valid_package_scope(&["fixture\0overlay".to_owned()]));
         assert!(valid_package_scope(&[
             "base".to_owned(),
             "client_overlay".to_owned(),

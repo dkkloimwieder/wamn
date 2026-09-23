@@ -40,6 +40,18 @@ wamn-control-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 pg_walstream = { workspace = true }
 object_store = { workspace = true }
+# The operator example composes generated WMS screens through the shared driver.
+async-trait = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+wamn-client = { workspace = true }
+wamn-client-terminal = { workspace = true }
+wamn-client-tui = { workspace = true }
+wamn-generated-wms-tui = { workspace = true }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "wms_move"
+path = "../examples/wms_move.rs"

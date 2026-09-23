@@ -174,27 +174,27 @@ mod tests {
     #[test]
     fn a_parameterless_route_is_its_template() {
         assert_eq!(
-            route("/purchase_order/query")
+            route("/widget/query")
                 .path(&BTreeMap::new())
                 .expect("no parameters needed"),
-            "/purchase_order/query"
+            "/widget/query"
         );
     }
 
     #[test]
     fn a_parameter_fills_its_segment() {
         assert_eq!(
-            route("/purchase_order/{id}")
+            route("/widget/{id}")
                 .path(&parameters(&[("id", "3f8e")]))
                 .expect("id fills"),
-            "/purchase_order/3f8e"
+            "/widget/3f8e"
         );
     }
 
     #[test]
     fn a_missing_parameter_is_named() {
         assert_eq!(
-            route("/purchase_order/{id}").path(&BTreeMap::new()),
+            route("/widget/{id}").path(&BTreeMap::new()),
             Err(RouteError::MissingParameter {
                 name: "id".to_owned()
             })
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn an_unknown_parameter_refuses_rather_than_being_dropped() {
         assert_eq!(
-            route("/purchase_order/{id}").path(&parameters(&[("id", "3f8e"), ("limit", "10")])),
+            route("/widget/{id}").path(&parameters(&[("id", "3f8e"), ("limit", "10")])),
             Err(RouteError::UnknownParameter {
                 name: "limit".to_owned()
             })
@@ -217,9 +217,9 @@ mod tests {
     /// id reaches a different operation than the one it named.
     #[test]
     fn a_value_cannot_change_the_routes_shape() {
-        for hostile in ["../receipt/get", "a/b", "x?y", "x#y"] {
+        for hostile in ["../gadget/get", "a/b", "x?y", "x#y"] {
             assert_eq!(
-                route("/purchase_order/{id}")
+                route("/widget/{id}")
                     .path(&parameters(&[("id", hostile)]))
                     .map_err(|error| error.code()),
                 Err("route_unsafe_value"),
