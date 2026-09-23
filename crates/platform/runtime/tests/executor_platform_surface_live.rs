@@ -37,8 +37,8 @@ use wamn_runtime::plugins::wamn_postgres::{
     CredentialConnectionKind, CredentialProbeErrorKind, CredentialProbePredicate,
     ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, ProductionClaimErrorKind,
     ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseRenewal, ProductionReapResult, RELEASE_WIRING_SQL, WamnPostgres,
-    WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
+    ProductionLeaseRenewal, ProductionReapResult, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,
+    WamnPostgres, WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
 };
 
 /// The generation login every leg runs as.
@@ -392,6 +392,29 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             "imports-fingerprint": imports_fingerprint, "effects": [],
         }),
         "the component library join produced the wrong released fact"
+    );
+
+    // A route reads the same release component list with no wiring.
+    let route_components = generation
+        .query_one(
+            RELEASE_COMPONENTS_SQL,
+            &[
+                &TENANT,
+                &ENVIRONMENT,
+                &EFFECTIVE_RELEASE_ID,
+                &manifest_digest,
+            ],
+        )
+        .await
+        .context("the release-components snapshot must execute under the credential")?;
+    assert_eq!(
+        route_components.get::<_, String>(0),
+        release[0].get::<_, String>(6),
+        "a route must load the same release component list as a wiring"
+    );
+    assert_eq!(
+        route_components.get::<_, i32>(1),
+        release[0].get::<_, i32>(7)
     );
 
     // The release path's own legitimate zero: the same coordinates under a

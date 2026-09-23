@@ -6,7 +6,10 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
-use wamn_catalog::{ServingAttachment, ServingManifest, WiringDocument};
+use wamn_catalog::{
+    AttachmentTarget, OperationKind, ServingAttachment, ServingManifest, ServingRoute,
+    WiringDocument,
+};
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_control::push_component::{
     AdmitComponentRequest, admit_component, project_admitted_component_for_verification,
@@ -205,6 +208,7 @@ pub(super) async fn assemble(
     let mut component_digests = HashMap::new();
     let mut admitted = Vec::new();
     let mut wirings = Vec::new();
+    let mut roots = BTreeMap::new();
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
             package: package.root.to_owned(),
@@ -256,6 +260,7 @@ pub(super) async fn assemble(
             .await?;
             wirings.push((applied.package_id.clone(), document));
         }
+        roots.insert(applied.package_id.clone(), package.root);
         admitted.push((applied.package_id, facts));
     }
     wamn_control::reconcile_package_data_access::reconcile_package_data_access(
@@ -271,8 +276,9 @@ pub(super) async fn assemble(
     )
     .await?;
 
-    let attachments = selected_attachments(&input)?;
-    let manifest = serving_manifest(&input, &admitted, &wirings, &attachments)?;
+    let attachments = selected_attachments(&input, &roots)?;
+    let routes = attachment_routes(&attachments, &roots)?;
+    let manifest = serving_manifest(&input, &admitted, &wirings, &routes, &attachments)?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -467,6 +473,7 @@ fn serving_manifest(
     input: &LocalApplicationConfig<'_>,
     components: &[(String, wamn_catalog::AdmittedComponent)],
     wirings: &[(String, WiringDocument)],
+    routes: &BTreeSet<ServingRoute>,
     attachments: &BTreeMap<String, ServingAttachment>,
 ) -> anyhow::Result<ServingManifest> {
     let packages = components
@@ -507,12 +514,15 @@ fn serving_manifest(
         .collect::<Vec<_>>();
     let wirings=wirings.iter().map(|(id,w)|json!({"package-id":id,"wiring-id":w.wiring_id,"wiring-version":w.version,"graph-hash":w.wiring_hash().as_str()})).collect::<Vec<_>>();
     Ok(serde_json::from_value(
-        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"routes":[],"wirings":wirings,"attachments":attachments,"registrations":{}}),
+        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"routes":routes,"wirings":wirings,"attachments":attachments,"registrations":{}}),
     )?)
 }
 
+/// The attachments of the selected wirings, and every route of a selected
+/// package.
 fn selected_attachments(
     input: &LocalApplicationConfig<'_>,
+    roots: &BTreeMap<String, &Path>,
 ) -> anyhow::Result<BTreeMap<String, ServingAttachment>> {
     let selected = input
         .packages
@@ -521,9 +531,11 @@ fn selected_attachments(
         .collect::<BTreeSet<_>>();
     let mut result = BTreeMap::new();
     for (id, attachment) in input.attachments {
-        if let wamn_catalog::AttachmentTarget::Wiring { wiring_id, .. } = &attachment.target
-            && selected.contains(wiring_id.as_str())
-        {
+        let served = match &attachment.target {
+            AttachmentTarget::Wiring { wiring_id, .. } => selected.contains(wiring_id.as_str()),
+            AttachmentTarget::Route { .. } => roots.contains_key(&attachment.package_id),
+        };
+        if served {
             let mut attachment = attachment.clone();
             attachment.definition["route"]["host"] = Value::String(input.route_host.into());
             attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
@@ -533,4 +545,54 @@ fn selected_attachments(
         }
     }
     Ok(result)
+}
+
+/// One manifest route for each route attachment. The kind is the `kind` of
+/// the package's generated contract `operation.json`, the same source that
+/// publish reads.
+fn attachment_routes(
+    attachments: &BTreeMap<String, ServingAttachment>,
+    roots: &BTreeMap<String, &Path>,
+) -> anyhow::Result<BTreeSet<ServingRoute>> {
+    let mut routes = BTreeSet::new();
+    for attachment in attachments.values() {
+        let AttachmentTarget::Route {
+            component,
+            operation,
+        } = &attachment.target
+        else {
+            continue;
+        };
+        let root = roots
+            .get(&attachment.package_id)
+            .context("a route attachment names an assembled package")?;
+        routes.insert(ServingRoute {
+            package_id: attachment.package_id.clone(),
+            component: component.clone(),
+            operation: operation.clone(),
+            kind: operation_kind(root, operation)?,
+        });
+    }
+    Ok(routes)
+}
+
+fn operation_kind(root: &Path, operation: &str) -> anyhow::Result<OperationKind> {
+    for model in std::fs::read_dir(root.join("generated/contracts"))? {
+        let model = model?.path();
+        if !model.is_dir() {
+            continue;
+        }
+        for contract in std::fs::read_dir(&model)? {
+            let contract = contract?.path();
+            if !contract.to_string_lossy().ends_with(".operation.json") {
+                continue;
+            }
+            let value: Value = serde_json::from_slice(&std::fs::read(&contract)?)?;
+            if value["operation"] == operation {
+                return serde_json::from_value(value["kind"].clone())
+                    .with_context(|| format!("read the kind of {}", contract.display()));
+            }
+        }
+    }
+    anyhow::bail!("no generated contract declares operation {operation}")
 }

@@ -12,7 +12,8 @@ use tokio_postgres::Client;
 use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryKind, Envelope, Op};
 use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_runtime::plugins::wamn_jetstream::{
-    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, router_tap_environment_filter,
+    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, RouterTapTarget,
+    router_tap_environment_filter,
 };
 
 use super::{
@@ -236,8 +237,11 @@ async fn delivery_taps(
         ensure!(
             record.source_id.as_ref() == REGISTRATION
                 && record.source_kind == RouterTapSourceKind::Registration
-                && record.wiring_id.as_ref() == WIRING
-                && record.wiring_version == 1
+                && record.target
+                    == RouterTapTarget::Wiring {
+                        wiring_id: WIRING.into(),
+                        wiring_version: 1,
+                    }
                 && !record.redacted
                 && record.over_ceiling_bytes.is_none(),
             "the delivery tap does not identify the unchanged private handler"

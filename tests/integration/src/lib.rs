@@ -26,6 +26,8 @@ pub mod readerbench;
 mod reconcile_live;
 #[cfg(test)]
 mod route_authentication_live;
+#[cfg(test)]
+mod route_interface_live;
 mod router_tap_live;
 pub mod startup_burst;
 pub mod streambench;

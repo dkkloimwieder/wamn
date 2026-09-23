@@ -544,6 +544,7 @@ mod tests {
     };
     use wamn_runtime::plugins::wamn_jetstream::{
         RouterTapFormatVersion, RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind,
+        RouterTapTarget,
     };
 
     use super::*;
@@ -1024,8 +1025,10 @@ mod tests {
                 redacted: true,
                 source_id: "widget-get-http".into(),
                 source_kind,
-                wiring_id: "widget_get".into(),
-                wiring_version: 1,
+                target: RouterTapTarget::Wiring {
+                    wiring_id: "widget_get".into(),
+                    wiring_version: 1,
+                },
             },
         )
     }

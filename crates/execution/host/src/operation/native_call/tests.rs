@@ -241,7 +241,7 @@ async fn assert_readiness(case: Case) {
 
 fn isolated(name: &str, case: Case) {
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
-        let full_name = format!("router_driver::native_call::tests::{name}");
+        let full_name = format!("operation::native_call::tests::{name}");
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, name)

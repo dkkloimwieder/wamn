@@ -32,6 +32,8 @@ pub struct RouterReadinessSnapshot {
     pub attempts: u32,
     /// Distinct request-reachable wiring versions prepared on success.
     pub synchronous_wirings: usize,
+    /// Request-reachable route attachments prepared on success.
+    pub synchronous_routes: usize,
     /// Distinct digest-keyed instances prepared on success.
     pub component_digests: usize,
     /// Stable redacted reason while NotReady.
@@ -58,6 +60,7 @@ impl ReadinessState {
                 generation: 0,
                 attempts: 0,
                 synchronous_wirings: 0,
+                synchronous_routes: 0,
                 component_digests: 0,
                 refusal: Some("release-readiness-not-evaluated"),
             },
@@ -80,12 +83,14 @@ impl ReadinessState {
             Ok(prepared) => {
                 self.snapshot.status = RouterReadinessStatus::Ready;
                 self.snapshot.synchronous_wirings = prepared.synchronous_wirings;
+                self.snapshot.synchronous_routes = prepared.synchronous_routes;
                 self.snapshot.component_digests = prepared.component_digests;
                 self.snapshot.refusal = None;
             }
             Err(refusal) => {
                 self.snapshot.status = RouterReadinessStatus::NotReady;
                 self.snapshot.synchronous_wirings = 0;
+                self.snapshot.synchronous_routes = 0;
                 self.snapshot.component_digests = 0;
                 self.snapshot.refusal = Some(refusal);
             }
@@ -97,6 +102,7 @@ impl ReadinessState {
         self.snapshot.attempts = 0;
         self.snapshot.status = RouterReadinessStatus::NotReady;
         self.snapshot.synchronous_wirings = 0;
+        self.snapshot.synchronous_routes = 0;
         self.snapshot.component_digests = 0;
         self.snapshot.refusal = Some(refusal);
     }
@@ -197,6 +203,7 @@ mod tests {
     fn prepared() -> PreparedReleaseReadiness {
         PreparedReleaseReadiness {
             synchronous_wirings: 2,
+            synchronous_routes: 1,
             component_digests: 3,
         }
     }
@@ -215,6 +222,7 @@ mod tests {
         assert!(state.snapshot.is_ready());
         assert_eq!(state.snapshot.attempts, 2);
         assert_eq!(state.snapshot.synchronous_wirings, 2);
+        assert_eq!(state.snapshot.synchronous_routes, 1);
         assert_eq!(state.snapshot.component_digests, 3);
         assert_eq!(state.begin(), None, "Ready is a no-store cache hit");
     }

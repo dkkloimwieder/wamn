@@ -16,7 +16,7 @@ use wamn_catalog::{
     ServingComponentOperation, ServingManifest,
 };
 use wamn_runtime::plugins::wamn_jetstream::{
-    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind,
+    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, RouterTapTarget,
 };
 
 use super::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
@@ -151,14 +151,9 @@ impl DevTapObservation {
         &self.record.delivery_id
     }
 
-    /// Wiring that routed the delivery.
-    pub fn wiring_id(&self) -> &str {
-        &self.record.wiring_id
-    }
-
-    /// Exact wiring version that routed the delivery.
-    pub const fn wiring_version(&self) -> u32 {
-        self.record.wiring_version
+    /// The route or the exact wiring version that the delivery entered.
+    pub const fn target(&self) -> &RouterTapTarget {
+        &self.record.target
     }
 
     /// Kind of release source that originated the delivery.
@@ -762,8 +757,10 @@ mod tests {
                     redacted: false,
                     source_id: "route".into(),
                     source_kind: RouterTapSourceKind::Attachment,
-                    wiring_id: "wiring".into(),
-                    wiring_version: 1,
+                    target: RouterTapTarget::Wiring {
+                        wiring_id: "wiring".into(),
+                        wiring_version: 1,
+                    },
                 },
             });
         }

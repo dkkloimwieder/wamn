@@ -1,24 +1,24 @@
 //! The single production driver for direct and queued wiring delivery.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::operation::{
+    InvocationSite, NativeApplication, NativeComponent, NodeAcquisition, OperationCall,
+    OperationClosure, OperationHost, OperationScope, authorize_registered_operation,
+    bounded_node_deadline_ms, component_invocation, invocation_span, invoke_operation,
+    node_trace_context, node_types, remote_trace_context, validate_component_in_release,
+};
 use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
 use anyhow::Context as _;
-use futures_util::{StreamExt as _, stream};
-use opentelemetry::propagation::Extractor;
-use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
-use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, AttachmentKind, AttachmentTarget,
-    ComponentOperationDependency, ComponentSqlField, ComponentSqlValueType, DefinitionHash,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingWiring,
+    AdmittedComponent, AttachmentKind, AttachmentTarget, DefinitionHash, ServingManifest,
+    ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_event_wire::Causation;
@@ -30,47 +30,20 @@ use wamn_router::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactFetchErrorKind, ComponentArtifactSource,
 };
-use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
-    ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
-    InvocationEntry, WiringPosition,
+    ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
-use wamn_runtime::plugins::flow_http_routing::{AuthenticatedCaller, CredentialKind};
-use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
+use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    CandidateBindingWorld, CandidateWiringResolution, PreparedStatementSet, ReleaseIdentity,
-    ResolvedActiveWiring, SessionClaims, StatementField, StatementValueType, VerifiedStatement,
-    VerifiedStatementSet, WamnPostgres,
+    CandidateBindingWorld, CandidateWiringResolution, ResolvedActiveWiring, WamnPostgres,
 };
 use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
-use wash_runtime::plugin::HostPlugin;
-
-mod native_call;
-mod native_policy;
-mod native_workload;
-
-use native_call::{NativeInvocation, invoke_native, prepare_native};
-use native_policy::{NATIVE_POLICY_ID, NativePolicyResources, new_native_policy};
-use native_workload::{
-    NativeApplication, NativeComponent, NativeWorkloadSpec, load_native_application,
-};
-
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: "../router/wit",
-        world: "node",
-        exports: { default: async },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-use bindings::wamn::node::types as node_types;
 
 /// Shared CLI/environment key for the only wiring cache in a serving process.
 pub const WIRING_CACHE_CAPACITY_ENV: &str = "WAMN_WIRING_CACHE_CAPACITY";
@@ -82,10 +55,6 @@ pub const WIRING_CACHE_CAPACITY_ENV: &str = "WAMN_WIRING_CACHE_CAPACITY";
 /// environment. 1,024 therefore costs single-digit MiB and cheaply avoids hot
 /// path re-parsing; the hit/eviction metrics make the choice evidence-tunable.
 pub const DEFAULT_WIRING_CACHE_CAPACITY: usize = 1_024;
-
-/// Keep at most two verified artifact fetches in flight per release load.
-/// Native workload loading owns compilation after these bounded fetches finish.
-const COMPONENT_FETCH_CONCURRENCY: usize = 2;
 
 /// A non-zero wiring cache bound, parsed once at process construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,71 +110,6 @@ pub struct RouterDriverConfig {
     pub project: String,
     pub schema: Option<String>,
     pub cache_capacity: WiringCacheCapacity,
-}
-
-/// Why an originating caller cannot invoke a registered operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OperationRefusalKind {
-    PermissionDenied,
-    FreshCredentialRequired,
-}
-
-/// Exact operation authority missing from the originating caller.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OperationRefusal {
-    kind: OperationRefusalKind,
-    operation: Box<str>,
-}
-
-impl OperationRefusal {
-    pub(crate) fn new(kind: OperationRefusalKind, operation: impl Into<Box<str>>) -> Self {
-        Self {
-            kind,
-            operation: operation.into(),
-        }
-    }
-
-    pub(crate) fn kind(&self) -> OperationRefusalKind {
-        self.kind
-    }
-
-    pub(crate) fn operation(&self) -> &str {
-        &self.operation
-    }
-}
-
-impl fmt::Display for OperationRefusal {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let reason = match self.kind {
-            OperationRefusalKind::PermissionDenied => "permission denied",
-            OperationRefusalKind::FreshCredentialRequired => "fresh-credential-required",
-        };
-        write!(formatter, "{reason} for operation {}", self.operation)
-    }
-}
-
-impl std::error::Error for OperationRefusal {}
-
-pub(crate) fn authorize_registered_operation(
-    caller: Option<&AuthenticatedCaller>,
-    operation: Option<&str>,
-    fresh_only: bool,
-) -> Result<(), OperationRefusal> {
-    let Some(operation) = operation else {
-        return Ok(());
-    };
-    let caller = caller
-        .filter(|caller| caller.permits(operation))
-        .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
-    // Human sessions now receive a current authority check at request admission.
-    // This does not widen the separately admitted queued-service contract.
-    if fresh_only && caller.credential_kind() == CredentialKind::QueuedService {
-        return Err(OperationRefusal::new(
-            OperationRefusalKind::FreshCredentialRequired,
-            operation,
-        ));
-    }
-    Ok(())
 }
 
 /// Stable host classification for a candidate fact that cannot be retried
@@ -266,83 +170,6 @@ pub struct RouterDriverRequest {
     pub tracestate: Option<String>,
 }
 
-struct TraceHeaders<'a> {
-    traceparent: &'a str,
-    tracestate: Option<&'a str>,
-}
-
-impl Extractor for TraceHeaders<'_> {
-    fn get(&self, key: &str) -> Option<&str> {
-        if key.eq_ignore_ascii_case("traceparent") {
-            Some(self.traceparent)
-        } else if key.eq_ignore_ascii_case("tracestate") {
-            self.tracestate
-        } else {
-            None
-        }
-    }
-
-    fn keys(&self) -> Vec<&str> {
-        match self.tracestate {
-            Some(_) => vec!["traceparent", "tracestate"],
-            None => vec!["traceparent"],
-        }
-    }
-}
-
-/// The pair of W3C fields the router hands one guest, written by the global
-/// propagator.
-///
-/// The mirror image of [`TraceHeaders`]: that one reads the caller's headers in,
-/// this one writes the host's own span out.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct NodeTraceContext {
-    traceparent: Option<String>,
-    tracestate: Option<String>,
-}
-
-impl opentelemetry::propagation::Injector for NodeTraceContext {
-    fn set(&mut self, key: &str, value: String) {
-        // The W3C propagator writes `tracestate` even when the context carries
-        // none, and an empty field is not a field.
-        let value = (!value.is_empty()).then_some(value);
-        if key.eq_ignore_ascii_case("traceparent") {
-            self.traceparent = value;
-        } else if key.eq_ignore_ascii_case("tracestate") {
-            self.tracestate = value;
-        }
-    }
-}
-
-/// The context the guest — and every hop below it — must parent to: the
-/// `wamn.component.invoke` span this node is running under, NOT the raw ingress
-/// header that opened the delivery.
-///
-/// Forwarding the ingress header verbatim made every downstream service a
-/// sibling of the host rather than its child, skipping the component span
-/// entirely, and left the queue path (which carries no ingress header at all,
-/// by the ratified host-scoped re-root) with no context to send.
-///
-/// Read through [`tracing_opentelemetry::OpenTelemetrySpanExt`], never
-/// `opentelemetry::global::tracer`: the runtime's `initialize_observability`
-/// installs the layer but no global tracer provider, so the global tracer is a
-/// silent no-op.
-fn node_trace_context(request: &RouterDriverRequest) -> NodeTraceContext {
-    let mut carrier = NodeTraceContext::default();
-    let context = tracing::Span::current().context();
-    opentelemetry::global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&context, &mut carrier);
-    });
-    if carrier.traceparent.is_none() {
-        // A tracing subscriber without the OTel layer is the supported
-        // no-export mode: the span has no exportable context to inject, so pass
-        // the caller's own header through rather than dropping propagation.
-        carrier.traceparent.clone_from(&request.traceparent);
-        carrier.tracestate.clone_from(&request.tracestate);
-    }
-    carrier
-}
-
 /// The exact context one `wamn:node` guest is invoked with.
 ///
 /// A free function, not an inline literal in `invoke_node`, because the trace
@@ -358,7 +185,10 @@ fn node_context(
     call: &wamn_router::NodeCall,
     deadline_ms: u64,
 ) -> anyhow::Result<node_types::NodeContext> {
-    let trace = node_trace_context(request);
+    let trace = node_trace_context(
+        request.traceparent.as_deref(),
+        request.tracestate.as_deref(),
+    );
     Ok(node_types::NodeContext {
         wiring_id: request.wiring_id.clone(),
         wiring_version,
@@ -373,19 +203,11 @@ fn node_context(
     })
 }
 
-fn remote_trace_context(request: &RouterDriverRequest) -> Option<opentelemetry::Context> {
-    let traceparent = request.traceparent.as_deref()?;
-    let headers = TraceHeaders {
-        traceparent,
-        tracestate: request.tracestate.as_deref(),
-    };
-    let context =
-        opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(&headers));
-    if context.span().span_context().is_valid() {
-        Some(context)
-    } else {
-        None
-    }
+fn remote_request_context(request: &RouterDriverRequest) -> Option<opentelemetry::Context> {
+    remote_trace_context(
+        request.traceparent.as_deref(),
+        request.tracestate.as_deref(),
+    )
 }
 
 fn component_invocation_span(
@@ -396,42 +218,21 @@ fn component_invocation_span(
     call: &wamn_router::NodeCall,
     remote_parent: Option<&opentelemetry::Context>,
 ) -> tracing::Span {
-    let span = tracing::info_span!(
-        target: "wamn::router",
-        "wamn.component.invoke",
-        wamn.tenant = %request.tenant_id,
-        wamn.project = %project,
-        wamn.environment = %request.environment,
-        wamn.wiring_id = %request.wiring_id,
-        wamn.wiring_version = wiring_version,
-        wamn.component_digest = %component_digest,
-        wamn.node_id = %call.node,
-        wamn.operation = %call.operation,
-        wamn.caller_principal_id = tracing::field::Empty,
-        wamn.caller_credential_kind = tracing::field::Empty,
-        wamn.input_port = tracing::field::Empty,
-    );
-    if let Some(caller) = request.caller.as_ref() {
-        span.record("wamn.caller_principal_id", caller.principal_id());
-        span.record(
-            "wamn.caller_credential_kind",
-            match caller.credential_kind() {
-                CredentialKind::Pat => "pat",
-                CredentialKind::Session => "session",
-                CredentialKind::QueuedService => "queued-service",
-            },
-        );
-    }
-    if let Some(input_port) = call.input_port.as_deref() {
-        span.record("wamn.input_port", input_port);
-    }
-    if let Some(parent) = remote_parent {
-        // A tracing subscriber without the OTel layer is the supported
-        // no-export mode. `set_parent` may then refuse; the span still records
-        // locally and no invocation is affected.
-        let _ = span.set_parent(parent.clone());
-    }
-    span
+    invocation_span(
+        &InvocationSite {
+            tenant_id: &request.tenant_id,
+            project,
+            environment: &request.environment,
+            wiring_id: &request.wiring_id,
+            wiring_version,
+            node_id: &call.node,
+            input_port: call.input_port.as_deref(),
+            operation: &call.operation,
+            component_digest,
+            caller: request.caller.as_ref(),
+        },
+        remote_parent,
+    )
 }
 
 /// Exact immutable candidate selected by one durable management admission.
@@ -498,6 +299,7 @@ pub struct RouterDriverSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PreparedReleaseReadiness {
     pub(crate) synchronous_wirings: usize,
+    pub(crate) synchronous_routes: usize,
     pub(crate) component_digests: usize,
 }
 
@@ -537,18 +339,10 @@ enum ExecutionClosure<'a> {
 /// One router, cache, and artifact source per serving process. Both process
 /// leaves construct this exact type.
 pub struct RouterDriver {
-    engine: Arc<Engine>,
-    postgres: Arc<WamnPostgres>,
-    /// Shared by every driver in this process, independently of fresh stores.
-    http_transport: Arc<HttpTransport>,
-    credentials: Arc<WamnCredentials>,
-    logging: Arc<WamnLogging>,
-    allowed_hosts: Arc<[AllowedHost]>,
+    operations: Arc<OperationHost>,
     release: Arc<LoadedRelease>,
-    source: ComponentArtifactSource,
     config: RouterDriverConfig,
     cache: Arc<WiringCache<CatalogFacts>>,
-    native: tokio::sync::OnceCell<Arc<NativeApplication>>,
     started: Instant,
 }
 
@@ -563,15 +357,6 @@ impl fmt::Debug for RouterDriver {
 }
 
 impl RouterDriver {
-    pub(crate) async fn record_actor_labels(
-        &self,
-        tenant: &str,
-        actors: &[String],
-    ) -> anyhow::Result<Vec<(String, String)>> {
-        self.postgres
-            .record_actor_labels(&self.config.project, tenant, actors)
-            .await
-    }
     /// Bind one release to the process-owned capabilities.
     /// Every driver in the same process must receive the same HTTP transport.
     #[expect(
@@ -595,20 +380,35 @@ impl RouterDriver {
             config.owner_prefix
         );
         let cache = Arc::new(WiringCache::new(config.cache_capacity.get()));
-        Ok(Self {
+        let operations = Arc::new(OperationHost::new(
             engine,
             postgres,
             http_transport,
             credentials,
             logging,
             allowed_hosts,
-            release,
+            Arc::clone(&release),
             source,
+            OperationScope {
+                project: config.project.clone(),
+                schema: config.schema.clone(),
+                owner_prefix: config.owner_prefix.clone(),
+                warm_reuse: config.warm_reuse.clone(),
+            },
+        ));
+        Ok(Self {
+            operations,
+            release,
             config,
             cache,
-            native: tokio::sync::OnceCell::new(),
             started: Instant::now(),
         })
+    }
+
+    /// The operation host this driver runs its nodes on. The route path calls
+    /// the same host, so a route and a wiring share one loaded application.
+    pub(crate) fn operations(&self) -> Arc<OperationHost> {
+        Arc::clone(&self.operations)
     }
 
     pub fn snapshot(&self) -> RouterDriverSnapshot {
@@ -625,6 +425,7 @@ impl RouterDriver {
         let prepare_started = Instant::now();
         let manifest = self.release.manifest();
         let targets = synchronous_wiring_targets(manifest);
+        let routes = synchronous_route_count(manifest);
         anyhow::ensure!(
             targets.len() <= self.config.cache_capacity.get().get(),
             "release-wiring-preload-exceeds-cache-capacity"
@@ -653,9 +454,14 @@ impl RouterDriver {
             }
             components = Some(Arc::clone(&active.facts.components));
         }
+        // A route reads the same release component list with no wiring.
+        if components.is_none() && routes > 0 {
+            components = Some(self.operations.release_components().await?);
+        }
         let Some(components) = components else {
             return Ok(PreparedReleaseReadiness {
                 synchronous_wirings: 0,
+                synchronous_routes: 0,
                 component_digests: 0,
             });
         };
@@ -666,6 +472,7 @@ impl RouterDriver {
             .into_iter()
             .collect();
         let bindings_ready = self
+            .operations
             .postgres
             .release_component_bindings_ready(
                 &self.config.project,
@@ -676,29 +483,18 @@ impl RouterDriver {
             )
             .await?;
         anyhow::ensure!(bindings_ready, "release-component-requirement-unbound");
-        let application = self.released_application(&components).await?;
-        for id in application.workload.facts_by_component_id.keys() {
-            let target = application
-                .workload
-                .resolved
-                .dispatch_target(id, NATIVE_POLICY_ID)
-                .await?;
-            prepare_native(
-                &target,
-                tokio::time::Instant::now() + Duration::from_millis(bounded_node_deadline_ms(None)),
-            )
-            .await
-            .with_context(|| format!("initialize native release component {id:?}"))?;
-        }
+        self.operations.prepare_released(&components).await?;
         tracing::info!(
             target: "wamn::router",
             synchronous_wirings = targets.len(),
+            synchronous_routes = routes,
             component_digests = digests.len(),
             elapsed_ms = %prepare_started.elapsed().as_millis(),
             "synchronous release preload completed"
         );
         Ok(PreparedReleaseReadiness {
             synchronous_wirings: targets.len(),
+            synchronous_routes: routes,
             component_digests: digests.len(),
         })
     }
@@ -779,7 +575,7 @@ impl RouterDriver {
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let application = self.load_application(native).await?;
+        let application = self.operations.load_application(native).await?;
         let target = &request.target;
         let driver_request = RouterDriverRequest {
             tenant_id: target.tenant_id.clone(),
@@ -831,7 +627,7 @@ impl RouterDriver {
             // Parse the ingress context once per delivery, not once per node on the
             // router hot path. Queue delivery deliberately carries no remote
             // context and inherits the executor's host-created queue root instead.
-            let remote_parent = remote_trace_context(&request);
+            let remote_parent = remote_request_context(&request);
             let wiring = Arc::clone(&active.wiring);
             let mut walk = wiring.start(Delivery {
                 id: request.delivery_id.clone(),
@@ -969,6 +765,7 @@ impl RouterDriver {
         expected_binding_world: &CandidateBindingWorld,
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
         let resolved = self
+            .operations
             .postgres
             .resolve_candidate_wiring(
                 &self.config.project,
@@ -1069,6 +866,7 @@ impl RouterDriver {
             return Ok(active);
         }
         let resolved = self
+            .operations
             .postgres
             .resolve_release_wiring(
                 &self.config.project,
@@ -1176,7 +974,7 @@ impl RouterDriver {
     ) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
         let mut bytes_by_digest = BTreeMap::new();
         for component in active.facts.components.iter() {
-            match self.source.pull_verified(component).await {
+            match self.operations.source.pull_verified(component).await {
                 Ok(bytes) => {
                     bytes_by_digest.insert(component.component_digest.clone(), bytes);
                 }
@@ -1223,115 +1021,6 @@ impl RouterDriver {
         validate_component_in_release(&self.release, component)
     }
 
-    async fn released_application(
-        &self,
-        components: &[AdmittedComponent],
-    ) -> anyhow::Result<Arc<NativeApplication>> {
-        for component in components {
-            self.validate_release_component(component)?;
-        }
-        let application = self
-            .native
-            .get_or_try_init(|| async {
-                let pulls = components.iter().cloned().map(|fact| {
-                    let source = self.source.clone();
-                    async move {
-                        let bytes = source
-                            .pull_verified(&fact)
-                            .instrument(tracing::info_span!(
-                                "wamn.component.pull",
-                                wamn.component_digest = %fact.component_digest,
-                            ))
-                            .await?;
-                        anyhow::Ok(NativeComponent { fact, bytes })
-                    }
-                });
-                let mut pulls = stream::iter(pulls).buffered(COMPONENT_FETCH_CONCURRENCY);
-                let mut native = Vec::with_capacity(components.len());
-                while let Some(component) = pulls.next().await {
-                    native.push(component?);
-                }
-                self.load_application(native).await
-            })
-            .await?;
-        let loaded = &application.workload.facts_by_component_id;
-        anyhow::ensure!(
-            components.len() == loaded.len()
-                && components
-                    .iter()
-                    .all(|fact| loaded.values().any(|loaded| loaded == fact)),
-            "native-release-component-closure-mismatch"
-        );
-        Ok(Arc::clone(application))
-    }
-
-    async fn load_application(
-        &self,
-        components: Vec<NativeComponent>,
-    ) -> anyhow::Result<Arc<NativeApplication>> {
-        let facts: Vec<_> = components
-            .iter()
-            .map(|component| component.fact.clone())
-            .collect();
-        let policy = new_native_policy(
-            &facts,
-            NativePolicyResources {
-                postgres: Arc::clone(&self.postgres),
-                logging: Arc::clone(&self.logging),
-                connection_http: Arc::new(ConnectionHttp::new(
-                    Arc::clone(&self.postgres),
-                    Arc::clone(&self.http_transport),
-                    Arc::clone(&self.credentials),
-                    self.release.manifest().release.tenant_id.as_str(),
-                    self.config.project.as_str(),
-                    Arc::clone(&self.allowed_hosts),
-                    Some(Arc::clone(&self.release)),
-                )),
-                blobstore: Arc::new(WamnBlobstore::new(
-                    Arc::clone(&self.postgres),
-                    Arc::clone(&self.credentials),
-                    self.release.manifest().release.tenant_id.as_str(),
-                    self.config.project.as_str(),
-                    Some(Arc::clone(&self.release)),
-                )),
-                release: Arc::clone(&self.release),
-                project: self.config.project.clone(),
-            },
-        )?;
-        let world = policy.world();
-        // This list requests plugin binding. Native initialization already
-        // links WASI, so copying every admitted import here would require a
-        // second provider for clocks and polling that the engine supplies.
-        let host_interfaces = world
-            .imports
-            .into_iter()
-            .chain(world.exports)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
-            HashMap::from([(NATIVE_POLICY_ID, Arc::clone(&policy) as Arc<dyn HostPlugin>)]);
-        load_native_application(
-            Arc::clone(&self.engine),
-            NativeWorkloadSpec {
-                id: next_scope("wamn-application").into(),
-                namespace: self.config.project.clone(),
-                name: self.config.owner_prefix.clone(),
-                components,
-                warm_reuse: self.config.warm_reuse.clone(),
-                local_resources: wash_runtime::types::LocalResources::default(),
-                host_interfaces,
-            },
-            policy,
-            &plugins,
-            &wash_runtime::plugin::PluginBindings::new(),
-            &wash_runtime::observability::Meters::new(
-                wash_runtime::observability::MeterKind::Duration,
-            ),
-        )
-        .await
-    }
-
     #[expect(
         clippy::too_many_arguments,
         reason = "the delivery, graph, call, closure, provenance and executing component are independent facts"
@@ -1353,173 +1042,67 @@ impl RouterDriver {
         if matches!(closure, ExecutionClosure::Released) {
             self.validate_release_component(component)?;
         }
-        let release = if matches!(closure, ExecutionClosure::Released) {
-            Some(ReleaseIdentity {
-                effective_release_id: self.release.release().effective_release_id,
-                manifest_digest: self.release.release().manifest_digest.clone(),
-            })
-        } else {
-            None
-        };
-        let connection_closure = match closure {
-            ExecutionClosure::Released => ConnectionExecutionClosure::Released,
+        let release = matches!(closure, ExecutionClosure::Released)
+            .then(|| self.operations.release_identity());
+        let (operation_closure, connection_closure) = match closure {
+            ExecutionClosure::Released => (
+                OperationClosure::Released(&active.facts.components),
+                ConnectionExecutionClosure::Released,
+            ),
             ExecutionClosure::Candidate {
                 target,
                 binding_world,
-                ..
-            } => ConnectionExecutionClosure::Candidate {
-                effective_release_id: target.effective_release_id,
-                environment: target.environment.clone(),
-                wiring_hash: target.wiring_hash.clone(),
-                component: component.component.clone(),
-                interface_version: component.interface_version.clone(),
-                binding_world: Arc::clone(binding_world),
-            },
-        };
-        let acquisition = NodeAcquisition {
-            claims: SessionClaims {
-                tenant: request.tenant_id.clone(),
-                project: Some(self.config.project.clone()),
-                schema: self.config.schema.clone(),
-                runner: Some(self.config.owner_prefix.clone()),
-                role: None,
-                // Activation binds the executing principal from the caller or
-                // `platform`, so a nested call derives the same one.
-                user_id: None,
-                // Activation binds the operation token of `invocation`, so a
-                // nested call binds its own operation.
-                operation: None,
-                release,
-            },
-            invocation: ConnectionInvocation {
-                origin: ConnectionOrigin {
-                    package_id: component.scope.package_id.clone(),
-                    component_digest: component.component_digest.clone(),
+                application,
+            } => (
+                OperationClosure::Candidate(application),
+                ConnectionExecutionClosure::Candidate {
+                    effective_release_id: target.effective_release_id,
+                    environment: target.environment.clone(),
+                    wiring_hash: target.wiring_hash.clone(),
                     component: component.component.clone(),
                     interface_version: component.interface_version.clone(),
-                    operation: call.operation.clone(),
+                    binding_world: Arc::clone(binding_world),
                 },
-                entry: InvocationEntry::Wiring(WiringPosition {
-                    package_id: request.package_id.clone(),
-                    wiring_id: request.wiring_id.clone(),
-                    wiring_version: active.version,
-                    node_id: call.node.clone(),
-                    occurrence: call.occurrence,
-                }),
-                package_id: component.scope.package_id.clone(),
-                component_digest: component.component_digest.clone(),
-                // The admitted component name, read off the catalog fact this
-                // node resolved to. The per-request pooled scope is an instance
-                // id and names no component a reader can look up, so an effect
-                // span takes its component identity from here (`wamn-b2m6.7`).
-                component: component.component.clone(),
-                operation: call.operation.clone(),
-                closure: connection_closure,
-                effects,
-            },
-            causation: causation.cloned(),
-            platform,
+            ),
         };
+        let entry = InvocationEntry::Wiring(WiringPosition {
+            package_id: request.package_id.clone(),
+            wiring_id: request.wiring_id.clone(),
+            wiring_version: active.version,
+            node_id: call.node.clone(),
+            occurrence: call.occurrence,
+        });
         let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(deadline_ms);
-        tokio::time::timeout_at(deadline, async {
-            let application = match closure {
-                ExecutionClosure::Released => {
-                    self.released_application(&active.facts.components).await?
-                }
-                ExecutionClosure::Candidate { application, .. } => Arc::clone(application),
-            };
-            let id = application
-                .workload
-                .facts_by_component_id
-                .iter()
-                .find_map(|(id, fact)| (fact == component).then_some(id))
-                .context("native-node-component-fact-missing")?;
-            let target = application
-                .workload
-                .resolved
-                .dispatch_target(id, NATIVE_POLICY_ID)
-                .await?;
-            let context = node_context(request, active.version, call, deadline_ms)?;
-            let input = serde_json::to_string(&call.payload).context("encode node input")?;
-            invoke_native(
-                &target,
-                NativeInvocation {
-                    operation: call.operation.clone(),
-                    context,
-                    input: input.into(),
-                    deadline,
-                    transaction_participation: None,
-                    selected_participant: None,
-                    acquisition,
-                    caller: request.caller.clone(),
-                    application,
-                },
-            )
+        let call = OperationCall {
+            closure: operation_closure,
+            component,
+            operation: &call.operation,
+            context: node_context(request, active.version, call, deadline_ms)?,
+            input: &call.payload,
+            deadline_ms,
+            acquisition: NodeAcquisition {
+                claims: self.operations.claims(&request.tenant_id, release),
+                invocation: component_invocation(
+                    component,
+                    &call.operation,
+                    entry,
+                    connection_closure,
+                    effects,
+                ),
+                causation: causation.cloned(),
+                platform,
+            },
+            caller: request.caller.clone(),
+        };
+        // Boxed, so each node's call does not grow the delivery future.
+        Box::pin(invoke_operation(&self.operations, call, None))
             .await
             .and_then(lower_node_outcome)
-        })
-        .await
-        .context("native node enclosing deadline elapsed")?
     }
 
     fn now_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
-}
-
-fn validate_component_in_release(
-    release: &LoadedRelease,
-    component: &AdmittedComponent,
-) -> anyhow::Result<()> {
-    let manifest = release.manifest();
-    let package_version = manifest
-        .release
-        .packages
-        .iter()
-        .find(|package| package.package_id() == component.scope.package_id)
-        .map(wamn_catalog::PackageCoordinate::package_version);
-    anyhow::ensure!(
-        component.scope.tenant_id == manifest.release.tenant_id
-            && package_version == Some(component.scope.package_version.as_str()),
-        "release-component-scope-mismatch"
-    );
-    let expected = ServingComponent {
-        package_id: component.scope.package_id.clone(),
-        component: component.component.clone(),
-        interface_version: component.interface_version.clone(),
-        digest: ArtifactHash::parse(component.component_digest.clone())
-            .context("component fact carries a non-canonical artifact hash")?,
-        operations: component
-            .operations
-            .iter()
-            .map(|(name, operation)| {
-                (
-                    name.clone(),
-                    ServingComponentOperation {
-                        pre_commit: operation.pre_commit.clone(),
-                        registered_operation: operation.registered_operation.clone(),
-                        fresh_only: operation.fresh_only,
-                        committed_result_schema: operation.committed_result_schema.as_ref().map(
-                            |schema| {
-                                String::from_utf8(wamn_execution_contract::canonical_json_bytes(
-                                    &schema.schema,
-                                ))
-                                .expect("canonical JSON is UTF-8")
-                            },
-                        ),
-                        dependencies: operation.dependencies.clone(),
-                        statements: operation.statements.clone(),
-                    },
-                )
-            })
-            .collect(),
-    };
-    anyhow::ensure!(
-        manifest.components.contains(&expected),
-        "component-not-in-carried-release"
-    );
-    Ok(())
 }
 
 fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, String, u32)> {
@@ -1541,228 +1124,22 @@ fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, S
         .collect()
 }
 
+fn synchronous_route_count(manifest: &ServingManifest) -> usize {
+    manifest
+        .attachments
+        .values()
+        .filter(|attachment| {
+            synchronous_request_kind(attachment.kind)
+                && matches!(attachment.target, AttachmentTarget::Route { .. })
+        })
+        .count()
+}
+
 fn synchronous_request_kind(kind: AttachmentKind) -> bool {
     matches!(
         kind,
         AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
     )
-}
-
-#[derive(Debug, Clone)]
-struct NodeAcquisition {
-    claims: SessionClaims,
-    invocation: ConnectionInvocation,
-    /// Event provenance for every transaction opened during this acquisition.
-    /// This is intentionally independent of `caller`: post-commit delivery has
-    /// causation but no caller identity.
-    causation: Option<Causation>,
-    /// The platform component that executes a callerless delivery. Activation
-    /// binds the caller principal as `app.user_id` when a caller exists, and
-    /// this component's principal otherwise. A nested call keeps both.
-    platform: Option<PlatformComponent>,
-}
-
-impl NodeAcquisition {
-    /// The `app.user_id` of this acquisition: the caller principal, or the
-    /// platform principal of a callerless delivery. An anonymous attachment
-    /// has neither.
-    fn executing_principal(&self, caller: Option<&AuthenticatedCaller>) -> Option<String> {
-        match caller {
-            Some(caller) => Some(caller.principal_id().to_owned()),
-            None => self
-                .platform
-                .map(|component| component.principal_id().to_string()),
-        }
-    }
-
-    /// The claims that activation binds: [`Self::claims`] with the executing
-    /// principal as `app.user_id` and the operation token that this
-    /// acquisition executes as `app.operation`. A retargeted acquisition
-    /// carries the nested operation, so a nested call binds its own token.
-    fn executing_claims(&self, caller: Option<&AuthenticatedCaller>) -> SessionClaims {
-        SessionClaims {
-            user_id: self.executing_principal(caller),
-            operation: Some(self.invocation.operation.clone()),
-            ..self.claims.clone()
-        }
-    }
-
-    /// Point one acquisition at the nested target it is about to enter.
-    ///
-    /// The target arrives as the catalog fact rather than as its parts, because
-    /// three of the four retargeted values are read off one fact and four bare
-    /// strings let a caller swap two of them with no type error.
-    ///
-    /// The component name and the operation move with the package and the
-    /// digest. A child that kept the parent's pair would raise its effects under
-    /// the caller's identity while naming its own package (`wamn-b2m6.7`).
-    /// The original wiring owner and root component remain in `origin`.
-    fn retarget(mut self, target: &AdmittedComponent, operation: &str) -> Self {
-        self.invocation
-            .package_id
-            .clone_from(&target.scope.package_id);
-        self.invocation
-            .component_digest
-            .clone_from(&target.component_digest);
-        self.invocation.component.clone_from(&target.component);
-        operation.clone_into(&mut self.invocation.operation);
-        self
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NestedOperationRefusalKind {
-    IdentityUnbound,
-    UndeclaredForExport,
-    ReleaseClosureUnavailable,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NestedOperationRefusal {
-    kind: NestedOperationRefusalKind,
-    operation: Box<str>,
-}
-
-impl NestedOperationRefusal {
-    fn new(kind: NestedOperationRefusalKind, operation: &str) -> Self {
-        Self {
-            kind,
-            operation: operation.into(),
-        }
-    }
-
-    fn literal(&self) -> &'static str {
-        match self.kind {
-            NestedOperationRefusalKind::IdentityUnbound => "nested-operation-identity-unbound",
-            NestedOperationRefusalKind::UndeclaredForExport => {
-                "nested-operation-not-declared-for-export"
-            }
-            NestedOperationRefusalKind::ReleaseClosureUnavailable => {
-                "nested-operation-release-closure-unavailable"
-            }
-        }
-    }
-}
-
-impl fmt::Display for NestedOperationRefusal {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.literal(), self.operation)
-    }
-}
-
-impl std::error::Error for NestedOperationRefusal {}
-
-fn nested_host_error(error: &anyhow::Error) -> wash_runtime::wasmtime::Error {
-    if let Some(denial) = error.downcast_ref::<OperationRefusal>() {
-        return wash_runtime::wasmtime::Error::new(denial.clone());
-    }
-    if let Some(refusal) = error.downcast_ref::<NestedOperationRefusal>() {
-        return wash_runtime::wasmtime::Error::new(refusal.clone());
-    }
-    wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
-}
-
-/// Dependency operation -> (its exact pin, the owner operations that import it).
-type NestedOperationLinks = BTreeMap<String, (ComponentOperationDependency, BTreeSet<String>)>;
-
-fn nested_operation_links(component: &AdmittedComponent) -> anyhow::Result<NestedOperationLinks> {
-    let mut links = NestedOperationLinks::new();
-    for (owner_operation, operation) in &component.operations {
-        for dependency in &operation.dependencies {
-            if links.get(&dependency.operation).is_some_and(|(pinned, _)| {
-                pinned.package != dependency.package
-                    || pinned.version != dependency.version
-                    || pinned.digest != dependency.digest
-            }) {
-                anyhow::bail!("component-operation-dependency-pin-mismatch");
-            }
-            let (_, owners) = links
-                .entry(dependency.operation.clone())
-                .or_insert_with(|| (dependency.clone(), BTreeSet::new()));
-            owners.insert(owner_operation.clone());
-        }
-    }
-    Ok(links)
-}
-
-fn lower_statement_value_type(value_type: ComponentSqlValueType) -> StatementValueType {
-    match value_type {
-        ComponentSqlValueType::Boolean => StatementValueType::Boolean,
-        ComponentSqlValueType::Int32 => StatementValueType::Int32,
-        ComponentSqlValueType::Int64 => StatementValueType::Int64,
-        ComponentSqlValueType::Float64 => StatementValueType::Float64,
-        ComponentSqlValueType::Text => StatementValueType::Text,
-        ComponentSqlValueType::Bytes => StatementValueType::Bytes,
-        ComponentSqlValueType::Numeric => StatementValueType::Numeric,
-        ComponentSqlValueType::Timestamptz => StatementValueType::Timestamptz,
-        ComponentSqlValueType::Json => StatementValueType::Json,
-        ComponentSqlValueType::Uuid => StatementValueType::Uuid,
-    }
-}
-
-fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
-    StatementField {
-        value_type: lower_statement_value_type(field.value_type),
-        nullable: field.nullable,
-    }
-}
-
-/// Lower and verify every operation's statement set out of the admitted facts.
-/// The complete admitted fact owns these immutable statements.
-fn prepare_statement_sets(
-    component: &AdmittedComponent,
-) -> anyhow::Result<BTreeMap<String, PreparedStatementSet>> {
-    component
-        .operations
-        .iter()
-        .map(|(operation, fact)| {
-            WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements))
-                .with_context(|| format!("prepare verified statements for operation {operation:?}"))
-                .map(|prepared| (operation.clone(), prepared))
-        })
-        .collect()
-}
-
-fn lower_statement_set(
-    statements: &BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
-) -> VerifiedStatementSet {
-    statements
-        .iter()
-        .map(|(digest, statement)| {
-            (
-                digest.clone(),
-                VerifiedStatement {
-                    exact_sql: statement.sql.clone().into_boxed_str(),
-                    binds: statement.binds.iter().map(lower_statement_field).collect(),
-                    columns: statement
-                        .columns
-                        .iter()
-                        .map(lower_statement_field)
-                        .collect(),
-                    transactional: statement.transactional,
-                },
-            )
-        })
-        .collect()
-}
-
-/// Unique process-local application and invocation scope identifiers.
-static NEXT_SCOPE: AtomicU64 = AtomicU64::new(0);
-
-fn next_scope(component: &str) -> Box<str> {
-    format!("{component}#{}", NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)).into()
-}
-
-/// The host call ceiling in milliseconds. The constant is well under an hour,
-/// so it fits every width this bound converts to.
-fn max_host_call_ms() -> u64 {
-    u64::try_from(MAX_HOST_CALL_DURATION.as_millis()).unwrap_or(u64::MAX)
-}
-
-fn bounded_node_deadline_ms(deadline_ms: Option<u64>) -> u64 {
-    deadline_ms
-        .unwrap_or(max_host_call_ms())
-        .clamp(1, max_host_call_ms())
 }
 
 fn lower_node_outcome(
@@ -1809,14 +1186,14 @@ fn lower_detail(detail: node_types::ErrorDetail) -> ErrorDetail {
 
 #[cfg(test)]
 mod tests {
-    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
     use opentelemetry_sdk::propagation::TraceContextPropagator;
     use opentelemetry_sdk::trace::{
         InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
     };
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
     use tracing_subscriber::layer::SubscriberExt as _;
     use wamn_catalog::{
-        AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
         EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
         ServingRegistration, ServingRegistrationInput, ServingRelease,
     };
@@ -1826,52 +1203,6 @@ mod tests {
     const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
     const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";
     const VALID_TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-
-    fn component_with_operations(
-        operations: BTreeMap<String, AdmittedComponentOperation>,
-    ) -> AdmittedComponent {
-        AdmittedComponent {
-            scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
-                package_id: "orders".to_owned(),
-                package_version: "1.0.0".to_owned(),
-            },
-            component: "orders".to_owned(),
-            interface_version: "0.1.0".to_owned(),
-            operations,
-            component_digest:
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-            imports: Vec::new(),
-            imports_fingerprint:
-                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
-            effects: Vec::new(),
-        }
-    }
-
-    fn operation_with_statements(
-        statements: BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
-    ) -> AdmittedComponentOperation {
-        AdmittedComponentOperation {
-            pre_commit: None,
-            registered_operation: None,
-            fresh_only: false,
-            committed_result_schema: None,
-            dependencies: Vec::new(),
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
-            statements,
-        }
-    }
-
-    fn statement_plugin() -> Arc<WamnPostgres> {
-        Arc::new(WamnPostgres::with_provider(Arc::new(
-            wamn_runtime::plugins::wamn_postgres::StaticCredentialProvider::new(
-                HashMap::new(),
-                None,
-            ),
-        )))
-    }
 
     struct TraceHarness {
         exporter: InMemorySpanExporter,
@@ -1970,92 +1301,6 @@ mod tests {
     }
 
     #[test]
-    fn node_deadline_is_nonzero_and_host_bounded() {
-        let ceiling = max_host_call_ms();
-
-        assert_eq!(bounded_node_deadline_ms(None), ceiling);
-        assert_eq!(bounded_node_deadline_ms(Some(0)), 1);
-        assert_eq!(bounded_node_deadline_ms(Some(ceiling + 1)), ceiling);
-        assert_eq!(bounded_node_deadline_ms(Some(17)), 17);
-    }
-
-    #[test]
-    fn admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary() {
-        let cases = [
-            (ComponentSqlValueType::Boolean, StatementValueType::Boolean),
-            (ComponentSqlValueType::Int32, StatementValueType::Int32),
-            (ComponentSqlValueType::Int64, StatementValueType::Int64),
-            (ComponentSqlValueType::Float64, StatementValueType::Float64),
-            (ComponentSqlValueType::Text, StatementValueType::Text),
-            (ComponentSqlValueType::Bytes, StatementValueType::Bytes),
-            (ComponentSqlValueType::Numeric, StatementValueType::Numeric),
-            (
-                ComponentSqlValueType::Timestamptz,
-                StatementValueType::Timestamptz,
-            ),
-            (ComponentSqlValueType::Json, StatementValueType::Json),
-            (ComponentSqlValueType::Uuid, StatementValueType::Uuid),
-        ];
-
-        for (index, (admitted, runtime)) in cases.into_iter().enumerate() {
-            let field = ComponentSqlField {
-                name: format!("field-{index}"),
-                value_type: admitted,
-                nullable: index % 2 == 0,
-            };
-            assert_eq!(
-                lower_statement_field(&field),
-                StatementField {
-                    value_type: runtime,
-                    nullable: field.nullable,
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn partial_statement_binding_failure_cleans_earlier_operations() {
-        let postgres = statement_plugin();
-        let invalid_statement = wamn_catalog::ComponentSqlStatement {
-            name: "lookup".to_owned(),
-            path: "sql/lookup.sql".to_owned(),
-            sql: "SELECT 1".to_owned(),
-            binds: Vec::new(),
-            columns: Vec::new(),
-            transactional: false,
-        };
-        let component = component_with_operations(BTreeMap::from([
-            (
-                "a-empty".to_owned(),
-                operation_with_statements(BTreeMap::new()),
-            ),
-            (
-                "b-invalid".to_owned(),
-                operation_with_statements(BTreeMap::from([(
-                    "sha256:not-the-statement-digest".to_owned(),
-                    invalid_statement,
-                )])),
-            ),
-        ]));
-
-        // The refusal moved to preparation: a digest that does not name its
-        // SQL is refused before any scope exists to bind it under, so nothing
-        // partial can ever have been bound.
-        let error = prepare_statement_sets(&component)
-            .expect_err("a digest that does not name its SQL is refused at preparation");
-        assert!(
-            format!("{error:#}").contains("statement-digest-mismatch"),
-            "the refusal names the mismatch: {error:#}"
-        );
-        assert!(
-            postgres
-                .activate_statement_operation("scope-partial", "a-empty")
-                .is_err(),
-            "no operation of a refused digest is ever bound"
-        );
-    }
-
-    #[test]
     fn candidate_refusal_preserves_class_and_frozen_literal() {
         let refusal = CandidateExecutionRefusal::new(
             CandidateExecutionRefusalKind::Binding,
@@ -2067,247 +1312,10 @@ mod tests {
     }
 
     #[test]
-    fn every_registered_invocation_requires_the_exact_operation_grant() {
-        let operation = "orders:widget/get@7.0.0";
-
-        assert!(authorize_registered_operation(None, None, false).is_ok());
-        let denial = authorize_registered_operation(None, Some(operation), false)
-            .expect_err("a registered invocation without an originating caller is denied");
-        assert_eq!(denial.operation(), operation);
-    }
-
-    /// Spec test 9. The host refuses the fixture's custom list read to a caller
-    /// without its operation grant.
-    #[test]
-    fn a_custom_read_refuses_a_caller_without_its_grant() {
-        let tokens = wamn_control_provision::operation_grants::operation_grant_tokens(
-            &wamn_fixture_package::manifest_bytes(),
-        )
-        .expect("parse the fixture manifest");
-        let operation = tokens
-            .get("platform-fixture:widget/list@1.0.0")
-            .expect("the custom list read is its own operation grant");
-        let denial = authorize_registered_operation(None, Some(operation), false)
-            .expect_err("a caller without the grant is refused");
-        assert_eq!(
-            (denial.kind(), denial.operation()),
-            (OperationRefusalKind::PermissionDenied, operation.as_str())
-        );
-    }
-
-    #[test]
-    fn nested_acquisition_preserves_causation_and_root_origin() {
-        let causation = Causation {
-            run: "registration:delivery:9".to_owned(),
-            root: "attachment:delivery:1".to_owned(),
-            depth: 2,
-        };
-        let acquisition = NodeAcquisition {
-            claims: SessionClaims {
-                tenant: "tenant-a".to_owned(),
-                project: Some("project-a".to_owned()),
-                schema: Some("app".to_owned()),
-                runner: Some("executor-a".to_owned()),
-                role: Some("operator".to_owned()),
-                user_id: Some("user-a".to_owned()),
-                operation: None,
-                release: Some(ReleaseIdentity {
-                    effective_release_id: 7,
-                    manifest_digest: wamn_catalog::ManifestDigest::parse(
-                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    )
-                    .expect("valid manifest digest"),
-                }),
-            },
-            invocation: ConnectionInvocation {
-                origin: ConnectionOrigin {
-                    package_id: "platform_fixture_overlay".to_owned(),
-                    component_digest: "sha256:overlay".to_owned(),
-                    component: "overlay".to_owned(),
-                    interface_version: "1.0.0".to_owned(),
-                    operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
-                },
-                entry: InvocationEntry::Wiring(WiringPosition {
-                    package_id: "org_workflow".to_owned(),
-                    wiring_id: "record-batch".to_owned(),
-                    wiring_version: 1,
-                    node_id: "base-command".to_owned(),
-                    occurrence: 0,
-                }),
-                package_id: "platform_fixture_overlay".to_owned(),
-                component_digest: "sha256:overlay".to_owned(),
-                component: "overlay".to_owned(),
-                operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
-                closure: ConnectionExecutionClosure::Released,
-                effects: None,
-            },
-            causation: Some(causation.clone()),
-            platform: Some(PlatformComponent::Materializer),
-        };
-
-        let original = acquisition.clone();
-        let mut target = component_with_operations(BTreeMap::new());
-        target.scope.package_id = "platform_fixture".to_owned();
-        target.component = "fixture".to_owned();
-        target.component_digest = "sha256:base".to_owned();
-        let executor = NodeAcquisition {
-            platform: Some(PlatformComponent::Executor),
-            ..acquisition.clone()
-        }
-        .retarget(&target, "platform-fixture:widget/record-batch@1.0.0");
-        let child = acquisition.retarget(&target, "platform-fixture:widget/record-batch@1.0.0");
-        // A callerless parent and its nested call bind the same platform principal.
-        let materializer = PlatformComponent::Materializer.principal_id().to_string();
-        assert_eq!(
-            original.executing_principal(None).as_deref(),
-            Some(materializer.as_str())
-        );
-        assert_eq!(
-            child.executing_principal(None).as_deref(),
-            Some(materializer.as_str())
-        );
-        assert_eq!(
-            executor.executing_principal(None),
-            Some(PlatformComponent::Executor.principal_id().to_string())
-        );
-        // The parent binds its own operation token and the nested call binds
-        // the token of the operation that it executes.
-        assert_eq!(
-            original.executing_claims(None).operation.as_deref(),
-            Some("platform-fixture-overlay:widget/record-batch@1.0.0")
-        );
-        assert_eq!(
-            child.executing_claims(None),
-            SessionClaims {
-                user_id: Some(materializer.clone()),
-                operation: Some("platform-fixture:widget/record-batch@1.0.0".to_owned()),
-                ..original.claims.clone()
-            }
-        );
-        assert_eq!(child.causation.as_ref(), Some(&causation));
-        assert_eq!(child.invocation.package_id, "platform_fixture");
-        assert_eq!(child.invocation.component_digest, "sha256:base");
-        assert_eq!(
-            child
-                .invocation
-                .entry
-                .wiring()
-                .expect("a wiring entry")
-                .wiring_id,
-            "record-batch"
-        );
-        // The child raises its effects under ITS OWN component and operation.
-        // The overlay's pair belongs to the caller (`wamn-b2m6.7`).
-        assert_eq!(child.invocation.component, "fixture");
-        assert_eq!(
-            child.invocation.operation,
-            "platform-fixture:widget/record-batch@1.0.0"
-        );
-        assert_eq!(child.claims, original.claims);
-        assert_eq!(
-            child.invocation,
-            ConnectionInvocation {
-                package_id: "platform_fixture".to_owned(),
-                component_digest: "sha256:base".to_owned(),
-                component: "fixture".to_owned(),
-                operation: "platform-fixture:widget/record-batch@1.0.0".to_owned(),
-                ..original.invocation.clone()
-            }
-        );
-
-        target.scope.package_id = "wamn_inventory".to_owned();
-        target.component = "inventory".to_owned();
-        target.component_digest = "sha256:inventory".to_owned();
-        let grandchild = child.retarget(&target, "wamn-inventory:inventory/receive@1.0.0");
-        assert_eq!(grandchild.claims, original.claims);
-        assert_eq!(grandchild.causation, original.causation);
-        assert_eq!(
-            grandchild.invocation,
-            ConnectionInvocation {
-                package_id: "wamn_inventory".to_owned(),
-                component_digest: "sha256:inventory".to_owned(),
-                component: "inventory".to_owned(),
-                operation: "wamn-inventory:inventory/receive@1.0.0".to_owned(),
-                ..original.invocation
-            }
-        );
-    }
-
-    #[test]
-    fn shared_nested_import_retains_each_declaring_export() {
-        let operation = "platform-fixture:widget/record-batch@1.0.0";
-        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let dependency = ComponentOperationDependency {
-            participant: None,
-            package: "platform_fixture".to_owned(),
-            version: "1.0.0".to_owned(),
-            digest: digest.to_owned(),
-            operation: operation.to_owned(),
-        };
-        let target = AdmittedComponent {
-            scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
-                package_id: "platform_fixture".to_owned(),
-                package_version: "1.0.0".to_owned(),
-            },
-            component: "fixture".to_owned(),
-            interface_version: "0.1.0".to_owned(),
-            operations: BTreeMap::from([(
-                operation.to_owned(),
-                AdmittedComponentOperation {
-                    pre_commit: None,
-                    registered_operation: Some(operation.to_owned()),
-                    fresh_only: false,
-                    committed_result_schema: None,
-                    dependencies: Vec::new(),
-                    input_ports: Vec::new(),
-                    output_ports: Vec::new(),
-                    parameters: Vec::new(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            component_digest: digest.to_owned(),
-            imports: Vec::new(),
-            imports_fingerprint:
-                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
-            effects: Vec::<AdmittedComponentEffect>::new(),
-        };
-
-        let declaration = AdmittedComponentOperation {
-            pre_commit: None,
-            registered_operation: None,
-            fresh_only: false,
-            committed_result_schema: None,
-            dependencies: vec![dependency],
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
-            statements: BTreeMap::new(),
-        };
-        let mut caller = target;
-        caller.operations = BTreeMap::from([
-            (
-                "platform-fixture-overlay:one/run@3.0.0".to_owned(),
-                declaration.clone(),
-            ),
-            (
-                "platform-fixture-overlay:two/run@3.0.0".to_owned(),
-                declaration,
-            ),
-        ]);
-        let links = nested_operation_links(&caller).expect("matching pins may share one import");
-        let (_, owners) = links
-            .get(operation)
-            .expect("the exact dependency import is present once");
-        assert_eq!(links.len(), 1);
-        assert_eq!(owners.len(), 2);
-    }
-
-    #[test]
     fn component_span_adopts_remote_traceparent_and_host_identity() {
         let harness = TraceHarness::install();
         let request = driver_request(Some(VALID_TRACEPARENT));
-        let parent = remote_trace_context(&request).expect("valid W3C parent must extract");
+        let parent = remote_request_context(&request).expect("valid W3C parent must extract");
         let span = component_invocation_span(
             &request,
             "project-a",
@@ -2400,7 +1408,7 @@ mod tests {
     fn node_context_carries_the_component_span_not_the_ingress_header() {
         let harness = TraceHarness::install();
         let request = driver_request(Some(VALID_TRACEPARENT));
-        let parent = remote_trace_context(&request).expect("valid W3C parent must extract");
+        let parent = remote_request_context(&request).expect("valid W3C parent must extract");
         let span = component_invocation_span(
             &request,
             "project-a",
@@ -2497,7 +1505,7 @@ mod tests {
     fn malformed_traceparent_is_ignored_without_suppressing_the_span() {
         let harness = TraceHarness::install();
         let request = driver_request(Some("not-a-traceparent"));
-        assert!(remote_trace_context(&request).is_none());
+        assert!(remote_request_context(&request).is_none());
         let span = component_invocation_span(
             &request,
             "project-a",
@@ -2555,6 +1563,16 @@ mod tests {
                     "cron".to_owned(),
                     attachment(AttachmentKind::Cron, "background-wiring"),
                 ),
+                (
+                    "route".to_owned(),
+                    ServingAttachment {
+                        target: wamn_catalog::AttachmentTarget::Route {
+                            component: "orders".to_owned(),
+                            operation: "orders:order/get@1.0.0".to_owned(),
+                        },
+                        ..attachment(AttachmentKind::Http, "unused")
+                    },
+                ),
             ]),
             registrations: BTreeMap::from([(
                 "orders::events".to_owned(),
@@ -2577,5 +1595,6 @@ mod tests {
                 ("orders".to_owned(), "studio-wiring".to_owned(), 3),
             ])
         );
+        assert_eq!(synchronous_route_count(&manifest), 1);
     }
 }

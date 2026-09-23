@@ -23,7 +23,7 @@ use futures_util::StreamExt as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
-use wamn_catalog::ServingManifest;
+use wamn_catalog::{AttachmentTarget, ServingManifest};
 use wamn_control_provision::events::{
     advisory_stream_config, consumer_config_matches, materializer_consumer_config,
     source_stream_config, stream_config_matches,
@@ -149,20 +149,22 @@ impl std::error::Error for DerivedPublishError {}
 /// Only the native host publisher constructs these records.
 pub const ROUTER_TAP_PREFIX: &str = "tap";
 
-/// Wire version of the preview record. Bumped when a field's meaning changes.
-const ROUTER_TAP_FORMAT_VERSION: u32 = 1;
-
-/// The only router-tap record version understood by this release.
+/// A router-tap record version understood by this release.
+///
+/// Version 1 names a wiring. Version 2 names a route or a wiring. The publisher
+/// writes only version 2, and a reader still reads version 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouterTapFormatVersion {
     V1,
+    V2,
 }
 
 impl RouterTapFormatVersion {
     /// Numeric value carried on the wire.
     pub const fn as_u32(self) -> u32 {
         match self {
-            Self::V1 => ROUTER_TAP_FORMAT_VERSION,
+            Self::V1 => 1,
+            Self::V2 => 2,
         }
     }
 }
@@ -181,13 +183,12 @@ impl<'de> Deserialize<'de> for RouterTapFormatVersion {
     where
         D: Deserializer<'de>,
     {
-        let version = u32::deserialize(deserializer)?;
-        if version == ROUTER_TAP_FORMAT_VERSION {
-            Ok(Self::V1)
-        } else {
-            Err(serde::de::Error::custom(format!(
+        match u32::deserialize(deserializer)? {
+            1 => Ok(Self::V1),
+            2 => Ok(Self::V2),
+            version => Err(serde::de::Error::custom(format!(
                 "unsupported router-tap format-version {version}"
-            )))
+            ))),
         }
     }
 }
@@ -218,27 +219,134 @@ impl RouterTapSourceKind {
     }
 }
 
-/// Frozen, owned router-tap v1 wire record shared by publisher and readers.
+/// What one router-tap record names: a route or a wiring, never both.
 ///
-/// Fields are declared in the byte order emitted by the former JSON-map
-/// publisher so making the wire typed does not rewrite otherwise-identical
-/// records.
+/// The same shape as the serving manifest's attachment target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouterTapTarget {
+    /// One component export, entered through its attachment.
+    Route {
+        component: Box<str>,
+        operation: Box<str>,
+    },
+    /// One exact wiring version.
+    Wiring {
+        wiring_id: Box<str>,
+        wiring_version: u32,
+    },
+}
+
+/// Frozen, owned router-tap wire record shared by publisher and readers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(try_from = "RouterTapWire", into = "RouterTapWire")]
 pub struct RouterTapRecord {
     pub delivery_id: Box<str>,
     pub format_version: RouterTapFormatVersion,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<Box<str>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub over_ceiling_bytes: Option<u64>,
     pub payload: serde_json::Value,
     pub phase: RouterTapRecordPhase,
     pub redacted: bool,
     pub source_id: Box<str>,
     pub source_kind: RouterTapSourceKind,
-    pub wiring_id: Box<str>,
-    pub wiring_version: u32,
+    pub target: RouterTapTarget,
+}
+
+/// The flat wire of [`RouterTapRecord`].
+///
+/// Fields are declared in the byte order emitted by the former JSON-map
+/// publisher, so a wiring record keeps its version 1 bytes apart from its
+/// version number.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct RouterTapWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    component: Option<Box<str>>,
+    delivery_id: Box<str>,
+    format_version: RouterTapFormatVersion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    operation: Option<Box<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcome: Option<Box<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    over_ceiling_bytes: Option<u64>,
+    payload: serde_json::Value,
+    phase: RouterTapRecordPhase,
+    redacted: bool,
+    source_id: Box<str>,
+    source_kind: RouterTapSourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wiring_id: Option<Box<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wiring_version: Option<u32>,
+}
+
+impl TryFrom<RouterTapWire> for RouterTapRecord {
+    type Error = &'static str;
+
+    fn try_from(wire: RouterTapWire) -> Result<Self, Self::Error> {
+        let target = match (
+            wire.format_version,
+            wire.component,
+            wire.operation,
+            wire.wiring_id,
+            wire.wiring_version,
+        ) {
+            (_, None, None, Some(wiring_id), Some(wiring_version)) => RouterTapTarget::Wiring {
+                wiring_id,
+                wiring_version,
+            },
+            (RouterTapFormatVersion::V2, Some(component), Some(operation), None, None) => {
+                RouterTapTarget::Route {
+                    component,
+                    operation,
+                }
+            }
+            _ => return Err("a router tap names exactly one route or one wiring"),
+        };
+        Ok(Self {
+            delivery_id: wire.delivery_id,
+            format_version: wire.format_version,
+            outcome: wire.outcome,
+            over_ceiling_bytes: wire.over_ceiling_bytes,
+            payload: wire.payload,
+            phase: wire.phase,
+            redacted: wire.redacted,
+            source_id: wire.source_id,
+            source_kind: wire.source_kind,
+            target,
+        })
+    }
+}
+
+impl From<RouterTapRecord> for RouterTapWire {
+    fn from(record: RouterTapRecord) -> Self {
+        let (component, operation, wiring_id, wiring_version) = match record.target {
+            RouterTapTarget::Route {
+                component,
+                operation,
+            } => (Some(component), Some(operation), None, None),
+            RouterTapTarget::Wiring {
+                wiring_id,
+                wiring_version,
+            } => (None, None, Some(wiring_id), Some(wiring_version)),
+        };
+        Self {
+            component,
+            delivery_id: record.delivery_id,
+            format_version: record.format_version,
+            operation,
+            outcome: record.outcome,
+            over_ceiling_bytes: record.over_ceiling_bytes,
+            payload: record.payload,
+            phase: record.phase,
+            redacted: record.redacted,
+            source_id: record.source_id,
+            source_kind: record.source_kind,
+            wiring_id,
+            wiring_version,
+        }
+    }
 }
 
 /// Semantic disagreement inside one otherwise well-formed tap record.
@@ -256,8 +364,24 @@ impl std::fmt::Display for RouterTapRecordError {
 impl std::error::Error for RouterTapRecordError {}
 
 impl RouterTapRecord {
+    /// The subject token that names this record's target: the wiring id, or
+    /// the attachment id of a route.
+    pub fn subject_token(&self) -> &str {
+        match &self.target {
+            RouterTapTarget::Route { .. } => &self.source_id,
+            RouterTapTarget::Wiring { wiring_id, .. } => wiring_id,
+        }
+    }
+
     /// Check that the phase and bounded-payload fields describe one possible record.
     pub fn validate(&self) -> Result<(), RouterTapRecordError> {
+        if matches!(self.target, RouterTapTarget::Route { .. })
+            && self.source_kind != RouterTapSourceKind::Attachment
+        {
+            return Err(RouterTapRecordError {
+                detail: "only an attachment enters a route",
+            });
+        }
         match (self.phase, self.outcome.as_deref()) {
             (RouterTapRecordPhase::Accepted, Some(_)) => {
                 return Err(RouterTapRecordError {
@@ -306,8 +430,8 @@ pub enum RouterTapPhase {
 #[derive(Debug, Clone, Copy)]
 pub struct RouterTapPreview<'a> {
     pub delivery_id: &'a str,
-    pub wiring_id: &'a str,
-    pub wiring_version: u32,
+    /// The route or the wiring that the delivery entered.
+    pub target: &'a AttachmentTarget,
     /// `"attachment"` or `"registration"` — the bridge's own two ingress kinds.
     pub source_kind: &'static str,
     pub source_id: &'a str,
@@ -315,14 +439,15 @@ pub struct RouterTapPreview<'a> {
     pub payload: &'a serde_json::Value,
 }
 
-/// `tap.<org>.<project>.<env>.<wiring>.<delivery>` — six tokens, the same arity
+/// `tap.<org>.<project>.<env>.<target>.<delivery>` — six tokens, the same arity
 /// as `evt.<org>.<project>.<env>.<entity>.<op>`, so a run screen binds one
 /// delivery (`tap.<org>.<project>.<env>.*.<delivery>`) and an operator binds one
-/// environment.
+/// environment. The target token is the wiring id, or the attachment id of a
+/// route.
 ///
 /// The org, project and environment tokens come from the trusted bind-time
 /// claim, which [`WamnJetstream::required_derived_claim`] already confirmed to
-/// be exactly one subject token each. The wiring and delivery ids have not: the
+/// be exactly one subject token each. The target and delivery ids have not: the
 /// delivery id arrives over the WIT boundary from a guest, so both go through
 /// [`subject_token`] and cannot inject a separator or a wildcard. `None` when an
 /// id sanitizes to nothing, because an empty token is not a subject.
@@ -352,28 +477,28 @@ pub fn router_tap_record_subject(
     tenant: &str,
     project: &str,
     environment: &str,
-    wiring_id: &str,
+    target_token: &str,
     delivery_id: &str,
 ) -> Option<String> {
     let prefix = router_tap_environment_prefix(tenant, project, environment)?;
-    let wiring = subject_token(wiring_id);
+    let target = subject_token(target_token);
     let delivery = subject_token(delivery_id);
-    if wiring.is_empty() || delivery.is_empty() {
+    if target.is_empty() || delivery.is_empty() {
         return None;
     }
-    Some(format!("{prefix}.{wiring}.{delivery}"))
+    Some(format!("{prefix}.{target}.{delivery}"))
 }
 
 fn router_tap_subject(
     claim: &JetstreamClaim,
-    wiring_id: &str,
+    target_token: &str,
     delivery_id: &str,
 ) -> Option<String> {
     router_tap_record_subject(
         &claim.tenant,
         &claim.project,
         &claim.environment,
-        wiring_id,
+        target_token,
         delivery_id,
     )
 }
@@ -400,7 +525,29 @@ fn prepare_router_tap(
     claim: &JetstreamClaim,
     preview: &RouterTapPreview<'_>,
 ) -> Option<PreparedRouterTap> {
-    let subject = router_tap_subject(claim, preview.wiring_id, preview.delivery_id)?;
+    let (target, target_token) = match preview.target {
+        AttachmentTarget::Route {
+            component,
+            operation,
+        } => (
+            RouterTapTarget::Route {
+                component: Box::from(component.as_str()),
+                operation: Box::from(operation.as_str()),
+            },
+            preview.source_id,
+        ),
+        AttachmentTarget::Wiring {
+            wiring_id,
+            wiring_version,
+        } => (
+            RouterTapTarget::Wiring {
+                wiring_id: Box::from(wiring_id.as_str()),
+                wiring_version: *wiring_version,
+            },
+            wiring_id.as_str(),
+        ),
+    };
+    let subject = router_tap_subject(claim, target_token, preview.delivery_id)?;
     let source_kind = RouterTapSourceKind::from_preview(preview.source_kind)?;
     let mut payload = preview.payload.clone();
     let redacted = scrub(&mut payload);
@@ -427,7 +574,7 @@ fn prepare_router_tap(
     };
     let record = RouterTapRecord {
         delivery_id: Box::from(preview.delivery_id),
-        format_version: RouterTapFormatVersion::V1,
+        format_version: RouterTapFormatVersion::V2,
         outcome,
         over_ceiling_bytes,
         payload,
@@ -435,8 +582,7 @@ fn prepare_router_tap(
         redacted,
         source_id: Box::from(preview.source_id),
         source_kind,
-        wiring_id: Box::from(preview.wiring_id),
-        wiring_version: preview.wiring_version,
+        target,
     };
     record
         .validate()
@@ -1849,6 +1995,31 @@ mod tests {
 
     // ---- the reserved router-tap preview namespace (wamn-0h0g.24.5) --------
 
+    fn orders_wiring() -> AttachmentTarget {
+        AttachmentTarget::Wiring {
+            wiring_id: "orders".to_owned(),
+            wiring_version: 3,
+        }
+    }
+
+    fn orders_record(format_version: RouterTapFormatVersion) -> RouterTapRecord {
+        RouterTapRecord {
+            delivery_id: "d-1".into(),
+            format_version,
+            outcome: None,
+            over_ceiling_bytes: None,
+            payload: serde_json::json!({"plain": "visible"}),
+            phase: RouterTapRecordPhase::Accepted,
+            redacted: false,
+            source_id: "orders-http".into(),
+            source_kind: RouterTapSourceKind::Attachment,
+            target: RouterTapTarget::Wiring {
+                wiring_id: "orders".into(),
+                wiring_version: 3,
+            },
+        }
+    }
+
     fn tap_claim() -> JetstreamClaim {
         JetstreamClaim {
             tenant: "fixture".into(),
@@ -1897,10 +2068,10 @@ mod tests {
             "nested": {"authorization": "Bearer abc"},
             "plain": "visible",
         });
+        let target = orders_wiring();
         let preview = RouterTapPreview {
             delivery_id: "d-1",
-            wiring_id: "orders",
-            wiring_version: 3,
+            target: &target,
             source_kind: "attachment",
             source_id: "orders-http",
             phase: RouterTapPhase::Accepted,
@@ -1920,9 +2091,15 @@ mod tests {
         assert_eq!(record.phase, RouterTapRecordPhase::Accepted);
         assert_eq!(record.outcome, None);
         assert_eq!(&*record.delivery_id, "d-1");
-        assert_eq!(record.wiring_version, 3);
+        assert_eq!(
+            record.target,
+            RouterTapTarget::Wiring {
+                wiring_id: "orders".into(),
+                wiring_version: 3,
+            }
+        );
         assert_eq!(&*record.source_id, "orders-http");
-        assert_eq!(record.format_version.as_u32(), 1);
+        assert_eq!(record.format_version.as_u32(), 2);
         assert_eq!(prepared.subject, "tap.fixture.app.prod.orders.d-1");
 
         // A settled preview names its outcome; an accepted one has none to name.
@@ -1976,10 +2153,10 @@ mod tests {
     fn the_preview_record_is_frozen_for_its_named_consumer() {
         let claim = tap_claim();
         let payload = serde_json::json!({"plain": "visible"});
+        let target = orders_wiring();
         let preview = RouterTapPreview {
             delivery_id: "d-1",
-            wiring_id: "orders",
-            wiring_version: 3,
+            target: &target,
             source_kind: "attachment",
             source_id: "orders-http",
             phase: RouterTapPhase::Accepted,
@@ -1991,19 +2168,7 @@ mod tests {
             serde_json::from_slice(&accepted.body).expect("the tap body is JSON");
         assert_eq!(
             accepted_record,
-            RouterTapRecord {
-                delivery_id: "d-1".into(),
-                format_version: RouterTapFormatVersion::V1,
-                outcome: None,
-                over_ceiling_bytes: None,
-                payload: serde_json::json!({"plain": "visible"}),
-                phase: RouterTapRecordPhase::Accepted,
-                redacted: false,
-                source_id: "orders-http".into(),
-                source_kind: RouterTapSourceKind::Attachment,
-                wiring_id: "orders".into(),
-                wiring_version: 3,
-            },
+            orders_record(RouterTapFormatVersion::V2),
             "the accepted preview record is frozen for wamn-dggp.10"
         );
         assert_eq!(
@@ -2015,7 +2180,7 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&accepted.body)
                 .expect("decode accepted record as its public wire value"),
             serde_json::json!({
-                "format-version": 1,
+                "format-version": 2,
                 "phase": "accepted",
                 "delivery-id": "d-1",
                 "wiring-id": "orders",
@@ -2025,7 +2190,7 @@ mod tests {
                 "redacted": false,
                 "payload": {"plain": "visible"},
             }),
-            "the accepted v1 wire stays byte-semantically frozen"
+            "the accepted v2 wire of a wiring keeps the v1 keys"
         );
 
         // A settled preview adds exactly one key. An accepted one carries no
@@ -2044,17 +2209,9 @@ mod tests {
         assert_eq!(
             settled_record,
             RouterTapRecord {
-                delivery_id: "d-1".into(),
-                format_version: RouterTapFormatVersion::V1,
                 outcome: Some("respond".into()),
-                over_ceiling_bytes: None,
-                payload: serde_json::json!({"plain": "visible"}),
                 phase: RouterTapRecordPhase::Settled,
-                redacted: false,
-                source_id: "orders-http".into(),
-                source_kind: RouterTapSourceKind::Attachment,
-                wiring_id: "orders".into(),
-                wiring_version: 3,
+                ..orders_record(RouterTapFormatVersion::V2)
             },
             "the settled preview record is frozen for wamn-dggp.10"
         );
@@ -2067,7 +2224,7 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&settled.body)
                 .expect("decode settled record as its public wire value"),
             serde_json::json!({
-                "format-version": 1,
+                "format-version": 2,
                 "phase": "settled",
                 "outcome": "respond",
                 "delivery-id": "d-1",
@@ -2078,34 +2235,113 @@ mod tests {
                 "redacted": false,
                 "payload": {"plain": "visible"},
             }),
-            "the settled v1 wire stays byte-semantically frozen"
+            "the settled v2 wire of a wiring keeps the v1 keys"
         );
 
         assert_eq!(
             router_tap_subject(&claim, "orders", "d-1").as_deref(),
             Some("tap.fixture.app.prod.orders.d-1"),
             "the subject grammar is the other half of the frozen contract: \
-             {ROUTER_TAP_PREFIX}.<tenant>.<project>.<environment>.<wiring>.<delivery>"
+             {ROUTER_TAP_PREFIX}.<tenant>.<project>.<environment>.<target>.<delivery>"
+        );
+    }
+
+    /// A route names its component and operation, and its subject token is
+    /// the attachment id, because a route has no wiring id.
+    #[test]
+    fn a_route_preview_names_the_route_and_takes_the_attachment_token() {
+        let claim = tap_claim();
+        let payload = serde_json::json!({"plain": "visible"});
+        let target = AttachmentTarget::Route {
+            component: "orders".to_owned(),
+            operation: "orders:order/get@1.0.0".to_owned(),
+        };
+        let prepared = prepare_router_tap(
+            &claim,
+            &RouterTapPreview {
+                delivery_id: "d-1",
+                target: &target,
+                source_kind: "attachment",
+                source_id: "orders-get-http",
+                phase: RouterTapPhase::Accepted,
+                payload: &payload,
+            },
+        )
+        .expect("the ids name tokens");
+        assert_eq!(prepared.subject, "tap.fixture.app.prod.orders-get-http.d-1");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&prepared.body)
+                .expect("decode the route record as its public wire value"),
+            serde_json::json!({
+                "format-version": 2,
+                "phase": "accepted",
+                "delivery-id": "d-1",
+                "component": "orders",
+                "operation": "orders:order/get@1.0.0",
+                "source-kind": "attachment",
+                "source-id": "orders-get-http",
+                "redacted": false,
+                "payload": {"plain": "visible"},
+            })
+        );
+        let record: RouterTapRecord =
+            serde_json::from_slice(&prepared.body).expect("the route record reads back");
+        assert_eq!(record.subject_token(), "orders-get-http");
+        assert_eq!(
+            record.target,
+            RouterTapTarget::Route {
+                component: "orders".into(),
+                operation: "orders:order/get@1.0.0".into(),
+            }
+        );
+
+        let mut from_registration = record;
+        from_registration.source_kind = RouterTapSourceKind::Registration;
+        assert!(from_registration.validate().is_err());
+    }
+
+    /// Version 1 is never written again, and every version 1 record stays
+    /// readable as the wiring it names.
+    #[test]
+    fn a_version_one_record_still_reads_as_its_wiring() {
+        let v1 = serde_json::json!({
+            "format-version": 1,
+            "phase": "accepted",
+            "delivery-id": "d-1",
+            "wiring-id": "orders",
+            "wiring-version": 3,
+            "source-kind": "attachment",
+            "source-id": "orders-http",
+            "redacted": false,
+            "payload": {"plain": "visible"},
+        });
+        let record: RouterTapRecord =
+            serde_json::from_value(v1.clone()).expect("a version 1 record reads");
+        assert_eq!(record, orders_record(RouterTapFormatVersion::V1));
+        assert_eq!(record.subject_token(), "orders");
+        assert_eq!(
+            serde_json::to_value(&record).expect("serialize the version 1 record"),
+            v1
+        );
+
+        let mut route = v1;
+        route
+            .as_object_mut()
+            .expect("the record is an object")
+            .remove("wiring-id");
+        route["component"] = serde_json::json!("orders");
+        route["operation"] = serde_json::json!("orders:order/get@1.0.0");
+        assert!(
+            serde_json::from_value::<RouterTapRecord>(route).is_err(),
+            "version 1 cannot name a route"
         );
     }
 
     #[test]
     fn the_preview_record_refuses_unknown_versions_and_fields() {
-        let record = RouterTapRecord {
-            delivery_id: "d-1".into(),
-            format_version: RouterTapFormatVersion::V1,
-            outcome: None,
-            over_ceiling_bytes: None,
-            payload: serde_json::json!({"plain": "visible"}),
-            phase: RouterTapRecordPhase::Accepted,
-            redacted: false,
-            source_id: "orders-http".into(),
-            source_kind: RouterTapSourceKind::Attachment,
-            wiring_id: "orders".into(),
-            wiring_version: 3,
-        };
+        let record = orders_record(RouterTapFormatVersion::V2);
         let mut future_version = serde_json::to_value(&record).expect("serialize record");
-        future_version["format-version"] = serde_json::Value::from(2);
+        future_version["format-version"] = serde_json::Value::from(3);
         assert!(serde_json::from_value::<RouterTapRecord>(future_version).is_err());
 
         let mut unknown_field = serde_json::to_value(&record).expect("serialize record");
@@ -2115,6 +2351,14 @@ mod tests {
         let mut unknown_source = serde_json::to_value(&record).expect("serialize record");
         unknown_source["source-kind"] = serde_json::Value::String("schedule".to_owned());
         assert!(serde_json::from_value::<RouterTapRecord>(unknown_source).is_err());
+
+        let mut both = serde_json::to_value(&record).expect("serialize record");
+        both["component"] = serde_json::json!("orders");
+        both["operation"] = serde_json::json!("orders:order/get@1.0.0");
+        assert!(
+            serde_json::from_value::<RouterTapRecord>(both).is_err(),
+            "a record names a route or a wiring, never both"
+        );
 
         let mut impossible = record.clone();
         impossible.outcome = Some("respond".into());

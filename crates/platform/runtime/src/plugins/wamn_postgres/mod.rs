@@ -68,7 +68,8 @@ mod types;
 mod wiring_resolution;
 
 pub use wiring_resolution::{
-    CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_WIRING_SQL, ResolvedActiveWiring,
+    CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,
+    ResolvedActiveWiring,
 };
 
 pub use claims::{

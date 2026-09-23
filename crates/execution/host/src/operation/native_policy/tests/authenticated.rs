@@ -588,7 +588,7 @@ async fn assert_authenticated(admin_url: &str) -> anyhow::Result<()> {
 
 #[test]
 fn native_authenticated_nested_authority_and_lifecycle() {
-    let full_name = format!("router_driver::native_policy::tests::authenticated::{TEST_NAME}");
+    let full_name = format!("operation::native_policy::tests::authenticated::{TEST_NAME}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(TEST_NAME) {
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", &full_name, "--nocapture"])

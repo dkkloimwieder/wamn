@@ -25,9 +25,9 @@ mod tests;
 
 /// One admitted authority fact and the exact bytes it names.
 #[derive(Debug)]
-pub(super) struct NativeComponent {
-    pub(super) fact: AdmittedComponent,
-    pub(super) bytes: Vec<u8>,
+pub(crate) struct NativeComponent {
+    pub(crate) fact: AdmittedComponent,
+    pub(crate) bytes: Vec<u8>,
 }
 
 /// The immutable release or candidate workload selected by the owning driver.
@@ -44,18 +44,18 @@ pub(super) struct NativeWorkloadSpec {
 
 /// A native workload and its admitted facts, keyed by native component identity.
 #[derive(Debug)]
-pub(super) struct NativeWorkload {
-    pub(super) resolved: ResolvedWorkload,
+pub(crate) struct NativeWorkload {
+    pub(crate) resolved: ResolvedWorkload,
     pub(super) facts_by_component_id: BTreeMap<String, AdmittedComponent>,
 }
 
 /// One release or candidate lifetime, retained by every native call it owns.
 #[derive(Debug)]
-pub(super) struct NativeApplication {
+pub(crate) struct NativeApplication {
     // Cleanup runs before the workload fields drop. The policy contains only
     // synchronous WAMN registries; native workload teardown owns warm stores.
     _cleanup: NativePolicyCleanup,
-    pub(super) workload: Arc<NativeWorkload>,
+    pub(crate) workload: Arc<NativeWorkload>,
     pub(super) policy: Arc<NativePolicy>,
 }
 

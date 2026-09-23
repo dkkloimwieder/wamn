@@ -24,9 +24,11 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::Accessor;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::router_driver::{
-    OperationRefusal, OperationRefusalKind, authorize_registered_operation,
+use crate::operation::{
+    OperationHost, OperationRefusal, OperationRefusalKind, authorize_registered_operation,
+    node_types,
 };
+use crate::route::{RouteCall, invoke_route};
 use crate::router_response::{InterruptedResponse, PartialEvidence};
 use crate::{RouterDriver, RouterDriverRequest};
 
@@ -79,6 +81,8 @@ const EXECUTION_FAILED: &str = "execution-failed";
 /// The one bridge shared by attachment and registration ingress.
 pub struct RouterDeliveryBridge {
     driver: Arc<RouterDriver>,
+    /// The route path calls this host directly and never enters the driver.
+    operations: Arc<OperationHost>,
     release: Arc<LoadedRelease>,
     jetstream: Arc<WamnJetstream>,
     metrics: Option<DeliveryMetrics>,
@@ -99,6 +103,7 @@ impl RouterDeliveryBridge {
             &release.manifest().release.environment,
         )?;
         Ok(Self {
+            operations: driver.operations(),
             driver,
             release,
             jetstream,
@@ -135,8 +140,13 @@ impl RouterDeliveryBridge {
         if label_eligible && let Ok(DeliveryOutcome::Respond(payload)) = &outcome {
             let actors = result_actors(payload);
             match self
-                .driver
-                .record_actor_labels(&self.release.manifest().release.tenant_id, &actors)
+                .operations
+                .postgres
+                .record_actor_labels(
+                    &self.operations.project,
+                    &self.release.manifest().release.tenant_id,
+                    &actors,
+                )
                 .await
             {
                 Ok(labels) => actor_labels = labels,
@@ -199,34 +209,74 @@ impl RouterDeliveryBridge {
         self.tap(
             source,
             &delivery_id,
-            &target.wiring_id,
-            target.wiring_version,
+            &target.target,
             RouterTapPhase::Accepted,
             &payload,
         )
         .await;
+        let attributes = match &self.metrics {
+            Some(_) => delivery_attributes(source, &target.target),
+            None => Vec::new(),
+        };
+        let (wiring_id, wiring_version) = match &target.target {
+            AttachmentTarget::Wiring {
+                wiring_id,
+                wiring_version,
+            } => (wiring_id.clone(), *wiring_version),
+            AttachmentTarget::Route {
+                component,
+                operation,
+            } => {
+                let result = invoke_route(
+                    &self.operations,
+                    RouteCall {
+                        package_id: &target.package_id,
+                        component,
+                        operation,
+                        delivery_id: &delivery_id,
+                        payload: &payload,
+                        caller,
+                        traceparent: traceparent.as_deref(),
+                        tracestate: tracestate.as_deref(),
+                        causation,
+                    },
+                )
+                .await
+                .and_then(settle_route);
+                return match result {
+                    Ok(settled) => {
+                        self.record(&attributes, DeliveryClass::Delivered);
+                        self.tap(
+                            source,
+                            &delivery_id,
+                            &target.target,
+                            RouterTapPhase::Settled(settled.label),
+                            &settled.result,
+                        )
+                        .await;
+                        Ok(settled.outcome)
+                    }
+                    Err(error) => {
+                        self.refuse(source, &delivery_id, &target.target, &attributes, &error)
+                            .await
+                    }
+                };
+            }
+        };
 
         let release = &self.release.manifest().release;
         let request = RouterDriverRequest {
             tenant_id: release.tenant_id.clone(),
             package_id: target.package_id.clone(),
             environment: release.environment.clone(),
-            // Cloned, not moved: the settled preview after the driver call still
-            // has to name the delivery it settles, and `request` is gone by then.
-            wiring_id: target.wiring_id.clone(),
-            wiring_version: target.wiring_version,
+            wiring_id: wiring_id.clone(),
+            wiring_version,
             delivery_id: delivery_id.clone(),
             payload,
             caller_attached: target.caller_attached,
             caller,
             traceparent,
             tracestate,
-        };
-        // The last point that still holds every dimension: the request moves
-        // into the driver on the next line.
-        let attributes = match &self.metrics {
-            Some(_) => delivery_attributes(source, &request.wiring_id, request.wiring_version),
-            None => Vec::new(),
         };
         let result = self
             .driver
@@ -246,17 +296,40 @@ impl RouterDeliveryBridge {
                 self.tap(
                     source,
                     &delivery_id,
-                    &target.wiring_id,
-                    target.wiring_version,
+                    &target.target,
                     RouterTapPhase::Settled(outcome),
                     &result,
                 )
                 .await;
-                self.publish_emit(&target, &delivery.outcome, causation)
-                    .await?;
+                self.publish_emit(
+                    &target.package_id,
+                    &wiring_id,
+                    wiring_version,
+                    &delivery.outcome,
+                    causation,
+                )
+                .await?;
                 lower_with_evidence(delivery.outcome, delivery.partial)
             }
-            Err(error) if error.downcast_ref::<InterruptedResponse>().is_some() => {
+            Err(error) => {
+                self.refuse(source, &delivery_id, &target.target, &attributes, &error)
+                    .await
+            }
+        }
+    }
+
+    /// Settle a delivery that the route path or the driver refused, or that
+    /// failed to execute.
+    async fn refuse(
+        &self,
+        source: SourceRef<'_>,
+        delivery_id: &str,
+        target: &AttachmentTarget,
+        attributes: &[KeyValue],
+        error: &anyhow::Error,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
+        match error {
+            error if error.downcast_ref::<InterruptedResponse>().is_some() => {
                 let interrupted = error
                     .downcast_ref::<InterruptedResponse>()
                     .expect("guarded partial response");
@@ -264,12 +337,11 @@ impl RouterDeliveryBridge {
                     .source
                     .downcast_ref::<OperationRefusal>()
                     .map_or(DeliveryError::ExecutionFailed, lower_operation_refusal);
-                self.record(&attributes, DeliveryClass::ExecutionFailed);
+                self.record(attributes, DeliveryClass::ExecutionFailed);
                 self.tap(
                     source,
-                    &delivery_id,
-                    &target.wiring_id,
-                    target.wiring_version,
+                    delivery_id,
+                    target,
                     RouterTapPhase::Settled(EXECUTION_FAILED),
                     &serde_json::Value::Null,
                 )
@@ -277,7 +349,7 @@ impl RouterDeliveryBridge {
                 tracing::warn!(error = %format_args!("{:#}", interrupted.source), "router delivery failed after a declared committed result");
                 partial_outcome(&interrupted.evidence, FailedOutcome::Error(failure))
             }
-            Err(error) if error.downcast_ref::<OperationRefusal>().is_some() => {
+            error if error.downcast_ref::<OperationRefusal>().is_some() => {
                 let denial = error
                     .downcast_ref::<OperationRefusal>()
                     .expect("the guarded branch carries an operation refusal")
@@ -291,25 +363,23 @@ impl RouterDeliveryBridge {
                         FRESH_CREDENTIAL_REQUIRED,
                     ),
                 };
-                self.record(&attributes, class);
+                self.record(attributes, class);
                 self.tap(
                     source,
-                    &delivery_id,
-                    &target.wiring_id,
-                    target.wiring_version,
+                    delivery_id,
+                    target,
                     RouterTapPhase::Settled(literal),
                     &serde_json::Value::Null,
                 )
                 .await;
                 Err(lower_operation_refusal(&denial))
             }
-            Err(error) => {
-                self.record(&attributes, DeliveryClass::ExecutionFailed);
+            error => {
+                self.record(attributes, DeliveryClass::ExecutionFailed);
                 self.tap(
                     source,
-                    &delivery_id,
-                    &target.wiring_id,
-                    target.wiring_version,
+                    delivery_id,
+                    target,
                     RouterTapPhase::Settled(EXECUTION_FAILED),
                     &serde_json::Value::Null,
                 )
@@ -342,8 +412,7 @@ impl RouterDeliveryBridge {
         &self,
         source: SourceRef<'_>,
         delivery_id: &str,
-        wiring_id: &str,
-        wiring_version: u32,
+        target: &AttachmentTarget,
         phase: RouterTapPhase,
         payload: &serde_json::Value,
     ) {
@@ -352,8 +421,7 @@ impl RouterDeliveryBridge {
                 ROUTER_DELIVERY_ID,
                 RouterTapPreview {
                     delivery_id,
-                    wiring_id,
-                    wiring_version,
+                    target,
                     source_kind: source.kind(),
                     source_id: source.id(),
                     phase,
@@ -363,12 +431,14 @@ impl RouterDeliveryBridge {
             .await;
     }
 
-    /// `target` rather than a bare package id: the wiring position this bridge
-    /// resolved before the walk is what names the publication on its effect
-    /// span, and the node comes from the verdict the walk recorded.
+    /// The wiring position this bridge resolved before the walk names the
+    /// publication on its effect span, and the node comes from the verdict the
+    /// walk recorded. A route never emits.
     async fn publish_emit(
         &self,
-        target: &ResolvedTarget,
+        package_id: &str,
+        wiring_id: &str,
+        wiring_version: u32,
         outcome: &Outcome,
         causation: Causation,
     ) -> Result<(), DeliveryError> {
@@ -385,9 +455,9 @@ impl RouterDeliveryBridge {
         self.jetstream
             .publish_derived(DerivedPublishRequest {
                 component_id: ROUTER_DELIVERY_ID.to_owned(),
-                package_id: target.package_id.clone(),
-                wiring_id: target.wiring_id.clone(),
-                wiring_version: target.wiring_version,
+                package_id: package_id.to_owned(),
+                wiring_id: wiring_id.to_owned(),
+                wiring_version,
                 node_id: node_id.clone(),
                 entity: entity.clone(),
                 operation: *operation,
@@ -565,8 +635,8 @@ impl<'a> SourceRef<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedTarget {
     package_id: String,
-    wiring_id: String,
-    wiring_version: u32,
+    /// A registration always names a wiring. An attachment names either.
+    target: AttachmentTarget,
     caller_attached: bool,
     /// `Some` only for attachment ingress. A callerless attachment is legal
     /// only when its loaded auth policy explicitly names anonymous mode.
@@ -578,18 +648,9 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
     match source {
         SourceRef::Attachment(id) => {
             let attachment = manifest.attachments.get(id)?;
-            // A route target has no wiring to walk; the route path owns it.
-            let AttachmentTarget::Wiring {
-                wiring_id,
-                wiring_version,
-            } = &attachment.target
-            else {
-                return None;
-            };
             Some(ResolvedTarget {
                 package_id: attachment.package_id.clone(),
-                wiring_id: wiring_id.clone(),
-                wiring_version: *wiring_version,
+                target: attachment.target.clone(),
                 caller_attached: true,
                 anonymous_caller_permitted: Some(
                     parse_attachment_auth_policy(&attachment.auth_policy)
@@ -604,8 +665,10 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                 .get(id)
                 .map(|registration| ResolvedTarget {
                     package_id: registration.package_id.clone(),
-                    wiring_id: registration.wiring_id.clone(),
-                    wiring_version: registration.wiring_version,
+                    target: AttachmentTarget::Wiring {
+                        wiring_id: registration.wiring_id.clone(),
+                        wiring_version: registration.wiring_version,
+                    },
                     caller_attached: false,
                     anonymous_caller_permitted: None,
                     registered_operation: None,
@@ -756,18 +819,76 @@ impl DeliveryMetrics {
 /// count is fixed for the life of the process at one per manifest attachment
 /// and registration. `wamn.wiring.version` is unbounded across releases but
 /// constant within a process, so it churns at the release rate, not the
-/// delivery rate.
-fn delivery_attributes(
-    source: SourceRef<'_>,
-    wiring_id: &str,
-    wiring_version: u32,
-) -> Vec<KeyValue> {
-    vec![
+/// delivery rate. A route has no wiring, so its source names it alone.
+fn delivery_attributes(source: SourceRef<'_>, target: &AttachmentTarget) -> Vec<KeyValue> {
+    let mut attributes = vec![
         KeyValue::new(SOURCE_KIND, source.kind()),
         KeyValue::new(SOURCE_ID, source.id().to_owned()),
-        KeyValue::new(WIRING_ID, wiring_id.to_owned()),
-        KeyValue::new(WIRING_VERSION, i64::from(wiring_version)),
-    ]
+    ];
+    if let AttachmentTarget::Wiring {
+        wiring_id,
+        wiring_version,
+    } = target
+    {
+        attributes.push(KeyValue::new(WIRING_ID, wiring_id.clone()));
+        attributes.push(KeyValue::new(WIRING_VERSION, i64::from(*wiring_version)));
+    }
+    attributes
+}
+
+/// How one route call settled: what the caller receives, and the live view's
+/// label and result for it.
+#[derive(Debug)]
+struct RouteSettlement {
+    outcome: DeliveryOutcome,
+    label: &'static str,
+    result: serde_json::Value,
+}
+
+/// Lower the one export call of a route.
+///
+/// A route never retries, so a retryable or rate-limited error lowers to the
+/// failure that a wiring reports after its last attempt, and the caller sees
+/// one shape. The labels and results are the ones [`settled_preview`] gives
+/// the same wiring outcome.
+fn settle_route(
+    outcome: Result<node_types::Emission, node_types::NodeError>,
+) -> anyhow::Result<RouteSettlement> {
+    let failed = |kind, detail: node_types::ErrorDetail| RouteSettlement {
+        label: "failed",
+        result: serde_json::json!({"code": detail.code, "message": detail.message}),
+        outcome: DeliveryOutcome::Failed(DeliveryFailure {
+            kind,
+            code: detail.code,
+            message: detail.message,
+        }),
+    };
+    Ok(match outcome {
+        Ok(emission) => {
+            let payload: serde_json::Value = serde_json::from_str(&emission.payload)
+                .map_err(|_| anyhow::anyhow!("wamn:node emitted invalid JSON"))?;
+            RouteSettlement {
+                outcome: DeliveryOutcome::Respond(serde_json::to_string(&payload)?),
+                label: "respond",
+                result: payload,
+            }
+        }
+        Err(node_types::NodeError::Retryable(detail)) => {
+            failed(WireFailureKind::RetryExhausted, detail)
+        }
+        Err(node_types::NodeError::RateLimited(limited)) => {
+            failed(WireFailureKind::RetryExhausted, limited.detail)
+        }
+        Err(node_types::NodeError::Terminal(detail)) => failed(WireFailureKind::Terminal, detail),
+        Err(node_types::NodeError::InvalidInput(detail)) => {
+            failed(WireFailureKind::InvalidInput, detail)
+        }
+        Err(node_types::NodeError::Cancelled) => RouteSettlement {
+            outcome: DeliveryOutcome::Cancelled,
+            label: "cancelled",
+            result: serde_json::Value::Null,
+        },
+    })
 }
 
 /// How one settled delivery reads in the live view: the outcome label, and the
@@ -965,8 +1086,10 @@ mod tests {
             resolve_target(&manifest(), SourceRef::Attachment("orders-http")),
             Some(ResolvedTarget {
                 package_id: "manifest_mint".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 1,
+                target: AttachmentTarget::Wiring {
+                    wiring_id: "orders".into(),
+                    wiring_version: 1,
+                },
                 caller_attached: true,
                 anonymous_caller_permitted: Some(true),
                 registered_operation: None,
@@ -979,8 +1102,10 @@ mod tests {
             ),
             Some(ResolvedTarget {
                 package_id: "manifest_mint".into(),
-                wiring_id: "shipping".into(),
-                wiring_version: 2,
+                target: AttachmentTarget::Wiring {
+                    wiring_id: "shipping".into(),
+                    wiring_version: 2,
+                },
                 caller_attached: false,
                 anonymous_caller_permitted: None,
                 registered_operation: None,
@@ -1173,6 +1298,93 @@ mod tests {
         assert_eq!(failure.message, "order is invalid");
     }
 
+    /// A route answers each node outcome exactly as its one-node respond
+    /// wiring does: the caller's outcome and the live view's label and result
+    /// both match. A retryable or rate-limited error reads as the wiring's
+    /// failure after its last attempt, because a route never retries.
+    #[test]
+    fn a_route_settles_each_node_outcome_as_its_one_node_wiring() {
+        let detail = || node_types::ErrorDetail {
+            message: "order is invalid".into(),
+            code: Some("bad-order".into()),
+        };
+        let failed = |kind| Outcome {
+            status: WalkStatus::Failed,
+            result: serde_json::Value::Null,
+            failure: Some(Failure {
+                node: "operation".into(),
+                kind,
+                detail: ErrorDetail::coded("bad-order", "order is invalid"),
+            }),
+            hops: 1,
+            verdict: None,
+        };
+        let cases = [
+            (
+                Ok(node_types::Emission {
+                    payload: r#"{"accepted":true}"#.into(),
+                    port: None,
+                }),
+                Outcome {
+                    status: WalkStatus::Completed,
+                    result: serde_json::json!({"accepted": true}),
+                    failure: None,
+                    hops: 1,
+                    verdict: Some(Verdict::Respond {
+                        payload: serde_json::json!({"accepted": true}),
+                        node_id: "operation".into(),
+                    }),
+                },
+            ),
+            (
+                Err(node_types::NodeError::Retryable(detail())),
+                failed(FailureKind::RetryExhausted),
+            ),
+            (
+                Err(node_types::NodeError::RateLimited(
+                    node_types::RateLimitDetail {
+                        detail: detail(),
+                        retry_after_ms: Some(10),
+                    },
+                )),
+                failed(FailureKind::RetryExhausted),
+            ),
+            (
+                Err(node_types::NodeError::Terminal(detail())),
+                failed(FailureKind::Terminal),
+            ),
+            (
+                Err(node_types::NodeError::InvalidInput(detail())),
+                failed(FailureKind::InvalidInput),
+            ),
+            (
+                Err(node_types::NodeError::Cancelled),
+                outcome_of(WalkStatus::Cancelled, None),
+            ),
+        ];
+        for (route, wiring) in cases {
+            let settled = settle_route(route).expect("every node outcome settles");
+            let (label, result) = settled_preview(&wiring);
+            assert_eq!((settled.label, &settled.result), (label, &*result));
+            assert_eq!(
+                format!("{:?}", settled.outcome),
+                format!(
+                    "{:?}",
+                    lower_outcome(wiring).expect("the wiring outcome lowers")
+                ),
+            );
+        }
+
+        assert!(
+            settle_route(Ok(node_types::Emission {
+                payload: "not json".into(),
+                port: None,
+            }))
+            .is_err(),
+            "invalid JSON is an execution failure, as on the wiring path"
+        );
+    }
+
     #[test]
     fn a_first_verdict_stands_when_later_frontier_work_fails() {
         let outcome = Outcome {
@@ -1276,11 +1488,7 @@ mod tests {
         let attachment = resolve_target(&manifest, SourceRef::Attachment("orders-http"))
             .expect("the fixture names this attachment");
         assert_eq!(
-            delivery_attributes(
-                SourceRef::Attachment("orders-http"),
-                &attachment.wiring_id,
-                attachment.wiring_version,
-            ),
+            delivery_attributes(SourceRef::Attachment("orders-http"), &attachment.target),
             vec![
                 KeyValue::new(SOURCE_KIND, "attachment"),
                 KeyValue::new(SOURCE_ID, "orders-http"),
@@ -1297,8 +1505,7 @@ mod tests {
         assert_eq!(
             delivery_attributes(
                 SourceRef::Registration("manifest_mint::orders-changed"),
-                &registration.wiring_id,
-                registration.wiring_version,
+                &registration.target,
             ),
             vec![
                 KeyValue::new(SOURCE_KIND, "registration"),
@@ -1314,7 +1521,13 @@ mod tests {
     #[test]
     fn a_delivered_run_counts_once_and_raises_no_error_series() {
         let harness = MetricHarness::install();
-        let attributes = delivery_attributes(SourceRef::Attachment("orders-http"), "orders", 1);
+        let attributes = delivery_attributes(
+            SourceRef::Attachment("orders-http"),
+            &AttachmentTarget::Wiring {
+                wiring_id: "orders".to_owned(),
+                wiring_version: 1,
+            },
+        );
 
         harness
             .metrics()
@@ -1343,8 +1556,10 @@ mod tests {
         let metrics = harness.metrics();
         let attributes = delivery_attributes(
             SourceRef::Registration("manifest_mint::orders-changed"),
-            "shipping",
-            2,
+            &AttachmentTarget::Wiring {
+                wiring_id: "shipping".to_owned(),
+                wiring_version: 2,
+            },
         );
 
         metrics.record(&attributes, DeliveryClass::PermissionDenied);

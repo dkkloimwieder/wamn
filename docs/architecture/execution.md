@@ -1,8 +1,9 @@
 # Request execution
 
 A request enters through a declared route and keeps its caller identity throughout execution.
-The host binds the route to an admitted wiring in the supplied release.
-The router decides which operation runs next. Native dispatch executes that operation.
+The host binds the route to one component operation or to an admitted wiring in the supplied release.
+A route target calls its operation once, with no graph walk and no retry.
+For a wiring, the router decides which operation runs next. Native dispatch executes each operation.
 A hot HTTP request creates no run or queue row.
 Route concurrency limits refuse excess work with HTTP 429.
 
@@ -94,8 +95,12 @@ Wasmtime's pooling allocator remains enabled under its separate resource limits.
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
 All cleanup paths retain their resource bounds and return failures to their owner.
 
-The [driver](../../crates/execution/host/src/router_driver.rs) coordinates the graph through native dispatch.
+The [operation module](../../crates/execution/host/src/operation.rs) runs one component export through native dispatch.
 Its private modules own admission, authority, dependency calls, workload loading, and invocation state.
+The [driver](../../crates/execution/host/src/router_driver.rs) walks a wiring graph and calls the operation module for each node.
+The [route path](../../crates/execution/host/src/route.rs) calls it once for a route target and never enters the driver.
+A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
+The caller decides whether to send a new request.
 
 Typed operation inputs and successful results contain owned lists or records.
 Admission checks the context, node errors, and every nested value.
@@ -524,6 +529,7 @@ The [runtime tests](../operations/running-tests.md#host-and-package-runtime) cov
 OpenTelemetry records invocation and effect spans, request timing, and delivery outcomes.
 Operational logs use INFO, and detailed request traces go to Tempo.
 The bounded router tap supplies the live view without durable node histories.
+Each tap record names a route or a wiring. The host writes only version 2 of the record, and readers still read version 1.
 
 The [deployment guide](../operations/deployment.md) owns probe ports, grace periods, and rollout commands.
 The [native alignment page](native-alignment.md#current-limits) retains the unresolved operator retry and liveness limits.

@@ -1137,7 +1137,7 @@ fn isolated(name: &str, case: Case) {
 }
 
 fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
-    let full_name = format!("router_driver::native_policy::tests::{name}");
+    let full_name = format!("operation::native_policy::tests::{name}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", &full_name, "--nocapture"])

@@ -132,6 +132,58 @@ SELECT selected.version, selected.effective_release_id, \
        jsonb_array_length(selected.manifest -> 'components') AS manifest_component_count \
   FROM selected";
 
+/// The complete component list of the carried release, for a route.
+///
+/// A route walks no wiring, so it reads the component list alone: the same
+/// projection of the verified release snapshot that [`RELEASE_WIRING_SQL`]
+/// returns beside a wiring. The loaded application is one per release, so a
+/// route and a wiring must load the same list.
+pub const RELEASE_COMPONENTS_SQL: &str = "\
+WITH release_scope AS MATERIALIZED ( \
+    SELECT snapshot.effective_release_id, \
+           convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb AS manifest \
+      FROM catalog.release_manifest_v3_snapshots AS snapshot \
+     WHERE snapshot.tenant_id = $1 \
+       AND snapshot.effective_release_id = $3 \
+       AND snapshot.manifest_digest = $4 \
+       AND convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb \
+             #>> '{release,environment}' = $2 \
+) \
+SELECT COALESCE( \
+           (SELECT jsonb_agg( \
+               jsonb_build_object( \
+                   'scope', jsonb_build_object( \
+                       'tenant-id', $1::text, \
+                       'package-id', component.package_id, \
+                       'package-version', component.package_version \
+                   ), \
+                   'component', component.component, \
+                   'interface-version', component.interface_version, \
+                   'operations', component.operations, \
+                   'component-digest', component.component_digest, \
+                   'imports', component.imports, \
+                   'imports-fingerprint', component.imports_fingerprint, \
+                   'effects', component.effects \
+               ) ORDER BY projected.ordinality \
+            ) \
+              FROM jsonb_array_elements(release_scope.manifest -> 'components') \
+                   WITH ORDINALITY AS projected(definition, ordinality) \
+              JOIN catalog.effective_release_packages AS release_package \
+                ON release_package.tenant_id = $1 \
+               AND release_package.effective_release_id = release_scope.effective_release_id \
+               AND release_package.package_id = projected.definition ->> 'package-id' \
+              JOIN catalog.component_library AS component \
+                ON component.tenant_id = release_package.tenant_id \
+               AND component.package_id = release_package.package_id \
+               AND component.package_version = release_package.package_version \
+               AND component.component = projected.definition ->> 'component' \
+               AND component.interface_version = projected.definition ->> 'interface-version' \
+               AND component.component_digest = projected.definition ->> 'digest'), \
+           '[]'::jsonb \
+       )::text AS components, \
+       jsonb_array_length(release_scope.manifest -> 'components') AS manifest_component_count \
+  FROM release_scope";
+
 /// Exact immutable candidate wiring selected by private management admission.
 ///
 /// A candidate is neither the active environment pointer nor a member of the
@@ -473,6 +525,99 @@ impl WamnPostgres {
         }
     }
 
+    /// Read the complete component list of the carried release.
+    ///
+    /// A route loads the released application from this list. The query
+    /// refuses a release whose snapshot does not match every coordinate.
+    pub async fn resolve_release_components(
+        &self,
+        project: &str,
+        tenant_id: &str,
+        environment: &str,
+        effective_release_id: u32,
+        manifest_digest: &str,
+    ) -> anyhow::Result<Vec<AdmittedComponent>> {
+        anyhow::ensure!(effective_release_id > 0, "effective-release-id-zero");
+        let effective_release_id = i32::try_from(effective_release_id)
+            .context("effective release id exceeds PostgreSQL int")?;
+        let (connection, policy) = self
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                AuthorityClass::ExecutorPlatform,
+                tenant_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+
+        let result = if let Some(local) = &self.local_application {
+            async {
+                local.require_instance(&connection).await?;
+                anyhow::ensure!(
+                    local.manifest.release.tenant_id == tenant_id
+                        && local.manifest.release.environment == environment
+                        && local.manifest.release.effective_release_id.get()
+                            == u32::try_from(effective_release_id)?
+                        && local.facts.manifest_digest.as_str() == manifest_digest,
+                    "local release scope mismatch"
+                );
+                Ok(local.facts.components.clone())
+            }
+            .await
+        } else {
+            async {
+                let row = connection
+                    .query_opt(
+                        RELEASE_COMPONENTS_SQL,
+                        &[
+                            &tenant_id,
+                            &environment,
+                            &effective_release_id,
+                            &manifest_digest,
+                        ],
+                    )
+                    .await
+                    .context("query release components")?
+                    .ok_or_else(|| anyhow::anyhow!("release-snapshot-not-found"))?;
+                decode_release_components(&row, 0)
+            }
+            .await
+        };
+        let result = result.and_then(|components| {
+            verify_served_effect_projections(&components)?;
+            Ok(components)
+        });
+
+        match result {
+            Ok(components) => {
+                if let Err(error) = connection.batch_execute("COMMIT").await {
+                    self.destroy(connection);
+                    return Err(error).context("commit release component snapshot");
+                }
+                Ok(components)
+            }
+            Err(error) => {
+                if connection.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(connection);
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Resolve one report-owned candidate without consulting activation or a
     /// serving-manifest projection.
     #[expect(
@@ -753,18 +898,7 @@ fn decode_released_wiring(
         node_components.len() == decoded.document.nodes.len(),
         "release-wiring-node-closure-incomplete"
     );
-    let components: String = row
-        .try_get(6)
-        .context("decode release manifest component closure")?;
-    let components: Vec<AdmittedComponent> =
-        serde_json::from_str(&components).context("parse release manifest component closure")?;
-    let expected_component_count: i32 = row
-        .try_get(7)
-        .context("decode release manifest component count")?;
-    anyhow::ensure!(
-        usize::try_from(expected_component_count).ok() == Some(components.len()),
-        "release-manifest-component-closure-incomplete"
-    );
+    let components = decode_release_components(row, 6)?;
     lower_resolved_wiring(
         tenant_id,
         package_id,
@@ -773,6 +907,26 @@ fn decode_released_wiring(
         node_components,
         components,
     )
+}
+
+/// The release component list at column `first`, and its manifest count after it.
+fn decode_release_components(
+    row: &tokio_postgres::Row,
+    first: usize,
+) -> anyhow::Result<Vec<AdmittedComponent>> {
+    let components: String = row
+        .try_get(first)
+        .context("decode release manifest component closure")?;
+    let components: Vec<AdmittedComponent> =
+        serde_json::from_str(&components).context("parse release manifest component closure")?;
+    let expected_component_count: i32 = row
+        .try_get(first + 1)
+        .context("decode release manifest component count")?;
+    anyhow::ensure!(
+        usize::try_from(expected_component_count).ok() == Some(components.len()),
+        "release-manifest-component-closure-incomplete"
+    );
+    Ok(components)
 }
 
 fn decode_active_wiring(

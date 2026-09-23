@@ -452,7 +452,7 @@ fn decode_tap(
         tenant,
         project,
         environment,
-        &record.wiring_id,
+        record.subject_token(),
         &record.delivery_id,
     )
     .ok_or_else(|| {
@@ -477,7 +477,7 @@ fn decode_tap(
 mod tests {
     use serde_json::json;
     use wamn_runtime::plugins::wamn_jetstream::{
-        RouterTapFormatVersion, RouterTapRecordPhase, RouterTapSourceKind,
+        RouterTapFormatVersion, RouterTapRecordPhase, RouterTapSourceKind, RouterTapTarget,
     };
 
     use super::*;
@@ -494,8 +494,10 @@ mod tests {
             redacted: false,
             source_id: "route-1".into(),
             source_kind: RouterTapSourceKind::Attachment,
-            wiring_id: "rack".into(),
-            wiring_version: 1,
+            target: RouterTapTarget::Wiring {
+                wiring_id: "rack".into(),
+                wiring_version: 1,
+            },
         };
         let bytes = serde_json::to_vec(&record).expect("serialize typed tap");
         let observation = decode_tap(
