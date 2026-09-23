@@ -375,7 +375,7 @@ async fn assert_case(
             Duration::from_secs(30)
         };
     let mut request = fixture.request(deadline);
-    request.caller = Some(caller.clone());
+    request.facts.caller = Some(caller.clone());
     if scenario == Scenario::Cancellation {
         let task = tokio::spawn(async move { invoke_native(&target, request).await });
         timeout(CLEANUP, async {
@@ -500,7 +500,7 @@ async fn assert_case(
         assert_eq!(claims.project.as_deref(), Some(PROJECT));
         assert_eq!(
             claims.release,
-            fixture.request(deadline).acquisition.claims.release
+            fixture.request(deadline).facts.acquisition.claims.release
         );
         let invocation = event.invocation.expect("host invocation");
         assert_eq!(
@@ -510,7 +510,12 @@ async fn assert_case(
         );
         assert_eq!(
             invocation.origin,
-            fixture.request(deadline).acquisition.invocation.origin,
+            fixture
+                .request(deadline)
+                .facts
+                .acquisition
+                .invocation
+                .origin,
             "nested execution preserves its distinct wiring owner and original root component"
         );
         let position = invocation.entry.wiring().expect("a wiring entry");
@@ -690,7 +695,7 @@ fn native_authenticated_transaction_participant() {
             )
             .await;
             let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
-            request.caller = Some(caller.clone());
+            request.facts.caller = Some(caller.clone());
             let result = invoke_native(&fixture.target().await, request)
                 .await
                 .expect("authorized participant dispatch")
@@ -708,7 +713,7 @@ fn native_authenticated_transaction_participant() {
             fixture.assert_clean().await;
 
             let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
-            request.caller = Some(parent_only);
+            request.facts.caller = Some(parent_only);
             let error = invoke_native(&fixture.target().await, request)
                 .await
                 .expect_err("caller without participant permission is refused");
@@ -729,7 +734,7 @@ fn native_authenticated_transaction_participant() {
             )
             .await;
             let mut request = denied.request(Instant::now() + Duration::from_secs(10));
-            request.caller = Some(caller);
+            request.facts.caller = Some(caller);
             let result = invoke_native(&denied.target().await, request)
                 .await
                 .expect("nonparticipant probe dispatches")
@@ -778,7 +783,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             ] {
                 let mut request = fixture.request(Instant::now() + CLEANUP);
                 request.input = input.into();
-                request.caller = Some(caller.clone());
+                request.facts.caller = Some(caller.clone());
                 let result = invoke_native(&target, request)
                     .await
                     .expect("authorized native dispatch")
@@ -849,7 +854,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             );
             let denied = authenticated_as(&route, false, Some(bob.principal_id())).await;
             let mut request = fixture.request(Instant::now() + CLEANUP);
-            request.caller = Some(denied);
+            request.facts.caller = Some(denied);
             let error = invoke_native(&target, request)
                 .await
                 .expect_err("new caller cannot inherit the prior nested grant");
@@ -872,7 +877,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             )
             .await;
             let mut request = fresh_only.request(Instant::now() + CLEANUP);
-            request.caller = Some(alice.clone());
+            request.facts.caller = Some(alice.clone());
             invoke_native(&fresh_only.target().await, request)
                 .await
                 .expect("session admits the legacy fresh-only child")
@@ -887,7 +892,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             assert_eq!(pat.credential_kind(), CredentialKind::Pat);
             for caller in [&pat, &pat] {
                 let mut request = fresh_only.request(Instant::now() + CLEANUP);
-                request.caller = Some(caller.clone());
+                request.facts.caller = Some(caller.clone());
                 invoke_native(&fresh_only.target().await, request)
                     .await
                     .expect("PAT admits fresh-only child")
@@ -912,7 +917,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                 "session and PAT calls reuse the same root instance"
             );
             let mut request = fresh_only.request(Instant::now() + CLEANUP);
-            request.caller = Some(alice);
+            request.facts.caller = Some(alice);
             invoke_native(&fresh_only.target().await, request)
                 .await
                 .expect("session remains authorized after PAT calls")
@@ -922,7 +927,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                 Fixture::build_with_reuse(Case::Success, None, true, None, true, Some(postgres))
                     .await;
             let mut request = retired.request(Instant::now() + CLEANUP);
-            request.caller = Some(bob.clone());
+            request.facts.caller = Some(bob.clone());
             invoke_native(&retired.target().await, request)
                 .await
                 .expect("credential initially available")
@@ -931,7 +936,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                 .enabled
                 .store(false, std::sync::atomic::Ordering::SeqCst);
             let mut request = retired.request(Instant::now() + CLEANUP);
-            request.caller = Some(bob.clone());
+            request.facts.caller = Some(bob.clone());
             assert!(
                 invoke_native(&retired.target().await, request)
                     .await
@@ -942,7 +947,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                 .enabled
                 .store(true, std::sync::atomic::Ordering::SeqCst);
             let mut request = retired.request(Instant::now() + CLEANUP);
-            request.caller = Some(bob);
+            request.facts.caller = Some(bob);
             invoke_native(&retired.target().await, request)
                 .await
                 .expect("restored credential")

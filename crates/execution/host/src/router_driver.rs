@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::operation::{
-    InvocationSite, NativeApplication, NativeComponent, NodeAcquisition, OperationCall,
-    OperationClosure, OperationHost, OperationScope, authorize_registered_operation,
+    InvocationSite, NativeApplication, NativeComponent, NativeFacts, NativePolicy, NodeAcquisition,
+    OperationCall, OperationClosure, OperationHost, OperationScope, authorize_registered_operation,
     bounded_node_deadline_ms, component_invocation, invocation_span, invoke_operation,
     node_trace_context, node_types, remote_trace_context, validate_component_in_release,
 };
@@ -332,7 +332,7 @@ enum ExecutionClosure<'a> {
     Candidate {
         target: &'a CandidateWiringTarget,
         binding_world: &'a Arc<CandidateBindingWorld>,
-        application: &'a Arc<NativeApplication>,
+        application: &'a Arc<NativeApplication<NativePolicy>>,
     },
 }
 
@@ -1080,22 +1080,24 @@ impl RouterDriver {
             context: node_context(request, active.version, call, deadline_ms)?,
             input: &call.payload,
             deadline_ms,
-            acquisition: NodeAcquisition {
-                claims: self.operations.claims(&request.tenant_id, release),
-                invocation: component_invocation(
-                    component,
-                    &call.operation,
-                    entry,
-                    connection_closure,
-                    effects,
-                ),
-                causation: causation.cloned(),
-                platform,
-            },
-            caller: request.caller.clone(),
+            facts: NativeFacts::entry(
+                NodeAcquisition {
+                    claims: self.operations.claims(&request.tenant_id, release),
+                    invocation: component_invocation(
+                        component,
+                        &call.operation,
+                        entry,
+                        connection_closure,
+                        effects,
+                    ),
+                    causation: causation.cloned(),
+                    platform,
+                },
+                request.caller.clone(),
+            ),
         };
         // Boxed, so each node's call does not grow the delivery future.
-        Box::pin(invoke_operation(&self.operations, call, None))
+        Box::pin(invoke_operation(&*self.operations, call, None))
             .await
             .and_then(lower_node_outcome)
     }

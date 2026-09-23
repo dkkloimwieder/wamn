@@ -46,12 +46,15 @@ use wash_runtime::plugin::HostPlugin;
 
 use crate::warm_reuse::WarmReuse;
 
+mod invocation_policy;
 mod native_call;
 mod native_policy;
 mod native_workload;
 
+use invocation_policy::{ApplicationHost, InvocationPolicy};
 use native_call::{NativeInvocation, invoke_native, prepare_native};
 use native_policy::{NATIVE_POLICY_ID, NativePolicyResources, new_native_policy};
+pub(crate) use native_policy::{NativeFacts, NativePolicy};
 pub(crate) use native_workload::{NativeApplication, NativeComponent};
 use native_workload::{NativeWorkloadSpec, load_native_application};
 
@@ -310,7 +313,7 @@ pub(crate) struct OperationHost {
     schema: Option<String>,
     owner_prefix: String,
     warm_reuse: WarmReuse,
-    native: tokio::sync::OnceCell<Arc<NativeApplication>>,
+    native: tokio::sync::OnceCell<Arc<NativeApplication<NativePolicy>>>,
     /// The complete release component list a route loads, read once.
     components: tokio::sync::OnceCell<Arc<[AdmittedComponent]>>,
 }
@@ -433,7 +436,7 @@ impl OperationHost {
     pub(crate) async fn released_application(
         &self,
         components: &[AdmittedComponent],
-    ) -> anyhow::Result<Arc<NativeApplication>> {
+    ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
         for component in components {
             validate_component_in_release(&self.release, component)?;
         }
@@ -475,7 +478,7 @@ impl OperationHost {
     pub(crate) async fn load_application(
         &self,
         components: Vec<NativeComponent>,
-    ) -> anyhow::Result<Arc<NativeApplication>> {
+    ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
         let facts: Vec<_> = components
             .iter()
             .map(|component| component.fact.clone())
@@ -540,6 +543,17 @@ impl OperationHost {
     }
 }
 
+impl ApplicationHost for OperationHost {
+    type Policy = NativePolicy;
+
+    fn released_application(
+        &self,
+        components: &[AdmittedComponent],
+    ) -> impl Future<Output = anyhow::Result<Arc<NativeApplication<NativePolicy>>>> + Send {
+        OperationHost::released_application(self, components)
+    }
+}
+
 /// The connection invocation of one admitted component at one entry.
 pub(crate) fn component_invocation(
     component: &AdmittedComponent,
@@ -571,32 +585,39 @@ pub(crate) fn component_invocation(
 }
 
 /// The application that one operation call runs in.
-#[derive(Clone, Copy)]
-pub(crate) enum OperationClosure<'a> {
+pub(crate) enum OperationClosure<'a, P: InvocationPolicy> {
     /// The carried release, loaded once from its complete component list.
     Released(&'a [AdmittedComponent]),
     /// A candidate application that the caller loaded and unbinds.
-    Candidate(&'a Arc<NativeApplication>),
+    Candidate(&'a Arc<NativeApplication<P>>),
 }
 
+impl<P: InvocationPolicy> Clone for OperationClosure<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P: InvocationPolicy> Copy for OperationClosure<'_, P> {}
+
 /// One export call of one admitted component.
-pub(crate) struct OperationCall<'a> {
-    pub(crate) closure: OperationClosure<'a>,
+pub(crate) struct OperationCall<'a, P: InvocationPolicy> {
+    pub(crate) closure: OperationClosure<'a, P>,
     pub(crate) component: &'a AdmittedComponent,
     pub(crate) operation: &'a str,
     pub(crate) context: node_types::NodeContext,
     pub(crate) input: &'a serde_json::Value,
     /// The bounded deadline, the same value as `context.deadline_ms`.
     pub(crate) deadline_ms: u64,
-    pub(crate) acquisition: NodeAcquisition,
-    pub(crate) caller: Option<AuthenticatedCaller>,
+    /// The facts of this call that only the policy reads.
+    pub(crate) facts: P::Facts,
 }
 
 /// Call one export once, under the call's deadline, and return what the
 /// component returned. The caller lowers the result for its own entry.
-pub(crate) async fn invoke_operation(
-    host: &OperationHost,
-    call: OperationCall<'_>,
+pub(crate) async fn invoke_operation<H: ApplicationHost>(
+    host: &H,
+    call: OperationCall<'_, H::Policy>,
     #[expect(
         unused_variables,
         reason = "route intent logging is a later epic; every caller passes None"
@@ -618,7 +639,7 @@ pub(crate) async fn invoke_operation(
         let target = application
             .workload
             .resolved
-            .dispatch_target(id, NATIVE_POLICY_ID)
+            .dispatch_target(id, application.policy.id())
             .await?;
         let input = serde_json::to_string(call.input).context("encode node input")?;
         invoke_native(
@@ -628,10 +649,7 @@ pub(crate) async fn invoke_operation(
                 context: call.context,
                 input: input.into(),
                 deadline,
-                transaction_participation: None,
-                selected_participant: None,
-                acquisition: call.acquisition,
-                caller: call.caller,
+                facts: call.facts,
                 application,
             },
         )

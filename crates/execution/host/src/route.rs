@@ -13,7 +13,7 @@ use wamn_runtime::plugins::connection_http::{ConnectionExecutionClosure, Invocat
 use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 
 use crate::operation::{
-    InvocationSite, NodeAcquisition, OperationCall, OperationClosure, OperationHost,
+    InvocationSite, NativeFacts, NodeAcquisition, OperationCall, OperationClosure, OperationHost,
     authorize_registered_operation, bounded_node_deadline_ms, component_invocation,
     invocation_span, invoke_operation, node_trace_context, node_types, remote_trace_context,
 };
@@ -109,8 +109,7 @@ pub(crate) async fn invoke_route(
                 context,
                 input: route.payload,
                 deadline_ms,
-                acquisition,
-                caller: route.caller,
+                facts: NativeFacts::entry(acquisition, route.caller),
             },
             None,
         )

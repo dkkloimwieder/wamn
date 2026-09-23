@@ -18,7 +18,7 @@ use wash_runtime::plugin::{HostPlugin, PluginBindings};
 use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wit::WitInterface;
 
-use super::native_policy::NativePolicy;
+use super::invocation_policy::InvocationPolicy;
 
 #[cfg(test)]
 mod tests;
@@ -51,18 +51,18 @@ pub(crate) struct NativeWorkload {
 
 /// One release or candidate lifetime, retained by every native call it owns.
 #[derive(Debug)]
-pub(crate) struct NativeApplication {
+pub(crate) struct NativeApplication<P: InvocationPolicy> {
     // Cleanup runs before the workload fields drop. The policy contains only
     // synchronous WAMN registries; native workload teardown owns warm stores.
-    _cleanup: NativePolicyCleanup,
+    _cleanup: NativePolicyCleanup<P>,
     pub(crate) workload: Arc<NativeWorkload>,
-    pub(super) policy: Arc<NativePolicy>,
+    pub(super) policy: Arc<P>,
 }
 
 #[derive(Debug)]
-struct NativePolicyCleanup(Arc<NativePolicy>);
+struct NativePolicyCleanup<P: InvocationPolicy>(Arc<P>);
 
-impl Drop for NativePolicyCleanup {
+impl<P: InvocationPolicy> Drop for NativePolicyCleanup<P> {
     fn drop(&mut self) {
         self.0.shutdown();
     }
@@ -72,14 +72,14 @@ impl Drop for NativePolicyCleanup {
 ///
 /// The guard precedes resolution because native rollback covers returned errors,
 /// but dropping a pending resolution does not run the plugin unbind callbacks.
-pub(super) async fn load_native_application(
+pub(super) async fn load_native_application<P: InvocationPolicy>(
     engine: Arc<Engine>,
     spec: NativeWorkloadSpec,
-    policy: Arc<NativePolicy>,
+    policy: Arc<P>,
     plugins: &HashMap<&'static str, Arc<dyn HostPlugin>>,
     plugin_bindings: &PluginBindings,
     meters: &Meters,
-) -> anyhow::Result<Arc<NativeApplication>> {
+) -> anyhow::Result<Arc<NativeApplication<P>>> {
     let cleanup = NativePolicyCleanup(Arc::clone(&policy));
     let workload =
         Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);

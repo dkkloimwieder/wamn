@@ -18,13 +18,15 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::{
 };
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
-    PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID, WamnPostgres,
+    PreparedStatementSet, TransactionParticipation, UnprovisionedPrincipal, WAMN_POSTGRES_ID,
+    WamnPostgres,
 };
 use wash_runtime::engine::ctx::extract_active_ctx;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_call::{
     NativeCallFailure, NativeInput, NativeInvocation, NativeOutcome, invoke_owned, typed_context,
 };
@@ -70,6 +72,27 @@ pub(super) struct SelectedParticipant {
     intent: String,
 }
 
+/// The facts of one native call that only this policy reads.
+pub(crate) struct NativeFacts {
+    pub(super) acquisition: NodeAcquisition,
+    pub(super) caller: Option<AuthenticatedCaller>,
+    /// Host-attested owner scope for one nested transaction participant.
+    pub(super) transaction_participation: Option<TransactionParticipation>,
+    pub(super) selected_participant: Option<SelectedParticipant>,
+}
+
+impl NativeFacts {
+    /// The facts of an entry call, which joins no caller transaction.
+    pub(crate) fn entry(acquisition: NodeAcquisition, caller: Option<AuthenticatedCaller>) -> Self {
+        Self {
+            acquisition,
+            caller,
+            transaction_participation: None,
+            selected_participant: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct InvocationAuthority {
     acquisition: NodeAcquisition,
@@ -82,13 +105,13 @@ struct InvocationAuthority {
 
 /// Immutable component policy and the authority of calls that are still active.
 #[derive(Debug, Clone)]
-pub(super) struct NativePolicy {
+pub(crate) struct NativePolicy {
     resources: Arc<NativePolicyResources>,
     components: Arc<BTreeMap<String, Arc<ComponentPolicy>>>,
     bindings: Arc<RwLock<BTreeMap<String, Arc<ComponentPolicy>>>>,
     invocations: Arc<Mutex<BTreeMap<String, InvocationAuthority>>>,
     traces: Arc<InvocationTraces>,
-    application: Arc<OnceLock<Weak<NativeApplication>>>,
+    application: Arc<OnceLock<Weak<NativeApplication<NativePolicy>>>>,
 }
 
 pub(super) fn new_native_policy(
@@ -117,66 +140,29 @@ pub(super) fn new_native_policy(
     }))
 }
 
-/// Caller-owned cancellation boundary, separate from the native store lifetime.
-#[derive(Debug)]
-pub(super) struct InvocationScope {
-    pub(super) id: Box<str>,
-    closed: Mutex<bool>,
-    cancelled: tokio::sync::Notify,
-    policy: Arc<NativePolicy>,
-}
+impl InvocationPolicy for NativePolicy {
+    type Facts = NativeFacts;
+    type Authority = NativeAuthorityGuard;
 
-impl InvocationScope {
-    pub(super) fn new(policy: Arc<NativePolicy>) -> Self {
-        Self {
-            id: super::next_scope("native-invocation"),
-            closed: Mutex::new(false),
-            cancelled: tokio::sync::Notify::new(),
-            policy,
-        }
-    }
-
-    pub(super) async fn cancelled(&self) {
-        loop {
-            let notified = self.cancelled.notified();
-            if *self.closed.lock().expect("invocation scope lock poisoned") {
-                return;
-            }
-            notified.await;
-        }
-    }
-
-    pub(super) fn close(&self) {
-        let mut closed = self.closed.lock().expect("invocation scope lock poisoned");
-        *closed = true;
-        self.policy.revoke(&self.id);
-        self.cancelled.notify_waiters();
-    }
-}
-
-impl NativePolicy {
     /// Retain only a weak reference so native workload teardown has no ownership cycle.
-    pub(super) fn bind_application(
-        &self,
-        application: &Arc<NativeApplication>,
-    ) -> anyhow::Result<()> {
+    fn bind_application(&self, application: &Arc<NativeApplication<Self>>) -> anyhow::Result<()> {
         self.application
             .set(Arc::downgrade(application))
             .map_err(|_| anyhow::anyhow!("native-policy-workload-already-bound"))
     }
 
     /// Grant authority after native initialization, with rollback on every partial failure.
-    pub(super) async fn activate(
+    async fn activate(
         &self,
         component_id: &str,
-        invocation_scope: &InvocationScope,
-        request: &NativeInvocation,
+        invocation_scope: &InvocationScope<Self>,
+        request: &NativeInvocation<Self>,
         failure: NativeCallFailure,
     ) -> anyhow::Result<NativeAuthorityGuard> {
         let scope = invocation_scope.id.as_ref();
         let operation = request.operation.as_str();
-        let acquisition = &request.acquisition;
-        let caller = request.caller.as_ref();
+        let acquisition = &request.facts.acquisition;
+        let caller = request.facts.caller.as_ref();
         let deadline = request.deadline;
         anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
         // Admission is read TWICE, around the claim bind, because that bind now
@@ -285,9 +271,9 @@ impl NativePolicy {
         resources.postgres.bind_transaction_scope(
             scope,
             deadline,
-            request.transaction_participation.as_ref(),
+            request.facts.transaction_participation.as_ref(),
         )?;
-        if let Some(selected) = &request.selected_participant {
+        if let Some(selected) = &request.facts.selected_participant {
             resources.postgres.bind_selected_participant(
                 scope,
                 selected.dependency.operation.clone(),
@@ -315,7 +301,7 @@ impl NativePolicy {
                     operation: operation.to_owned(),
                     deadline,
                     failure,
-                    selected_participant: request.selected_participant.clone(),
+                    selected_participant: request.facts.selected_participant.clone(),
                 },
             );
         anyhow::ensure!(previous.is_none(), "native-invocation-scope-already-bound");
@@ -324,7 +310,7 @@ impl NativePolicy {
     }
 
     /// Close component admission and revoke all synchronous WAMN authority.
-    pub(super) fn shutdown(&self) {
+    fn shutdown(&self) {
         let mut bindings = self
             .bindings
             .write()
@@ -356,7 +342,9 @@ impl NativePolicy {
         self.resources.postgres.revoke_session_claims(scope);
         self.resources.postgres.clear_statement_scope(scope);
     }
+}
 
+impl NativePolicy {
     fn host_failure(&self, scope: &str, error: anyhow::Error) -> wash_runtime::wasmtime::Error {
         let failure = self
             .invocations
@@ -623,10 +611,12 @@ impl NativePolicy {
                 context,
                 input,
                 deadline,
-                transaction_participation,
-                selected_participant,
-                acquisition: bound.acquisition.retarget(target, &dependency.operation),
-                caller: bound.caller,
+                facts: NativeFacts {
+                    acquisition: bound.acquisition.retarget(target, &dependency.operation),
+                    caller: bound.caller,
+                    transaction_participation,
+                    selected_participant,
+                },
                 application,
             },
         )
@@ -637,7 +627,7 @@ impl NativePolicy {
 
 /// Revoke host registries when a call returns, traps, fails to bind, or is cancelled.
 #[derive(Debug)]
-pub(super) struct NativeAuthorityGuard {
+pub(crate) struct NativeAuthorityGuard {
     policy: NativePolicy,
     scope: String,
 }

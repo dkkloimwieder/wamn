@@ -9,14 +9,13 @@ use anyhow::Context as _;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout_at};
 use wamn_engine::invocation_trace::InvocationTrace;
-use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc, Val};
 
-use super::native_policy::InvocationScope;
+use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_workload::NativeApplication;
-use super::{NodeAcquisition, node_types};
+use super::node_types;
 
 #[cfg(test)]
 mod tests;
@@ -25,18 +24,14 @@ mod tests;
 pub(super) type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>;
 
 /// The request authority and absolute deadline carried into one native node call.
-pub(super) struct NativeInvocation {
+pub(crate) struct NativeInvocation<P: InvocationPolicy> {
     pub(super) operation: String,
     pub(super) context: node_types::NodeContext,
     pub(super) input: NativeInput,
     pub(super) deadline: Instant,
-    /// Host-attested owner scope for one nested transaction participant.
-    pub(super) transaction_participation:
-        Option<wamn_runtime::plugins::wamn_postgres::TransactionParticipation>,
-    pub(super) selected_participant: Option<super::native_policy::SelectedParticipant>,
-    pub(super) acquisition: NodeAcquisition,
-    pub(super) caller: Option<AuthenticatedCaller>,
-    pub(super) application: Arc<NativeApplication>,
+    /// The facts of this call that only the policy reads.
+    pub(super) facts: P::Facts,
+    pub(super) application: Arc<NativeApplication<P>>,
 }
 
 /// JSON exists only at dynamic routing. Nested known calls retain WIT values.
@@ -74,7 +69,7 @@ impl NativeOutcome {
     }
 }
 
-impl fmt::Debug for NativeInvocation {
+impl<P: InvocationPolicy> fmt::Debug for NativeInvocation<P> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("NativeInvocation")
@@ -84,13 +79,13 @@ impl fmt::Debug for NativeInvocation {
     }
 }
 
-struct NativeCall {
-    request: NativeInvocation,
+struct NativeCall<P: InvocationPolicy> {
+    request: NativeInvocation<P>,
     reply: oneshot::Sender<NativeOutcome>,
     failure: NativeCallFailure,
     trace: InvocationTrace,
     retired_after_reply: Arc<AtomicBool>,
-    scope: Arc<InvocationScope>,
+    scope: Arc<InvocationScope<P>>,
 }
 
 /// Restore the native identity after the request's capability scope is revoked.
@@ -109,14 +104,14 @@ impl Drop for ActiveScope<'_> {
 
 // This guard belongs to the dispatching caller, not the native guest task.
 // Cancellation revokes authority before native's abandoned-store grace ends.
-struct CloseScope(Arc<InvocationScope>);
-impl Drop for CloseScope {
+struct CloseScope<P: InvocationPolicy>(Arc<InvocationScope<P>>);
+impl<P: InvocationPolicy> Drop for CloseScope<P> {
     fn drop(&mut self) {
         self.0.close();
     }
 }
 
-impl GuestCall for NativeCall {
+impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
     fn describe(&self) -> &str {
         &self.request.operation
     }
@@ -293,9 +288,9 @@ pub(super) async fn prepare_native(
 }
 
 /// Dispatch and receive a typed node result under the same enclosing deadline.
-pub(super) async fn invoke_owned(
+pub(super) async fn invoke_owned<P: InvocationPolicy>(
     target: &DispatchTarget,
-    request: NativeInvocation,
+    request: NativeInvocation<P>,
 ) -> anyhow::Result<NativeOutcome> {
     let deadline = request.deadline;
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
@@ -350,9 +345,9 @@ pub(super) async fn invoke_owned(
 }
 
 /// Invoke the JSON adapter at an HTTP or dynamic routing boundary.
-pub(super) async fn invoke_native(
+pub(super) async fn invoke_native<P: InvocationPolicy>(
     target: &DispatchTarget,
-    request: NativeInvocation,
+    request: NativeInvocation<P>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     invoke_owned(target, request).await?.into_json()
 }

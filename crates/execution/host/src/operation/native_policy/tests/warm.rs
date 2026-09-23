@@ -8,6 +8,7 @@ use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
 use wash_runtime::wasmtime::component::{Accessor, Instance};
 
+use super::super::super::invocation_policy::InvocationPolicy as _;
 use super::{CLEANUP, Case, Fixture, invoke_native, run_isolated_test};
 
 pub(super) async fn fixture(case: Case) -> Fixture {

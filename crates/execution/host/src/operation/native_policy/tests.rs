@@ -44,7 +44,9 @@ use super::super::native_workload::{
     NativeApplication, NativeComponent, NativeWorkload, NativeWorkloadSpec, load_native_application,
 };
 use super::super::{NodeAcquisition, OperationRefusal, OperationRefusalKind, node_types};
-use super::{NATIVE_POLICY_ID, NativePolicy, NativePolicyResources, new_native_policy};
+use super::{
+    NATIVE_POLICY_ID, NativeFacts, NativePolicy, NativePolicyResources, new_native_policy,
+};
 
 #[path = "tests/authenticated.rs"]
 mod authenticated;
@@ -529,7 +531,7 @@ struct Fixture {
     engine: Arc<Engine>,
     policy: Arc<NativePolicy>,
     workload: Arc<NativeWorkload>,
-    application: Arc<NativeApplication>,
+    application: Arc<NativeApplication<NativePolicy>>,
     root: AdmittedComponent,
     events: Arc<Mutex<Vec<Observation>>>,
     entered: Arc<Notify>,
@@ -816,14 +818,11 @@ impl Fixture {
             .expect("native root dispatch target")
     }
 
-    fn request(&self, deadline: Instant) -> NativeInvocation {
+    fn request(&self, deadline: Instant) -> NativeInvocation<NativePolicy> {
         NativeInvocation {
             operation: ROOT.into(),
             input: r#"[{"value":37}]"#.into(),
             deadline,
-            transaction_participation: None,
-            selected_participant: None,
-            caller: None,
             application: Arc::clone(&self.application),
             context: node_types::NodeContext {
                 wiring_id: "forged-guest-wiring".into(),
@@ -837,43 +836,46 @@ impl Fixture {
                 deadline_ms: Some(30_000),
                 config: "{}".into(),
             },
-            acquisition: NodeAcquisition {
-                claims: SessionClaims {
-                    tenant: "tenant-a".into(),
-                    project: Some("test".into()),
-                    release: Some(ReleaseIdentity {
-                        effective_release_id: 1,
-                        manifest_digest: self.policy.resources.release.manifest().digest(),
-                    }),
-                    ..SessionClaims::default()
-                },
-                invocation: ConnectionInvocation {
-                    origin: ConnectionOrigin {
+            facts: NativeFacts::entry(
+                NodeAcquisition {
+                    claims: SessionClaims {
+                        tenant: "tenant-a".into(),
+                        project: Some("test".into()),
+                        release: Some(ReleaseIdentity {
+                            effective_release_id: 1,
+                            manifest_digest: self.policy.resources.release.manifest().digest(),
+                        }),
+                        ..SessionClaims::default()
+                    },
+                    invocation: ConnectionInvocation {
+                        origin: ConnectionOrigin {
+                            package_id: "root".into(),
+                            component_digest: self.root.component_digest.clone(),
+                            component: "node".into(),
+                            interface_version: self.root.interface_version.clone(),
+                            operation: ROOT.into(),
+                        },
+                        entry: wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(
+                            wamn_runtime::plugins::connection_http::WiringPosition {
+                                package_id: "workflow".into(),
+                                wiring_id: "trusted-wiring".into(),
+                                wiring_version: 1,
+                                node_id: "trusted-node".into(),
+                                occurrence: 0,
+                            },
+                        ),
                         package_id: "root".into(),
                         component_digest: self.root.component_digest.clone(),
                         component: "node".into(),
-                        interface_version: self.root.interface_version.clone(),
                         operation: ROOT.into(),
+                        closure: ConnectionExecutionClosure::Released,
+                        effects: None,
                     },
-                    entry: wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(
-                        wamn_runtime::plugins::connection_http::WiringPosition {
-                            package_id: "workflow".into(),
-                            wiring_id: "trusted-wiring".into(),
-                            wiring_version: 1,
-                            node_id: "trusted-node".into(),
-                            occurrence: 0,
-                        },
-                    ),
-                    package_id: "root".into(),
-                    component_digest: self.root.component_digest.clone(),
-                    component: "node".into(),
-                    operation: ROOT.into(),
-                    closure: ConnectionExecutionClosure::Released,
-                    effects: None,
+                    causation: None,
+                    platform: None,
                 },
-                causation: None,
-                platform: None,
-            },
+                None,
+            ),
         }
     }
 
@@ -943,6 +945,7 @@ impl Fixture {
                 .bind_invocation(
                     &event.scope,
                     self.request(Instant::now() + CLEANUP)
+                        .facts
                         .acquisition
                         .invocation,
                 )
@@ -1005,7 +1008,7 @@ async fn run_case(case: Case) {
                     budget
                 };
             let mut request = fixture.request(deadline);
-            request.acquisition.platform = Some(PlatformComponent::Materializer);
+            request.facts.acquisition.platform = Some(PlatformComponent::Materializer);
             let result = invoke_native(&target, request).await;
             let looped = looping.is_none_or(|phase| {
                 fixture
