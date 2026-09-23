@@ -38,6 +38,8 @@ Add an item only when an emitter target needs it.
 | `gridFeatures`, `GridFeatures` | The TanStack Table features every generated table declares |
 | `RecordSelect` | The selector: the rows a list returned, a search after a pause in typing, and a next page button |
 | `announceOutcome` | Shows one runtime outcome as a toast |
+| `TextField`, `ChoiceField`, `CheckField` | One labeled control and the refusal that marks it |
+| `DetailList`, `DetailItem` | The fields of one record, with a skeleton while it is read |
 
 `RecordSelect` filters nothing itself, so its options are exactly the rows the release sent.
 A search matches a value in full, because a declared filter compares with `IN`.

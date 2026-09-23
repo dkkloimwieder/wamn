@@ -8,6 +8,7 @@
 
 import { createUniqueId, type JSX, Show } from "solid-js";
 
+import { Checkbox } from "./components/ui/checkbox";
 import { Field, FieldError, FieldLabel } from "./components/ui/field";
 import { Input } from "./components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
@@ -41,6 +42,27 @@ export function TextField(props: TextFieldProps): JSX.Element {
         onInput={(event) => props.onInput?.(event.currentTarget.value)}
         onChange={(event) => props.onChange?.(event.currentTarget.value)}
       />
+      <Show when={props.error}>
+        <FieldError>{props.error}</FieldError>
+      </Show>
+    </Field>
+  );
+}
+
+export interface CheckFieldProps {
+  readonly label: string;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+  /** The refusal that marks this control, or null. */
+  readonly error?: string | null | undefined;
+}
+
+export function CheckField(props: CheckFieldProps): JSX.Element {
+  const id = createUniqueId();
+  return (
+    <Field orientation="horizontal" data-invalid={props.error ? "true" : undefined}>
+      <Checkbox id={id} checked={props.checked} onChange={(checked) => props.onChange(checked)} />
+      <FieldLabel for={id}>{props.label}</FieldLabel>
       <Show when={props.error}>
         <FieldError>{props.error}</FieldError>
       </Show>
