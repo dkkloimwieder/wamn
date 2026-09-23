@@ -765,7 +765,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             .await
             .map(|_| ()),
         plugin
-            .reap_uncertain(COMPONENT, &packages, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)
             .await
             .map(|_| ()),
         plugin
@@ -800,7 +800,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_uncertain(COMPONENT, &packages, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Empty
     );

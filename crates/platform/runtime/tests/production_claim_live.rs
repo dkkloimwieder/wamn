@@ -286,7 +286,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor".into()
@@ -326,7 +326,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     make_callerless(admin, "janitor-callerless").await?;
     assert_eq!(
         plugin
-            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-callerless".into()
@@ -338,7 +338,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let janitor_winner = install_prior_caller_winner(admin, "janitor-winner").await?;
     assert_eq!(
         plugin
-            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-winner".into()
@@ -412,7 +412,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "grant-refused".into()
@@ -493,7 +493,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_eq!(
         plugin
-            .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "standard-effect".into()

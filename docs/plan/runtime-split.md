@@ -55,25 +55,29 @@ wash-runtime's `HostPlugin` is the plugin trait. The engine re-exports it and ow
 
 Run-state gets two traits, because today's code and the route path need different shapes.
 
-`RunStore` is the queued-run lifecycle. It holds the existing Postgres code as its first adapter.
+`RunStore` is the queued-run lifecycle. It holds the existing Postgres code as its first adapter. `wamn-3lw7.1` landed it with the real signatures of the `WamnPostgres` methods that it replaced.
 
 ```rust
 #[async_trait]
 pub trait RunStore: Send + Sync {
+    /// The result of one claim turn.
+    type ClaimResult: Send;
     /// Take the next claimable run: grant a lease and serialize its effect intent.
-    async fn claim_next(&self, scope: &ClaimScope<'_>) -> Result<ClaimResult, StoreError>;
+    async fn claim_next(&self, component_id: &str, package_ids: &[String], environment: &str, lease_ttl_ms: i64) -> Result<Self::ClaimResult, ProductionClaimError>;
     /// Extend a held lease, fenced by lease generation.
-    async fn renew(&self, run: &LeaseFence<'_>, ttl_ms: u64) -> Result<LeaseRenewal, StoreError>;
+    async fn renew(&self, component_id: &str, run_id: &str, lease_generation: i64, lease_ttl_ms: i64) -> Result<ProductionLeaseRenewal, ProductionClaimError>;
     /// Record the outcome and release a waiting caller.
-    async fn complete(&self, run: &LeaseFence<'_>, completion: &Completion) -> Result<CompletionResult, StoreError>;
-    /// Find one exhausted run and end it as effect-uncertain. It is never replayed.
-    async fn reap_uncertain(&self, scope: &ClaimScope<'_>) -> Result<ReapResult, StoreError>;
+    async fn complete(&self, component_id: &str, run_id: &str, lease_generation: i64, completion: &ProductionCompletion) -> Result<ProductionCompletionResult, ProductionClaimError>;
+    /// Reap at most one crash-budget-exhausted run.
+    async fn reap_exhausted(&self, component_id: &str, package_ids: &[String], environment: &str, grace_ms: i64) -> Result<ProductionReapResult, ProductionClaimError>;
     /// Record host deadline adjustments for a held run.
-    async fn record_deadline_adjustments(&self, run: &LeaseFence<'_>, adjustments: &[DeadlineAdjustment]) -> Result<(), StoreError>;
+    async fn record_deadline_adjustments(&self, component_id: &str, run_id: &str, lease_generation: i64, adjustments: &serde_json::Value) -> Result<bool, ProductionClaimError>;
 }
 ```
 
-The four decisions in the block map onto it. Write intent is `claim_next`, and record outcome is `complete`. Find uncertain is `reap_uncertain`. Park or release is `complete` with a caller release, and `renew`. The method bodies are today's `WamnPostgres` methods in `production_claim.rs`. A decision type that names no router or catalog type moves to run-state. The other types stay in `wamn-runtime`.
+The four decisions in the block map onto it. Write intent is `claim_next`, and record outcome is `complete`. Park or release is `complete` with a caller release, and `renew`. Find uncertain is split between two methods. `reap_exhausted` ends a pre-effect exhausted run as `infrastructure-failure`. A run with effect evidence comes back to `claim_next`, which ends it as effect-uncertain and never replays it.
+
+The decision types that name no router, catalog, or `tokio-postgres` type moved to run-state with their names. `ClaimResult` is an associated type, because `ProductionClaimResult` holds `CandidateBindingWorld` from the claim code in `wamn-runtime`. The router mapping (`ProductionRouterAction`) stays in `wamn-runtime`, because it names `wamn_router::Outcome`.
 
 `IntentStore` is the per-call record that `invoke_operation` takes. The route path needs no lease and no queue, so a single-writer SQLite store implements it with no lease table.
 

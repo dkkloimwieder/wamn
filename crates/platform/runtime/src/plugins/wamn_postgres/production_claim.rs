@@ -450,7 +450,7 @@ impl RunStore for WamnPostgres {
     /// never from PostgreSQL's non-canonical `jsonb::text` rendering. The
     /// mounted release's exact package-id set is filtered in the same single
     /// global-FIFO turn as ordinary claims.
-    async fn reap_uncertain(
+    async fn reap_exhausted(
         &self,
         component_id: &str,
         package_ids: &[String],

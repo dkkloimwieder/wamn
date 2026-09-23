@@ -47,7 +47,7 @@ pub trait RunStore: Send + Sync {
 
     /// Reap at most one crash-budget-exhausted run. A run with effect evidence
     /// is left for the claimant to end as effect-uncertain. It is never replayed.
-    async fn reap_uncertain(
+    async fn reap_exhausted(
         &self,
         component_id: &str,
         package_ids: &[String],

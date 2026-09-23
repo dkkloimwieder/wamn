@@ -106,7 +106,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         let release_package_ids = release_package_ids.clone();
         tokio::spawn(async move {
             plugin
-                .reap_uncertain(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+                .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
                 .await
         })
     };

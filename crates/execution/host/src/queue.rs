@@ -251,7 +251,7 @@ async fn drain_one(
     liveness: &Liveness,
 ) -> anyhow::Result<bool> {
     match postgres
-        .reap_uncertain(
+        .reap_exhausted(
             QUEUE_CLAIM_SCOPE,
             &scope.package_ids,
             &scope.environment,
