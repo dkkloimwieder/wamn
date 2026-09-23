@@ -258,6 +258,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wamn-platform-fixture-data-access",
+ "wamn-postgres-statements",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "fixture-overlay"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wamn-postgres-statements",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1207,6 +1230,18 @@ dependencies = [
  "serde_json",
  "wamn-event-reg",
  "wamn-event-wire",
+]
+
+[[package]]
+name = "wamn-platform-fixture-data-access"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "serde_json",
+ "uuid",
+ "wamn-execution-contract",
+ "wamn-postgres-statements",
 ]
 
 [[package]]
