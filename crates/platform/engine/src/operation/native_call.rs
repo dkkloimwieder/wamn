@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use crate::invocation_trace::InvocationTrace;
 use anyhow::Context as _;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout_at};
-use wamn_engine::invocation_trace::InvocationTrace;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc, Val};
@@ -21,22 +21,22 @@ use super::node_types;
 mod tests;
 
 /// Preserve a host failure's Rust type across the native guest trap boundary.
-pub(super) type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>;
+pub type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>;
 
 /// The request authority and absolute deadline carried into one native node call.
-pub(crate) struct NativeInvocation<P: InvocationPolicy> {
-    pub(super) operation: String,
-    pub(super) context: node_types::NodeContext,
-    pub(super) input: NativeInput,
-    pub(super) deadline: Instant,
+pub struct NativeInvocation<P: InvocationPolicy> {
+    pub operation: String,
+    pub context: node_types::NodeContext,
+    pub input: NativeInput,
+    pub deadline: Instant,
     /// The facts of this call that only the policy reads.
-    pub(super) facts: P::Facts,
-    pub(super) application: Arc<NativeApplication<P>>,
+    pub facts: P::Facts,
+    pub application: Arc<NativeApplication<P>>,
 }
 
 /// JSON exists only at dynamic routing. Nested known calls retain WIT values.
 #[derive(Debug)]
-pub(super) enum NativeInput {
+pub enum NativeInput {
     Json(String),
     Typed(Val),
 }
@@ -53,15 +53,14 @@ impl From<&str> for NativeInput {
     }
 }
 
-pub(super) enum NativeOutcome {
+#[derive(Debug)]
+pub enum NativeOutcome {
     Json(Result<node_types::Emission, node_types::NodeError>),
     Typed(Val),
 }
 
 impl NativeOutcome {
-    pub(super) fn into_json(
-        self,
-    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+    pub fn into_json(self) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
         match self {
             Self::Json(value) => Ok(value),
             Self::Typed(_) => anyhow::bail!("typed operation returned to a JSON-only caller"),
@@ -273,10 +272,7 @@ impl GuestCall for ReadinessCall {
 }
 
 /// Instantiate through native dispatch under a bound, without invocation authority.
-pub(super) async fn prepare_native(
-    target: &DispatchTarget,
-    deadline: Instant,
-) -> anyhow::Result<()> {
+pub async fn prepare_native(target: &DispatchTarget, deadline: Instant) -> anyhow::Result<()> {
     anyhow::ensure!(
         Instant::now() < deadline,
         "native-readiness-deadline-exceeded"
@@ -288,7 +284,7 @@ pub(super) async fn prepare_native(
 }
 
 /// Dispatch and receive a typed node result under the same enclosing deadline.
-pub(super) async fn invoke_owned<P: InvocationPolicy>(
+pub async fn invoke_owned<P: InvocationPolicy>(
     target: &DispatchTarget,
     request: NativeInvocation<P>,
 ) -> anyhow::Result<NativeOutcome> {
@@ -345,7 +341,7 @@ pub(super) async fn invoke_owned<P: InvocationPolicy>(
 }
 
 /// Invoke the JSON adapter at an HTTP or dynamic routing boundary.
-pub(super) async fn invoke_native<P: InvocationPolicy>(
+pub async fn invoke_native<P: InvocationPolicy>(
     target: &DispatchTarget,
     request: NativeInvocation<P>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
@@ -374,7 +370,7 @@ fn context_value(context: node_types::NodeContext) -> Val {
 }
 
 /// Read the same context record that admission compares with the node contract.
-pub(super) fn typed_context(value: &Val) -> anyhow::Result<node_types::NodeContext> {
+pub fn typed_context(value: &Val) -> anyhow::Result<node_types::NodeContext> {
     let Val::Record(fields) = value else {
         anyhow::bail!("typed operation context is not a record");
     };

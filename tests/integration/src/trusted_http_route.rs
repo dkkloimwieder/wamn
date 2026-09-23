@@ -228,7 +228,7 @@ async fn build_with_credentials(
             Arc::clone(&release),
             Arc::new(source),
             RouterDriverConfig {
-                warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
+                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
                 owner_prefix: "trusted-http-route".to_owned(),
                 project: PROJECT.to_owned(),
                 schema: None,
@@ -1250,7 +1250,7 @@ mod tests {
                 )?,
             )?),
             RouterDriverConfig {
-                warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
+                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
                 owner_prefix: "nested-http-authority".to_owned(),
                 project: PROJECT.to_owned(),
                 schema: None,

@@ -767,10 +767,10 @@ impl Fixture {
             Arc::clone(&engine),
             NativeWorkloadSpec {
                 warm_reuse: if warm {
-                    crate::warm_reuse::WarmReuse::new(&[root.component_digest.clone()], 1, 1)
+                    wamn_engine::warm_reuse::WarmReuse::new(&[root.component_digest.clone()], 1, 1)
                         .expect("trusted root with bounded native reuse")
                 } else {
-                    crate::warm_reuse::WarmReuse::default()
+                    wamn_engine::warm_reuse::WarmReuse::default()
                 },
                 id: "native-policy-test".into(),
                 namespace: "test".into(),

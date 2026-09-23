@@ -286,7 +286,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         Arc::clone(&release),
         Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
         RouterDriverConfig {
-            warm_reuse: crate::warm_reuse::WarmReuse::default(),
+            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
             owner_prefix: "automation-live".to_owned(),
             project: "default".to_owned(),
             schema: Some("application_data".to_owned()),

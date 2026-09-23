@@ -17,6 +17,11 @@
 //! - [`invocation_trace`]: restores host-captured tracing context when native
 //!   dispatch polls host callbacks.
 //! - [`component_imports`]: a compiled component's ordered world imports.
+//! - [`operation`]: [`invoke_operation`](operation::invoke_operation), the one
+//!   export call that routes and wiring nodes share, and the traits the host
+//!   implements for it.
+//! - [`warm_reuse`]: the reviewed component digests that native loading keeps
+//!   warm.
 //!
 //! This crate refuses to depend on:
 //!
@@ -41,7 +46,9 @@ pub mod component_artifact;
 pub mod engine;
 pub mod invocation_trace;
 pub mod lifecycle;
+pub mod operation;
 pub mod release_manifest;
+pub mod warm_reuse;
 
 pub use engine::{
     DEFAULT_CORE_INSTANCES, HostMemoryBudgets, MEMORY_CAP_BYTES, build_engine,

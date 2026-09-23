@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::component_admission::component_digest;
 use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
-use wamn_engine::component_admission::component_digest;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::workload::ResolvedWorkload;
 use wash_runtime::host::http::NullServer;
@@ -25,38 +25,38 @@ mod tests;
 
 /// One admitted authority fact and the exact bytes it names.
 #[derive(Debug)]
-pub(crate) struct NativeComponent {
-    pub(crate) fact: AdmittedComponent,
-    pub(crate) bytes: Vec<u8>,
+pub struct NativeComponent {
+    pub fact: AdmittedComponent,
+    pub bytes: Vec<u8>,
 }
 
 /// The immutable release or candidate workload selected by the owning driver.
 #[derive(Debug)]
-pub(super) struct NativeWorkloadSpec {
-    pub(super) warm_reuse: crate::warm_reuse::WarmReuse,
-    pub(super) id: String,
-    pub(super) namespace: String,
-    pub(super) name: String,
-    pub(super) components: Vec<NativeComponent>,
-    pub(super) local_resources: LocalResources,
-    pub(super) host_interfaces: Vec<WitInterface>,
+pub struct NativeWorkloadSpec {
+    pub warm_reuse: crate::warm_reuse::WarmReuse,
+    pub id: String,
+    pub namespace: String,
+    pub name: String,
+    pub components: Vec<NativeComponent>,
+    pub local_resources: LocalResources,
+    pub host_interfaces: Vec<WitInterface>,
 }
 
 /// A native workload and its admitted facts, keyed by native component identity.
 #[derive(Debug)]
-pub(crate) struct NativeWorkload {
-    pub(crate) resolved: ResolvedWorkload,
-    pub(super) facts_by_component_id: BTreeMap<String, AdmittedComponent>,
+pub struct NativeWorkload {
+    pub resolved: ResolvedWorkload,
+    pub facts_by_component_id: BTreeMap<String, AdmittedComponent>,
 }
 
 /// One release or candidate lifetime, retained by every native call it owns.
 #[derive(Debug)]
-pub(crate) struct NativeApplication<P: InvocationPolicy> {
+pub struct NativeApplication<P: InvocationPolicy> {
     // Cleanup runs before the workload fields drop. The policy contains only
     // synchronous WAMN registries; native workload teardown owns warm stores.
     _cleanup: NativePolicyCleanup<P>,
-    pub(crate) workload: Arc<NativeWorkload>,
-    pub(super) policy: Arc<P>,
+    pub workload: Arc<NativeWorkload>,
+    pub policy: Arc<P>,
 }
 
 #[derive(Debug)]
@@ -72,7 +72,11 @@ impl<P: InvocationPolicy> Drop for NativePolicyCleanup<P> {
 ///
 /// The guard precedes resolution because native rollback covers returned errors,
 /// but dropping a pending resolution does not run the plugin unbind callbacks.
-pub(super) async fn load_native_application<P: InvocationPolicy>(
+#[expect(
+    clippy::implicit_hasher,
+    reason = "wash-runtime takes the plugin map with the default hasher"
+)]
+pub async fn load_native_application<P: InvocationPolicy>(
     engine: Arc<Engine>,
     spec: NativeWorkloadSpec,
     policy: Arc<P>,
@@ -95,7 +99,7 @@ pub(super) async fn load_native_application<P: InvocationPolicy>(
 /// Identify a complete admitted fact before native plugin binding begins.
 ///
 /// This name is metadata identity, not the digest used by the compilation cache.
-pub(super) fn native_component_name(fact: &AdmittedComponent) -> anyhow::Result<String> {
+pub fn native_component_name(fact: &AdmittedComponent) -> anyhow::Result<String> {
     let value = serde_json::to_value(fact).context("encode admitted component identity")?;
     Ok(format!(
         "wamn-fact:{}",

@@ -26,11 +26,11 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::operation::{
     OperationHost, OperationRefusal, OperationRefusalKind, authorize_registered_operation,
-    node_types,
 };
 use crate::route::{RouteCall, invoke_route};
 use crate::router_response::{InterruptedResponse, PartialEvidence};
 use crate::{RouterDriver, RouterDriverRequest};
+use wamn_engine::operation::node_types;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({

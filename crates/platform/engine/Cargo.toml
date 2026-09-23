@@ -15,12 +15,14 @@ wasmtime = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-execution-contract = { workspace = true }
+# `invoke_operation` takes the intent store trait. Run-state is pure.
+wamn-run-state = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["fs", "time"] }
+tokio = { workspace = true, features = ["fs", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

@@ -15,7 +15,7 @@ use super::native_workload::NativeApplication;
 /// The per-call authority of one native application.
 ///
 /// The call path dispatches through this plugin by its [`HostPlugin::id`].
-pub(crate) trait InvocationPolicy: HostPlugin + Sized {
+pub trait InvocationPolicy: HostPlugin + Sized {
     /// The facts of one call that only the policy reads.
     type Facts: Send + Sync + 'static;
     /// Revokes the authority of one call when it drops.
@@ -41,7 +41,7 @@ pub(crate) trait InvocationPolicy: HostPlugin + Sized {
 }
 
 /// The host that loads the application of the carried release.
-pub(crate) trait ApplicationHost {
+pub trait ApplicationHost {
     /// The policy of the applications this host loads.
     type Policy: InvocationPolicy;
 
@@ -54,15 +54,15 @@ pub(crate) trait ApplicationHost {
 
 /// Caller-owned cancellation boundary, separate from the native store lifetime.
 #[derive(Debug)]
-pub(crate) struct InvocationScope<P: InvocationPolicy> {
-    pub(super) id: Box<str>,
-    pub(super) closed: Mutex<bool>,
+pub struct InvocationScope<P: InvocationPolicy> {
+    pub id: Box<str>,
+    pub closed: Mutex<bool>,
     cancelled: tokio::sync::Notify,
     policy: Arc<P>,
 }
 
 impl<P: InvocationPolicy> InvocationScope<P> {
-    pub(super) fn new(policy: Arc<P>) -> Self {
+    pub fn new(policy: Arc<P>) -> Self {
         Self {
             id: super::next_scope("native-invocation"),
             closed: Mutex::new(false),
@@ -71,7 +71,7 @@ impl<P: InvocationPolicy> InvocationScope<P> {
         }
     }
 
-    pub(super) async fn cancelled(&self) {
+    pub async fn cancelled(&self) {
         loop {
             let notified = self.cancelled.notified();
             if *self.closed.lock().expect("invocation scope lock poisoned") {
@@ -81,7 +81,7 @@ impl<P: InvocationPolicy> InvocationScope<P> {
         }
     }
 
-    pub(super) fn close(&self) {
+    pub fn close(&self) {
         let mut closed = self.closed.lock().expect("invocation scope lock poisoned");
         *closed = true;
         self.policy.revoke(&self.id);

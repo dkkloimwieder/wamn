@@ -870,7 +870,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 Arc::clone(release),
                 source,
                 RouterDriverConfig {
-                    warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::new(
+                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::new(
                         &args.trusted_warm_component_digest,
                         args.component_pool_size,
                         args.component_reclaim_window_seconds,

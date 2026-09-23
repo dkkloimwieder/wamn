@@ -44,7 +44,7 @@ impl WarmReuse {
         })
     }
 
-    pub(crate) fn apply(&self, component: &mut wash_runtime::types::Component) {
+    pub fn apply(&self, component: &mut wash_runtime::types::Component) {
         if component
             .digest
             .as_ref()

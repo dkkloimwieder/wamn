@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
+use crate::engine::{build_engine_with_host_memory, host_memory_budgets};
 use tokio::time::{Instant, timeout_at};
-use wamn_engine::engine::{build_engine_with_host_memory, host_memory_budgets};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::dispatch::DispatchTarget;
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};

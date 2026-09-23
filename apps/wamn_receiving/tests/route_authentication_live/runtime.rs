@@ -413,7 +413,7 @@ pub(super) async fn build_journey_runtime(
         Arc::clone(&release),
         Arc::new(source),
         RouterDriverConfig {
-            warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
+            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
             owner_prefix: "receiving-route-live".to_owned(),
             project: PROJECT.to_owned(),
             schema: Some("receiving".to_owned()),

@@ -37,5 +37,3 @@ pub fn authorize_attachment_for_test(
 ) -> Result<(), Box<str>> {
     router_delivery::authorize_attachment_for_test(release, attachment_id, caller)
 }
-
-pub mod warm_reuse;

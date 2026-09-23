@@ -5885,6 +5885,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-component-policy",
  "wamn-execution-contract",
+ "wamn-run-state",
  "wash-runtime",
  "wasmtime",
  "wat",

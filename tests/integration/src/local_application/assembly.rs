@@ -305,7 +305,7 @@ pub(super) async fn assemble(
         Arc::clone(&release),
         Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
         RouterDriverConfig {
-            warm_reuse: wamn_execution_host::warm_reuse::WarmReuse::default(),
+            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
             owner_prefix: "local-application".into(),
             project: input.project.to_owned(),
             schema: Some(input.schema.to_owned()),

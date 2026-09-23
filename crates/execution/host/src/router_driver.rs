@@ -8,10 +8,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::operation::{
-    InvocationSite, NativeApplication, NativeComponent, NativeFacts, NativePolicy, NodeAcquisition,
-    OperationCall, OperationClosure, OperationHost, OperationScope, authorize_registered_operation,
-    bounded_node_deadline_ms, component_invocation, invocation_span, invoke_operation,
-    node_trace_context, node_types, remote_trace_context, validate_component_in_release,
+    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationScope,
+    authorize_registered_operation, bounded_node_deadline_ms, component_invocation,
+    invocation_span, node_trace_context, remote_trace_context, validate_component_in_release,
 };
 use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
 use anyhow::Context as _;
@@ -22,6 +21,10 @@ use wamn_catalog::{
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::{ArtifactSource, ComponentArtifactFetchErrorKind};
+use wamn_engine::operation::native_workload::NativeComponent;
+use wamn_engine::operation::{
+    NativeApplication, OperationCall, OperationClosure, invoke_operation, node_types,
+};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
@@ -103,7 +106,7 @@ impl std::error::Error for InvalidWiringCacheCapacity {}
 /// Process-owned construction facts shared by the host and executor leaves.
 #[derive(Debug, Clone)]
 pub struct RouterDriverConfig {
-    pub warm_reuse: crate::warm_reuse::WarmReuse,
+    pub warm_reuse: wamn_engine::warm_reuse::WarmReuse,
     pub owner_prefix: String,
     pub project: String,
     pub schema: Option<String>,

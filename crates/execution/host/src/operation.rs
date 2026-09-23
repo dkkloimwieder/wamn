@@ -1,14 +1,13 @@
-//! One export call of one admitted component, shared by every entry.
+//! The host half of one operation call.
 //!
-//! The router driver calls [`invoke_operation`] for each node of a wiring walk.
-//! The route path calls it once for a route, with no walk. The released
-//! application, its store and plugins, and the deadline belong here, so both
-//! entries run a component the same way.
+//! The released application, its plugins, and the policy that grants each
+//! call's authority belong here. The call itself is
+//! [`wamn_engine::operation::invoke_operation`], which the router driver and
+//! the route path both call.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -44,30 +43,19 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
 
-use crate::warm_reuse::WarmReuse;
+use wamn_engine::operation::{
+    invocation_policy, native_call, native_workload, next_scope, node_types,
+};
+use wamn_engine::warm_reuse::WarmReuse;
 
-mod invocation_policy;
-mod native_call;
 mod native_policy;
-mod native_workload;
 
-use invocation_policy::{ApplicationHost, InvocationPolicy};
-use native_call::{NativeInvocation, invoke_native, prepare_native};
+use invocation_policy::ApplicationHost;
+use native_call::prepare_native;
 use native_policy::{NATIVE_POLICY_ID, NativePolicyResources, new_native_policy};
 pub(crate) use native_policy::{NativeFacts, NativePolicy};
-pub(crate) use native_workload::{NativeApplication, NativeComponent};
+use native_workload::{NativeApplication, NativeComponent};
 use native_workload::{NativeWorkloadSpec, load_native_application};
-
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: "../router/wit",
-        world: "node",
-        exports: { default: async },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-pub(crate) use bindings::wamn::node::types as node_types;
 
 /// Keep at most two verified artifact fetches in flight per release load.
 /// Native workload loading owns compilation after these bounded fetches finish.
@@ -584,81 +572,6 @@ pub(crate) fn component_invocation(
     }
 }
 
-/// The application that one operation call runs in.
-pub(crate) enum OperationClosure<'a, P: InvocationPolicy> {
-    /// The carried release, loaded once from its complete component list.
-    Released(&'a [AdmittedComponent]),
-    /// A candidate application that the caller loaded and unbinds.
-    Candidate(&'a Arc<NativeApplication<P>>),
-}
-
-impl<P: InvocationPolicy> Clone for OperationClosure<'_, P> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<P: InvocationPolicy> Copy for OperationClosure<'_, P> {}
-
-/// One export call of one admitted component.
-pub(crate) struct OperationCall<'a, P: InvocationPolicy> {
-    pub(crate) closure: OperationClosure<'a, P>,
-    pub(crate) component: &'a AdmittedComponent,
-    pub(crate) operation: &'a str,
-    pub(crate) context: node_types::NodeContext,
-    pub(crate) input: &'a serde_json::Value,
-    /// The bounded deadline, the same value as `context.deadline_ms`.
-    pub(crate) deadline_ms: u64,
-    /// The facts of this call that only the policy reads.
-    pub(crate) facts: P::Facts,
-}
-
-/// Call one export once, under the call's deadline, and return what the
-/// component returned. The caller lowers the result for its own entry.
-pub(crate) async fn invoke_operation<H: ApplicationHost>(
-    host: &H,
-    call: OperationCall<'_, H::Policy>,
-    #[expect(
-        unused_variables,
-        reason = "route intent logging is a later epic; every caller passes None"
-    )]
-    intent: Option<&dyn wamn_run_state::IntentStore>,
-) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
-    tokio::time::timeout_at(deadline, async {
-        let application = match call.closure {
-            OperationClosure::Released(components) => host.released_application(components).await?,
-            OperationClosure::Candidate(application) => Arc::clone(application),
-        };
-        let id = application
-            .workload
-            .facts_by_component_id
-            .iter()
-            .find_map(|(id, fact)| (fact == call.component).then_some(id))
-            .context("native-node-component-fact-missing")?;
-        let target = application
-            .workload
-            .resolved
-            .dispatch_target(id, application.policy.id())
-            .await?;
-        let input = serde_json::to_string(call.input).context("encode node input")?;
-        invoke_native(
-            &target,
-            NativeInvocation {
-                operation: call.operation.to_owned(),
-                context: call.context,
-                input: input.into(),
-                deadline,
-                facts: call.facts,
-                application,
-            },
-        )
-        .await
-    })
-    .await
-    .context("native node enclosing deadline elapsed")?
-}
-
 pub(crate) fn validate_component_in_release(
     release: &LoadedRelease,
     component: &AdmittedComponent,
@@ -909,13 +822,6 @@ fn lower_statement_set(
             )
         })
         .collect()
-}
-
-/// Unique process-local application and invocation scope identifiers.
-static NEXT_SCOPE: AtomicU64 = AtomicU64::new(0);
-
-fn next_scope(component: &str) -> Box<str> {
-    format!("{component}#{}", NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)).into()
 }
 
 /// The host call ceiling in milliseconds. The constant is well under an hour,
