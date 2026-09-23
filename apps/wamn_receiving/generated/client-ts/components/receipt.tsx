@@ -29,6 +29,9 @@ import {
   DetailItem,
   DetailList,
   FieldError,
+  FieldGroup,
+  FormActions,
+  TableScreen,
   TextField,
   announceOutcome,
   gridFeatures,
@@ -234,22 +237,26 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
   });
 
   return (
-    <section>
+    <TableScreen>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           restart();
         }}
       >
-        <TextField
-          label="limit"
-          type="number"
-          min={1}
-          max={100}
-          value="100"
-          onChange={(value) => change(["limit"], value)}
-        />
-        <Button type="submit">read</Button>
+        <FieldGroup>
+          <TextField
+            label="limit"
+            type="number"
+            min={1}
+            max={100}
+            value="100"
+            onChange={(value) => change(["limit"], value)}
+          />
+        </FieldGroup>
+        <FormActions>
+          <Button type="submit">read</Button>
+        </FormActions>
       </form>
       <DataGrid
         table={table}
@@ -261,11 +268,16 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
           <DataGridTable />
         </DataGridContainer>
       </DataGrid>
-      <Show when={hasNextPage(page())}>
-        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
+      <FormActions>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!hasNextPage(page())}
+          onClick={() => void read(page().cursor)}
+        >
           next page
         </Button>
-      </Show>
-    </section>
+      </FormActions>
+    </TableScreen>
   );
 }

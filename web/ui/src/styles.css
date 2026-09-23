@@ -6,13 +6,15 @@
  * every class the copied components use. A generated component states no
  * class, so no generated tree is scanned.
  *
- * The theme is the Zaidan vega style over the neutral base color with the
- * medium radius. The `.dark` block is the dark mode, and `ColorModeProvider`
- * sets that class.
+ * The theme is the Zaidan preset buIovdQ: the lyra style over the neutral
+ * base color, the indigo theme and the default radius. The owner replaced
+ * the preset's Inter with Fira Code, over the system monospace font. The
+ * `.dark` block is the dark mode, and `ColorModeProvider` sets that class.
  */
 
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/fira-code";
 @import "./styles/utilities.css";
 @import "./styles/base.css" layer(base);
 
@@ -74,10 +76,10 @@
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
+    --primary: oklch(0.457 0.24 277.023);
+    --primary-foreground: oklch(0.962 0.018 272.314);
+    --secondary: oklch(0.967 0.001 286.375);
+    --secondary-foreground: oklch(0.21 0.006 285.885);
     --muted: oklch(0.97 0 0);
     --muted-foreground: oklch(0.556 0 0);
     --accent: oklch(0.97 0 0);
@@ -94,8 +96,8 @@
     --radius: 0.625rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.511 0.262 276.966);
+    --sidebar-primary-foreground: oklch(0.962 0.018 272.314);
     --sidebar-accent: oklch(0.97 0 0);
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
@@ -115,9 +117,9 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
+    --primary: oklch(0.398 0.195 277.366);
+    --primary-foreground: oklch(0.962 0.018 272.314);
+    --secondary: oklch(0.274 0.006 286.033);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
     --muted-foreground: oklch(0.708 0 0);
@@ -134,8 +136,8 @@
     --chart-5: oklch(0.269 0 0);
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.585 0.233 277.117);
+    --sidebar-primary-foreground: oklch(0.962 0.018 272.314);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
@@ -162,9 +164,38 @@
   body {
     @apply bg-background text-foreground;
   }
+  html {
+    @apply font-sans;
+  }
+  /*
+   * Every label, column header, button and title reads in capitals. A value
+   * the operator reads or types keeps its own case, and so does a
+   * description.
+   */
+  [data-slot="label"],
+  [data-slot="field-label"],
+  [data-slot="field-legend"],
+  [data-slot="card-title"],
+  [data-slot="button"],
+  [data-slot="data-grid-table"] th,
+  dt {
+    @apply uppercase;
+  }
 }
 
-/* No font item is installed, so a heading takes the body font. */
+/*
+ * solid-sonner injects its own CSS outside every layer and draws the toast
+ * corner from --border-radius, so a layered class cannot change the corner.
+ * The toast radius of this style is therefore set on that variable. Lyra
+ * draws square corners, as its .z-toast rule states.
+ */
+.z-toast {
+  --border-radius: 0;
+}
+
+/* Every text is Fira Code, and the system monospace font stands in for it. */
 @theme inline {
-  --font-heading: var(--font-sans);
+  --font-sans: 'Fira Code Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-heading: 'Fira Code Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-mono: 'Fira Code Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 }

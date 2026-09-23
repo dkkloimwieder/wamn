@@ -11,6 +11,7 @@
     "check": "tsc --project tsconfig.json && tailwindcss --input src/styles.css --output node_modules/.cache/wamn-ui/styles.css"
   },
   "dependencies": {
+    "@fontsource-variable/fira-code": "^5.3.0",
     "@kobalte/core": "^0.13.14",
     "@tanstack/solid-table": "^9.2.4",
     "class-variance-authority": "^0.7.1",

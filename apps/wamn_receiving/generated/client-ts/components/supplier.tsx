@@ -31,6 +31,9 @@ import {
   DataGridContainer,
   DataGridTable,
   FieldError,
+  FieldGroup,
+  FormActions,
+  TableScreen,
   TextField,
   announceOutcome,
   gridFeatures,
@@ -123,18 +126,22 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.code}</FieldError>
       </Show>
-      <form.Field name={`name`}>
-        {(field) => (
-          <TextField
-            label="Supplier name"
-            type="text"
-            value={String(field().state.value ?? "")}
-            onInput={(value) => field().handleChange(value)}
-            error={refusalMarks(refusal()?.member ?? null, "name") ? (refusal()?.code ?? "refused") : null}
-          />
-        )}
-      </form.Field>
-      <Button type="submit">submit</Button>
+      <FieldGroup>
+        <form.Field name={`name`}>
+          {(field) => (
+            <TextField
+              label="Supplier name"
+              type="text"
+              value={String(field().state.value ?? "")}
+              onInput={(value) => field().handleChange(value)}
+              error={refusalMarks(refusal()?.member ?? null, "name") ? (refusal()?.code ?? "refused") : null}
+            />
+          )}
+        </form.Field>
+      </FieldGroup>
+      <FormActions>
+        <Button type="submit">submit</Button>
+      </FormActions>
     </form>
   );
 }
@@ -247,22 +254,26 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
   });
 
   return (
-    <section>
+    <TableScreen>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           restart();
         }}
       >
-        <TextField
-          label="limit"
-          type="number"
-          min={1}
-          max={100}
-          value="100"
-          onChange={(value) => change(["limit"], value)}
-        />
-        <Button type="submit">read</Button>
+        <FieldGroup>
+          <TextField
+            label="limit"
+            type="number"
+            min={1}
+            max={100}
+            value="100"
+            onChange={(value) => change(["limit"], value)}
+          />
+        </FieldGroup>
+        <FormActions>
+          <Button type="submit">read</Button>
+        </FormActions>
       </form>
       <DataGrid
         table={table}
@@ -274,11 +285,16 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
           <DataGridTable />
         </DataGridContainer>
       </DataGrid>
-      <Show when={hasNextPage(page())}>
-        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
+      <FormActions>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!hasNextPage(page())}
+          onClick={() => void read(page().cursor)}
+        >
           next page
         </Button>
-      </Show>
-    </section>
+      </FormActions>
+    </TableScreen>
   );
 }
