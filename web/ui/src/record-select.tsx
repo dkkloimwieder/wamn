@@ -7,7 +7,15 @@
  * options are exactly the rows the release sent.
  */
 
-import { createEffect, createSignal, createUniqueId, on, onCleanup, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  createUniqueId,
+  on,
+  onCleanup,
+  Show,
+} from "solid-js";
 
 import { Button } from "./components/ui/button";
 import { Field, FieldError, FieldLabel } from "./components/ui/field";
@@ -48,7 +56,11 @@ export interface RecordSelectProps<Row extends object> {
 export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) {
   // The chosen row stays shown after a search replaces the options.
   const [chosen, setChosen] = createSignal<Row | null>(null);
-  const selected = (): Row | null => {
+  const key = (row: Row | null): string | null => (row === null ? null : props.optionValue(row));
+  // The combobox writes the chosen label back into the input whenever the
+  // selection changes identity. A search reply replaces every row, so the
+  // chosen row stays the same object while its value stays the same.
+  const selected = createMemo((): Row | null => {
     const value = props.value;
     if (value === null || value === "") {
       return null;
@@ -59,7 +71,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
     }
     const kept = chosen();
     return kept !== null && props.optionValue(kept) === value ? kept : null;
-  };
+  }, null, { equals: (previous, next) => key(previous) === key(next) });
   createEffect(
     on(selected, (row) => {
       if (row !== null) {

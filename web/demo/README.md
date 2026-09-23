@@ -16,6 +16,7 @@ Generated files are never edited.
 
 Stand up the local stack first. The notes of Beads `wamn-78or.6` hold the exact commands.
 The stack prints a base URL and a route host. Keep both.
+Run `npm install` in `web/ui` first, because the page renders through it.
 
 ```bash
 cd web/demo
@@ -89,3 +90,9 @@ One result needs the running page, and Beads `wamn-rm14.7` records it.
 Open the record receipt form and choose its purchase order, then its line, then its location, each from a list.
 The line list offers the lines of the chosen order alone, the update form chooses a supplier from a list, and a purchase order row opens the receipt form already filled.
 No control asks the operator to paste an identity.
+
+## The Epic 10 check
+
+Five results need the running page, and the notes of Beads `wamn-ut5e` record them.
+Read one table, submit one form and read its toast, and choose one purchase order through its search and its next page.
+Switch to dark mode once. The delete result reads "delete: no Receiving operation; covered by fixture test."

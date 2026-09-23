@@ -123,6 +123,21 @@ describe("a selector over a list that declares its display filter", () => {
     expect(searched.cursor).toBeUndefined();
   });
 
+  it("keeps the typed search when a record is already chosen", async () => {
+    const { transport, sent } = paged();
+    render(() => <WidgetCreateForm transport={transport} />);
+    await choose("maker id", "Northwind");
+    const input = await openSelector("maker id");
+
+    fireEvent.input(input, { target: { value: "Southwind" } });
+
+    await waitFor(() => expect(sent).toHaveLength(2));
+    // The reply replaces the options, and the input still shows the search.
+    await openSelector("maker id");
+    await waitFor(() => expect(screen.getByRole("option", { name: "Southwind" })).toBeDefined());
+    expect(input.value).toBe("Southwind");
+  });
+
   it("appends the next page to the options it already offers", async () => {
     const { transport, sent } = paged();
     render(() => <WidgetCreateForm transport={transport} />);

@@ -8,6 +8,7 @@
 
 import { For, Show, createMemo, createSignal } from "solid-js";
 
+import { Button, useColorMode } from "@wamn/ui";
 import { createTransport, type Outcome, type Transport } from "@wamn/web-runtime";
 import {
   LocationListTable,
@@ -52,10 +53,14 @@ export function App() {
   }
 
   const read = (result: Outcome<unknown>) => setOutcome(describe(result));
+  const { colorMode, toggleColorMode } = useColorMode();
 
   return (
     <main>
       <h1>Receiving demo</h1>
+      <Button variant="outline" onClick={toggleColorMode}>
+        {colorMode() === "dark" ? "light mode" : "dark mode"}
+      </Button>
 
       <Show when={token() === null}>
         <form

@@ -3,13 +3,8 @@
 // `supplier` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { For, Show, createSignal } from "solid-js";
-import {
-  createSolidTable,
-  flexRender,
-  getCoreRowModel,
-  type ColumnDef,
-} from "@tanstack/solid-table";
+import { Show, createSignal } from "solid-js";
+import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
@@ -30,6 +25,17 @@ import {
   type Transport,
   writeMember,
 } from "@wamn/web-runtime";
+import {
+  Button,
+  DataGrid,
+  DataGridContainer,
+  DataGridTable,
+  FieldError,
+  TextField,
+  announceOutcome,
+  gridFeatures,
+  type GridFeatures,
+} from "@wamn/ui";
 import {
   SUPPLIER_CREATE_REQUEST_FIELDS,
   create,
@@ -98,6 +104,7 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       const outcome = await create(props.transport, [item]);
       props.onSubmitted?.(outcome);
+      announceOutcome(outcome, SupplierCreateFormLabel);
       setRefusal(
         outcome.status === "refused"
           ? { code: outcome.code, member: refusedMember(outcome.detail) }
@@ -114,30 +121,26 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <p>{refusal()?.code}</p>
+        <FieldError>{refusal()?.code}</FieldError>
       </Show>
       <form.Field name={`name`}>
         {(field) => (
-          <label>
-            Supplier name
-            <input
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(event) => field().handleChange(event.currentTarget.value)}
-            />
-            <Show when={refusalMarks(refusal()?.member ?? null, "name")}>
-              <em>{refusal()?.code}</em>
-            </Show>
-          </label>
+          <TextField
+            label="Supplier name"
+            type="text"
+            value={String(field().state.value ?? "")}
+            onInput={(value) => field().handleChange(value)}
+            error={refusalMarks(refusal()?.member ?? null, "name") ? (refusal()?.code ?? "refused") : null}
+          />
         )}
       </form.Field>
-      <button type="submit">submit</button>
+      <Button type="submit">submit</Button>
     </form>
   );
 }
 
 /** Columns of `wamn-receiving:supplier/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<SupplierQueryRow, unknown>[] = [
+const QUERY_COLUMNS: ColumnDef<GridFeatures, SupplierQueryRow>[] = [
   {
     accessorKey: "createdAt",
     header: "Added",
@@ -196,6 +199,7 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
     const outcome = await query(props.transport, [sent]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
+      announceOutcome(outcome, SupplierQueryTableLabel);
       setPage({ ...page(), busy: false });
       return;
     }
@@ -213,12 +217,33 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
     restart();
   };
 
-  const table = createSolidTable({
+  const columns: ColumnDef<GridFeatures, SupplierQueryRow>[] = [
+    ...QUERY_COLUMNS,
+    {
+      id: "fillPurchaseOrderUpdate",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onFillPurchaseOrderUpdate}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onFillPurchaseOrderUpdate?.(writeMember({} as PurchaseOrderUpdateFormInitial, ["change", "supplierId"], cell.row.original.id))}
+          >
+            update
+          </Button>
+        </Show>
+      ),
+    },
+  ];
+
+  const table = createTable({
+    features: gridFeatures,
     get data() {
       return page().rows as SupplierQueryRow[];
     },
-    columns: QUERY_COLUMNS,
-    getCoreRowModel: getCoreRowModel(),
+    columns: columns,
+    manualPagination: true,
   });
 
   return (
@@ -229,58 +254,30 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
           restart();
         }}
       >
-        <label>
-          limit
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={100}
-            onChange={(event) => change(["limit"], event.currentTarget.value)}
-          />
-        </label>
-        <button type="submit">read</button>
+        <TextField
+          label="limit"
+          type="number"
+          min={1}
+          max={100}
+          value="100"
+          onChange={(value) => change(["limit"], value)}
+        />
+        <Button type="submit">read</Button>
       </form>
-      <table>
-        <thead>
-          <For each={table.getHeaderGroups()}>
-            {(group) => (
-              <tr>
-                <For each={group.headers}>
-                  {(header) => (
-                    <th>{flexRender(header.column.columnDef.header, header.getContext())}</th>
-                  )}
-                </For>
-              </tr>
-            )}
-          </For>
-        </thead>
-        <tbody>
-          <For each={table.getRowModel().rows}>
-            {(row) => (
-              <tr onClick={() => props.onRowSelect?.(row.original)}>
-                <For each={row.getVisibleCells()}>
-                  {(cell) => <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>}
-                </For>
-                <td>
-                  <Show when={props.onFillPurchaseOrderUpdate}>
-                    <button
-                      type="button"
-                      onClick={() => props.onFillPurchaseOrderUpdate?.(writeMember({} as PurchaseOrderUpdateFormInitial, ["change", "supplierId"], row.original.id))}
-                    >
-                      update
-                    </button>
-                  </Show>
-                </td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+      <DataGrid
+        table={table}
+        recordCount={page().rows.length}
+        isLoading={page().busy && page().rows.length === 0}
+        onRowClick={(row) => props.onRowSelect?.(row)}
+      >
+        <DataGridContainer>
+          <DataGridTable />
+        </DataGridContainer>
+      </DataGrid>
       <Show when={hasNextPage(page())}>
-        <button type="button" onClick={() => void read(page().cursor)}>
+        <Button type="button" variant="outline" onClick={() => void read(page().cursor)}>
           next page
-        </button>
+        </Button>
       </Show>
     </section>
   );
