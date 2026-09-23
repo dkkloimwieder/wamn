@@ -1,11 +1,17 @@
 //! Package manifest bytes and generated metadata.
 
-use super::{BTreeMap, MintManifestError, MintManifestErrorKind, PathBuf, sha256};
+use std::path::Path;
 
-/// Every package's parsed manifest, and every package's manifest digest.
+use super::{
+    BTreeMap, MintManifestError, MintManifestErrorKind, OperationKind, PathBuf, RouteKinds, sha256,
+};
+
+/// Every package's parsed manifest, every package's manifest digest, and the
+/// contract kind of every operation the packages generate.
 pub(super) type PackageManifestSources = (
     BTreeMap<String, wamn_schema_generator::PackageManifest>,
     BTreeMap<String, String>,
+    RouteKinds,
 );
 
 pub(super) fn read_package_manifests(
@@ -13,6 +19,7 @@ pub(super) fn read_package_manifests(
 ) -> Result<PackageManifestSources, MintManifestError> {
     let mut manifests = BTreeMap::new();
     let mut hashes = BTreeMap::new();
+    let mut kinds = RouteKinds::new();
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| {
             MintManifestError::with_source(
@@ -70,6 +77,9 @@ pub(super) fn read_package_manifests(
         })?;
         validate_package_metadata(&manifest, &metadata)?;
         let package_id = manifest.package.id.clone();
+        for (operation, kind) in read_operation_kinds(root)? {
+            kinds.insert((package_id.clone(), operation), kind);
+        }
         if manifests.insert(package_id.clone(), manifest).is_some() {
             return Err(MintManifestError::new(
                 MintManifestErrorKind::PackageManifest,
@@ -78,7 +88,58 @@ pub(super) fn read_package_manifests(
         }
         hashes.insert(package_id, sha256(&bytes));
     }
-    Ok((manifests, hashes))
+    Ok((manifests, hashes, kinds))
+}
+
+/// The `kind` of every generated contract `operation.json` under the package.
+///
+/// The generated contract is the only source of an operation kind. A package
+/// that generates no contract has no operation a route can call.
+fn read_operation_kinds(root: &Path) -> Result<Vec<(String, OperationKind)>, MintManifestError> {
+    #[derive(serde::Deserialize)]
+    struct Contract {
+        operation: String,
+        kind: OperationKind,
+    }
+    let unreadable = |path: &Path, error: std::io::Error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::GeneratedPackageMetadata,
+            format!("read generated contracts {}", path.display()),
+            error,
+        )
+    };
+    let contracts = root.join("generated/contracts");
+    let models = match std::fs::read_dir(&contracts) {
+        Ok(models) => models,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(unreadable(&contracts, error)),
+    };
+    let mut kinds = Vec::new();
+    for model in models {
+        let model = model.map_err(|error| unreadable(&contracts, error))?.path();
+        if !model.is_dir() {
+            continue;
+        }
+        for contract in std::fs::read_dir(&model).map_err(|error| unreadable(&model, error))? {
+            let path = contract.map_err(|error| unreadable(&model, error))?.path();
+            if !path.to_string_lossy().ends_with(".operation.json") {
+                continue;
+            }
+            let bytes = std::fs::read(&path).map_err(|error| unreadable(&path, error))?;
+            let contract: Contract = serde_json::from_slice(&bytes).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::GeneratedPackageMetadata,
+                    format!(
+                        "generated contract {} names no operation kind; regenerate the package evidence",
+                        path.display()
+                    ),
+                    error,
+                )
+            })?;
+            kinds.push((contract.operation, contract.kind));
+        }
+    }
+    Ok(kinds)
 }
 
 pub(super) fn validate_package_metadata(

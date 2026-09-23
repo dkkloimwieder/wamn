@@ -134,6 +134,9 @@ pub struct RunPlaneObservation {
     /// Rows in `catalog.event_registrations` still carrying a retired `state`
     /// or `partition-key` key (0 when the table is absent).
     pub stale_registration_key_rows: i64,
+    /// Whether `catalog.release_components` exists without its route columns,
+    /// so every member still binds a wiring node.
+    pub release_components_without_routes: bool,
     /// Every CHECK constraint on a record table, keyed by `(table, name)`, with
     /// PostgreSQL's canonical `pg_get_constraintdef(..., true)` definition.
     pub checks: BTreeMap<(String, String), String>,

@@ -376,20 +376,30 @@ CREATE TABLE catalog.wiring_activation_events (
     changed_at                 timestamptz NOT NULL DEFAULT now()
 );
 
+-- One member binds a component to a wiring node or to a route, never both. A
+-- route row names its component and operation in the member's own package.
 CREATE TABLE catalog.release_components (
     tenant_id             text NOT NULL CHECK (tenant_id <> ''),
     effective_release_id  int  NOT NULL CHECK (effective_release_id > 0),
-    wiring_package_id     text NOT NULL CHECK (wiring_package_id <> ''),
-    wiring_package_version text NOT NULL CHECK (wiring_package_version <> ''),
-    wiring_id             text NOT NULL CHECK (wiring_id <> ''),
-    wiring_version        int  NOT NULL CHECK (wiring_version > 0),
-    node_id               text NOT NULL CHECK (node_id <> ''),
+    wiring_package_id     text CHECK (wiring_package_id <> ''),
+    wiring_package_version text CHECK (wiring_package_version <> ''),
+    wiring_id             text CHECK (wiring_id <> ''),
+    wiring_version        int  CHECK (wiring_version > 0),
+    node_id               text CHECK (node_id <> ''),
     package_id            text NOT NULL CHECK (package_id <> ''),
     package_version       text NOT NULL CHECK (package_version <> ''),
     component_digest      text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    CONSTRAINT release_components_pkey
-        PRIMARY KEY (tenant_id, effective_release_id, wiring_package_id,
-                     wiring_package_version, wiring_id, wiring_version, node_id),
+    route_component       text CHECK (route_component <> ''),
+    route_operation       text CHECK (route_operation <> ''),
+    CONSTRAINT release_components_binding_check CHECK (
+        (wiring_package_id IS NOT NULL AND wiring_package_version IS NOT NULL
+         AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+         AND node_id IS NOT NULL
+         AND route_component IS NULL AND route_operation IS NULL)
+        OR (wiring_package_id IS NULL AND wiring_package_version IS NULL
+            AND wiring_id IS NULL AND wiring_version IS NULL AND node_id IS NULL
+            AND route_component IS NOT NULL AND route_operation IS NOT NULL)
+    ),
     CONSTRAINT release_components_wiring_membership_fkey
         FOREIGN KEY (tenant_id, effective_release_id, wiring_package_id,
                      wiring_package_version)
@@ -409,6 +419,14 @@ CREATE TABLE catalog.release_components (
         REFERENCES catalog.component_library
             (tenant_id, package_id, package_version, component_digest)
 );
+CREATE UNIQUE INDEX release_components_wiring_key
+    ON catalog.release_components (tenant_id, effective_release_id, wiring_package_id,
+                                   wiring_package_version, wiring_id, wiring_version, node_id)
+    WHERE wiring_id IS NOT NULL;
+CREATE UNIQUE INDEX release_components_route_key
+    ON catalog.release_components (tenant_id, effective_release_id, package_id,
+                                   route_component, route_operation)
+    WHERE route_operation IS NOT NULL;
 
 CREATE TABLE catalog.release_manifest_v3_snapshots (
     tenant_id            text  NOT NULL CHECK (tenant_id <> ''),

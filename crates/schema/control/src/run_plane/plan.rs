@@ -29,15 +29,15 @@ use super::declarations::{
 };
 
 use super::schema_changes::{
-    RETIRED_CHILD_RUN_COLUMNS, RETIRED_FAILURE_DETAIL_COLUMNS, RETIRED_PARTITION_CHECK,
-    RETIRED_PARTITION_COLUMNS, RETIRED_RERUN_LINEAGE_COLUMNS, RETIRED_TEST_SET_REFERENCE_COLUMN,
-    RETIRED_TEST_SET_REFERENCE_TABLES, child_run_cutover_needed, child_run_cutover_sql,
-    effect_table_cutover_needed, effect_table_cutover_owned_check, effect_table_cutover_sql,
-    execution_bundle_cutover_needed, execution_bundle_cutover_sql, failure_detail_cutover_needed,
-    failure_detail_cutover_sql, frame_identity_check, frame_identity_column,
-    frame_identity_cutover_sql, frame_identity_cutover_targets, partition_plane_cutover_needed,
-    partition_plane_cutover_sql, rerun_lineage_cutover_needed, rerun_lineage_cutover_sql,
-    retired_child_run_check, retired_effect_disposition_cutover_needed,
+    BIND_RELEASE_COMPONENT_ROUTES_SQL, RETIRED_CHILD_RUN_COLUMNS, RETIRED_FAILURE_DETAIL_COLUMNS,
+    RETIRED_PARTITION_CHECK, RETIRED_PARTITION_COLUMNS, RETIRED_RERUN_LINEAGE_COLUMNS,
+    RETIRED_TEST_SET_REFERENCE_COLUMN, RETIRED_TEST_SET_REFERENCE_TABLES, child_run_cutover_needed,
+    child_run_cutover_sql, effect_table_cutover_needed, effect_table_cutover_owned_check,
+    effect_table_cutover_sql, execution_bundle_cutover_needed, execution_bundle_cutover_sql,
+    failure_detail_cutover_needed, failure_detail_cutover_sql, frame_identity_check,
+    frame_identity_column, frame_identity_cutover_sql, frame_identity_cutover_targets,
+    partition_plane_cutover_needed, partition_plane_cutover_sql, rerun_lineage_cutover_needed,
+    rerun_lineage_cutover_sql, retired_child_run_check, retired_effect_disposition_cutover_needed,
     retired_effect_disposition_cutover_sql, run_queue_claim_index_ready,
     run_wiring_identity_contract_complete, stored_suite_cutover_needed, stored_suite_cutover_sql,
     wiring_identity_cutover_sql,
@@ -483,6 +483,13 @@ $retire_run_projection_authority$;",
                     sql: table_section(CATALOG_SCHEMA_SQL, "catalog", &table),
                 });
             }
+        }
+        if obs.release_components_without_routes {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::BindReleaseComponentRoutes,
+                target: "catalog.release_components".to_string(),
+                sql: BIND_RELEASE_COMPONENT_ROUTES_SQL.to_string(),
+            });
         }
     } else {
         plan.actions.push(RunPlaneAction {

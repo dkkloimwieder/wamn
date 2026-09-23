@@ -89,6 +89,7 @@ pub(super) fn assert_invocation_identity(
     component_digest: &str,
     caller_principal_id: &str,
 ) {
+    // A route invocation records the empty wiring id.
     assert_eq!(
         span_attribute(component, "wamn.wiring_id").as_deref(),
         Some(wiring_id),
@@ -161,8 +162,8 @@ pub(super) fn assert_direct_route_trace(
     );
     assert_eq!(
         span_attribute(component, "wamn.node_id").as_deref(),
-        Some("operation"),
-        "trace {trace_id} invoked a different wiring node"
+        Some(""),
+        "trace {trace_id} is a route, and a route names no wiring node"
     );
     let postgres = assert_postgres_descendants(spans, trace_id, component);
     assert_eq!(
@@ -207,7 +208,7 @@ pub(super) fn assert_nested_record_receipt_trace(
     assert_invocation_identity(
         overlay,
         trace_id,
-        "receiving_record_receipt",
+        "",
         OVERLAY_RECORD_RECEIPT,
         overlay_digest,
         caller_principal_id,
@@ -215,7 +216,7 @@ pub(super) fn assert_nested_record_receipt_trace(
     assert_invocation_identity(
         base,
         trace_id,
-        "receiving_record_receipt",
+        "",
         BASE_RECORD_RECEIPT,
         base_digest,
         caller_principal_id,
@@ -232,7 +233,7 @@ pub(super) fn assert_nested_record_receipt_trace(
         assert_invocation_identity(
             participant,
             trace_id,
-            "receiving_record_receipt",
+            "",
             OVERLAY_RECEIPT_PARTICIPANT,
             overlay_digest,
             caller_principal_id,
@@ -310,7 +311,7 @@ pub(super) fn assert_nested_permission_denial_trace(
     assert_invocation_identity(
         overlay,
         trace_id,
-        "receiving_record_receipt",
+        "",
         OVERLAY_RECORD_RECEIPT,
         overlay_digest,
         caller_principal_id,

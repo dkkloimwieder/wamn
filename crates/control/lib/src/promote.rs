@@ -719,6 +719,7 @@ async fn promote_target(
             environment_is_disposable: false,
         },
         &source.manifest.registrations,
+        &source.manifest.routes,
     )
     .await
     .context("mint target format-1 release snapshot")?;

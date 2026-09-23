@@ -2,8 +2,8 @@
   "pallet-get-http": {
     "kind": "http",
     "package-id": "wamn_wms",
-    "wiring-id": "pallet_get",
-    "wiring-version": 1,
+    "component": "wms",
+    "operation": "wamn-wms:pallet/get@1.0.0",
     "definition-hash": "sha256:570982058b020e74d6611b335936c9afcc84c7721557a2758936edc4a35984b1",
     "definition": {
       "id": "pallet-get-http",
@@ -47,8 +47,8 @@
   "pallet-query-http": {
     "kind": "http",
     "package-id": "wamn_wms",
-    "wiring-id": "pallet_query",
-    "wiring-version": 1,
+    "component": "wms",
+    "operation": "wamn-wms:pallet/query@1.0.0",
     "definition-hash": "sha256:64d3d2b566b79b0661128d54ecc7472de52f445f7cf16032cb988966faa70e0e",
     "definition": {
       "id": "pallet-query-http",
@@ -222,8 +222,8 @@
   "inventory-adjust-http": {
     "kind": "http",
     "package-id": "wamn_wms",
-    "wiring-id": "inventory_adjust",
-    "wiring-version": 1,
+    "component": "wms",
+    "operation": "wamn-wms:inventory/adjust@1.0.0",
     "definition-hash": "sha256:8158a98d8ffe68b2571e244cefc7459d8e63b22de87b62d085b46414326b68f3",
     "definition": {
       "id": "inventory-adjust-http",
@@ -314,8 +314,8 @@
   "inventory-merge-http": {
     "kind": "http",
     "package-id": "wamn_wms",
-    "wiring-id": "inventory_merge",
-    "wiring-version": 1,
+    "component": "wms",
+    "operation": "wamn-wms:inventory/merge@1.0.0",
     "definition-hash": "sha256:b0cbdf56d60604817efe855934be40c13911176e6ee917cc86524190e7d3200d",
     "definition": {
       "id": "inventory-merge-http",
@@ -388,8 +388,8 @@
   "inventory-split-http": {
     "kind": "http",
     "package-id": "wamn_wms",
-    "wiring-id": "inventory_split",
-    "wiring-version": 1,
+    "component": "wms",
+    "operation": "wamn-wms:inventory/split@1.0.0",
     "definition-hash": "sha256:e0c8e16e8797c2a014d1f430408e038afee709e268faee7e6d1c17f8933f187a",
     "definition": {
       "id": "inventory-split-http",
@@ -485,8 +485,8 @@
   "inventory-aggregate-http": {
     "kind": "http",
     "package-id": "wamn_wms",
-    "wiring-id": "inventory_aggregate",
-    "wiring-version": 1,
+    "component": "wms",
+    "operation": "wamn-wms:inventory/aggregate@1.0.0",
     "definition-hash": "sha256:c601e23b8d3b8610c2e1923e2ca6ac758081b8dc57aa7d6e4558e35ea70911e1",
     "definition": {
       "id": "inventory-aggregate-http",

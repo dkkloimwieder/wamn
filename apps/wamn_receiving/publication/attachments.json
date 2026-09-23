@@ -2,8 +2,8 @@
   "purchase-order-get-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "purchase_order_get",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:purchase-order/get@1.0.0",
     "definition-hash": "sha256:aa3411356694d4a6a224d42ca6b34bc9f28cfd88f5a07aa53fd61bb87f2bbba1",
     "definition": {
       "id": "purchase-order-get-http",
@@ -47,8 +47,8 @@
   "purchase-order-query-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "purchase_order_query",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:purchase-order/query@1.0.0",
     "definition-hash": "sha256:e55a70b5615b4d78d8f872b4cff64174a3832c6ff9413ce027eeaf8b4bcf1779",
     "definition": {
       "id": "purchase-order-query-http",
@@ -147,8 +147,8 @@
   "purchase-order-update-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "purchase_order_update",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:purchase-order/update@1.0.0",
     "definition-hash": "sha256:7ee1527b4a23237d2528d6ae18edde62f2b0baf84a877605f147c10cd9e0f61d",
     "definition": {
       "id": "purchase-order-update-http",
@@ -210,8 +210,8 @@
   "receipt-get-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "receipt_get",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:receipt/get@1.0.0",
     "definition-hash": "sha256:a557410fb61431e9e00560f9946434935c844e1175a12276a9dc291969b6358c",
     "definition": {
       "id": "receipt-get-http",
@@ -255,8 +255,8 @@
   "receipt-query-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "receipt_query",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:receipt/query@1.0.0",
     "definition-hash": "sha256:055e672e20cbfd29b74a2285f3d05e4d547637bc5d61aa99ff6109c2fea6de2b",
     "definition": {
       "id": "receipt-query-http",
@@ -304,8 +304,8 @@
   "receiving-record-receipt-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "receiving_record_receipt",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
     "definition-hash": "sha256:496de6b67604e420aaf924fea7b686ae817aa9954b7fcfa5b80f69d08544a825",
     "definition": {
       "id": "receiving-record-receipt-http",
@@ -397,8 +397,8 @@
   "receiving-load-receipt-screen-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "receiving_load_receipt_screen",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:receiving/load-receipt-screen@1.0.0",
     "definition-hash": "sha256:0dd9f8c483a2b853dae53fc10a040f1410dd930144ef94487cf3f7abacdeb66a",
     "definition": {
       "id": "receiving-load-receipt-screen-http",
@@ -442,8 +442,8 @@
   "receiving-load-purchase-order-history-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "receiving_load_purchase_order_history",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
     "definition-hash": "sha256:c503c1630f7313e08b5b597c6fed9ce98ae8d62296a74d18f1ef6556d21ba4b5",
     "definition": {
       "id": "receiving-load-purchase-order-history-http",
@@ -495,8 +495,8 @@
   "location-list-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "location_list",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:location/list@1.0.0",
     "definition-hash": "sha256:32c3d76d30f7ccc227867201f327d9855e5ebf159da7093fea835b05e9b8288a",
     "definition": {
       "id": "location-list-http",
@@ -535,8 +535,8 @@
   "supplier-query-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "supplier_query",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:supplier/query@1.0.0",
     "definition-hash": "sha256:83f671382b41291da302af172c490e7f7b45ac8067409cb55888f37aebadb747",
     "definition": {
       "id": "supplier-query-http",
@@ -584,8 +584,8 @@
   "supplier-create-http": {
     "kind": "http",
     "package-id": "wamn_receiving",
-    "wiring-id": "supplier_create",
-    "wiring-version": 1,
+    "component": "receiving",
+    "operation": "wamn-receiving:supplier/create@1.0.0",
     "definition-hash": "sha256:3dd2b1706fda6a9603c3ac223727d1aff4ae9aeab2e0e5c269ac20c694af7289",
     "definition": {
       "id": "supplier-create-http",

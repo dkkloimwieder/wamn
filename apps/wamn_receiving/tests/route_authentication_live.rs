@@ -303,6 +303,8 @@ struct JourneyPackage {
     version: &'static str,
     component: &'static str,
     operations: &'static [(&'static str, &'static str)],
+    /// The wirings the package publishes. Every other operation is a route.
+    wirings: &'static [&'static str],
 }
 
 const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
@@ -311,12 +313,15 @@ const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
         version: BASE_PACKAGE_VERSION,
         component: BASE_COMPONENT,
         operations: &BASE_OPERATIONS,
+        wirings: &[],
     },
     JourneyPackage {
         id: OVERLAY_PACKAGE_ID,
         version: OVERLAY_PACKAGE_VERSION,
         component: OVERLAY_COMPONENT,
         operations: &OVERLAY_OPERATIONS,
+        // The receipt-insert registration names this event handler wiring.
+        wirings: &["quality_create_inspection"],
     },
 ];
 

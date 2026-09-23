@@ -87,10 +87,18 @@ Effectful application tests remain separate from this authoring contract.
 
 ## Release identity
 
-A release fixes package versions, component digests, operation dependencies, SQL, connections, and wiring versions.
+A release fixes package versions, component digests, operation dependencies, SQL, connections, routes, and wiring versions.
 Sealing prevents later changes to its content.
 Promotion compares target manifests and ordered migrations, copies admitted facts, and admits target wirings.
 Conflicting content refuses, and exact retries retain their original facts.
+
+Publication mints one route for each attachment that targets a route.
+The route carries the contract kind of its operation, which publication reads from the generated `operation.json` of the package.
+Promotion reads no package directory, so it copies the routes and registrations of the source release.
+Publication refuses a wiring with no edges, because a graph with no edges is a route.
+The one exception is a wiring that a registration names, because a registration still delivers to a wiring.
+Each release component member binds a component to one wiring node or to one route, and a CHECK constraint refuses a member that binds both.
+`reconcile-run-plane` converts the membership table of an older catalog to this shape.
 
 Publication produces an immutable release manifest addressed by its digest.
 Deployment supplies that digest and artifact location to the host.

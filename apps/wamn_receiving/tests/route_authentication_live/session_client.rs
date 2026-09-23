@@ -283,7 +283,7 @@ pub(super) async fn assert_session_client(
         assert_kind(
             &test,
             61 + index as u64,
-            "purchase_order_get",
+            "",
             OPERATION,
             base_digest,
             "session",
@@ -301,14 +301,7 @@ pub(super) async fn assert_session_client(
         transport.calls() == 3 && login.transport.calls.load(Ordering::SeqCst) == 1,
         "legacy fresh client call must send one session request without exchange"
     );
-    assert_kind(
-        &test,
-        63,
-        "receiving_record_receipt",
-        BASE_RECORD_RECEIPT,
-        base_digest,
-        "session",
-    )?;
+    assert_kind(&test, 63, "", BASE_RECORD_RECEIPT, base_digest, "session")?;
 
     let expired = issue_pat(
         test.control,

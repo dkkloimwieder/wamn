@@ -14,10 +14,10 @@ use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, ArtifactHash,
-    ComponentPackageScope, EffectiveReleaseId, ManifestDigest, PackageCoordinate,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRelease, ServingWiring,
-    WiringDocument, validate_resolved_wiring_compatibility,
+    AttachmentTarget, ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationKind,
+    PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRelease, ServingRoute,
+    ServingWiring, WiringDocument, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_schema_control::{
@@ -35,8 +35,8 @@ use attachments::{
     read_package_attachments, resolve_route_host_overlay, validate_attachment_definition_hashes,
 };
 use components::{
-    project_serving_component, resolve_component_dependency_closure, resolve_wiring_components,
-    resolved_wiring_entry_operation, validate_anonymous_wiring_closure,
+    project_serving_component, resolve_component_dependency_closure, resolve_route_component,
+    resolve_wiring_components, resolved_wiring_entry_operation, validate_anonymous_wiring_closure,
 };
 use package_sources::read_package_manifests;
 
@@ -81,16 +81,15 @@ SELECT wiring_hash, graph_json::text \
    AND wiring_id = $4 AND version = $5 FOR SHARE";
 const SELECT_RELEASE_COMPONENTS_SQL: &str = "\
 SELECT wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id, \
-       package_id, package_version, component_digest \
+       package_id, package_version, component_digest, route_component, route_operation \
   FROM catalog.release_components \
- WHERE tenant_id = $1 AND effective_release_id = $2 \
- ORDER BY wiring_package_id COLLATE \"C\", wiring_package_version COLLATE \"C\", \
-          wiring_id COLLATE \"C\", wiring_version, node_id COLLATE \"C\" FOR SHARE";
+ WHERE tenant_id = $1 AND effective_release_id = $2 FOR SHARE";
 const INSERT_RELEASE_COMPONENT_SQL: &str = "\
 INSERT INTO catalog.release_components (\
        tenant_id, effective_release_id, wiring_package_id, wiring_package_version, \
-       wiring_id, wiring_version, node_id, package_id, package_version, component_digest\
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
+       wiring_id, wiring_version, node_id, package_id, package_version, component_digest, \
+       route_component, route_operation\
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)";
 const SELECT_RELEASE_SNAPSHOT_SQL: &str = "\
 SELECT manifest_digest, canonical_bytes \
   FROM catalog.release_manifest_v3_snapshots \
@@ -344,13 +343,29 @@ impl std::error::Error for MintManifestError {
     }
 }
 
+/// The contract kind of each generated operation, keyed by package id and
+/// exact operation.
+type RouteKinds = BTreeMap<(String, String), OperationKind>;
+
+/// What one release component member binds: a wiring node or a route.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum MemberBinding {
+    Wiring {
+        package_id: String,
+        package_version: String,
+        wiring_id: String,
+        wiring_version: u32,
+        node_id: String,
+    },
+    Route {
+        component: String,
+        operation: String,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ReleaseComponentMembership {
-    wiring_package_id: String,
-    wiring_package_version: String,
-    wiring_id: String,
-    wiring_version: u32,
-    node_id: String,
+    binding: MemberBinding,
     package_id: String,
     package_version: String,
     component_digest: String,
@@ -456,7 +471,7 @@ pub async fn mint_local(
         .max(args.effective_release_id);
     let authored = read_package_attachments(&args.attachments)?;
     let attachments = resolve_route_host_overlay(&authored, args.route_host.as_deref())?;
-    let (package_manifests, _) = read_package_manifests(&args.package_manifests)?;
+    let (package_manifests, _, route_kinds) = read_package_manifests(&args.package_manifests)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -504,6 +519,7 @@ pub async fn mint_local(
     let mut wirings = BTreeSet::new();
     let mut membership = BTreeSet::new();
     let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
+    let mut one_node = Vec::new();
     let mut local_wirings = Vec::new();
     ensure!(
         documents.len() == targets.len(),
@@ -530,6 +546,7 @@ pub async fn mint_local(
             &mut components,
             &mut wirings,
             &mut membership,
+            &mut one_node,
         )?;
         let node_components = resolve_wiring_components(
             &document,
@@ -548,6 +565,15 @@ pub async fn mint_local(
             .or_default()
             .push(target);
     }
+    let routes = project_routes(
+        &request,
+        &route_kinds,
+        &component_facts,
+        &mut components,
+        &mut membership,
+    )?;
+    let registrations = derive_serving_registrations(&package_manifests, &entry_targets)?;
+    refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
     let manifest = ServingManifest {
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
@@ -557,10 +583,10 @@ pub async fn mint_local(
             packages: packages.clone(),
         },
         components,
-        routes: BTreeSet::new(),
+        routes,
         wirings,
         attachments: attachments.clone(),
-        registrations: derive_serving_registrations(&package_manifests, &entry_targets)?,
+        registrations,
     };
     let canonical_bytes = manifest.canonical_bytes();
     let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
@@ -644,7 +670,7 @@ async fn mint_candidate(
     let authored_attachments = read_package_attachments(&args.attachments)?;
     let attachments =
         resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
-    let (package_manifests, package_manifest_hashes) =
+    let (package_manifests, package_manifest_hashes, route_kinds) =
         read_package_manifests(&args.package_manifests)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -719,6 +745,7 @@ async fn mint_candidate(
         &request,
         &package_manifests,
         &package_manifest_hashes,
+        &route_kinds,
         &run_schema,
         &source_policy,
     )
@@ -744,6 +771,7 @@ async fn mint_in_transaction(
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
+    route_kinds: &RouteKinds,
     run_schema: &BareSchemaName,
     source_policy: &AuthoritativeEnvironmentPolicy,
 ) -> anyhow::Result<MintedReleaseManifest> {
@@ -756,6 +784,7 @@ async fn mint_in_transaction(
         request,
         package_manifests,
         package_manifest_hashes,
+        route_kinds,
     )
     .await?;
     let projected =
@@ -1103,17 +1132,33 @@ fn sha256(bytes: &[u8]) -> String {
     )
 }
 
+/// Mint a release promoted from a published one.
+///
+/// The source manifest is the authority once published, so its registrations
+/// and the kinds of its routes carry over. Promotion never reads a package
+/// folder.
 pub async fn mint_promoted_release_manifest(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
     registrations: &BTreeMap<String, ServingRegistration>,
+    routes: &BTreeSet<ServingRoute>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     let package_manifests = BTreeMap::new();
+    let route_kinds = routes
+        .iter()
+        .map(|route| {
+            (
+                (route.package_id.clone(), route.operation.clone()),
+                route.kind,
+            )
+        })
+        .collect();
     mint_release_manifest_from_sources(
         transaction,
         request,
         &package_manifests,
         None,
+        &route_kinds,
         Some(registrations),
     )
     .await
@@ -1124,12 +1169,14 @@ async fn mint_release_manifest_with_package_manifests(
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
+    route_kinds: &RouteKinds,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     mint_release_manifest_from_sources(
         transaction,
         request,
         package_manifests,
         Some(package_manifest_hashes),
+        route_kinds,
         None,
     )
     .await
@@ -1140,6 +1187,7 @@ async fn mint_release_manifest_from_sources(
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: Option<&BTreeMap<String, String>>,
+    route_kinds: &RouteKinds,
     promoted_registrations: Option<&BTreeMap<String, ServingRegistration>>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     transaction
@@ -1163,6 +1211,7 @@ async fn mint_release_manifest_from_sources(
     let mut membership = BTreeSet::new();
     let mut component_facts = BTreeMap::new();
     let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
+    let mut one_node = Vec::new();
     for package in request.packages {
         let scope = ComponentPackageScope {
             tenant_id: request.tenant_id.to_owned(),
@@ -1205,6 +1254,7 @@ async fn mint_release_manifest_from_sources(
             &mut components,
             &mut wirings,
             &mut membership,
+            &mut one_node,
         )
         .await?;
         entry_targets
@@ -1213,11 +1263,19 @@ async fn mint_release_manifest_from_sources(
             .push(target.clone());
     }
 
+    let routes = project_routes(
+        request,
+        route_kinds,
+        &component_facts,
+        &mut components,
+        &mut membership,
+    )?;
     let registrations = if let Some(registrations) = promoted_registrations {
         registrations.clone()
     } else {
         derive_serving_registrations(package_manifests, &entry_targets)?
     };
+    refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
 
     let release_id = EffectiveReleaseId::new(
         u32::try_from(request.effective_release_id).expect("validate_request checked release id"),
@@ -1232,7 +1290,7 @@ async fn mint_release_manifest_from_sources(
             packages: request.packages.clone(),
         },
         components,
-        routes: BTreeSet::new(),
+        routes,
         wirings,
         attachments: request.attachments.clone(),
         registrations,
@@ -1284,10 +1342,14 @@ fn validate_request(request: &MintReleaseManifest<'_>) -> Result<(), MintManifes
             "an effective release cannot contain two versions of one package",
         ));
     }
-    if request.wirings.is_empty() {
+    let routed = request
+        .attachments
+        .values()
+        .any(|attachment| matches!(attachment.target, AttachmentTarget::Route { .. }));
+    if request.wirings.is_empty() && !routed {
         return Err(MintManifestError::new(
             MintManifestErrorKind::Wiring,
-            "a release with no wiring has no executable closure",
+            "a release with no route and no wiring has no executable closure",
         ));
     }
     validate_attachment_definition_hashes(request.attachments)?;
@@ -1606,6 +1668,7 @@ async fn resolve_wiring(
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
+    one_node: &mut Vec<ReleaseWiringTarget>,
 ) -> Result<String, MintManifestError> {
     let version = i32::try_from(target.wiring_version).map_err(|error| {
         MintManifestError::with_source(
@@ -1675,6 +1738,7 @@ async fn resolve_wiring(
         components,
         wirings,
         membership,
+        one_node,
     )
 }
 
@@ -1692,7 +1756,11 @@ fn project_wiring_document(
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
+    one_node: &mut Vec<ReleaseWiringTarget>,
 ) -> Result<String, MintManifestError> {
+    if document.edges.is_empty() {
+        one_node.push(target.clone());
+    }
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
     let resolved = resolve_wiring_components(
         document,
@@ -1725,17 +1793,125 @@ fn project_wiring_document(
     }
     for (node_id, fact) in resolved {
         membership.insert(ReleaseComponentMembership {
-            wiring_package_id: target.package_id.clone(),
-            wiring_package_version: target.package_version.clone(),
-            wiring_id: target.wiring_id.clone(),
-            wiring_version: target.wiring_version,
-            node_id,
+            binding: MemberBinding::Wiring {
+                package_id: target.package_id.clone(),
+                package_version: target.package_version.clone(),
+                wiring_id: target.wiring_id.clone(),
+                wiring_version: target.wiring_version,
+                node_id,
+            },
             package_id: fact.scope.package_id.clone(),
             package_version: fact.scope.package_version.clone(),
             component_digest: fact.component_digest.clone(),
         });
     }
     Ok(entry_operation)
+}
+
+/// Project the route of every route attachment, with its component closure and
+/// its one release component member.
+///
+/// The kind comes from the generated contract of the operation, or from the
+/// published manifest a promotion copies.
+fn project_routes(
+    request: &MintReleaseManifest<'_>,
+    route_kinds: &RouteKinds,
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    components: &mut BTreeSet<ServingComponent>,
+    membership: &mut BTreeSet<ReleaseComponentMembership>,
+) -> Result<BTreeSet<ServingRoute>, MintManifestError> {
+    let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
+    let mut routes = BTreeSet::new();
+    for (attachment_id, attachment) in request.attachments {
+        let AttachmentTarget::Route {
+            component,
+            operation,
+        } = &attachment.target
+        else {
+            continue;
+        };
+        let package = request
+            .packages
+            .iter()
+            .find(|package| package.package_id() == attachment.package_id)
+            .ok_or_else(|| {
+                MintManifestError::new(
+                    MintManifestErrorKind::Component,
+                    format!(
+                        "route attachment {attachment_id:?} names package {:?} outside the effective release membership",
+                        attachment.package_id
+                    ),
+                )
+            })?;
+        let facts = component_facts
+            .get(&(
+                package.package_id().to_owned(),
+                package.package_version().to_owned(),
+            ))
+            .map_or(&[][..], Vec::as_slice);
+        let fact = resolve_route_component(attachment_id, attachment, component, operation, facts)?;
+        let kind = *route_kinds
+            .get(&(attachment.package_id.clone(), operation.clone()))
+            .ok_or_else(|| {
+                MintManifestError::new(
+                    MintManifestErrorKind::GeneratedPackageMetadata,
+                    format!(
+                        "route operation {operation:?} of package {:?} has no generated contract kind; regenerate the package evidence",
+                        attachment.package_id
+                    ),
+                )
+            })?;
+        let roots = BTreeMap::from([(operation.clone(), fact.clone())]);
+        for member in resolve_component_dependency_closure(&roots, component_facts, rule)? {
+            components.insert(project_serving_component(&member)?);
+        }
+        membership.insert(ReleaseComponentMembership {
+            binding: MemberBinding::Route {
+                component: component.clone(),
+                operation: operation.clone(),
+            },
+            package_id: fact.scope.package_id.clone(),
+            package_version: fact.scope.package_version.clone(),
+            component_digest: fact.component_digest.clone(),
+        });
+        routes.insert(ServingRoute {
+            package_id: attachment.package_id.clone(),
+            component: component.clone(),
+            operation: operation.clone(),
+            kind,
+        });
+    }
+    Ok(routes)
+}
+
+/// Refuse a wiring with no edges unless a registration names it.
+///
+/// A graph with no edges is a route. A registration keeps its one-node wiring
+/// until the workflow epic moves registrations off wirings.
+fn refuse_unregistered_one_node_wirings(
+    one_node: &[ReleaseWiringTarget],
+    registrations: &BTreeMap<String, ServingRegistration>,
+) -> Result<(), MintManifestError> {
+    for target in one_node {
+        let registered = registrations.values().any(|registration| {
+            registration.package_id == target.package_id
+                && registration.wiring_id == target.wiring_id
+                && registration.wiring_version == target.wiring_version
+        });
+        if !registered {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::Wiring,
+                format!(
+                    "wiring {}@{}::{}/{} has no edges; a graph with no edges is a route, so attach its operation as a route",
+                    target.package_id,
+                    target.package_version,
+                    target.wiring_id,
+                    target.wiring_version
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 async fn freeze_release(
@@ -1754,13 +1930,21 @@ async fn freeze_release(
         .map_err(|error| storage("read the frozen release component closure", error))?
         .into_iter()
         .map(|row| {
-            let version: i32 = row.get(3);
+            let binding = match (row.get(8), row.get(9)) {
+                (Some(component), Some(operation)) => MemberBinding::Route {
+                    component,
+                    operation,
+                },
+                _ => MemberBinding::Wiring {
+                    package_id: row.get(0),
+                    package_version: row.get(1),
+                    wiring_id: row.get(2),
+                    wiring_version: positive_u32(row.get(3), "wiring-version")?,
+                    node_id: row.get(4),
+                },
+            };
             Ok(ReleaseComponentMembership {
-                wiring_package_id: row.get(0),
-                wiring_package_version: row.get(1),
-                wiring_id: row.get(2),
-                wiring_version: positive_u32(version, "wiring-version")?,
-                node_id: row.get(4),
+                binding,
                 package_id: row.get(5),
                 package_version: row.get(6),
                 component_digest: row.get(7),
@@ -1800,22 +1984,49 @@ async fn freeze_release(
     }
 
     for member in expected {
-        let wiring_version = i32::try_from(member.wiring_version)
-            .expect("resolved wiring version fits PostgreSQL integer");
+        let (wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id) =
+            match &member.binding {
+                MemberBinding::Wiring {
+                    package_id,
+                    package_version,
+                    wiring_id,
+                    wiring_version,
+                    node_id,
+                } => (
+                    Some(package_id),
+                    Some(package_version),
+                    Some(wiring_id),
+                    Some(
+                        i32::try_from(*wiring_version)
+                            .expect("resolved wiring version fits PostgreSQL integer"),
+                    ),
+                    Some(node_id),
+                ),
+                MemberBinding::Route { .. } => (None, None, None, None, None),
+            };
+        let (route_component, route_operation) = match &member.binding {
+            MemberBinding::Route {
+                component,
+                operation,
+            } => (Some(component), Some(operation)),
+            MemberBinding::Wiring { .. } => (None, None),
+        };
         transaction
             .execute(
                 INSERT_RELEASE_COMPONENT_SQL,
                 &[
                     &request.tenant_id,
                     &request.effective_release_id,
-                    &member.wiring_package_id,
-                    &member.wiring_package_version,
-                    &member.wiring_id,
+                    &wiring_package_id,
+                    &wiring_package_version,
+                    &wiring_id,
                     &wiring_version,
-                    &member.node_id,
+                    &node_id,
                     &member.package_id,
                     &member.package_version,
                     &member.component_digest,
+                    &route_component,
+                    &route_operation,
                 ],
             )
             .await

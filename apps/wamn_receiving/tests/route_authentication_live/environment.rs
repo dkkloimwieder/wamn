@@ -402,11 +402,11 @@ pub(super) async fn gate_journey_wirings(
     let mut reports = Vec::with_capacity(
         JOURNEY_PACKAGES
             .iter()
-            .map(|package| package.operations.len())
+            .map(|package| package.wirings.len())
             .sum(),
     );
     for package in JOURNEY_PACKAGES {
-        for (wiring, _) in package.operations {
+        for wiring in package.wirings {
             let path = journey_publication_root(package, Some(inputs))
                 .join("wirings")
                 .join(format!("{wiring}.json"));
@@ -460,7 +460,7 @@ pub(super) async fn verify_zero_case_gate_reports(
 ) -> anyhow::Result<()> {
     let expected_count = JOURNEY_PACKAGES
         .iter()
-        .map(|package| package.operations.len())
+        .map(|package| package.wirings.len())
         .sum::<usize>();
     anyhow::ensure!(
         report_ids.len() == expected_count,
@@ -492,7 +492,7 @@ pub(super) async fn author_journey_wirings(
     system_url: &str,
 ) -> anyhow::Result<()> {
     for package in JOURNEY_PACKAGES {
-        for (wiring, _) in package.operations {
+        for wiring in package.wirings {
             let document = author_wiring::read_wiring_document(
                 &journey_publication_root(package, Some(inputs))
                     .join("wirings")
@@ -542,7 +542,7 @@ pub(super) async fn mint_journey_release(
     let wirings = JOURNEY_PACKAGES
         .iter()
         .flat_map(|package| {
-            package.operations.iter().map(move |(wiring, _)| {
+            package.wirings.iter().map(move |wiring| {
                 format!("{}@{}::{wiring}=1", package.id, package.version)
                     .parse::<ReleaseWiringTarget>()
                     .map_err(anyhow::Error::msg)
@@ -758,13 +758,18 @@ pub(super) fn released_component_digests(
     );
     for expected in JOURNEY_ATTACHMENTS {
         let attachment = &release.manifest().attachments[expected.id];
+        let component = JOURNEY_PACKAGES
+            .iter()
+            .find(|package| package.id == expected.package_id)
+            .context("every journey attachment names a journey package")?
+            .component;
         anyhow::ensure!(
             attachment.kind == AttachmentKind::Http
                 && attachment.package_id == expected.package_id
                 && attachment.target
-                    == wamn_catalog::AttachmentTarget::Wiring {
-                        wiring_id: expected.wiring_id.into(),
-                        wiring_version: 1,
+                    == wamn_catalog::AttachmentTarget::Route {
+                        component: component.into(),
+                        operation: expected.operation.into(),
                     }
                 && attachment.registered_operation.as_deref() == Some(expected.operation)
                 && attachment.definition["route"]["method"] == "POST"

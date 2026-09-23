@@ -51,7 +51,9 @@ const VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 pub struct LocalPackage<'a> {
     pub root: &'a Path,
     pub component: &'a str,
-    pub wirings: &'a [&'a str],
+    /// The wirings this package serves. A package whose attachments all
+    /// target routes serves none.
+    pub wirings: &'a [WiringDocument],
 }
 
 pub(super) async fn assemble(
@@ -241,24 +243,17 @@ pub(super) async fn assemble(
             std::fs::read(component_path)?,
         )?;
         component_digests.insert(package.component.to_owned(), facts.component_digest.clone());
-        for wiring in package.wirings {
-            let path = package
-                .root
-                .join("publication/wirings")
-                .join(format!("{wiring}.json"));
-            let value: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-            let document = WiringDocument::parse(&value)
-                .with_context(|| format!("parse {}", path.display()))?;
+        for document in package.wirings {
             insert_wiring(
                 &project,
                 input.tenant,
                 &applied.package_id,
                 &applied.package_version,
-                &document,
+                document,
                 &facts,
             )
             .await?;
-            wirings.push((applied.package_id.clone(), document));
+            wirings.push((applied.package_id.clone(), document.clone()));
         }
         roots.insert(applied.package_id.clone(), package.root);
         admitted.push((applied.package_id, facts));
@@ -527,7 +522,12 @@ fn selected_attachments(
     let selected = input
         .packages
         .iter()
-        .flat_map(|package| package.wirings.iter().copied())
+        .flat_map(|package| {
+            package
+                .wirings
+                .iter()
+                .map(|wiring| wiring.wiring_id.as_str())
+        })
         .collect::<BTreeSet<_>>();
     let mut result = BTreeMap::new();
     for (id, attachment) in input.attachments {

@@ -2,8 +2,8 @@
   "widget-archive-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_archive",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/archive@1.0.0",
     "definition-hash": "sha256:412c8054caa4b1b57ce82a2d4850b450957e365e20c6a6d0330cc11cc89b29c4",
     "definition": {
       "id": "widget-archive-http",
@@ -26,8 +26,8 @@
   "widget-create-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_create",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/create@1.0.0",
     "definition-hash": "sha256:d4c7bc7bb7dc12d5c049f34da5ff84ac388625f1ee65a44fb3d83c9806e06db4",
     "definition": {
       "id": "widget-create-http",
@@ -50,8 +50,8 @@
   "widget-delete-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_delete",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/delete@1.0.0",
     "definition-hash": "sha256:5e3a1dc63d6ad8a54a4a87aa1665ccdf9d08c8381eabd33512e18b0256efdc9e",
     "definition": {
       "id": "widget-delete-http",
@@ -74,8 +74,8 @@
   "widget-get-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_get",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/get@1.0.0",
     "definition-hash": "sha256:d9cc06b8e94d8a3496be89d62e34d66350cb0e491a3b9f78dcfec9a603539e96",
     "definition": {
       "id": "widget-get-http",
@@ -98,8 +98,8 @@
   "widget-list-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_list",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/list@1.0.0",
     "definition-hash": "sha256:381ff33685c4ddff617218e4fc64ef40b0dbfda6c9fafb27ac7816ca509f4605",
     "definition": {
       "id": "widget-list-http",
@@ -122,8 +122,8 @@
   "widget-maker-list-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_maker_list",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget-maker/list@1.0.0",
     "definition-hash": "sha256:36f085bb670b3592ef5f7d5e5424b973a38c2f1447f123b77e6a042ad4ecb326",
     "definition": {
       "id": "widget-maker-list-http",
@@ -146,8 +146,8 @@
   "widget-maker-query-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_maker_query",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget-maker/query@1.0.0",
     "definition-hash": "sha256:b6ba21454a9dd52f72d137345c41c080e5acebcbed71db1166cd8abf69720ee9",
     "definition": {
       "id": "widget-maker-query-http",
@@ -216,8 +216,8 @@
   "widget-query-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_query",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/query@1.0.0",
     "definition-hash": "sha256:616edd0d41811f9c1abb0f606ec35ae13e9bb5f2830556b29369abb7d6823034",
     "definition": {
       "id": "widget-query-http",
@@ -286,8 +286,8 @@
   "widget-record-batch-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_record_batch",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/record-batch@1.0.0",
     "definition-hash": "sha256:7d98afdd3f46ccdae8bbd55a4cf7dcfedcb5982e3cd19162aabb9573f2946f6b",
     "definition": {
       "id": "widget-record-batch-http",
@@ -378,8 +378,8 @@
   "widget-tag-update-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_tag_update",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget-tag/update@1.0.0",
     "definition-hash": "sha256:7d49b71f6434a1ff47390b3cb6b3ff4b490bd85b88b25f277537bd4dc36d7d1f",
     "definition": {
       "id": "widget-tag-update-http",
@@ -437,8 +437,8 @@
   "widget-update-http": {
     "kind": "http",
     "package-id": "platform_fixture",
-    "wiring-id": "widget_update",
-    "wiring-version": 1,
+    "component": "fixture",
+    "operation": "platform-fixture:widget/update@1.0.0",
     "definition-hash": "sha256:decf73aced923996389fc797bcea597c1a3662a324438141bb3249db03925ee1",
     "definition": {
       "id": "widget-update-http",

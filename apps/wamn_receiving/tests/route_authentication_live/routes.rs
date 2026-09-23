@@ -412,7 +412,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "purchase_order_get",
+        "",
         "wamn-receiving:purchase-order/get@1.0.0",
         BASE_PACKAGE_ID,
     ));
@@ -443,7 +443,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "purchase_order_query",
+        "",
         "wamn-receiving:purchase-order/query@1.0.0",
         BASE_PACKAGE_ID,
     ));
@@ -478,7 +478,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "purchase_order_update",
+        "",
         "wamn-receiving:purchase-order/update@1.0.0",
         BASE_PACKAGE_ID,
     ));
@@ -538,12 +538,7 @@ async fn receiving_release_journey(
             && stamps.get::<_, String>(2) == caller_principal_id,
         "receiving.record_receipt did not stamp the order and receipt with one instant and actor"
     );
-    expected_direct_traces.push((
-        trace_id,
-        "receiving_record_receipt",
-        BASE_RECORD_RECEIPT,
-        BASE_PACKAGE_ID,
-    ));
+    expected_direct_traces.push((trace_id, "", BASE_RECORD_RECEIPT, BASE_PACKAGE_ID));
 
     let (trace_id, traceparent) = journey_trace(6);
     let receipt_get = serde_json::to_vec(&serde_json::json!([{
@@ -571,7 +566,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "receipt_get",
+        "",
         "wamn-receiving:receipt/get@1.0.0",
         BASE_PACKAGE_ID,
     ));
@@ -606,7 +601,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "receipt_query",
+        "",
         "wamn-receiving:receipt/query@1.0.0",
         BASE_PACKAGE_ID,
     ));
@@ -639,7 +634,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "purchase_order_get",
+        "",
         "client-acme-receiving:purchase-order/get@3.0.0",
         OVERLAY_PACKAGE_ID,
     ));
@@ -677,7 +672,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "purchase_order_update",
+        "",
         "client-acme-receiving:purchase-order/update@3.0.0",
         OVERLAY_PACKAGE_ID,
     ));
@@ -718,7 +713,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "quality_load_purchase_order_detail",
+        "",
         "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
         OVERLAY_PACKAGE_ID,
     ));
@@ -753,7 +748,7 @@ async fn receiving_release_journey(
     );
     expected_direct_traces.push((
         trace_id,
-        "quality_approve_inspection",
+        "",
         "client-acme-receiving:quality/approve-inspection@3.0.0",
         OVERLAY_PACKAGE_ID,
     ));

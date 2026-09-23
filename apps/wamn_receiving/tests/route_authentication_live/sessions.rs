@@ -713,7 +713,7 @@ pub(super) async fn assert_nested_session(
         assert_direct_route_trace(
             &traces.spans(),
             &direct_session_trace,
-            direct_attachment.wiring_id,
+            "",
             BASE_RECORD_RECEIPT,
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
@@ -752,7 +752,7 @@ pub(super) async fn assert_nested_session(
         assert_direct_route_trace(
             &direct_spans,
             &direct_pat_trace,
-            direct_attachment.wiring_id,
+            "",
             BASE_RECORD_RECEIPT,
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),

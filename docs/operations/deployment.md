@@ -100,8 +100,9 @@ The CronJob runs `wamn-ctl-ops prune-record-history --tenant "$TENANT"` once a d
 ## Publish and select a release
 
 The example below selects Receiving.
-For an overlay, repeat package, wiring, attachment, and manifest arguments for the exact selected package set.
+For an overlay, repeat package, attachment, and manifest arguments for the exact selected package set.
 Use the package manifests as the source for that selection.
+Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
 
 ```bash
 wamn-ctl publish-release \
@@ -112,7 +113,6 @@ wamn-ctl publish-release \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
-  --wiring "$PACKAGE_ID@$PACKAGE_VERSION::$WIRING_ID=$WIRING_VERSION" \
   --attachments apps/wamn_receiving/publication/attachments.json \
   --route-host "$ROUTE_HOST" \
   --package-manifest apps/wamn_receiving/wamn.json

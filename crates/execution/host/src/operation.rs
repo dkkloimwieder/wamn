@@ -601,8 +601,9 @@ pub(crate) trait IntentStore: Send + Sync {}
 pub(crate) async fn invoke_operation(
     host: &OperationHost,
     call: OperationCall<'_>,
-    #[expect(unused_variables, reason = "Epic 3 writes the intent record here")]
-    intent: Option<&dyn IntentStore>,
+    #[expect(unused_variables, reason = "Epic 3 writes the intent record here")] intent: Option<
+        &dyn IntentStore,
+    >,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
     tokio::time::timeout_at(deadline, async {

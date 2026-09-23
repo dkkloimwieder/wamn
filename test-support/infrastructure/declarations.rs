@@ -124,7 +124,7 @@ mod tests {
     const LABEL: &str = include_str!("../../apps/platform/no-std/label-render/declaration.json.in");
     const BLOB: &str = include_str!("../../apps/platform/execution/blob-put/declaration.json.in");
     const WIRING: &str =
-        include_str!("../../apps/platform_fixture/publication/wirings/widget_get.json");
+        include_str!("../../apps/wamn_wms/publication/wirings/inventory_move_and_label.json");
 
     /// The overlay template with its base digest filled, which the control
     /// plane renders before this renderer sees it.
@@ -253,8 +253,8 @@ mod tests {
 
     fn gate_input() -> GateInput {
         GateInput {
-            command_id: "gate-platform_fixture-widget_get".into(),
-            package: PackageCoordinate::new("platform_fixture", "1.0.0").unwrap(),
+            command_id: "gate-wamn_wms-inventory_move_and_label".into(),
+            package: PackageCoordinate::new("wamn_wms", "1.0.0").unwrap(),
             scope: AuthoringScope {
                 project_id: "fixture".into(),
                 environment: "dev".into(),
@@ -278,7 +278,7 @@ mod tests {
             panic!("gate")
         };
         assert_eq!(gate.scope, input.scope);
-        assert_eq!(gate.package_id, "platform_fixture");
+        assert_eq!(gate.package_id, "wamn_wms");
         assert_eq!(gate.package_version, "1.0.0");
         assert_eq!(
             gate.document,

@@ -72,12 +72,9 @@ pub struct PublishReleaseArgs {
     /// Exact package membership; repeat once per package.
     #[arg(long = "package", value_parser = parse_package, required = true)]
     pub packages: Vec<PackageCoordinate>,
-    /// Exact package-owned wiring; repeat once per wiring.
-    #[arg(
-        long = "wiring",
-        value_name = "PACKAGE@VERSION::WIRING=VERSION",
-        required = true
-    )]
+    /// Exact package-owned wiring; repeat once per wiring. A release whose
+    /// attachments all target routes names none.
+    #[arg(long = "wiring", value_name = "PACKAGE@VERSION::WIRING=VERSION")]
     pub wirings: Vec<ReleaseWiringTarget>,
     /// Package-owned attachment documents; repeat once per package.
     #[arg(long = "attachments", value_name = "PATH", required = true)]

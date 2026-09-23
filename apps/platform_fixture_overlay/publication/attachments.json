@@ -2,8 +2,8 @@
   "widget-get-http": {
     "kind": "http",
     "package-id": "platform_fixture_overlay",
-    "wiring-id": "widget_get",
-    "wiring-version": 1,
+    "component": "fixture_overlay",
+    "operation": "platform-fixture-overlay:widget/get@1.0.0",
     "definition-hash": "sha256:7d593ec13eabf58ee67008735bbc96193320715e2ee94a0f210ed8c0c7fdfb89",
     "definition": {
       "id": "widget-get-http",

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use wamn_catalog::{
-    AttachmentKind, ComponentDeclaration, ComponentOperationDependency, WiringDocument,
-    WiringTerminal,
+    AttachmentKind, AttachmentTarget, ComponentDeclaration, ComponentOperationDependency,
+    WiringDocument,
 };
 
 const TENANT: &str = "acme-overlay-publication-test";
@@ -20,7 +20,6 @@ const PARTICIPANT_OPERATION: &str =
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
 struct DirectOperation {
-    wiring: &'static str,
     token: &'static str,
     attachment: &'static str,
     route: &'static str,
@@ -28,31 +27,26 @@ struct DirectOperation {
 
 const DIRECT_OPERATIONS: [DirectOperation; 5] = [
     DirectOperation {
-        wiring: "purchase_order_get",
         token: "client-acme-receiving:purchase-order/get@3.0.0",
         attachment: "client-acme-receiving-purchase-order-get-http",
         route: "/acme/purchase_order/get",
     },
     DirectOperation {
-        wiring: "purchase_order_update",
         token: "client-acme-receiving:purchase-order/update@3.0.0",
         attachment: "client-acme-receiving-purchase-order-update-http",
         route: "/acme/purchase_order/update",
     },
     DirectOperation {
-        wiring: "receiving_record_receipt",
         token: "client-acme-receiving:receiving/record-receipt@3.0.0",
         attachment: "client-acme-receiving-receiving-record-receipt-http",
         route: "/acme/receiving/record_receipt",
     },
     DirectOperation {
-        wiring: "quality_load_purchase_order_detail",
         token: "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
         attachment: "client-acme-receiving-quality-load-purchase-order-detail-http",
         route: "/acme/quality/load_purchase_order_detail",
     },
     DirectOperation {
-        wiring: "quality_approve_inspection",
         token: "client-acme-receiving:quality/approve-inspection@3.0.0",
         attachment: "client-acme-receiving-quality-approve-inspection-http",
         route: "/acme/quality/approve_inspection",
@@ -158,19 +152,6 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
             .into_iter()
             .collect::<Vec<_>>();
         assert_eq!(fact.dependencies, expected_dependencies);
-        let document = wiring(operation.wiring);
-        assert_eq!(document.wiring_id, operation.wiring);
-        assert_eq!(document.version, 1);
-        assert_eq!(document.nodes.len(), 1);
-        assert!(document.edges.is_empty());
-        assert!(document.cases.is_empty());
-        let node = &document.nodes[&document.entry];
-        assert_eq!(node.component, COMPONENT);
-        assert_eq!(node.interface_version, INTERFACE_VERSION);
-        assert_eq!(node.operation, operation.token);
-        assert!(node.operation_dependency.is_none());
-        assert_eq!(node.terminal, Some(WiringTerminal::Respond));
-
         let attachment = attachments
             .get(operation.attachment)
             .expect("the exact operation attachment exists");
@@ -178,9 +159,9 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
         assert_eq!(attachment.package_id, PACKAGE_ID);
         assert_eq!(
             attachment.target,
-            wamn_catalog::AttachmentTarget::Wiring {
-                wiring_id: operation.wiring.into(),
-                wiring_version: 1,
+            AttachmentTarget::Route {
+                component: COMPONENT.into(),
+                operation: operation.token.into(),
             }
         );
         assert_eq!(

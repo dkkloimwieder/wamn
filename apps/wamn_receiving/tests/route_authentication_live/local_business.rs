@@ -76,22 +76,23 @@ async fn command_histories() -> anyhow::Result<()> {
         serde_json::from_slice(&fs::read(receiving.join("publication/attachments.json"))?)?;
     attachments.retain(|_, attachment| {
         matches!(
-            wiring_id(attachment),
-            "purchase_order_query"
-                | "purchase_order_update"
-                | "receipt_get"
-                | "receiving_record_receipt"
-                | "receiving_load_receipt_screen"
-                | "receiving_load_purchase_order_history"
-                | "location_list"
+            route_operation(attachment),
+            "wamn-receiving:purchase-order/query@1.0.0"
+                | "wamn-receiving:purchase-order/update@1.0.0"
+                | "wamn-receiving:receipt/get@1.0.0"
+                | "wamn-receiving:receiving/record-receipt@1.0.0"
+                | "wamn-receiving:receiving/load-receipt-screen@1.0.0"
+                | "wamn-receiving:receiving/load-purchase-order-history@1.0.0"
+                | "wamn-receiving:location/list@1.0.0"
         )
     });
     let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_slice(&fs::read(acme.join("publication/attachments.json"))?)?;
     for (name, attachment) in overlay_attachments {
         if matches!(
-            wiring_id(&attachment),
-            "receiving_record_receipt" | "quality_load_purchase_order_detail"
+            route_operation(&attachment),
+            "client-acme-receiving:receiving/record-receipt@3.0.0"
+                | "client-acme-receiving:quality/load-purchase-order-detail@3.0.0"
         ) {
             attachments.insert(name, attachment);
         }
@@ -114,23 +115,12 @@ async fn command_histories() -> anyhow::Result<()> {
             LocalPackage {
                 root: &receiving,
                 component: "receiving",
-                wirings: &[
-                    "purchase_order_query",
-                    "purchase_order_update",
-                    "receipt_get",
-                    "receiving_record_receipt",
-                    "receiving_load_receipt_screen",
-                    "receiving_load_purchase_order_history",
-                    "location_list",
-                ],
+                wirings: &[],
             },
             LocalPackage {
                 root: &acme,
                 component: "client_acme_receiving",
-                wirings: &[
-                    "receiving_record_receipt",
-                    "quality_load_purchase_order_detail",
-                ],
+                wirings: &[],
             },
         ],
     })
@@ -480,9 +470,9 @@ async fn histories(
     Ok(())
 }
 
-fn wiring_id(attachment: &wamn_catalog::ServingAttachment) -> &str {
+fn route_operation(attachment: &wamn_catalog::ServingAttachment) -> &str {
     match &attachment.target {
-        wamn_catalog::AttachmentTarget::Wiring { wiring_id, .. } => wiring_id,
-        wamn_catalog::AttachmentTarget::Route { .. } => "",
+        wamn_catalog::AttachmentTarget::Route { operation, .. } => operation,
+        wamn_catalog::AttachmentTarget::Wiring { .. } => "",
     }
 }

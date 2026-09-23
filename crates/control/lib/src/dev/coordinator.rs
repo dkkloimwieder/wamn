@@ -1020,12 +1020,6 @@ impl ProductionDevStageRunner {
 
     async fn release(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Release);
-        if self.gated_wirings.is_empty() {
-            return Err(ProductionDevStageError::invalid(
-                "mint effective release",
-                "the Gate stage produced no accepted wiring",
-            ));
-        }
         let principal = self.reauthenticate_publisher().await?;
         let packages = self.package_inputs()?;
         let package_coordinates = packages
@@ -2248,16 +2242,22 @@ fn canonical_component_build_package(component: &str) -> String {
     component.replace('_', "-")
 }
 
+/// The wiring documents of every package. A package whose operations are all
+/// routes has no wiring directory.
 fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, ProductionDevStageError> {
     let mut inputs = Vec::new();
     for package in packages {
         let directory = package.root.join(PACKAGE_WIRINGS);
-        let entries = fs::read_dir(&directory).map_err(|source| {
-            ProductionDevStageError::owner(
-                "read package wiring directory",
-                anyhow!(source).context(format!("read {}", directory.display())),
-            )
-        })?;
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(ProductionDevStageError::owner(
+                    "read package wiring directory",
+                    anyhow!(source).context(format!("read {}", directory.display())),
+                ));
+            }
+        };
         let mut paths = entries
             .map(|entry| {
                 entry.map(|entry| entry.path()).map_err(|source| {
@@ -2292,12 +2292,6 @@ fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, Productio
                 wiring,
             });
         }
-    }
-    if inputs.is_empty() {
-        return Err(ProductionDevStageError::invalid(
-            "load package wirings",
-            "the package closure declares no wiring documents",
-        ));
     }
     Ok(inputs)
 }

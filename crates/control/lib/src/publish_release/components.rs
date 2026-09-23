@@ -1,9 +1,10 @@
 //! Exact component facts and their operation dependencies.
 
 use super::{
-    AdmittedComponent, ArtifactHash, BTreeMap, BTreeSet, ComponentPackageScope,
-    DependencyDigestRule, MintManifestError, MintManifestErrorKind, ReleaseWiringTarget,
-    ServingAttachment, ServingComponent, ServingComponentOperation, VecDeque, WiringDocument,
+    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, BTreeMap, BTreeSet,
+    ComponentPackageScope, DependencyDigestRule, MintManifestError, MintManifestErrorKind,
+    ReleaseWiringTarget, ServingAttachment, ServingComponent, ServingComponentOperation, VecDeque,
+    WiringDocument,
 };
 
 pub(super) fn resolve_wiring_components(
@@ -431,45 +432,101 @@ pub(super) fn validate_anonymous_wiring_closure(
             let operation = fact
                 .operation(&document.nodes[node_id].operation)
                 .expect("wiring compatibility resolved every reachable operation");
-            if let Some(operation) = operation.registered_operation.as_deref() {
-                return Err(MintManifestError::new(
-                    MintManifestErrorKind::UnauthenticatedRegisteredOperation,
-                    format!(
-                        "attachment {attachment_id:?} reaches registered operation \
-                         {operation:?} at node {node_id:?}; set auth-policy modes = \
-                         [{mode:?}]",
-                        mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
-                    ),
-                ));
-            }
-            if let Some(dependency) = operation.dependencies.first() {
-                return Err(MintManifestError::new(
-                    MintManifestErrorKind::UnauthenticatedRegisteredOperation,
-                    format!(
-                        "attachment {attachment_id:?} reaches registered operation \
-                         {:?} through component dependency at node {node_id:?}; set \
-                         auth-policy modes = [{mode:?}]",
-                        dependency.operation,
-                        mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
-                    ),
-                ));
-            }
-            if let Some(statement) = operation
-                .statements
-                .values()
-                .find(|statement| statement.transactional)
-            {
-                return Err(MintManifestError::new(
-                    MintManifestErrorKind::UnauthenticatedWrite,
-                    format!(
-                        "attachment {attachment_id:?} reaches transactional statement \
-                         {:?} at node {node_id:?}; set auth-policy modes = [{mode:?}]",
-                        statement.name,
-                        mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
-                    ),
-                ));
-            }
+            refuse_anonymous_reach(attachment_id, operation, &format!("node {node_id:?}"))?;
         }
+    }
+    Ok(())
+}
+
+/// Resolve the one admitted component that a route attachment calls.
+///
+/// A route names no interface version, so the component name and its export
+/// select the fact. An anonymous route attachment cannot reach a registered
+/// operation or a write, the same rule as an anonymous wiring.
+pub(super) fn resolve_route_component<'a>(
+    attachment_id: &str,
+    attachment: &ServingAttachment,
+    component: &str,
+    operation: &str,
+    facts: &'a [AdmittedComponent],
+) -> Result<&'a AdmittedComponent, MintManifestError> {
+    let mut matches = facts
+        .iter()
+        .filter(|fact| fact.component == component && fact.operation(operation).is_some());
+    let Some(fact) = matches.next() else {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::Component,
+            format!(
+                "route attachment {attachment_id:?} names component {component:?} operation \
+                 {operation:?}, which no admitted component of package {:?} exports",
+                attachment.package_id
+            ),
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::Component,
+            format!(
+                "route attachment {attachment_id:?} operation {operation:?} resolves more than \
+                 one admitted component"
+            ),
+        ));
+    }
+    if wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
+        == Some(wamn_catalog::AttachmentAuthPolicy::None)
+    {
+        let export = fact
+            .operation(operation)
+            .expect("the route component exports its operation");
+        refuse_anonymous_reach(attachment_id, export, &format!("route {operation:?}"))?;
+    }
+    Ok(fact)
+}
+
+/// Refuse an anonymous attachment that reaches a registered operation, a
+/// component dependency or a transactional statement at `site`.
+fn refuse_anonymous_reach(
+    attachment_id: &str,
+    operation: &AdmittedComponentOperation,
+    site: &str,
+) -> Result<(), MintManifestError> {
+    if let Some(operation) = operation.registered_operation.as_deref() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::UnauthenticatedRegisteredOperation,
+            format!(
+                "attachment {attachment_id:?} reaches registered operation \
+                 {operation:?} at {site}; set auth-policy modes = \
+                 [{mode:?}]",
+                mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+            ),
+        ));
+    }
+    if let Some(dependency) = operation.dependencies.first() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::UnauthenticatedRegisteredOperation,
+            format!(
+                "attachment {attachment_id:?} reaches registered operation \
+                 {:?} through component dependency at {site}; set \
+                 auth-policy modes = [{mode:?}]",
+                dependency.operation,
+                mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+            ),
+        ));
+    }
+    if let Some(statement) = operation
+        .statements
+        .values()
+        .find(|statement| statement.transactional)
+    {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::UnauthenticatedWrite,
+            format!(
+                "attachment {attachment_id:?} reaches transactional statement \
+                 {:?} at {site}; set auth-policy modes = [{mode:?}]",
+                statement.name,
+                mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+            ),
+        ));
     }
     Ok(())
 }

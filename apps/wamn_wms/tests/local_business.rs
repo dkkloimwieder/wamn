@@ -33,9 +33,9 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     attachments
         .get_mut("inventory-move-http")
         .context("WMS declares the move route")?
-        .target = wamn_catalog::AttachmentTarget::Wiring {
-        wiring_id: "inventory_move".into(),
-        wiring_version: 1,
+        .target = wamn_catalog::AttachmentTarget::Route {
+        component: "wms".into(),
+        operation: "wamn-wms:inventory/move@1.0.0".into(),
     };
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
@@ -55,15 +55,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         packages: &[LocalPackage {
             root: &app,
             component: "wms",
-            wirings: &[
-                "inventory_move",
-                "inventory_adjust",
-                "inventory_split",
-                "inventory_merge",
-                "inventory_aggregate",
-                "pallet_get",
-                "pallet_query",
-            ],
+            wirings: &[],
         }],
         attachments: &attachments,
     })

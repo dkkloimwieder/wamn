@@ -4,14 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{AdmittedComponent, ComponentDeclaration, PackageCoordinate, ServingAttachment};
+use wamn_catalog::{AdmittedComponent, ComponentDeclaration, OperationKind, PackageCoordinate};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
     DependencyDigestRule, MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest,
     ReleaseWiringTarget, effect_free_operation_dependencies,
-    mint_release_manifest_with_package_manifests, read_package_manifests,
+    mint_release_manifest_with_package_manifests, read_package_attachments, read_package_manifests,
     resolve_route_host_overlay, sha256, validate_package_metadata,
 };
 use crate::apply_package::{self, ApplyPackageRequest};
@@ -27,20 +27,6 @@ const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql");
 const PACKAGE_VERSION: &str = "1.0.0";
-const BASE_WIRINGS: [&str; 11] = [
-    "widget_archive",
-    "widget_create",
-    "widget_delete",
-    "widget_get",
-    "widget_list",
-    "widget_maker_list",
-    "widget_maker_query",
-    "widget_query",
-    "widget_record_batch",
-    "widget_tag_update",
-    "widget_update",
-];
-const OVERLAY_WIRINGS: [&str; 1] = ["widget_get"];
 
 struct PackageInput {
     id: &'static str,
@@ -49,7 +35,6 @@ struct PackageInput {
     component_declaration: PathBuf,
     component_bytes: PathBuf,
     expected_component_digest: Option<String>,
-    wirings: &'static [&'static str],
 }
 
 /// The base component digest, read from the ONE file that authors it.
@@ -76,7 +61,6 @@ fn packages() -> [PackageInput; 2] {
                 .map(PathBuf::from)
                 .expect("WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM names the built base component"),
             expected_component_digest: Some(base_component_digest()),
-            wirings: &BASE_WIRINGS,
         },
         PackageInput {
             id: wamn_fixture_package::OVERLAY_PACKAGE_ID,
@@ -90,7 +74,6 @@ fn packages() -> [PackageInput; 2] {
                     "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM names the built overlay component",
                 ),
             expected_component_digest: None,
-            wirings: &OVERLAY_WIRINGS,
         },
     ]
 }
@@ -281,62 +264,61 @@ async fn admit_components(
     digests
 }
 
-async fn author_wirings(
-    project: &mut Client,
-    control: &Client,
-    inputs: &[PackageInput],
-) -> BTreeSet<ReleaseWiringTarget> {
-    let mut targets = BTreeSet::new();
-    for input in inputs {
-        for wiring_id in input.wirings {
-            let path = input
-                .root
-                .join("publication/wirings")
-                .join(format!("{wiring_id}.json"));
-            let document = author_wiring::read_wiring_document(&path)
-                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-            let wiring_hash = document.wiring_hash();
-            // This seeds only the already-checked steady-state verdict under the
-            // document's derived identity. The production journey owns the
-            // first transition that writes a gate report.
-            control
-                .execute(
-                    "INSERT INTO wamn_run.gate_reports \
-                     (tenant_id, wiring_hash, passed, summary) \
-                     VALUES ($1, $2, true, '{\"cases\":0}'::jsonb)",
-                    &[&TENANT, &wiring_hash.as_str()],
-                )
-                .await
-                .expect("record the exact wiring's already-owned green verdict");
-            let transaction = project
-                .transaction()
-                .await
-                .expect("begin wiring authorship");
-            author_wiring::author_wiring(
-                control,
-                &transaction,
-                &AuthorWiringRequest {
-                    tenant_id: TENANT,
-                    package_id: input.id,
-                    package_version: input.version,
-                    document: &document,
-                },
-            )
-            .await
-            .unwrap_or_else(|error| panic!("author {}: {error}", path.display()));
-            transaction
-                .commit()
-                .await
-                .expect("commit wiring authorship");
-            targets.insert(ReleaseWiringTarget {
-                package_id: input.id.to_owned(),
-                package_version: input.version.to_owned(),
-                wiring_id: document.wiring_id,
-                wiring_version: document.version,
-            });
+/// Author one base-package wiring of the fixture get operation, with no edges.
+async fn author_one_node_wiring(project: &mut Client, control: &Client) -> ReleaseWiringTarget {
+    let document = wamn_catalog::WiringDocument::parse(&serde_json::json!({
+        "format-version": "0.1",
+        "wiring-id": "widget_get",
+        "version": 1,
+        "entry": "operation",
+        "nodes": {
+            "operation": {
+                "component": "fixture",
+                "interface-version": "0.1.0",
+                "operation": "platform-fixture:widget/get@1.0.0",
+                "terminal": "respond"
+            }
         }
+    }))
+    .expect("the one-node wiring parses");
+    // This seeds only the already-checked steady-state verdict under the
+    // document's derived identity. The production journey owns the first
+    // transition that writes a gate report.
+    control
+        .execute(
+            "INSERT INTO wamn_run.gate_reports \
+             (tenant_id, wiring_hash, passed, summary) \
+             VALUES ($1, $2, true, '{\"cases\":0}'::jsonb)",
+            &[&TENANT, &document.wiring_hash().as_str()],
+        )
+        .await
+        .expect("record the exact wiring's already-owned green verdict");
+    let transaction = project
+        .transaction()
+        .await
+        .expect("begin wiring authorship");
+    author_wiring::author_wiring(
+        control,
+        &transaction,
+        &AuthorWiringRequest {
+            tenant_id: TENANT,
+            package_id: wamn_fixture_package::PACKAGE_ID,
+            package_version: PACKAGE_VERSION,
+            document: &document,
+        },
+    )
+    .await
+    .expect("author the one-node wiring");
+    transaction
+        .commit()
+        .await
+        .expect("commit wiring authorship");
+    ReleaseWiringTarget {
+        package_id: wamn_fixture_package::PACKAGE_ID.to_owned(),
+        package_version: PACKAGE_VERSION.to_owned(),
+        wiring_id: document.wiring_id,
+        wiring_version: document.version,
     }
-    targets
 }
 
 async fn mint(
@@ -344,12 +326,18 @@ async fn mint(
     request: &MintReleaseManifest<'_>,
     manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     hashes: &BTreeMap<String, String>,
+    kinds: &super::RouteKinds,
 ) -> MintedReleaseManifest {
     let transaction = project.transaction().await.expect("begin release mint");
-    let release =
-        mint_release_manifest_with_package_manifests(&transaction, request, manifests, hashes)
-            .await
-            .expect("mint the exact fresh two-package release");
+    let release = mint_release_manifest_with_package_manifests(
+        &transaction,
+        request,
+        manifests,
+        hashes,
+        kinds,
+    )
+    .await
+    .expect("mint the exact fresh two-package release");
     transaction.commit().await.expect("commit release mint");
     release
 }
@@ -400,22 +388,26 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     provision_control(&control).await;
     apply_packages(&project_url, &inputs).await;
     let admitted_digests = admit_components(&mut project, &inputs).await;
-    let wirings = author_wirings(&mut project, &control, &inputs).await;
+    let wirings = BTreeSet::new();
 
     let manifest_paths = inputs
         .iter()
         .map(|input| input.root.join("wamn.json"))
         .collect::<Vec<_>>();
-    let (manifests, manifest_hashes) = read_package_manifests(&manifest_paths)
+    let (manifests, manifest_hashes, kinds) = read_package_manifests(&manifest_paths)
         .expect("consume exact package manifests and package contracts");
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
         .collect::<BTreeSet<_>>();
-    let authored_attachments: BTreeMap<String, ServingAttachment> = serde_json::from_slice(
-        &std::fs::read(inputs[0].root.join("publication/attachments.json")).unwrap(),
-    )
-    .unwrap();
+    // Both packages name widget-get-http. The overlay's replaces the base's, so
+    // the release carries a route to each package's component.
+    let read = |input: &PackageInput| {
+        read_package_attachments(&[input.root.join("publication/attachments.json")])
+            .expect("read the package attachment document")
+    };
+    let mut authored_attachments = read(&inputs[0]);
+    authored_attachments.extend(read(&inputs[1]));
     let attachments = resolve_route_host_overlay(&authored_attachments, Some("fixture.localhost"))
         .expect("bind the deployment-owned route hostname");
     let request = MintReleaseManifest {
@@ -429,13 +421,51 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         environment_is_disposable: false,
     };
 
-    let first = mint(&mut project, &request, &manifests, &manifest_hashes).await;
-    let second = mint(&mut project, &request, &manifests, &manifest_hashes).await;
+    let first = mint(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
+    let second = mint(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
     assert_eq!(first.canonical_bytes, second.canonical_bytes);
     assert_eq!(first.digest, second.digest);
     assert_eq!(first.manifest, second.manifest);
     assert_eq!(first.manifest.release.packages, packages);
     assert_eq!(first.manifest.components.len(), 2);
+    // Every attachment is a route: the release has routes and no wiring, and
+    // each route carries the kind its generated contract names.
+    assert!(first.manifest.wirings.is_empty());
+    assert_eq!(first.manifest.routes.len(), attachments.len());
+    let kind_of = |operation: &str| {
+        first
+            .manifest
+            .routes
+            .iter()
+            .find(|route| route.operation == operation)
+            .map(|route| route.kind)
+    };
+    assert_eq!(
+        kind_of("platform-fixture-overlay:widget/get@1.0.0"),
+        Some(OperationKind::Get)
+    );
+    assert_eq!(
+        kind_of("platform-fixture:widget/query@1.0.0"),
+        Some(OperationKind::Query)
+    );
+    assert_eq!(
+        kind_of("platform-fixture:widget/record-batch@1.0.0"),
+        Some(OperationKind::Command)
+    );
+    let route_members: i64 = project
+        .query_one(
+            "SELECT count(*) FROM catalog.release_components \
+             WHERE tenant_id = $1 AND effective_release_id = $2 \
+               AND route_operation IS NOT NULL AND wiring_id IS NULL",
+            &[&TENANT, &RELEASE_ID],
+        )
+        .await
+        .expect("count the route members")
+        .get(0);
+    assert_eq!(
+        usize::try_from(route_members).unwrap(),
+        first.manifest.routes.len()
+    );
     for component in &first.manifest.components {
         assert_eq!(
             component.digest.as_str(),
@@ -481,6 +511,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         },
         &manifests,
         &drifted_hashes,
+        &kinds,
     )
     .await
     .expect_err("manifest bytes other than apply-package's exact input must refuse");
@@ -490,6 +521,30 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         wamn_fixture_package::OVERLAY_PACKAGE_ID
     )));
     assert!(refusal.detail().contains("use the exact wamn.json"));
+    transaction
+        .rollback()
+        .await
+        .expect("close the refused mint");
+
+    // A graph with no edges is a route, so publish refuses a one-node wiring
+    // that no registration names.
+    let one_node = BTreeSet::from([author_one_node_wiring(&mut project, &control).await]);
+    let transaction = project.transaction().await.expect("begin refused mint");
+    let refusal = mint_release_manifest_with_package_manifests(
+        &transaction,
+        &MintReleaseManifest {
+            effective_release_id: RELEASE_ID + 2,
+            wirings: &one_node,
+            ..request
+        },
+        &manifests,
+        &manifest_hashes,
+        &kinds,
+    )
+    .await
+    .expect_err("a one-node wiring must refuse");
+    assert_eq!(refusal.kind(), MintManifestErrorKind::Wiring);
+    assert!(refusal.detail().contains("has no edges"), "{refusal}");
     transaction
         .rollback()
         .await

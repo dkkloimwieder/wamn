@@ -218,6 +218,8 @@ pub enum RunPlaneActionKind {
     RemoveAppRunQueueAuthority,
     /// Strip retired keys from stored registrations.
     StripRetiredRegistrationKeys,
+    /// Let a release component member bind a route as well as a wiring node.
+    BindReleaseComponentRoutes,
 }
 
 /// One reconcile action: the SQL to run and what it targets (for reporting).

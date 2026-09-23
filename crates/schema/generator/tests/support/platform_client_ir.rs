@@ -395,81 +395,39 @@ fn paging_and_closed_values_reach_the_platform_ir() {
     assert!(operation(&ir, "widget", "get").paging.is_none());
 }
 
-/// Epic 1 replaces each one-node wiring with a route to the same export. The
-/// fixture publication projects byte-identical client IR and TypeScript
-/// bindings either way.
+/// Every fixture attachment is a route to one export. Each one projects a
+/// direct client route with its response schema, which the wiring it replaced
+/// projected too. `materialize_package check` holds the bytes.
 #[test]
-fn a_route_projects_the_client_its_one_node_wiring_projected() {
+fn each_fixture_route_projects_a_direct_client_route() {
     let package = wamn_fixture_package::package_root();
     let publication = package.join("publication");
-    let contracts = package.join("generated/contracts");
-    let wired: BTreeMap<String, Value> =
+    let attachments: BTreeMap<String, Value> =
         serde_json::from_slice(&std::fs::read(publication.join("attachments.json")).unwrap())
             .unwrap();
-
-    let routed = ReleaseFiles::new();
-    let copied = routed.root.join("components");
-    std::fs::create_dir_all(&copied).unwrap();
-    for entry in std::fs::read_dir(publication.join("components")).unwrap() {
-        let path = entry.unwrap().path();
-        std::fs::copy(&path, copied.join(path.file_name().unwrap())).unwrap();
-    }
-    let mut converted = 0;
-    let attachments: BTreeMap<String, Value> = wired
-        .into_iter()
-        .map(|(id, mut attachment)| {
-            let wiring_id = attachment["wiring-id"].as_str().unwrap().to_owned();
-            let wiring: Value = serde_json::from_slice(
-                &std::fs::read(publication.join(format!("wirings/{wiring_id}.json"))).unwrap(),
-            )
-            .unwrap();
-            let nodes = wiring["nodes"].as_object().unwrap();
-            assert_eq!(nodes.len(), 1, "{wiring_id} is one node");
-            assert!(wiring.get("edges").is_none(), "{wiring_id} has no edge");
-            let node = nodes.values().next().unwrap();
-            let object = attachment.as_object_mut().unwrap();
-            object.remove("wiring-id");
-            object.remove("wiring-version");
-            object.insert("component".into(), node["component"].clone());
-            object.insert("operation".into(), node["operation"].clone());
-            converted += 1;
-            (id, attachment)
-        })
-        .collect();
-    std::fs::write(
-        &routed.attachments,
-        serde_json::to_vec(&attachments).unwrap(),
-    )
-    .unwrap();
-
-    let from_wirings = ClientContractIr::from_release(
+    assert!(
+        attachments
+            .values()
+            .all(|attachment| attachment.get("operation").is_some()
+                && attachment.get("wiring-id").is_none()),
+        "every fixture attachment targets a route"
+    );
+    let release = ClientContractIr::from_release(
         "platform_fixture",
-        &contracts,
+        &package.join("generated/contracts"),
         &publication.join("attachments.json"),
     )
     .unwrap();
-    let from_routes =
-        ClientContractIr::from_release("platform_fixture", &contracts, &routed.attachments)
-            .unwrap();
-
-    let served = routes(&from_wirings);
+    let served = routes(&release);
     assert_eq!(
         served.len(),
-        converted,
+        attachments.len(),
         "every attachment serves one operation"
     );
     assert!(
         served
             .values()
             .all(|route| route.direct && route.response.schema.is_some()),
-        "the wiring projection carries the evidence the route must reproduce"
-    );
-    assert_eq!(
-        from_routes.canonical_bytes(),
-        from_wirings.canonical_bytes()
-    );
-    assert_eq!(
-        wamn_schema_generator::client_ts::emit_ts_client(&from_routes).unwrap(),
-        wamn_schema_generator::client_ts::emit_ts_client(&from_wirings).unwrap()
+        "each route carries its response evidence"
     );
 }

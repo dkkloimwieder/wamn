@@ -2,8 +2,8 @@
   "client-acme-receiving-purchase-order-get-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",
-    "wiring-id": "purchase_order_get",
-    "wiring-version": 1,
+    "component": "client_acme_receiving",
+    "operation": "client-acme-receiving:purchase-order/get@3.0.0",
     "definition-hash": "sha256:155964d242ac6a831e67a57af5a0e9a6d7a48184c886f29ec2589f563ebda715",
     "definition": {
       "id": "client-acme-receiving-purchase-order-get-http",
@@ -31,8 +31,8 @@
   "client-acme-receiving-purchase-order-update-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",
-    "wiring-id": "purchase_order_update",
-    "wiring-version": 1,
+    "component": "client_acme_receiving",
+    "operation": "client-acme-receiving:purchase-order/update@3.0.0",
     "definition-hash": "sha256:31873edf342f882f478de97c38a651a75ad9a1b42bc86816ad536f8ccdfee97a",
     "definition": {
       "id": "client-acme-receiving-purchase-order-update-http",
@@ -76,8 +76,8 @@
   "client-acme-receiving-receiving-record-receipt-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",
-    "wiring-id": "receiving_record_receipt",
-    "wiring-version": 1,
+    "component": "client_acme_receiving",
+    "operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
     "definition-hash": "sha256:2e0c1a505b894b406fdfd8114ffae32fbf130813bb0de11487930a0e53e00c60",
     "definition": {
       "id": "client-acme-receiving-receiving-record-receipt-http",
@@ -130,8 +130,8 @@
   "client-acme-receiving-quality-load-purchase-order-detail-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",
-    "wiring-id": "quality_load_purchase_order_detail",
-    "wiring-version": 1,
+    "component": "client_acme_receiving",
+    "operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
     "definition-hash": "sha256:33599e76765546c3df9918386a2909862a97b06481787f4f2b463d1327c4deb6",
     "definition": {
       "id": "client-acme-receiving-quality-load-purchase-order-detail-http",
@@ -157,8 +157,8 @@
   "client-acme-receiving-quality-approve-inspection-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",
-    "wiring-id": "quality_approve_inspection",
-    "wiring-version": 1,
+    "component": "client_acme_receiving",
+    "operation": "client-acme-receiving:quality/approve-inspection@3.0.0",
     "definition-hash": "sha256:cd1af17c09b45c9df5d122bd565bcf82117f737bdde7a3242430b7df28a1afe0",
     "definition": {
       "id": "client-acme-receiving-quality-approve-inspection-http",

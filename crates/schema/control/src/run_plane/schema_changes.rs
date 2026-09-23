@@ -14,6 +14,42 @@ use super::declarations::{
     RUNS_ROOT_INDEX_DEF, RUNS_WIRING_IDENTITY_CHECK_DEF,
 };
 
+/// Let `catalog.release_components` bind a route as well as a wiring node.
+///
+/// Every existing member binds a wiring node, and each one satisfies the new
+/// binding CHECK unchanged, so no row is rewritten. The primary key goes
+/// because a route member has no wiring columns. Two partial unique indexes
+/// keep the wiring key and add the route key. The statements match the table
+/// section of `catalog-schema.sql`.
+pub(super) const BIND_RELEASE_COMPONENT_ROUTES_SQL: &str = "\
+LOCK TABLE catalog.release_components IN ACCESS EXCLUSIVE MODE;
+ALTER TABLE catalog.release_components
+    DROP CONSTRAINT release_components_pkey,
+    ALTER COLUMN wiring_package_id DROP NOT NULL,
+    ALTER COLUMN wiring_package_version DROP NOT NULL,
+    ALTER COLUMN wiring_id DROP NOT NULL,
+    ALTER COLUMN wiring_version DROP NOT NULL,
+    ALTER COLUMN node_id DROP NOT NULL,
+    ADD COLUMN route_component text CHECK (route_component <> ''),
+    ADD COLUMN route_operation text CHECK (route_operation <> ''),
+    ADD CONSTRAINT release_components_binding_check CHECK (
+        (wiring_package_id IS NOT NULL AND wiring_package_version IS NOT NULL
+         AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+         AND node_id IS NOT NULL
+         AND route_component IS NULL AND route_operation IS NULL)
+        OR (wiring_package_id IS NULL AND wiring_package_version IS NULL
+            AND wiring_id IS NULL AND wiring_version IS NULL AND node_id IS NULL
+            AND route_component IS NOT NULL AND route_operation IS NOT NULL)
+    );
+CREATE UNIQUE INDEX release_components_wiring_key
+    ON catalog.release_components (tenant_id, effective_release_id, wiring_package_id,
+                                   wiring_package_version, wiring_id, wiring_version, node_id)
+    WHERE wiring_id IS NOT NULL;
+CREATE UNIQUE INDEX release_components_route_key
+    ON catalog.release_components (tenant_id, effective_release_id, package_id,
+                                   route_component, route_operation)
+    WHERE route_operation IS NOT NULL;";
+
 pub(super) fn effect_table_cutover_owned_check(table: &str, name: &str) -> bool {
     table == "effect_attempts"
         && matches!(
