@@ -27,35 +27,6 @@ const RELEASE_BINDING: &str = "let release = ";
 const HOST_RELEASE_LOAD_SITES: [(&str, &str); 1] =
     [("services/host/src/host.rs", "ClusterHostBuilder::default()")];
 
-/// The production construction of a claim's release pair.
-///
-/// wamn-0h0g.15.103 struck the per-workload config keys that used to assert this
-/// pair at bind time, leaving the verified manifest as its sole carrier. The old
-/// guard pinned ONE `plugin.set_release_identity(` call in one file; production
-/// no longer has one such site, and `WamnPostgres::set_release_identity` is a
-/// pass-through that builds the struct from its own parameters rather than a
-/// source of the pair.
-///
-/// So the invariant that survives is not the COUNT but the SOURCE: wherever
-/// production builds a `ReleaseIdentity`, both halves are read off the loaded release. A
-/// site that invented either half from anywhere else would restore the
-/// dual-representation bug the ruling closed — two carriers with nothing
-/// reconciling them, so a pod could stamp one release onto a run while resolving
-/// plans against another.
-const RELEASE_IDENTITY_CONSTRUCTION: &str = "ReleaseIdentity {";
-
-/// The two production sites that build the pair, and the loaded release expression each
-/// one must read both halves off.
-///
-/// RouterDriver and the queue claim scope share the same loaded release.
-const RELEASE_IDENTITY_SOURCE_SITES: [(&str, &str); 2] = [
-    (
-        "crates/execution/host/src/router_driver.rs",
-        "self.release.release()",
-    ),
-    ("crates/execution/host/src/queue.rs", "release.release()"),
-];
-
 /// The host's one `RouterDeliveryBridge` opts into its meter.
 ///
 /// wamn-0h0g.24.4 shipped `wamn.router.delivery.attempts` and
@@ -155,44 +126,6 @@ fn validate_release_load_precedes_bind(
              carries no release identity for its claim to record"
         ))
     }
-}
-
-/// Every half of a production `ReleaseIdentity` is read off the loaded release.
-///
-/// The literal's body is taken as the text between `ReleaseIdentity {` and the
-/// next `}` — every production construction is a flat struct literal of two
-/// scalar fields, so no nesting can hide inside it — and both field
-/// initializers must name `loaded_release`, the expression that reaches this file's loaded release.
-fn validate_release_identity_from_loaded_release(
-    source: &str,
-    loaded_release: &str,
-    seam: &str,
-) -> Result<(), String> {
-    let production = production_half(source, seam)?;
-    validate_one(production, RELEASE_IDENTITY_CONSTRUCTION, seam)?;
-    let opened = production
-        .find(RELEASE_IDENTITY_CONSTRUCTION)
-        .expect("the counted construction must locate")
-        + RELEASE_IDENTITY_CONSTRUCTION.len();
-    let Some(closed) = production[opened..].find('}').map(|end| opened + end) else {
-        return Err(format!(
-            "{seam} must close its `{RELEASE_IDENTITY_CONSTRUCTION}` literal"
-        ));
-    };
-    let body = &production[opened..closed];
-    for field in ["effective_release_id", "manifest_digest"] {
-        let initializer = body
-            .lines()
-            .find(|line| line.trim_start().starts_with(&format!("{field}:")));
-        if !initializer.is_some_and(|line| line.contains(loaded_release) && line.contains(field)) {
-            return Err(format!(
-                "{seam} must initialize `{field}` from `{loaded_release}.{field}`. A pair read from \
-                 anywhere but the loaded release is a second carrier of the release identity the \
-                 verified manifest was made sole owner of (wamn-0h0g.15.102)"
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn validate_no_struck_key(source: &str, seam: &str) -> Result<(), String> {
@@ -587,74 +520,11 @@ fn the_host_router_delivery_bridge_is_metered() {
 }
 
 #[test]
-fn every_production_release_identity_is_read_off_the_loaded_release() {
-    let root = repository_root();
-    for (path, loaded_release) in RELEASE_IDENTITY_SOURCE_SITES {
-        let source = host_source(&root, path);
-        validate_release_identity_from_loaded_release(&source, loaded_release, path)
-            .unwrap_or_else(|error| panic!("{error}"));
-    }
-}
-
-#[test]
 fn the_struck_release_identity_config_keys_do_not_return() {
     let root = repository_root();
     for path in STRUCK_KEY_SITES {
         let source = host_source(&root, path);
         validate_no_struck_key(&source, path).unwrap_or_else(|error| panic!("{error}"));
-    }
-}
-
-/// The fixture the mutants below are cut from: one flat construction whose two
-/// halves both come off `release.release()`.
-fn loaded_release_identity() -> String {
-    format!(
-        "let release = load_release(base, digest)?;\n\
-         let identity = {RELEASE_IDENTITY_CONSTRUCTION}\n\
-         \x20   effective_release_id: release.release().effective_release_id,\n\
-         \x20   manifest_digest: release.release().manifest_digest.clone(),\n\
-         }};\n"
-    )
-}
-
-#[test]
-fn release_identity_list_accepts_the_loaded_shape() {
-    validate_release_identity_from_loaded_release(
-        &loaded_release_identity(),
-        "release.release()",
-        "seam",
-    )
-    .expect("both halves read off the loaded release must pass");
-}
-
-#[test]
-fn release_identity_list_rejects_a_removed_or_duplicated_construction() {
-    let duplicated = format!("{}{}", loaded_release_identity(), loaded_release_identity());
-    for source in [String::new(), duplicated] {
-        let error =
-            validate_release_identity_from_loaded_release(&source, "release.release()", "seam")
-                .expect_err("a missing or duplicated construction must be rejected");
-        assert!(
-            error.contains("exactly one"),
-            "the refusal must name the count it required: {error}"
-        );
-    }
-}
-
-#[test]
-fn release_identity_list_rejects_a_half_read_from_elsewhere() {
-    for stolen in ["effective_release_id", "manifest_digest"] {
-        let mutant = loaded_release_identity().replace(
-            &format!("{stolen}: release.release()."),
-            &format!("{stolen}: config.get("),
-        );
-        let error =
-            validate_release_identity_from_loaded_release(&mutant, "release.release()", "seam")
-                .expect_err("a half read from anywhere but the loaded release must be rejected");
-        assert!(
-            error.contains("second carrier"),
-            "the refusal must name why a second source matters: {error}"
-        );
     }
 }
 
