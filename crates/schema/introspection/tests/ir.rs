@@ -6,7 +6,7 @@ use wamn_schema_introspection::ir::{
 };
 
 fn complete_ir(reverse_collections: bool) -> CatalogIr {
-    let mut purchase_order_columns = vec![
+    let mut widget_columns = vec![
         Column::new(
             "status",
             ColumnType::Text,
@@ -64,19 +64,19 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
             Some(ColumnGeneration::stored("lower(status)")),
         ),
     ];
-    let mut purchase_order_constraints = vec![
-        Constraint::check("purchase_order_amount_check", "(amount >= (0)::numeric)").unwrap(),
-        Constraint::unique("purchase_order_status_id_key", ["status", "id"]).unwrap(),
-        Constraint::primary_key("purchase_order_id_pkey", ["id"]).unwrap(),
+    let mut widget_constraints = vec![
+        Constraint::check("widget_amount_check", "(amount >= (0)::numeric)").unwrap(),
+        Constraint::unique("widget_status_id_key", ["status", "id"]).unwrap(),
+        Constraint::primary_key("widget_id_pkey", ["id"]).unwrap(),
     ];
-    let mut purchase_order_indexes = vec![
+    let mut widget_indexes = vec![
         Index::new(
-            "purchase_order_status_idx",
+            "widget_status_idx",
             vec![IndexColumn::new("status", IndexDirection::Asc)],
         )
         .unwrap(),
         Index::new(
-            "purchase_order_created_at_idx",
+            "widget_created_at_idx",
             vec![IndexColumn::new("created_at", IndexDirection::Desc)],
         )
         .unwrap(),
@@ -90,54 +90,54 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
             Some(ColumnDefault::GenRandomUuid),
             None,
         ),
-        Column::new("purchase_order_id", ColumnType::Uuid, false, None, None),
+        Column::new("widget_id", ColumnType::Uuid, false, None, None),
     ];
     let mut line_constraints = vec![
         Constraint::foreign_key(
-            "purchase_order_line_purchase_order_id_fkey",
-            vec![ForeignKeyColumn::new("purchase_order_id", "id")],
-            "receiving",
-            "purchase_order",
+            "widget_line_widget_id_fkey",
+            vec![ForeignKeyColumn::new("widget_id", "id")],
+            "inventory",
+            "widget",
             ForeignKeyAction::NoAction,
             ForeignKeyAction::Cascade,
         )
         .unwrap(),
-        Constraint::primary_key("purchase_order_line_id_pkey", ["id"]).unwrap(),
+        Constraint::primary_key("widget_line_id_pkey", ["id"]).unwrap(),
     ];
 
     if reverse_collections {
-        purchase_order_columns.reverse();
-        purchase_order_constraints.reverse();
-        purchase_order_indexes.reverse();
+        widget_columns.reverse();
+        widget_constraints.reverse();
+        widget_indexes.reverse();
         line_columns.reverse();
         line_constraints.reverse();
     }
 
-    let purchase_order = Table::new(
-        "receiving",
-        "purchase_order",
-        purchase_order_columns,
-        purchase_order_constraints,
-        purchase_order_indexes,
+    let widget = Table::new(
+        "inventory",
+        "widget",
+        widget_columns,
+        widget_constraints,
+        widget_indexes,
     );
-    let purchase_order_line = Table::new(
-        "receiving",
-        "purchase_order_line",
+    let widget_line = Table::new(
+        "inventory",
+        "widget_line",
         line_columns,
         line_constraints,
         vec![
             Index::new(
-                "purchase_order_line_purchase_order_id_idx",
-                vec![IndexColumn::new("purchase_order_id", IndexDirection::Asc)],
+                "widget_line_widget_id_idx",
+                vec![IndexColumn::new("widget_id", IndexDirection::Asc)],
             )
             .unwrap(),
         ],
     );
 
     let tables = if reverse_collections {
-        vec![purchase_order_line, purchase_order]
+        vec![widget_line, widget]
     } else {
-        vec![purchase_order, purchase_order_line]
+        vec![widget, widget_line]
     };
     CatalogIr::new(tables)
 }
@@ -146,7 +146,7 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
 fn canonical_bytes_freeze_the_complete_ir() {
     let ir = complete_ir(false);
     let expected = concat!(
-        r#"{"tables":[{"schema":"receiving","name":"purchase_order","columns":["#,
+        r#"{"tables":[{"schema":"inventory","name":"widget","columns":["#,
         r#"{"name":"amount","type":"numeric","nullable":false,"default":{"kind":"numeric","value":"0"},"generation":null},"#,
         r#"{"name":"count","type":"int32","nullable":false,"default":null,"generation":null},"#,
         r#"{"name":"created_at","type":"timestamptz","nullable":false,"default":{"kind":"current_timestamp"},"generation":null},"#,
@@ -159,17 +159,17 @@ fn canonical_bytes_freeze_the_complete_ir() {
         r#"{"name":"sequence_id","type":"int64","nullable":false,"default":null,"generation":{"kind":"identity","mode":"always"}},"#,
         r#"{"name":"status","type":"text","nullable":false,"default":{"kind":"text","value":"open"},"generation":null},"#,
         r#"{"name":"status_key","type":"text","nullable":false,"default":null,"generation":{"kind":"stored","expression":"lower(status)"}}],"#,
-        r#""constraints":[{"name":"purchase_order_amount_check","kind":"check","expression":"(amount >= (0)::numeric)"},"#,
-        r#"{"name":"purchase_order_id_pkey","kind":"primary_key","columns":["id"]},"#,
-        r#"{"name":"purchase_order_status_id_key","kind":"unique","columns":["status","id"]}],"#,
-        r#""indexes":[{"name":"purchase_order_created_at_idx","columns":[{"name":"created_at","direction":"desc"}]},"#,
-        r#"{"name":"purchase_order_status_idx","columns":[{"name":"status","direction":"asc"}]}]},"#,
-        r#"{"schema":"receiving","name":"purchase_order_line","columns":["#,
+        r#""constraints":[{"name":"widget_amount_check","kind":"check","expression":"(amount >= (0)::numeric)"},"#,
+        r#"{"name":"widget_id_pkey","kind":"primary_key","columns":["id"]},"#,
+        r#"{"name":"widget_status_id_key","kind":"unique","columns":["status","id"]}],"#,
+        r#""indexes":[{"name":"widget_created_at_idx","columns":[{"name":"created_at","direction":"desc"}]},"#,
+        r#"{"name":"widget_status_idx","columns":[{"name":"status","direction":"asc"}]}]},"#,
+        r#"{"schema":"inventory","name":"widget_line","columns":["#,
         r#"{"name":"id","type":"uuid","nullable":false,"default":{"kind":"gen_random_uuid"},"generation":null},"#,
-        r#"{"name":"purchase_order_id","type":"uuid","nullable":false,"default":null,"generation":null}],"#,
-        r#""constraints":[{"name":"purchase_order_line_id_pkey","kind":"primary_key","columns":["id"]},"#,
-        r#"{"name":"purchase_order_line_purchase_order_id_fkey","kind":"foreign_key","columns":[{"column":"purchase_order_id","referenced_column":"id"}],"referenced_schema":"receiving","referenced_table":"purchase_order","on_update":"no_action","on_delete":"cascade"}],"#,
-        r#""indexes":[{"name":"purchase_order_line_purchase_order_id_idx","columns":[{"name":"purchase_order_id","direction":"asc"}]}]}]}"#,
+        r#"{"name":"widget_id","type":"uuid","nullable":false,"default":null,"generation":null}],"#,
+        r#""constraints":[{"name":"widget_line_id_pkey","kind":"primary_key","columns":["id"]},"#,
+        r#"{"name":"widget_line_widget_id_fkey","kind":"foreign_key","columns":[{"column":"widget_id","referenced_column":"id"}],"referenced_schema":"inventory","referenced_table":"widget","on_update":"no_action","on_delete":"cascade"}],"#,
+        r#""indexes":[{"name":"widget_line_widget_id_idx","columns":[{"name":"widget_id","direction":"asc"}]}]}]}"#,
     )
     .as_bytes();
 
@@ -366,7 +366,7 @@ fn exclusion_ir(reverse_collections: bool) -> CatalogIr {
     }
     CatalogIr::new(vec![
         Table::new(
-            "receiving",
+            "inventory",
             "dock_appointment",
             vec![Column::new("dock_id", ColumnType::Uuid, false, None, None)],
             vec![Constraint::primary_key("dock_appointment_dock_id_pkey", ["dock_id"]).unwrap()],
@@ -379,7 +379,7 @@ fn exclusion_ir(reverse_collections: bool) -> CatalogIr {
 #[test]
 fn canonical_bytes_freeze_an_exclusion_constraint() {
     let expected = concat!(
-        r#"{"tables":[{"schema":"receiving","name":"dock_appointment","columns":["#,
+        r#"{"tables":[{"schema":"inventory","name":"dock_appointment","columns":["#,
         r#"{"name":"dock_id","type":"uuid","nullable":false,"default":null,"generation":null}],"#,
         r#""constraints":[{"name":"dock_appointment_dock_id_pkey","kind":"primary_key","columns":["dock_id"]}],"#,
         r#""indexes":[],"#,

@@ -12,6 +12,7 @@ tokio-postgres.workspace = true
 wamn-record-history = { workspace = true }
 
 [dev-dependencies]
+wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-test-postgres = { workspace = true }
 

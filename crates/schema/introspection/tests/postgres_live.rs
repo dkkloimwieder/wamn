@@ -2,8 +2,10 @@
 //!
 //! Each test connects to a test database of the test PostgreSQL 18 server
 //! through a superuser connection. The admin identity is used only to create,
-//! measure, and remove the fixture database and negative catalog objects. The real Receiving migration and supported additive changes
-//! execute through a dedicated non-superuser role that owns only `receiving`.
+//! measure, and remove the fixture database and negative catalog objects. The
+//! fixture application's own migration and supported additive changes
+//! execute through a dedicated non-superuser role that owns only the fixture
+//! schema.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,15 +26,15 @@ use wamn_schema_introspection::postgres::{
     read_catalog_excluding_relations,
 };
 
-const APPLICATION_SCHEMA: &str = "receiving";
+const APPLICATION_SCHEMA: &str = wamn_fixture_package::SCHEMA;
 const CONTROL_SCHEMA: &str = "wamn_control";
 const FIXTURE_SCHEMA: &str = "wamn_introspection_fixture";
 const STATEMENT_TIMEOUT: &str = "5s";
 const LOCK_TIMEOUT: &str = "2s";
 const TRANSACTION_TIMEOUT: &str = "15s";
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
-/// The supplier that the additive-column purchase orders reference.
-const ADDITIVE_SUPPLIER: &str = "00000000-0000-4000-8000-0000000004a1";
+/// The widget that the additive-column inspection rows reference.
+const ADDITIVE_WIDGET: &str = "00000000-0000-4000-8000-0000000004a1";
 
 struct Fixture {
     database: String,
@@ -48,8 +50,7 @@ impl Fixture {
             database: format!("wamn_intro_{id}"),
             role: format!("wamn_intro_migrator_{id}"),
             password: format!("wamn_intro_password_{id}"),
-            migration_path: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../apps/wamn_receiving/migrations/0001_initial.sql"),
+            migration_path: wamn_fixture_package::migrations_dir().join("0001_initial.sql"),
         }
     }
 }
@@ -271,10 +272,10 @@ async fn server_table_names(client: &Client) -> Vec<(String, String)> {
 async fn assert_base_ir(client: &Client, admin: &Client) {
     let first = read_catalog(client, &[APPLICATION_SCHEMA])
         .await
-        .expect("introspect real Receiving migration");
+        .expect("introspect the fixture migration");
     let second = read_catalog(client, &[APPLICATION_SCHEMA])
         .await
-        .expect("repeat Receiving introspection");
+        .expect("repeat the fixture introspection");
     assert_eq!(first.canonical_json_bytes(), second.canonical_json_bytes());
 
     let server_tables = server_table_names(client).await;
@@ -289,8 +290,8 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
     );
     assert_eq!(
         server_tables.len(),
-        9,
-        "the real migration created nine tables"
+        3,
+        "the fixture migration created three tables"
     );
     assert!(
         first
@@ -344,12 +345,12 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
         .expect("read application catalog before host maps");
     client
         .batch_execute(
-            "CREATE TABLE receiving.wamn_entities ( \
+            "CREATE TABLE inventory.wamn_entities ( \
                relation_oid oid PRIMARY KEY, \
                package_id text NOT NULL, \
                entity_id text NOT NULL, \
                table_name text NOT NULL); \
-             CREATE TABLE receiving.wamn_cdc_exclusions ( \
+             CREATE TABLE inventory.wamn_cdc_exclusions ( \
                relation_oid oid PRIMARY KEY, \
                package_id text NOT NULL, \
                relation_id text NOT NULL, \
@@ -384,8 +385,8 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
 
     client
         .batch_execute(
-            "DROP TABLE receiving.wamn_cdc_exclusions; \
-             DROP TABLE receiving.wamn_entities",
+            "DROP TABLE inventory.wamn_cdc_exclusions; \
+             DROP TABLE inventory.wamn_entities",
         )
         .await
         .expect("remove host-owned relation maps");
@@ -395,7 +396,7 @@ async fn add_supported_columns(client: &Client) {
     execute_migration_transaction(
         client,
         r"
-ALTER TABLE receiving.purchase_order
+ALTER TABLE inventory.widget_maker
     ADD COLUMN additive_boolean boolean,
     ADD COLUMN additive_int32 int4,
     ADD COLUMN additive_int64 int8,
@@ -407,19 +408,19 @@ ALTER TABLE receiving.purchase_order
     ADD COLUMN additive_json jsonb,
     ADD COLUMN additive_uuid uuid,
     ADD COLUMN additive_identity bigint GENERATED ALWAYS AS IDENTITY,
-    ADD COLUMN additive_status_key text GENERATED ALWAYS AS (lower(status)) STORED,
-    ADD COLUMN acme_inspection_required boolean NOT NULL DEFAULT false,
-    ADD COLUMN acme_quality_status text NOT NULL DEFAULT 'not_required',
-    ADD CONSTRAINT purchase_order_acme_quality_status_check
-        CHECK (acme_quality_status IN ('not_required', 'pending', 'approved'));
-CREATE TABLE receiving.quality_inspection (
-    receipt_id uuid
-        CONSTRAINT quality_inspection_receipt_id_pkey PRIMARY KEY
-        CONSTRAINT quality_inspection_receipt_id_fkey
-        REFERENCES receiving.receipt (id),
+    ADD COLUMN additive_name_key text GENERATED ALWAYS AS (lower(name)) STORED,
+    ADD COLUMN overlay_inspection_required boolean NOT NULL DEFAULT false,
+    ADD COLUMN overlay_quality_status text NOT NULL DEFAULT 'not_required',
+    ADD CONSTRAINT widget_maker_overlay_quality_status_check
+        CHECK (overlay_quality_status IN ('not_required', 'pending', 'approved'));
+CREATE TABLE inventory.widget_inspection (
+    widget_id uuid
+        CONSTRAINT widget_inspection_widget_id_pkey PRIMARY KEY
+        CONSTRAINT widget_inspection_widget_id_fkey
+        REFERENCES inventory.widget (id),
     status text NOT NULL DEFAULT 'pending',
     row_version int8 NOT NULL DEFAULT 1,
-    CONSTRAINT quality_inspection_status_check
+    CONSTRAINT widget_inspection_status_check
         CHECK (status IN ('pending', 'approved'))
 )
 ",
@@ -428,29 +429,25 @@ CREATE TABLE receiving.quality_inspection (
 }
 
 async fn assert_additive_columns(client: &Client) {
-    // Every order references a supplier, so one supplier exists first and each
-    // insert below names it.
+    // The inspection table references one widget, so that widget exists first.
     client
         .execute(
-            "INSERT INTO receiving.supplier (id, name) \
-             VALUES ($1::text::uuid, 'quality status supplier')",
-            &[&ADDITIVE_SUPPLIER],
+            "INSERT INTO inventory.widget (id, code) \
+             VALUES ($1::text::uuid, 'priority')",
+            &[&ADDITIVE_WIDGET],
         )
         .await
-        .expect("the referenced supplier exists");
+        .expect("the referenced widget exists");
     for (index, quality_status) in ["not_required", "pending", "approved"]
         .into_iter()
         .enumerate()
     {
-        let purchase_order_number = format!("quality-status-{index}");
+        let maker_name = format!("quality-status-{index}");
         client
             .execute(
-                "INSERT INTO receiving.purchase_order \
-                    (purchase_order_number, supplier_id, acme_quality_status, \
-                     created_at, created_by, updated_at, updated_by) \
-                 VALUES ($1, $3::text::uuid, $2, now(), gen_random_uuid(), \
-                         now(), gen_random_uuid())",
-                &[&purchase_order_number, &quality_status, &ADDITIVE_SUPPLIER],
+                "INSERT INTO inventory.widget_maker (name, overlay_quality_status) \
+                 VALUES ($1, $2)",
+                &[&maker_name, &quality_status],
             )
             .await
             .unwrap_or_else(|error| {
@@ -459,12 +456,9 @@ async fn assert_additive_columns(client: &Client) {
     }
     let invalid_status = client
         .execute(
-            "INSERT INTO receiving.purchase_order \
-                (purchase_order_number, supplier_id, acme_quality_status, \
-                 created_at, created_by, updated_at, updated_by) \
-             VALUES ('quality-status-invalid', $1::text::uuid, 'unknown', \
-                     now(), gen_random_uuid(), now(), gen_random_uuid())",
-            &[&ADDITIVE_SUPPLIER],
+            "INSERT INTO inventory.widget_maker (name, overlay_quality_status) \
+             VALUES ('quality-status-invalid', 'unknown')",
+            &[],
         )
         .await
         .expect_err("an undeclared quality status was admitted");
@@ -478,7 +472,7 @@ async fn assert_additive_columns(client: &Client) {
         invalid_status
             .as_db_error()
             .and_then(|error| error.constraint()),
-        Some("purchase_order_acme_quality_status_check")
+        Some("widget_maker_overlay_quality_status_check")
     );
 
     let server_columns = client
@@ -489,8 +483,8 @@ async fn assert_additive_columns(client: &Client) {
                FROM pg_catalog.pg_attribute AS attribute \
                JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid \
                JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-              WHERE namespace.nspname = 'receiving' \
-                AND relation.relname = 'purchase_order' \
+              WHERE namespace.nspname = 'inventory' \
+                AND relation.relname = 'widget_maker' \
                 AND attribute.attname LIKE 'additive_%' \
                 AND attribute.attnum > 0 AND NOT attribute.attisdropped \
               ORDER BY attribute.attname",
@@ -524,7 +518,7 @@ async fn assert_additive_columns(client: &Client) {
         ("additive_int64", "bigint"),
         ("additive_json", "jsonb"),
         ("additive_numeric", "numeric"),
-        ("additive_status_key", "text"),
+        ("additive_name_key", "text"),
         ("additive_text", "text"),
         ("additive_timestamptz", "timestamp with time zone"),
         ("additive_uuid", "uuid"),
@@ -536,7 +530,7 @@ async fn assert_additive_columns(client: &Client) {
         );
     }
     assert_eq!(server_columns["additive_identity"].1, "a");
-    assert_eq!(server_columns["additive_status_key"].2, "s");
+    assert_eq!(server_columns["additive_name_key"].2, "s");
 
     let ir = read_catalog(client, &[APPLICATION_SCHEMA])
         .await
@@ -548,12 +542,12 @@ async fn assert_additive_columns(client: &Client) {
     let table = ir
         .tables()
         .iter()
-        .find(|table| table.name() == "purchase_order")
-        .expect("purchase_order remains in IR");
+        .find(|table| table.name() == "widget_maker")
+        .expect("widget_maker remains in IR");
     let inspection_required = table
         .columns()
         .iter()
-        .find(|column| column.name() == "acme_inspection_required")
+        .find(|column| column.name() == "overlay_inspection_required")
         .expect("client inspection field remains in IR");
     assert_eq!(
         inspection_required.default(),
@@ -562,7 +556,7 @@ async fn assert_additive_columns(client: &Client) {
     let quality_status = table
         .columns()
         .iter()
-        .find(|column| column.name() == "acme_quality_status")
+        .find(|column| column.name() == "overlay_quality_status")
         .expect("client quality field remains in IR");
     assert_eq!(
         quality_status.default(),
@@ -573,14 +567,14 @@ async fn assert_additive_columns(client: &Client) {
         table
             .constraints()
             .iter()
-            .any(|constraint| { constraint.name() == "purchase_order_acme_quality_status_check" }),
+            .any(|constraint| { constraint.name() == "widget_maker_overlay_quality_status_check" }),
         "client quality check remains in IR"
     );
     let inspection = ir
         .tables()
         .iter()
-        .find(|table| table.name() == "quality_inspection")
-        .expect("quality inspection remains in IR");
+        .find(|table| table.name() == "widget_inspection")
+        .expect("widget inspection remains in IR");
     let inspection_status = inspection
         .columns()
         .iter()
@@ -624,8 +618,8 @@ async fn assert_additive_columns(client: &Client) {
         })
     ));
     assert!(matches!(
-        ir_columns["additive_status_key"].generation(),
-        Some(ColumnGeneration::Stored { expression }) if expression.as_ref() == "lower(status)"
+        ir_columns["additive_name_key"].generation(),
+        Some(ColumnGeneration::Stored { expression }) if expression.as_ref() == "lower(name)"
     ));
 
     let identity_sequence = client
@@ -642,7 +636,7 @@ async fn assert_additive_columns(client: &Client) {
                  ON attribute.attrelid = table_relation.oid \
                 AND attribute.attnum = dependency.refobjsubid \
               WHERE sequence_relation.relkind = 'S' \
-                AND table_relation.relname = 'purchase_order' \
+                AND table_relation.relname = 'widget_maker' \
                 AND attribute.attname = 'additive_identity'",
             &[],
         )
@@ -740,34 +734,34 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     refusal_case(
         matrix,
         "unlogged table",
-        "CREATE UNLOGGED TABLE receiving.refused_unlogged (id bigint)",
+        "CREATE UNLOGGED TABLE inventory.refused_unlogged (id bigint)",
         "SELECT c.relpersistence='u' FROM pg_catalog.pg_class c \
           JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
-          WHERE n.nspname='receiving' AND c.relname='refused_unlogged' \
+          WHERE n.nspname='inventory' AND c.relname='refused_unlogged' \
           AND c.relkind='r'",
-        "DROP TABLE receiving.refused_unlogged",
+        "DROP TABLE inventory.refused_unlogged",
         PostgresIntrospectionErrorKind::UnsupportedTable,
     )
     .await;
     refusal_case(
         matrix,
         "view",
-        "CREATE VIEW receiving.refused_view AS SELECT 1::bigint AS id",
+        "CREATE VIEW inventory.refused_view AS SELECT 1::bigint AS id",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='receiving' AND c.relname='refused_view' \
+          ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_view' \
           AND c.relkind='v')",
-        "DROP VIEW receiving.refused_view",
+        "DROP VIEW inventory.refused_view",
         PostgresIntrospectionErrorKind::UnsupportedView,
     )
     .await;
     refusal_case(
         matrix,
         "materialized view",
-        "CREATE MATERIALIZED VIEW receiving.refused_materialized AS SELECT 1::bigint AS id",
+        "CREATE MATERIALIZED VIEW inventory.refused_materialized AS SELECT 1::bigint AS id",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='receiving' \
+          ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
           AND c.relname='refused_materialized' AND c.relkind='m')",
-        "DROP MATERIALIZED VIEW receiving.refused_materialized",
+        "DROP MATERIALIZED VIEW inventory.refused_materialized",
         PostgresIntrospectionErrorKind::UnsupportedMaterializedView,
     )
     .await;
@@ -776,11 +770,11 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         "foreign table",
         "CREATE FOREIGN DATA WRAPPER wamn_refused_fdw NO HANDLER; \
          CREATE SERVER wamn_refused_server FOREIGN DATA WRAPPER wamn_refused_fdw; \
-         CREATE FOREIGN TABLE receiving.refused_foreign (id bigint) SERVER wamn_refused_server",
+         CREATE FOREIGN TABLE inventory.refused_foreign (id bigint) SERVER wamn_refused_server",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='receiving' AND c.relname='refused_foreign' \
+          ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_foreign' \
           AND c.relkind='f')",
-        "DROP FOREIGN TABLE receiving.refused_foreign; \
+        "DROP FOREIGN TABLE inventory.refused_foreign; \
          DROP SERVER wamn_refused_server; DROP FOREIGN DATA WRAPPER wamn_refused_fdw",
         PostgresIntrospectionErrorKind::UnsupportedForeignTable,
     )
@@ -788,22 +782,22 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     refusal_case(
         matrix,
         "function",
-        "CREATE FUNCTION receiving.refused_function() RETURNS bigint LANGUAGE SQL AS 'SELECT 1'",
+        "CREATE FUNCTION inventory.refused_function() RETURNS bigint LANGUAGE SQL AS 'SELECT 1'",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n \
-          ON n.oid=p.pronamespace WHERE n.nspname='receiving' \
+          ON n.oid=p.pronamespace WHERE n.nspname='inventory' \
           AND p.proname='refused_function' AND p.prokind='f')",
-        "DROP FUNCTION receiving.refused_function()",
+        "DROP FUNCTION inventory.refused_function()",
         PostgresIntrospectionErrorKind::UnsupportedRoutine,
     )
     .await;
     refusal_case(
         matrix,
         "procedure",
-        "CREATE PROCEDURE receiving.refused_procedure() LANGUAGE SQL AS 'SELECT 1'",
+        "CREATE PROCEDURE inventory.refused_procedure() LANGUAGE SQL AS 'SELECT 1'",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n \
-          ON n.oid=p.pronamespace WHERE n.nspname='receiving' \
+          ON n.oid=p.pronamespace WHERE n.nspname='inventory' \
           AND p.proname='refused_procedure' AND p.prokind='p')",
-        "DROP PROCEDURE receiving.refused_procedure()",
+        "DROP PROCEDURE inventory.refused_procedure()",
         PostgresIntrospectionErrorKind::UnsupportedRoutine,
     )
     .await;
@@ -812,12 +806,12 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         "trigger",
         "CREATE FUNCTION wamn_introspection_fixture.trigger_function() RETURNS trigger \
            LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'; \
-         CREATE TRIGGER refused_trigger BEFORE INSERT ON receiving.item \
+         CREATE TRIGGER refused_trigger BEFORE INSERT ON inventory.widget \
            FOR EACH ROW EXECUTE FUNCTION wamn_introspection_fixture.trigger_function()",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c \
           ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
-          WHERE n.nspname='receiving' AND t.tgname='refused_trigger' AND NOT t.tgisinternal)",
-        "DROP TRIGGER refused_trigger ON receiving.item; \
+          WHERE n.nspname='inventory' AND t.tgname='refused_trigger' AND NOT t.tgisinternal)",
+        "DROP TRIGGER refused_trigger ON inventory.widget; \
          DROP FUNCTION wamn_introspection_fixture.trigger_function()",
         PostgresIntrospectionErrorKind::UnsupportedTrigger,
     )
@@ -825,93 +819,93 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     refusal_case(
         matrix,
         "rule",
-        "CREATE RULE refused_rule AS ON UPDATE TO receiving.item DO NOTHING",
+        "CREATE RULE refused_rule AS ON UPDATE TO inventory.widget DO NOTHING",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r JOIN pg_catalog.pg_class c \
           ON c.oid=r.ev_class JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
-          WHERE n.nspname='receiving' AND r.rulename='refused_rule')",
-        "DROP RULE refused_rule ON receiving.item",
+          WHERE n.nspname='inventory' AND r.rulename='refused_rule')",
+        "DROP RULE refused_rule ON inventory.widget",
         PostgresIntrospectionErrorKind::UnsupportedRule,
     )
     .await;
     refusal_case(
         matrix,
         "policy",
-        "CREATE POLICY refused_policy ON receiving.item USING (true)",
+        "CREATE POLICY refused_policy ON inventory.widget USING (true)",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c \
           ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
-          WHERE n.nspname='receiving' AND p.polname='refused_policy')",
-        "DROP POLICY refused_policy ON receiving.item",
+          WHERE n.nspname='inventory' AND p.polname='refused_policy')",
+        "DROP POLICY refused_policy ON inventory.widget",
         PostgresIntrospectionErrorKind::UnsupportedPolicy,
     )
     .await;
     refusal_case(
         matrix,
         "domain",
-        "CREATE DOMAIN receiving.refused_domain AS text",
+        "CREATE DOMAIN inventory.refused_domain AS text",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n \
-          ON n.oid=t.typnamespace WHERE n.nspname='receiving' \
+          ON n.oid=t.typnamespace WHERE n.nspname='inventory' \
           AND t.typname='refused_domain' AND t.typtype='d')",
-        "DROP DOMAIN receiving.refused_domain",
+        "DROP DOMAIN inventory.refused_domain",
         PostgresIntrospectionErrorKind::UnsupportedCustomType,
     )
     .await;
     refusal_case(
         matrix,
         "enum type",
-        "CREATE TYPE receiving.refused_enum AS ENUM ('one', 'two')",
+        "CREATE TYPE inventory.refused_enum AS ENUM ('one', 'two')",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n \
-          ON n.oid=t.typnamespace WHERE n.nspname='receiving' \
+          ON n.oid=t.typnamespace WHERE n.nspname='inventory' \
           AND t.typname='refused_enum' AND t.typtype='e')",
-        "DROP TYPE receiving.refused_enum",
+        "DROP TYPE inventory.refused_enum",
         PostgresIntrospectionErrorKind::UnsupportedCustomType,
     )
     .await;
     refusal_case(
         matrix,
         "table acl",
-        "CREATE TABLE receiving.refused_acl (id bigint); \
-         GRANT SELECT ON receiving.refused_acl TO PUBLIC",
+        "CREATE TABLE inventory.refused_acl (id bigint); \
+         GRANT SELECT ON inventory.refused_acl TO PUBLIC",
         "SELECT c.relacl IS NOT NULL FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='receiving' AND c.relname='refused_acl'",
-        "DROP TABLE receiving.refused_acl",
+          ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_acl'",
+        "DROP TABLE inventory.refused_acl",
         PostgresIntrospectionErrorKind::UnsupportedAcl,
     )
     .await;
     refusal_case(
         matrix,
         "identity start",
-        "ALTER TABLE receiving.purchase_order ADD COLUMN refused_identity bigint \
+        "ALTER TABLE inventory.widget_maker ADD COLUMN refused_identity bigint \
            GENERATED ALWAYS AS IDENTITY (START WITH 2)",
         "SELECT sequence_data.seqstart=2 FROM pg_catalog.pg_sequence AS sequence_data \
           WHERE sequence_data.seqrelid = \
             pg_catalog.pg_get_serial_sequence( \
-              'receiving.purchase_order', 'refused_identity')::pg_catalog.regclass",
-        "ALTER TABLE receiving.purchase_order DROP COLUMN refused_identity",
+              'inventory.widget_maker', 'refused_identity')::pg_catalog.regclass",
+        "ALTER TABLE inventory.widget_maker DROP COLUMN refused_identity",
         PostgresIntrospectionErrorKind::UnsupportedIdentity,
     )
     .await;
     refusal_case(
         matrix,
         "column collation",
-        "ALTER TABLE receiving.item ADD COLUMN refused_collation text COLLATE \"C\"",
+        "ALTER TABLE inventory.widget ADD COLUMN refused_collation text COLLATE \"C\"",
         "SELECT a.attcollation <> t.typcollation \
           FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
           JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
-          JOIN pg_catalog.pg_type t ON t.oid=a.atttypid WHERE n.nspname='receiving' \
-          AND c.relname='item' AND a.attname='refused_collation'",
-        "ALTER TABLE receiving.item DROP COLUMN refused_collation",
+          JOIN pg_catalog.pg_type t ON t.oid=a.atttypid WHERE n.nspname='inventory' \
+          AND c.relname='widget' AND a.attname='refused_collation'",
+        "ALTER TABLE inventory.widget DROP COLUMN refused_collation",
         PostgresIntrospectionErrorKind::UnsupportedColumnCollation,
     )
     .await;
     refusal_case(
         matrix,
         "column type",
-        "ALTER TABLE receiving.item ADD COLUMN refused_date date",
+        "ALTER TABLE inventory.widget ADD COLUMN refused_date date",
         "SELECT pg_catalog.format_type(a.atttypid,a.atttypmod)='date' \
           FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
-          JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='receiving' \
-          AND c.relname='item' AND a.attname='refused_date'",
-        "ALTER TABLE receiving.item DROP COLUMN refused_date",
+          JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
+          AND c.relname='widget' AND a.attname='refused_date'",
+        "ALTER TABLE inventory.widget DROP COLUMN refused_date",
         PostgresIntrospectionErrorKind::UnsupportedColumnType,
     )
     .await;
@@ -924,53 +918,53 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     refusal_case(
         matrix,
         "column default",
-        "ALTER TABLE receiving.purchase_order ALTER COLUMN status \
+        "ALTER TABLE inventory.widget_maker ALTER COLUMN name \
            SET DEFAULT lower('CLOSED')",
         "SELECT pg_catalog.pg_get_expr(d.adbin,d.adrelid,false)=$$lower('CLOSED'::text)$$ \
           FROM pg_catalog.pg_attrdef d JOIN pg_catalog.pg_class c ON c.oid=d.adrelid \
           JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
           JOIN pg_catalog.pg_attribute a ON a.attrelid=d.adrelid AND a.attnum=d.adnum \
-          WHERE n.nspname='receiving' AND c.relname='purchase_order' AND a.attname='status'",
-        "ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'open'",
+          WHERE n.nspname='inventory' AND c.relname='widget_maker' AND a.attname='name'",
+        "ALTER TABLE inventory.widget_maker ALTER COLUMN name DROP DEFAULT",
         PostgresIntrospectionErrorKind::UnsupportedColumnDefault,
     )
     .await;
     refusal_case(
         matrix,
         "virtual generated column",
-        "ALTER TABLE receiving.purchase_order ADD COLUMN refused_virtual text \
-           GENERATED ALWAYS AS (lower(status)) VIRTUAL",
+        "ALTER TABLE inventory.widget_maker ADD COLUMN refused_virtual text \
+           GENERATED ALWAYS AS (lower(name)) VIRTUAL",
         "SELECT a.attgenerated='v' FROM pg_catalog.pg_attribute a \
           JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='receiving' \
-          AND c.relname='purchase_order' AND a.attname='refused_virtual'",
-        "ALTER TABLE receiving.purchase_order DROP COLUMN refused_virtual",
+          ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
+          AND c.relname='widget_maker' AND a.attname='refused_virtual'",
+        "ALTER TABLE inventory.widget_maker DROP COLUMN refused_virtual",
         PostgresIntrospectionErrorKind::UnsupportedGeneratedColumn,
     )
     .await;
     refusal_case(
         matrix,
         "expression index",
-        "CREATE INDEX purchase_order_status_expression_idx \
-           ON receiving.purchase_order (lower(status))",
+        "CREATE INDEX widget_maker_name_expression_idx \
+           ON inventory.widget_maker (lower(name))",
         "SELECT i.indexprs IS NOT NULL FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c \
-          ON c.oid=i.indexrelid WHERE c.relname='purchase_order_status_expression_idx'",
-        "DROP INDEX receiving.purchase_order_status_expression_idx",
+          ON c.oid=i.indexrelid WHERE c.relname='widget_maker_name_expression_idx'",
+        "DROP INDEX inventory.widget_maker_name_expression_idx",
         PostgresIntrospectionErrorKind::UnsupportedIndex,
     )
     .await;
     let wrong_index_name = refusal_case(
         matrix,
         "index name",
-        "CREATE INDEX refused_name ON receiving.purchase_order (status)",
+        "CREATE INDEX refused_name ON inventory.widget_maker (name)",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='receiving' AND c.relname='refused_name')",
-        "DROP INDEX receiving.refused_name",
+          ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_name')",
+        "DROP INDEX inventory.refused_name",
         PostgresIntrospectionErrorKind::UnsupportedIndex,
     )
     .await;
     if let Some(error) = &wrong_index_name
-        && error.detail() != "name must use the authored convention `purchase_order_status_idx`"
+        && error.detail() != "name must use the authored convention `widget_maker_name_idx`"
     {
         matrix.failures.push(format!(
             "index name: unexpected detail {:?}",
@@ -980,12 +974,12 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     let repeated_index_column = refusal_case(
         matrix,
         "repeated index column",
-        "CREATE INDEX purchase_order_status_status_idx \
-           ON receiving.purchase_order (status, status)",
+        "CREATE INDEX widget_maker_name_name_idx \
+           ON inventory.widget_maker (name, name)",
         "SELECT i.indnkeyatts=2 AND i.indkey[0]=i.indkey[1] \
           FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c \
-          ON c.oid=i.indexrelid WHERE c.relname='purchase_order_status_status_idx'",
-        "DROP INDEX receiving.purchase_order_status_status_idx",
+          ON c.oid=i.indexrelid WHERE c.relname='widget_maker_name_name_idx'",
+        "DROP INDEX inventory.widget_maker_name_name_idx",
         PostgresIntrospectionErrorKind::UnsupportedIndex,
     )
     .await;
@@ -1000,14 +994,14 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     let wrong_constraint_name = refusal_case(
         matrix,
         "constraint name",
-        "ALTER TABLE receiving.item ADD CONSTRAINT refused_name CHECK (item_number <> '')",
+        "ALTER TABLE inventory.widget ADD CONSTRAINT refused_name CHECK (code <> '')",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname='refused_name')",
-        "ALTER TABLE receiving.item DROP CONSTRAINT refused_name",
+        "ALTER TABLE inventory.widget DROP CONSTRAINT refused_name",
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
     if let Some(error) = &wrong_constraint_name
-        && error.detail() != "name must use the authored convention `item_item_number_check`"
+        && error.detail() != "name must use the authored convention `widget_code_check`"
     {
         matrix.failures.push(format!(
             "constraint name: unexpected detail {:?}",
@@ -1017,11 +1011,11 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     refusal_case(
         matrix,
         "sequence",
-        "CREATE SEQUENCE receiving.refused_sequence",
+        "CREATE SEQUENCE inventory.refused_sequence",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='receiving' \
+          ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
           AND c.relname='refused_sequence' AND c.relkind='S')",
-        "DROP SEQUENCE receiving.refused_sequence",
+        "DROP SEQUENCE inventory.refused_sequence",
         PostgresIntrospectionErrorKind::UnsupportedSequence,
     )
     .await;
@@ -1051,22 +1045,22 @@ async fn assert_record_history_fixtures_are_skipped(admin: &Client, reader: &Cli
         .expect("read the catalog before the record history fixtures");
     admin
         .batch_execute(
-            "SELECT wamn_history.create_history_table('receiving', 'purchase_order', false); \
-             GRANT SELECT ON receiving.purchase_order_history TO PUBLIC; \
+            "SELECT wamn_history.create_history_table('inventory', 'widget_maker', false); \
+             GRANT SELECT ON inventory.widget_maker_history TO PUBLIC; \
              CREATE TRIGGER wamn_record_history_stamp \
-               BEFORE INSERT OR UPDATE ON receiving.purchase_order \
+               BEFORE INSERT OR UPDATE ON inventory.widget_maker \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at'); \
              CREATE TRIGGER wamn_record_history_log \
-               AFTER INSERT OR UPDATE OR DELETE ON receiving.purchase_order \
+               AFTER INSERT OR UPDATE OR DELETE ON inventory.widget_maker \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
         )
         .await
         .expect("install the record history fixtures");
     let installed = admin
         .query_one(
-            "SELECT to_regclass('receiving.purchase_order_history') IS NOT NULL, \
+            "SELECT to_regclass('inventory.widget_maker_history') IS NOT NULL, \
                     ARRAY(SELECT t.tgname::text FROM pg_catalog.pg_trigger t \
-                           WHERE t.tgrelid = 'receiving.purchase_order'::regclass \
+                           WHERE t.tgrelid = 'inventory.widget_maker'::regclass \
                              AND NOT t.tgisinternal ORDER BY t.tgname)",
             &[],
         )
@@ -1102,17 +1096,17 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
                      CREATE ROLE {role} NOLOGIN; \
                    END IF; \
                  END $role$; \
-                 GRANT USAGE ON SCHEMA receiving TO {role}; \
-                 GRANT SELECT ON receiving.purchase_order TO {role}; \
-                 GRANT SELECT (id) ON receiving.purchase_order_line TO {role}"
+                 GRANT USAGE ON SCHEMA inventory TO {role}; \
+                 GRANT SELECT ON inventory.widget_maker TO {role}; \
+                 GRANT SELECT (id) ON inventory.widget TO {role}"
             ))
             .await
             .expect("apply the platform grants");
         let granted = admin
             .query_one(
-                "SELECT has_schema_privilege($1, 'receiving', 'USAGE'), \
-                        has_table_privilege($1, 'receiving.purchase_order', 'SELECT'), \
-                        has_column_privilege($1, 'receiving.purchase_order_line', 'id', 'SELECT')",
+                "SELECT has_schema_privilege($1, 'inventory', 'USAGE'), \
+                        has_table_privilege($1, 'inventory.widget_maker', 'SELECT'), \
+                        has_column_privilege($1, 'inventory.widget', 'id', 'SELECT')",
                 &[&role],
             )
             .await
@@ -1137,14 +1131,14 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
     admin
         .batch_execute(&format!(
             "CREATE ROLE {other_role} NOLOGIN; \
-             GRANT USAGE ON SCHEMA receiving TO {other_role}"
+             GRANT USAGE ON SCHEMA inventory TO {other_role}"
         ))
         .await
         .expect("grant the application schema to another role");
     let refused = read_catalog(reader, &[APPLICATION_SCHEMA]).await;
     admin
         .batch_execute(&format!(
-            "REVOKE USAGE ON SCHEMA receiving FROM {other_role}; \
+            "REVOKE USAGE ON SCHEMA inventory FROM {other_role}; \
              DROP ROLE {other_role}"
         ))
         .await
@@ -1155,9 +1149,9 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
 
 async fn run_gate(admin_config: Config, fixture: Fixture) {
     validate_migration_file(&fixture.migration_path, APPLICATION_SCHEMA)
-        .expect("pre-apply policy admits the real Receiving migration");
+        .expect("pre-apply policy admits the fixture migration");
     let migration_sql = std::fs::read_to_string(&fixture.migration_path)
-        .expect("read the real Receiving migration after policy validation");
+        .expect("read the fixture migration after policy validation");
 
     let migration = connect(target_config(&admin_config, &fixture, true)).await;
     let target_admin = connect(target_config(&admin_config, &fixture, false)).await;
@@ -1196,7 +1190,7 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn receiving_migration_round_trips_and_refuses_unsupported_server_objects() {
+async fn the_fixture_migration_round_trips_and_refuses_unsupported_server_objects() {
     // record-history.sql creates the cluster-wide wamn_db_owner role.
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
@@ -1239,7 +1233,7 @@ async fn receiving_migration_round_trips_and_refuses_unsupported_server_objects(
 /// and the range half is an expression key because the frozen column vocabulary
 /// has no range type.
 const EXCLUSION_MIGRATION_SQL: &str = "\
-CREATE TABLE receiving.dock_appointment (
+CREATE TABLE inventory.dock_appointment (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     dock_id uuid NOT NULL,
     starts_at timestamptz NOT NULL,
@@ -1465,7 +1459,7 @@ async fn assert_exclusion_is_modelled(client: &Client) {
                  SELECT 1 FROM pg_catalog.pg_index AS catalog_index \
                    JOIN pg_catalog.pg_class AS index_relation \
                      ON index_relation.oid = catalog_index.indexrelid \
-                  WHERE catalog_index.indrelid = 'receiving.dock_appointment'::regclass \
+                  WHERE catalog_index.indrelid = 'inventory.dock_appointment'::regclass \
                     AND catalog_index.indisexclusion \
                     AND index_relation.relname = 'dock_appointment_no_overlap')",
             &[],
@@ -1483,7 +1477,7 @@ async fn assert_exclusion_is_modelled(client: &Client) {
 async fn assert_exclusion_is_enforced(client: &Client) {
     client
         .batch_execute(
-            "INSERT INTO receiving.dock_appointment (dock_id, starts_at, ends_at) VALUES \
+            "INSERT INTO inventory.dock_appointment (dock_id, starts_at, ends_at) VALUES \
              ('11111111-1111-1111-1111-111111111111', \
               '2026-01-01T09:00:00Z', '2026-01-01T10:00:00Z')",
         )
@@ -1491,7 +1485,7 @@ async fn assert_exclusion_is_enforced(client: &Client) {
         .expect("the first booking is accepted");
     let conflict = client
         .batch_execute(
-            "INSERT INTO receiving.dock_appointment (dock_id, starts_at, ends_at) VALUES \
+            "INSERT INTO inventory.dock_appointment (dock_id, starts_at, ends_at) VALUES \
              ('11111111-1111-1111-1111-111111111111', \
               '2026-01-01T09:30:00Z', '2026-01-01T10:30:00Z')",
         )
@@ -1511,7 +1505,7 @@ async fn assert_exclusion_is_enforced(client: &Client) {
         "the server names the modelled constraint"
     );
     client
-        .batch_execute("DELETE FROM receiving.dock_appointment")
+        .batch_execute("DELETE FROM inventory.dock_appointment")
         .await
         .expect("remove the booking fixture rows");
 }
@@ -1525,12 +1519,12 @@ async fn assert_exclusion_is_enforced(client: &Client) {
 async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client) {
     admin
         .batch_execute(
-            "CREATE TABLE receiving.dock_reservation ( \
+            "CREATE TABLE inventory.dock_reservation ( \
                dock_id uuid NOT NULL, \
                carrier_id uuid NOT NULL, \
                CONSTRAINT dock_reservation_dock_id_carrier_id_excl \
                  EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =)); \
-             CREATE TABLE receiving.dock_reservation_default ( \
+             CREATE TABLE inventory.dock_reservation_default ( \
                dock_id uuid NOT NULL, \
                carrier_id uuid NOT NULL, \
                EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))",
@@ -1581,8 +1575,8 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
     }
     admin
         .batch_execute(
-            "DROP TABLE receiving.dock_reservation_default; \
-             DROP TABLE receiving.dock_reservation",
+            "DROP TABLE inventory.dock_reservation_default; \
+             DROP TABLE inventory.dock_reservation",
         )
         .await
         .expect("remove the all-column exclusion tables");
@@ -1593,14 +1587,14 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
     let error = refusal_case(
         matrix,
         "exclusion constraint name",
-        "CREATE TABLE receiving.dock_reservation ( \
+        "CREATE TABLE inventory.dock_reservation ( \
            dock_id uuid NOT NULL, \
            carrier_id uuid NOT NULL, \
            CONSTRAINT dock_reservation_no_double_booking \
              EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint AS c \
            WHERE c.conname='dock_reservation_no_double_booking' AND c.contype='x')",
-        "DROP TABLE receiving.dock_reservation",
+        "DROP TABLE inventory.dock_reservation",
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
@@ -1619,21 +1613,21 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
     refusal_case(
         matrix,
         "btree exclusion",
-        "CREATE TABLE receiving.refused_btree_exclusion ( \
+        "CREATE TABLE inventory.refused_btree_exclusion ( \
            dock_id uuid NOT NULL, \
            CONSTRAINT refused_btree_exclusion_excl EXCLUDE USING btree (dock_id WITH =))",
         "SELECT method.amname='btree' FROM pg_catalog.pg_constraint AS c \
            JOIN pg_catalog.pg_class AS i ON i.oid=c.conindid \
            JOIN pg_catalog.pg_am AS method ON method.oid=i.relam \
           WHERE c.conname='refused_btree_exclusion_excl' AND c.contype='x'",
-        "DROP TABLE receiving.refused_btree_exclusion",
+        "DROP TABLE inventory.refused_btree_exclusion",
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
     refusal_case(
         matrix,
         "partial exclusion",
-        "CREATE TABLE receiving.refused_partial_exclusion ( \
+        "CREATE TABLE inventory.refused_partial_exclusion ( \
            dock_id uuid NOT NULL, \
            starts_at timestamptz NOT NULL, \
            ends_at timestamptz NOT NULL, \
@@ -1643,20 +1637,20 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
         "SELECT i.indpred IS NOT NULL FROM pg_catalog.pg_constraint AS c \
            JOIN pg_catalog.pg_index AS i ON i.indexrelid=c.conindid \
           WHERE c.conname='refused_partial_exclusion_excl' AND c.contype='x'",
-        "DROP TABLE receiving.refused_partial_exclusion",
+        "DROP TABLE inventory.refused_partial_exclusion",
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
     refusal_case(
         matrix,
         "deferred exclusion",
-        "CREATE TABLE receiving.refused_deferred_exclusion ( \
+        "CREATE TABLE inventory.refused_deferred_exclusion ( \
            dock_id uuid NOT NULL, \
            CONSTRAINT refused_deferred_exclusion_excl EXCLUDE USING gist (dock_id WITH =) \
              DEFERRABLE INITIALLY DEFERRED)",
         "SELECT c.condeferred FROM pg_catalog.pg_constraint AS c \
           WHERE c.conname='refused_deferred_exclusion_excl' AND c.contype='x'",
-        "DROP TABLE receiving.refused_deferred_exclusion",
+        "DROP TABLE inventory.refused_deferred_exclusion",
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
