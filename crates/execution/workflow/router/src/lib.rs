@@ -21,6 +21,12 @@
 //! on that verdict (answering the caller, publishing to the boundary) is the
 //! host's.
 //!
+//! ## Consumer
+//! The only consumer of this crate is `wamn-workflow`, which drives the walk.
+//! The crate stays separate from it, so the walk links no run plane:
+//! `crates/execution/run-state/tests/shelving_contract.rs` makes sure that this
+//! manifest names no `wamn-run-state`, no `wamn-runtime`, and no Postgres client.
+//!
 //! ## Driving the walk
 //! [`route`] is the synchronous entry point and drives the loop for you. A host
 //! that must await its invocations drives the same two functions directly:

@@ -6,7 +6,7 @@ The owner accepted this scope on 2026-09-23. Section 8 records the rulings.
 
 ## 1. Goal
 
-One new crate, `wamn-workflow`, holds everything that walks or delivers a wiring. A wiring is a graph of operation nodes with edges. The crate holds the walk (`wamn-router`, merged in), the driver glue, wiring delivery and response, the queue and the enqueue path, Cron, and registrations. The workflow crate calls `invoke_operation` for every node and owns no invocation path of its own.
+One new crate, `wamn-workflow`, holds everything that walks or delivers a wiring. A wiring is a graph of operation nodes with edges. The crate holds the driver glue, wiring delivery and response, the queue and the enqueue path, Cron, and registrations. It depends on the walk, `wamn-router`, which moves under `crates/execution/workflow/router` and stays its own crate. The workflow crate calls `invoke_operation` for every node and owns no invocation path of its own.
 
 A route never enters the workflow crate. A wiring with edges, a registration, a Cron attachment, and a queued delivery enter only through it.
 
@@ -36,7 +36,7 @@ The brief put the workflow crate below the host. Section 4 explains why it sits 
 - `wamn-execution-host` links no `wamn-workflow` and no `wamn-router`. This makes "a route never enters the workflow crate" a checked fact.
 - `wamn-host` (services/host) links `wamn-workflow`.
 
-The test lives in the workflow crate, because the engine is outside this epic's files. The engine test already refuses `wamn-router`. After the merge, that name no longer exists, and the engine test stays true with no edit.
+The test lives in the workflow crate, because the engine is outside this epic's files. The engine test already refuses `wamn-router`. The router stays its own crate, so that test keeps its subject with no edit.
 
 ## 3. Measured facts
 
@@ -56,7 +56,7 @@ Four runtime readers use wiring facts as data, with no router type. The JetStrea
 
 The generator writes no serving manifest. Publish mints it. So `apps/*/generated/` stays byte-identical, including the format version, which appears only in minted manifests.
 
-The node ABI WIT is at `crates/execution/workflow/router/wit/package.wit`. The engine, the generator test, `push_component.rs`, the conformance tests, and 14 component crates name that path. This epic does not move it (section 4).
+The node ABI WIT was at `crates/execution/router/wit/package.wit`. The engine, the generator test, `push_component.rs`, the conformance tests, and 14 component crates name that path. Issue 5 moves it with the router crate (section 4).
 
 Only cluster tests run the two remaining wirings end to end. `apps/wamn_wms/tests/cluster.rs` runs `inventory_move_and_label`, and `apps/wamn_receiving/tests/postcommit.rs` runs the `quality_create_inspection` registration. The WMS local test `local_business.rs` loads no wiring. Section 6 lists the tests that this epic can run without a cluster. Owner ruling 4 decides the proof.
 
@@ -64,16 +64,16 @@ The engine test `crates/platform/engine/src/release_manifest.rs:234-324` builds 
 
 ## 4. Decisions
 
-### Merge `wamn-router` into `wamn-workflow`
+### Move `wamn-router` under `wamn-workflow`
 
 Options:
 
 1. Merge. The router source becomes the `walk` module of `wamn-workflow`. Its 35 public items become crate-private, except the few that the host service and the tests name.
 2. Keep `wamn-router` as its own crate and depend on it. Its 35 public items stay public, and the workflow crate adds its own.
 
-Pick: merge. The owner's rule is the option with fewer public types. After this epic, only the workflow crate uses the router types. The walk tests (`tests/walk.rs`, `resolution.rs`, `route.rs`, `terminal.rs`) move into the crate as unit tests, so the walk API does not need to stay public for them. `docs/testing/deterministic.md` links move with them.
+Pick: option 2, moved, not merged (owner ruling of 2026-09-23). The plan first picked the merge, because the owner's rule is the option with fewer public types. A merge puts the walk in a crate that links `wamn-run-state` and `wamn-runtime`. `crates/execution/run-state/tests/shelving_contract.rs` then loses the link rule it checks: the walk links no run plane. So `wamn-router` moves to `crates/execution/workflow/router` and keeps its 35 public items and its tests. Its `lib.rs` names `wamn-workflow` as its only consumer.
 
-The node ABI WIT stays at `crates/execution/workflow/router/wit`. After the merge, that directory holds only the WIT. Moving it needs edits in the generator and the engine, which are outside this epic. The follow-up `wamn-2bgm` moves it to its owner.
+The node ABI WIT moves with the crate to `crates/execution/workflow/router/wit`. The same commit updates every reference to the path, the engine and the generator test included, by owner ruling. No symlink.
 
 ### Where the workflow crate sits
 
@@ -132,7 +132,7 @@ The WMS graph `inventory_move_and_label` sits behind the HTTP route `/inventory/
 
 | Today | After |
 | --- | --- |
-| `crates/execution/workflow/router` source and tests | `wamn-workflow`, `walk` module. The WIT stays. |
+| `crates/execution/router`, the WIT included | `crates/execution/workflow/router`, still the crate `wamn-router` |
 | host `router_driver.rs` | `wamn-workflow`. `OperationHost` is built outside it. |
 | host `router_delivery.rs` wiring arm, `publish_emit`, the `lower_*` functions | `wamn-workflow`, behind `WiringDelivery` |
 | host `router_delivery.rs` bridge, route arm, `settle_route`, source checks | stay in `wamn-execution-host` |
@@ -172,7 +172,7 @@ Seven issues. They land in the order 1, 2, 4, 3, 5, 6, 7. Issue 4 lands before i
 2. `wamn-xs9a.2` Separate the route path from `RouterDriver`, in place in `wamn-execution-host`, before any move. `OperationHost` gets its own constructor. The bridge takes `Arc<OperationHost>` and an optional `WiringDelivery`. Route readiness no longer goes through the wiring preload. `refuse()` names no wiring type. The route and bridge tests pass unchanged.
 3. `wamn-xs9a.3` The runtime drops `wamn-router`. `wiring_lowering.rs` and its test, the lowering half of `wiring_resolution.rs`, the router mapping in `production_claim.rs`, and `port_constant_agreement.rs` move to `wamn-workflow`. For now, the workflow crate depends on `wamn-router`.
 4. `wamn-xs9a.4` Move the driver, the wiring delivery, the response, and the queue into `wamn-workflow`. The ten host items become `pub`. `wamn-execution-host` drops `wamn-router`. `services/host` builds the driver and hands it to the bridge. `enqueue_run.rs` stays in `wamn-control` (section 5). The host drops its direct `wamn-router` dependency. The host router check turns on in issue 3, because the host still links the router through `wamn-runtime` until then.
-5. `wamn-xs9a.5` Merge `wamn-router` into `wamn-workflow`. First commit: `git mv` of the source and tests. Second commit: paths, visibility, and doc links. The crate leaves the workspace. The WIT stays.
+5. `wamn-xs9a.5` Move `wamn-router` under `crates/execution/workflow/router`: moved, not merged. A merge puts the walk in a crate that links `wamn-run-state` and `wamn-runtime`, and `shelving_contract.rs` then loses its link rule. One commit is the `git mv` of the whole crate with every path reference, the WIT included. The 35 public items stay.
 6. `wamn-xs9a.6` Manifest format 3 and the workflow section. `SERVING_MANIFEST_FORMAT_VERSION` moves to 3, and format 2 refuses. Publish writes the section. Promote, deployment activation, the runtime readers, and the driver read it. The pinned vector gets a new preimage and digest. The frozen manifest literals in about 14 test files change.
 7. `wamn-xs9a.7` Regenerate, docs, sweep, closeout. Receiving, WMS, Acme, and the fixture regenerate byte-identical. `docs/architecture/overview.md` and `execution.md` name the workflow crate. The sweep runs with its log kept. The closeout goes on the epic bead, and section 7 of routes-router.md gets one line. This page is then removed.
 
