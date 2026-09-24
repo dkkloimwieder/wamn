@@ -16,6 +16,11 @@ use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, decode
 
 // Owner-approved policy: wamn-ctc8.24–28 and JWT proposal §3–4.
 const MAX_AGE: Duration = Duration::from_secs(300);
+// Owner ruling of 2026-09-23 (wamn-co0p): a token the issuer signed is never
+// refused because this cache expired. A hit inside this window refreshes
+// ahead of expiry. The window covers the fetch timeout and the five-second
+// session check that run before final admission.
+const REFRESH_BEFORE: Duration = Duration::from_secs(30);
 const ATTEMPT_INTERVAL: Duration = Duration::from_secs(1);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_BODY_BYTES: usize = 65_536;
@@ -135,25 +140,52 @@ impl IssuerKeys {
         &self.inner.issuer
     }
 
-    /// Obtain fresh public-key evidence, refreshing at most once for this call.
+    /// Obtain fresh public-key evidence, fetching at most once for this call.
     ///
-    /// Fresh known keys need no network request. Unknown or expired keys fail
-    /// closed during another refresh or the one-second attempt-start interval.
-    /// A cancelled fetch releases the single-flight slot but keeps its interval.
+    /// A known key outside the last `REFRESH_BEFORE` of its evidence needs no
+    /// network request. Inside that window the call refreshes ahead of expiry
+    /// and keeps its unexpired evidence when the refresh cannot run or fails.
+    /// A miss waits for a refresh already in flight and reads its result
+    /// without fetching again. Otherwise a miss fetches once, subject to the
+    /// one-second attempt-start interval. A cancelled fetch releases the
+    /// single-flight slot but keeps its interval.
     pub async fn key(&self, kid: &str) -> Result<KeyEvidence, SessionKeyError> {
         if let Some(evidence) = self.cached(kid) {
-            return Ok(evidence);
+            if !self.refresh_due(&evidence) {
+                return Ok(evidence);
+            }
+            // A request never waits for, or fails on, a refresh ahead of expiry.
+            let Ok(_refresh) = self.inner.refresh.try_lock() else {
+                return Ok(evidence);
+            };
+            if let Some(current) = self
+                .cached(kid)
+                .filter(|current| !self.refresh_due(current))
+            {
+                return Ok(current);
+            }
+            return match self.fetch_set().await {
+                Ok(()) => self.installed(kid),
+                Err(_) if evidence.is_fresh() => Ok(evidence),
+                Err(error) => Err(error),
+            };
         }
-        let _refresh = self
-            .inner
-            .refresh
-            .try_lock()
-            .map_err(|_| SessionKeyError::new("issuer refresh already in progress"))?;
+        let Ok(_refresh) = self.inner.refresh.try_lock() else {
+            // Another call is fetching. Its result is this call's one fetch.
+            let _finished = self.inner.refresh.lock().await;
+            return self.installed(kid);
+        };
         if let Some(evidence) = self.cached(kid) {
             return Ok(evidence);
         }
-        // Stamp before dispatch, not at response completion. No unbounded
-        // waiter queue or per-kid state can turn IDs into additional requests.
+        self.fetch_set().await?;
+        self.installed(kid)
+    }
+
+    /// Fetch and install one complete key set, holding the refresh slot.
+    async fn fetch_set(&self) -> Result<(), SessionKeyError> {
+        // Stamp before dispatch, not at response completion. No per-kid state
+        // can turn IDs into additional requests.
         let started = self.inner.clock.now();
         {
             let mut state = self.inner.state.lock().expect("session key state lock");
@@ -172,17 +204,28 @@ impl IssuerKeys {
             .map_err(|source| {
                 SessionKeyError::caused("issuer refresh exceeded five seconds", source)
             })??;
-        {
-            let mut state = self.inner.state.lock().expect("session key state lock");
-            if self.inner.clock.now() >= set.deadline {
-                return Err(SessionKeyError::new("issuer key response arrived expired"));
-            }
-            // Successful refresh replaces the whole set, including an empty
-            // set. Previously cached keys absent from it cease to be selectable.
-            state.set = Some(set);
+        let mut state = self.inner.state.lock().expect("session key state lock");
+        if self.inner.clock.now() >= set.deadline {
+            return Err(SessionKeyError::new("issuer key response arrived expired"));
         }
+        // Successful refresh replaces the whole set, including an empty
+        // set. Previously cached keys absent from it cease to be selectable.
+        state.set = Some(set);
+        Ok(())
+    }
+
+    /// The installed evidence for `kid`, or the refusal for a key it lacks.
+    fn installed(&self, kid: &str) -> Result<KeyEvidence, SessionKeyError> {
         self.cached(kid)
             .ok_or_else(|| SessionKeyError::new("key is absent from fresh issuer evidence"))
+    }
+
+    /// Whether evidence is inside the window that refreshes ahead of expiry.
+    fn refresh_due(&self, evidence: &KeyEvidence) -> bool {
+        evidence
+            .deadline
+            .saturating_duration_since(self.inner.clock.now())
+            <= REFRESH_BEFORE
     }
 
     fn cached(&self, kid: &str) -> Option<KeyEvidence> {

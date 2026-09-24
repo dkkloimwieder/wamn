@@ -299,7 +299,8 @@ async fn delayed_in_window_age_is_anchored_at_start_and_hits_do_not_extend_it() 
         .expect("fetch task")
         .expect("remaining evidence window");
     assert_eq!(evidence.deadline(), started + Duration::from_secs(180));
-    clock.advance(Duration::from_secs(177));
+    // A hit outside the last thirty seconds does not refresh ahead of expiry.
+    clock.advance(Duration::from_secs(147));
     assert!(evidence.is_fresh());
     assert_eq!(
         cache.key("old").await.expect("fresh hit").deadline(),
@@ -307,7 +308,7 @@ async fn delayed_in_window_age_is_anchored_at_start_and_hits_do_not_extend_it() 
     );
     assert_eq!(server.count(), 1);
     server.stop().await;
-    clock.advance(Duration::from_secs(1));
+    clock.advance(Duration::from_secs(31));
     assert!(!evidence.is_fresh(), "equality expires held evidence too");
     assert!(
         cache.key("old").await.is_err(),
@@ -400,8 +401,8 @@ async fn varied_unknown_ids_share_one_inflight_slot_and_one_attempt_start_interv
         let caller = cache.clone();
         contenders.spawn(async move { caller.key(&format!("other-{i}")).await.is_err() });
     }
-    while let Some(result) = contenders.join_next().await {
-        assert!(result.expect("lookup task"));
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
     }
     assert!(
         cache.key("known").await.is_ok(),
@@ -415,6 +416,11 @@ async fn varied_unknown_ids_share_one_inflight_slot_and_one_attempt_start_interv
     assert_eq!(server.observed.peak.load(Ordering::SeqCst), 1);
     release.send(()).expect("release response");
     assert!(fetch.await.expect("refresh task").is_err());
+    // Each miss waited for that refresh, read its result, and fetched nothing.
+    while let Some(result) = contenders.join_next().await {
+        assert!(result.expect("lookup task"));
+    }
+    assert_eq!(server.count(), 2);
     // The interval is measured from attempt start, not completion.
     server.queue(Reply::keys(&["known"]));
     assert!(cache.key("next-missing").await.is_err());
@@ -423,6 +429,58 @@ async fn varied_unknown_ids_share_one_inflight_slot_and_one_attempt_start_interv
         assert!(cache.key(&format!("limited-{i}")).await.is_err());
     }
     assert_eq!(server.count(), 3);
+}
+
+#[tokio::test]
+async fn a_hit_near_its_deadline_refreshes_ahead_so_evidence_crosses_the_old_deadline() {
+    let server = Server::start().await;
+    let (cache, clock) = server.cache();
+    server.queue(Reply::keys(&["signing"]));
+    let first = cache.key("signing").await.expect("warm key");
+    clock.advance(Duration::from_secs(269));
+    assert_eq!(
+        cache
+            .key("signing")
+            .await
+            .expect("hit outside the window")
+            .deadline(),
+        first.deadline()
+    );
+    assert_eq!(server.count(), 1);
+    clock.advance(Duration::from_secs(1));
+    server.queue(Reply::keys(&["signing"]));
+    let renewed = cache.key("signing").await.expect("hit inside the window");
+    assert!(renewed.deadline() > first.deadline());
+    assert_eq!(server.count(), 2);
+    clock.advance(Duration::from_secs(30));
+    assert!(!first.is_fresh());
+    assert!(
+        renewed.is_fresh(),
+        "evidence taken inside the window outlives the old deadline"
+    );
+}
+
+#[tokio::test]
+async fn a_miss_waits_for_the_refresh_in_flight_and_fetches_nothing() {
+    let server = Server::start().await;
+    let (cache, _clock) = server.cache();
+    let (reply, barrier, release) = Reply::keys(&["signing"]).held();
+    server.queue(reply);
+    let caller = cache.clone();
+    let fetch = tokio::spawn(async move { caller.key("signing").await });
+    entered(barrier).await;
+    let caller = cache.clone();
+    let waiting = tokio::spawn(async move { caller.key("signing").await });
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+    release.send(()).expect("release response");
+    fetch.await.expect("fetch task").expect("fetched key");
+    waiting
+        .await
+        .expect("waiting task")
+        .expect("the key from the refresh it waited for");
+    assert_eq!(server.count(), 1);
 }
 
 #[tokio::test]
