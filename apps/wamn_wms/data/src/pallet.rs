@@ -123,10 +123,7 @@ pub async fn create(
         "location_id",
         scalar::text("location_id", command.location_id)?,
     )?;
-    let status = scalar::text("status", command.status)?;
-    if !STATUSES.contains(&status) {
-        return Err(AccessError::field(AccessErrorKind::InvalidInput, "status"));
-    }
+    let status = create_status(scalar::text("status", command.status)?)?;
     let canonical = wamn_execution_contract::canonical_json_bytes(&json!({
         "pallet_code": pallet_code,
         "location_id": location_id.0,
@@ -176,6 +173,16 @@ pub async fn create(
     };
     finalized.commit().await.map_err(|e| refuse(&e))?;
     Ok(row)
+}
+
+/// A new pallet is available or held. Only `inventory.merge` consumes a
+/// pallet, so a create that names `consumed` refuses on `status`.
+fn create_status(status: &str) -> Result<&str, AccessError> {
+    if STATUSES.contains(&status) && status != scalar::CONSUMED {
+        Ok(status)
+    } else {
+        Err(AccessError::field(AccessErrorKind::InvalidInput, "status"))
+    }
 }
 
 fn refuse(error: &wamn_postgres_statements::StatementError) -> AccessError {
@@ -492,6 +499,17 @@ mod tests {
             decode(DEFAULT_SORT, None).unwrap(),
             Cursor::Time(None, None)
         ));
+    }
+
+    #[test]
+    fn a_new_pallet_is_available_or_held_and_never_consumed() {
+        assert_eq!(create_status("available").unwrap(), "available");
+        assert_eq!(create_status("held").unwrap(), "held");
+        for refused in ["consumed", "lost"] {
+            let error = create_status(refused).unwrap_err();
+            assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
+            assert_eq!(error.detail()["field"], "status");
+        }
     }
 
     #[test]
