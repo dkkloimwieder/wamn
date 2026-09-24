@@ -263,9 +263,10 @@ pub struct Narrowing<'a> {
 /// A form that one result row opens with values it already knows.
 ///
 /// The pairs come from two declared facts: this screen's rows are records of
-/// one model, and that form states an input which names the same model. No
-/// name is compared, so a form and a table that merely share a spelling stay
-/// unrelated.
+/// one model, and that form states exactly one input which names the same
+/// model. No name is compared, so a form and a table that merely share a
+/// spelling stay unrelated. A form with two inputs of that model gets no pair
+/// from the row, because no declared path says which one the row is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowForm<'a> {
     /// Canonical identity of the form the row opens.
@@ -687,7 +688,10 @@ fn row_forms<'a>(
                 .filter(|(model, _)| *model == list.model)
                 .map(|(_, input)| (list.key_field, *input))
                 .collect();
-            (!pairs.is_empty()).then_some(RowForm {
+            // The row fills the one input that names its model. When two
+            // inputs name it, no declared path says which one the row is, so
+            // the row fills neither and the operator chooses both.
+            (pairs.len() == 1).then_some(RowForm {
                 operation: form.operation,
                 model: form.model,
                 name: form.name,

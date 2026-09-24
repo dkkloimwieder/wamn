@@ -52,7 +52,6 @@ import {
   ProductUpdateForm,
   ProductUpdateFormLabel,
   type InventoryAdjustFormInitial,
-  type InventoryMergeFormInitial,
   type InventoryMoveFormInitial,
   type InventorySplitFormInitial,
   type PalletCreateFormInitial,
@@ -100,7 +99,6 @@ export function WmsScreens(props: {
   // Each fill is a new object, so a keyed Show mounts the form again with it.
   const [moveFill, setMoveFill] = createSignal<InventoryMoveFormInitial>({});
   const [adjustFill, setAdjustFill] = createSignal<InventoryAdjustFormInitial>({});
-  const [mergeFill, setMergeFill] = createSignal<InventoryMergeFormInitial>({});
   const [splitFill, setSplitFill] = createSignal<InventorySplitFormInitial>({});
   const [palletFill, setPalletFill] = createSignal<PalletCreateFormInitial>({});
 
@@ -110,6 +108,7 @@ export function WmsScreens(props: {
   // page hands each command the revision of the pallet row the operator
   // selected.
   const needsPallet = "Select a pallet row. A command sends the revision of that row.";
+  const needsTarget = "Select the target pallet row. Merge sends the target's revision.";
 
   return (
     <>
@@ -130,7 +129,6 @@ export function WmsScreens(props: {
           onOpenPalletGet={pickPallet}
           onFillInventoryMove={(initial) => setMoveFill(merge(moveFill(), initial))}
           onFillInventoryAdjust={(initial) => setAdjustFill(merge(adjustFill(), initial))}
-          onFillInventoryMerge={(initial) => setMergeFill(merge(mergeFill(), initial))}
           onFillInventorySplit={(initial) => setSplitFill(merge(splitFill(), initial))}
           onOutcome={read}
         />
@@ -186,17 +184,14 @@ export function WmsScreens(props: {
         </Panel>
 
         <Panel title={InventoryMergeFormLabel} operation="inventory.merge">
-          <Show when={pallet()} fallback={<Waiting>{needsPallet}</Waiting>}>
-            <Show when={mergeFill()} keyed>
-              {(initial) => (
-                <InventoryMergeForm
-                  transport={transport}
-                  initial={initial}
-                  valueExpectedRowVersion={pallet()?.rowVersion ?? ""}
-                  onSubmitted={read}
-                />
-              )}
-            </Show>
+          {/* Merge names a pallet twice, so no row fills it, and it guards the
+              target's revision: select the target row, choose both pallets. */}
+          <Show when={pallet()} fallback={<Waiting>{needsTarget}</Waiting>}>
+            <InventoryMergeForm
+              transport={transport}
+              valueExpectedRowVersion={pallet()?.rowVersion ?? ""}
+              onSubmitted={read}
+            />
           </Show>
         </Panel>
 

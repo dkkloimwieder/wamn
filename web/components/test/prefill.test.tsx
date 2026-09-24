@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   WidgetCreateForm,
+  WidgetRecordBatchForm,
   type WidgetCreateFormInitial,
 } from "../fixture/components/widget.js";
 import { WidgetMakerQueryTable } from "../fixture/components/widget_maker.js";
@@ -38,5 +39,28 @@ describe("a row that opens a form", () => {
     render(() => <WidgetCreateForm transport={transport} initial={initial} />);
     // The selector shows the row whose key the form started with.
     await waitFor(() => expect(selector("maker id").value).toBe("Northwind"));
+  });
+
+  it("fills no form in which two inputs name its model", async () => {
+    // The batch form names a maker twice, as its maker and its inspector. No
+    // declared path says which one a maker row is, so the row offers no batch
+    // form, and the operator chooses both (wamn-6jcm). The callback is passed
+    // untyped, because the table no longer declares it.
+    const transport = stub();
+    const batch: unknown[] = [];
+    const untyped = { onFillWidgetRecordBatch: (initial: unknown) => batch.push(initial) };
+    render(() => (
+      <WidgetMakerQueryTable transport={transport} onFillWidgetCreate={() => {}} {...untyped} />
+    ));
+    fireEvent.click(screen.getByText("read"));
+    await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
+
+    expect(screen.getByRole("button", { name: "create" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "record-batch" })).toBeNull();
+    expect(batch).toHaveLength(0);
+
+    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
+    expect(selector("Maker").value).toBe("");
+    expect(selector("Inspector").value).toBe("");
   });
 });

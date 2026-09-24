@@ -61,7 +61,6 @@ import {
 } from "../pallet.js";
 import {
   type InventoryAdjustFormInitial,
-  type InventoryMergeFormInitial,
   type InventoryMoveFormInitial,
   type InventorySplitFormInitial,
 } from "./inventory.js";
@@ -357,8 +356,6 @@ export interface PalletQueryTableProps {
   readonly onOpenPalletGet?: (row: PalletQueryRow) => void;
   /** Called with the values one row hands to `wamn-wms:inventory/adjust@1.0.0`. */
   readonly onFillInventoryAdjust?: (initial: InventoryAdjustFormInitial) => void;
-  /** Called with the values one row hands to `wamn-wms:inventory/merge@1.0.0`. */
-  readonly onFillInventoryMerge?: (initial: InventoryMergeFormInitial) => void;
   /** Called with the values one row hands to `wamn-wms:inventory/move@1.0.0`. */
   readonly onFillInventoryMove?: (initial: InventoryMoveFormInitial) => void;
   /** Called with the values one row hands to `wamn-wms:inventory/split@1.0.0`. */
@@ -442,22 +439,6 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
             onClick={() => props.onFillInventoryAdjust?.(writeMember({} as InventoryAdjustFormInitial, ["value", "palletId"], cell.row.original.id))}
           >
             adjust
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventoryMerge",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventoryMerge}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventoryMerge?.(writeMember(writeMember({} as InventoryMergeFormInitial, ["value", "sourcePalletId"], cell.row.original.id), ["value", "targetPalletId"], cell.row.original.id))}
-          >
-            merge
           </Button>
         </Show>
       ),

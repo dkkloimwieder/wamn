@@ -969,7 +969,6 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
         maker.contains(concat!(
             "import {\n",
             "  type WidgetCreateFormInitial,\n",
-            "  type WidgetRecordBatchFormInitial,\n",
             "  type WidgetUpdateFormInitial,\n",
             "} from \"./widget.js\";\n",
         )),
@@ -983,9 +982,15 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
     );
     assert!(
         maker.contains(
-            "props.onFillWidgetRecordBatch?.(writeMember(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"inspectorId\"], cell.row.original.id), [\"value\", \"makerId\"], cell.row.original.id))"
+            "props.onFillWidgetUpdate?.(writeMember({} as WidgetUpdateFormInitial, [\"change\", \"makerId\"], cell.row.original.id))"
         ),
-        "a nested input path is written one member at a time"
+        "a nested input path is written at its declared members"
+    );
+    // The batch form names widget_maker in value.maker_id and
+    // value.inspector_id, so a maker row fills neither (wamn-6jcm).
+    assert!(
+        !maker.contains("onFillWidgetRecordBatch"),
+        "a row offers no form in which two inputs name its model"
     );
 
     let widget = widget(&files);

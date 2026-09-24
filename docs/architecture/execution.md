@@ -441,6 +441,7 @@ A delete asks for a confirmation first.
 A form whose plan binds a revision reads the record when it opens and sends the revision of that read.
 It reads nothing at submit, so a change that another writer makes in between refuses as a conflict.
 A delete whose plan binds a revision takes the key and the revision of the record that the page displayed, and it reads nothing.
+A table row fills a form input only when that input is the one input of the form that names the row's model. If two inputs name it, the row fills neither.
 An operation whose shape has no role gets no component, and the emitted index names it with the reason.
 A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
 Components state no route and no navigation: a row link is a callback, and the application decides what to open.

@@ -736,15 +736,25 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
         .screens()
         .find(|screen| screen.model == "widget_maker" && screen.name == "query")
         .expect("the second model lists");
-    let batch = makers
+    // The batch form names widget_maker twice, in value.maker_id and
+    // value.inspector_id. No declared path says which one a maker row is, so
+    // the row fills neither (wamn-6jcm).
+    assert!(
+        makers
+            .row_forms
+            .iter()
+            .all(|form| form.operation != "platform-fixture:widget/record-batch@1.0.0"),
+        "a row fills no input when two inputs name its model"
+    );
+    let update = makers
         .row_forms
         .iter()
-        .find(|form| form.operation == "platform-fixture:widget/record-batch@1.0.0")
-        .expect("a maker row opens the batch form");
+        .find(|form| form.operation == "platform-fixture:widget/update@1.0.0")
+        .expect("a maker row opens the update form");
     assert_eq!(
-        batch.pairs,
-        [("id", "value.inspector_id"), ("id", "value.maker_id")],
-        "the row's key fills each input that names that model"
+        update.pairs,
+        [("id", "change.maker_id")],
+        "the row's key fills the one input that names that model"
     );
 
     let widgets = screen(&plan, "list");
