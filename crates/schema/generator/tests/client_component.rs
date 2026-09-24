@@ -86,6 +86,10 @@ fn a_page_table_renders_every_control_the_plan_names() {
         "a repeated filter takes a list"
     );
     assert!(
+        query.contains("    setControls((current) => writeControl(current, path, value));\n"),
+        "an emptied control sends no member, never an empty list (wamn-oya5)"
+    );
+    assert!(
         widget.contains(concat!(
             "          <ChoiceField\n",
             "            label=\"field\"\n",

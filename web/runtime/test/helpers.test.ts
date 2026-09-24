@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ABSENT_CELL, cellText } from "../src/cell.js";
-import { clearMember, readMember, writeMember } from "../src/draft.js";
+import { clearMember, readMember, writeControl, writeMember } from "../src/draft.js";
 import { canAdd, canRemove } from "../src/group.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
 import { checkedMember, refusalMarks, refusedMember } from "../src/transport.js";
@@ -61,6 +61,19 @@ describe("a draft member", () => {
   it("clears an omittable member", () => {
     const draft = { change: { code: "priority", note: "keep" } };
     expect(clearMember(draft, ["change", "note"])).toEqual({ change: { code: "priority" } });
+  });
+
+  it("sends no member for an empty page control, and no parent it leaves empty", () => {
+    const both = writeControl({}, ["filter", "code"], ["A-1"]);
+    const two = writeControl(both, ["filter", "note"], ["x"]);
+    expect(two).toEqual({ filter: { code: ["A-1"], note: ["x"] } });
+    // One control emptied: that member goes, and the other stays.
+    const one = writeControl(two, ["filter", "note"], []);
+    expect(one).toEqual({ filter: { code: ["A-1"] } });
+    // Every control emptied: the read carries no filter member at all.
+    expect(writeControl(one, ["filter", "code"], [])).toEqual({});
+    expect(writeControl({ limit: 5 }, ["limit"], "")).toEqual({});
+    expect(writeControl({}, ["filter", "code"], [])).toEqual({});
   });
 });
 

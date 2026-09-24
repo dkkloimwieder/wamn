@@ -90,6 +90,20 @@ describe("the generated table for a page", () => {
     expect(second["cursor"]).toBeUndefined();
   });
 
+  it("sends no filter member once the operator empties the filter (wamn-oya5)", async () => {
+    const { transport, sent } = stub([page(["a"], null)]);
+    render(() => <WidgetQueryTable transport={transport} />);
+    const code = screen.getByLabelText("Widget code");
+    fireEvent.change(code, { target: { value: "x" } });
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect((sent[0]?.items[0] as { [key: string]: JsonValue })["filter"]).toEqual({ code: ["x"] });
+
+    // An empty list would ask for no record, so the read leaves the filter out.
+    fireEvent.change(code, { target: { value: "" } });
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]?.items[0] as { [key: string]: JsonValue }).not.toHaveProperty("filter");
+  });
+
   it("states an outcome that is not a completion in place of the empty message", async () => {
     const { transport } = stub([
       { status: "refused", code: "permission_denied", detail: null },

@@ -724,8 +724,11 @@ fn emit_table(
     writeln!(source, "    setPage(emptyPage<{stem}Row>());").expect("write");
     source.push_str("    void read(null);\n  };\n");
     if controls > 0 {
+        // An emptied control sends no member, because an empty filter list
+        // would ask for no record at all.
+        runtime.insert("writeControl");
         source.push_str("\n  const change = (path: readonly string[], value: JsonValue) => {\n");
-        source.push_str("    setControls((current) => writeMember(current, path, value));\n");
+        source.push_str("    setControls((current) => writeControl(current, path, value));\n");
         source.push_str("    restart();\n  };\n");
     }
     // The grid renders every cell of a row from the column list, so a row link

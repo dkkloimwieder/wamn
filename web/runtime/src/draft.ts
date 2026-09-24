@@ -43,6 +43,38 @@ export function writeMember<Draft>(draft: Draft, path: MemberPath, value: JsonVa
   return object as Draft;
 }
 
+/**
+ * One draft with a page control's value, or with that member absent when the
+ * control is empty.
+ *
+ * An empty text or an empty list means the operator asked for nothing, and a
+ * member sent empty asks for something else: an empty filter list matches no
+ * record. A parent that the removal leaves empty goes too, so a read with no
+ * filter carries no filter member.
+ */
+export function writeControl<Draft>(draft: Draft, path: MemberPath, value: JsonValue): Draft {
+  const empty = value === "" || (Array.isArray(value) && value.length === 0);
+  return empty ? pruneMember(draft, path) : writeMember(draft, path, value);
+}
+
+/** One draft with that member absent, and every parent it leaves empty. */
+function pruneMember<Draft>(draft: Draft, path: MemberPath): Draft {
+  const [name, ...rest] = path;
+  if (name === undefined || draft === null || typeof draft !== "object") {
+    return draft;
+  }
+  const object: { [key: string]: unknown } = { ...(draft as object) };
+  const child = rest.length === 0 ? undefined : pruneMember(object[name], rest);
+  const emptyObject =
+    child !== null && typeof child === "object" && !Array.isArray(child) && Object.keys(child).length === 0;
+  if (child === undefined || emptyObject) {
+    delete object[name];
+  } else {
+    object[name] = child;
+  }
+  return object as Draft;
+}
+
 /** One draft with that member absent, which an omittable input needs. */
 export function clearMember<Draft>(draft: Draft, path: MemberPath): Draft {
   const [name, ...rest] = path;

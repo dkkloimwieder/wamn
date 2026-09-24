@@ -20,6 +20,7 @@ import {
   type PageState,
   type Transport,
   type Uuid,
+  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
@@ -234,7 +235,7 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
   };
 
   const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeMember(current, path, value));
+    setControls((current) => writeControl(current, path, value));
     restart();
   };
 

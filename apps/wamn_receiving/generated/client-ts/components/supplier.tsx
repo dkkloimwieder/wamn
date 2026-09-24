@@ -24,6 +24,7 @@ import {
   type Outcome,
   type PageState,
   type Transport,
+  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
@@ -221,7 +222,7 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
   };
 
   const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeMember(current, path, value));
+    setControls((current) => writeControl(current, path, value));
     restart();
   };
 
