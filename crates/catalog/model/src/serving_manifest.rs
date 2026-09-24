@@ -1,8 +1,9 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 2 closes over exact package membership, component digests, routes,
-//! wiring definitions, exact component-operation dependencies and SQL
-//! statements, attachments, and registrations. A route calls one component
+//! Format 3 closes over exact package membership, component digests, routes,
+//! wiring definitions, the permissions and SQL statements of each export's
+//! call graph, attachments, and registrations. Publish folds each call graph,
+//! because an application's components compose at build into one component. A route calls one component
 //! export; a wiring is a graph the router walks. It contains no flow or
 //! execution-plan identity. Producers must source every member from current
 //! catalog records; this model intentionally provides no legacy-plan
@@ -14,20 +15,20 @@
 //! [`ServingManifest::from_canonical_bytes`] rejects bytes whose order or JSON
 //! encoding differs from that canonical representation.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    ArtifactHash, AttachmentKind, CatalogIdentityError, ComponentOperationDependency,
-    ComponentSqlStatement, DefinitionHash, EffectiveReleaseId, HASH_PREFIX, ManifestDigest,
-    PackageCoordinate, package::validate_canonical_operation_for_package, validate_digest,
-    validate_text,
+    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentKind,
+    CatalogIdentityError, ComponentOperationDependency, ComponentSqlStatement, DefinitionHash,
+    EffectiveReleaseId, HASH_PREFIX, ManifestDigest, PackageCoordinate,
+    package::validate_canonical_operation_for_package, validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 2;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 3;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -142,16 +143,22 @@ pub struct ServingComponentOperation {
     /// Explicit application permission identity. Palette exports carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
-    /// Require a fresh originating credential at this operation boundary.
+    /// Every registered operation in this export's call graph, its own included.
+    ///
+    /// Publish computes the set. The caller must hold each member.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub permissions: BTreeSet<String>,
+    /// Require a fresh originating credential. Publish sets it when any
+    /// operation in the call graph requires one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
     /// Canonical JSON for this registered operation's admitted committed result schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<String>,
-    /// Exact typed imports this operation may invoke through the host.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<ComponentOperationDependency>,
-    /// Exact SQL available only while this export is active.
+    /// The local participant that the base selects inside this export's transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub participant: Option<String>,
+    /// Exact SQL available while this export is active: the union over its call graph.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub statements: BTreeMap<String, ComponentSqlStatement>,
 }
@@ -160,6 +167,31 @@ impl ServingComponentOperation {
     /// Resolve one release-pinned statement inside this operation's authority.
     pub fn statement(&self, digest: &str) -> Option<&ComponentSqlStatement> {
         self.statements.get(digest)
+    }
+
+    /// Whether this folded operation carries the admitted operation's own facts.
+    ///
+    /// Publish only adds to an operation when it folds the call graph, so the
+    /// loaded admitted fact must be contained in the released operation.
+    pub fn carries(&self, admitted: &AdmittedComponentOperation) -> bool {
+        let schema = admitted.committed_result_schema.as_ref().map(|schema| {
+            String::from_utf8(wamn_execution_contract::canonical_json_bytes(
+                &schema.schema,
+            ))
+            .expect("canonical JSON uses UTF-8")
+        });
+        self.pre_commit == admitted.pre_commit
+            && self.registered_operation == admitted.registered_operation
+            && self.committed_result_schema == schema
+            && (self.fresh_only || !admitted.fresh_only)
+            && admitted
+                .registered_operation
+                .as_ref()
+                .is_none_or(|registered| self.permissions.contains(registered))
+            && admitted
+                .statements
+                .iter()
+                .all(|(digest, statement)| self.statements.get(digest) == Some(statement))
     }
 }
 
@@ -172,6 +204,121 @@ pub struct ServingComponent {
     pub interface_version: String,
     pub digest: ArtifactHash,
     pub operations: BTreeMap<String, ServingComponentOperation>,
+}
+
+impl ServingComponent {
+    /// Project one admitted component and fold each export's call graph.
+    ///
+    /// An application's components compose at build into one component, so a
+    /// dependency is a component-model call inside these bytes, with no host
+    /// between. Publish decides the authority of that call here, once:
+    /// `resolve` returns the admitted fact of each dependency's base. Every
+    /// export then carries the union of the permissions and SQL statements of
+    /// its call graph, the fresh-credential rule of any callee, and the
+    /// participant that the base selects.
+    pub fn project<'a>(
+        fact: &'a AdmittedComponent,
+        resolve: &dyn Fn(&ComponentOperationDependency) -> Option<&'a AdmittedComponent>,
+    ) -> Result<Self, CatalogIdentityError> {
+        let digest = ArtifactHash::parse(fact.component_digest.clone())?;
+        let mut operations = BTreeMap::new();
+        for (name, operation) in &fact.operations {
+            let mut folded = ServingComponentOperation {
+                pre_commit: operation.pre_commit.clone(),
+                registered_operation: operation.registered_operation.clone(),
+                permissions: BTreeSet::new(),
+                fresh_only: false,
+                committed_result_schema: operation.committed_result_schema.as_ref().map(|schema| {
+                    String::from_utf8(wamn_execution_contract::canonical_json_bytes(
+                        &schema.schema,
+                    ))
+                    .expect("canonical JSON uses UTF-8")
+                }),
+                participant: None,
+                statements: BTreeMap::new(),
+            };
+            fold_call_graph(fact, name, resolve, &mut Vec::new(), &mut folded)?;
+            operations.insert(name.clone(), folded);
+        }
+        Ok(Self {
+            package_id: fact.scope.package_id.clone(),
+            component: fact.component.clone(),
+            interface_version: fact.interface_version.clone(),
+            digest,
+            operations,
+        })
+    }
+}
+
+/// Merge one operation and everything it calls into `folded`.
+fn fold_call_graph<'a>(
+    fact: &'a AdmittedComponent,
+    operation_name: &str,
+    resolve: &dyn Fn(&ComponentOperationDependency) -> Option<&'a AdmittedComponent>,
+    path: &mut Vec<(String, String)>,
+    folded: &mut ServingComponentOperation,
+) -> Result<(), CatalogIdentityError> {
+    let key = (fact.component_digest.clone(), operation_name.to_owned());
+    if path.contains(&key) {
+        return invalid(format!(
+            "operation {operation_name:?} calls itself through its dependencies"
+        ));
+    }
+    let operation =
+        fact.operation(operation_name)
+            .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
+                message: format!(
+                    "component {:?} does not export operation {operation_name:?}",
+                    fact.component
+                ),
+            })?;
+    path.push(key);
+    folded
+        .permissions
+        .extend(operation.registered_operation.iter().cloned());
+    folded.fresh_only |= operation.fresh_only;
+    for (digest, statement) in &operation.statements {
+        if let Some(previous) = folded.statements.insert(digest.clone(), statement.clone())
+            && &previous != statement
+        {
+            return invalid(format!(
+                "statement {digest:?} has two different facts in the call graph of one export"
+            ));
+        }
+    }
+    for dependency in &operation.dependencies {
+        let base = resolve(dependency).ok_or_else(|| CatalogIdentityError::InvalidDefinition {
+            message: format!(
+                "component dependency {}@{} operation {:?} has no admitted fact",
+                dependency.package, dependency.version, dependency.operation
+            ),
+        })?;
+        fold_call_graph(base, &dependency.operation, resolve, path, folded)?;
+        if let Some(participant) = &dependency.participant {
+            if folded.participant.replace(participant.clone()).is_some() {
+                return invalid(format!(
+                    "the call graph of operation {operation_name:?} selects more than one participant"
+                ));
+            }
+            if base
+                .operation(&dependency.operation)
+                .is_none_or(|called| called.pre_commit.is_none())
+            {
+                return invalid("selected base operation declares no pre-commit interface");
+            }
+            if fact
+                .operation(participant)
+                .is_none_or(|local| !local.dependencies.is_empty())
+            {
+                return invalid(format!(
+                    "participant {participant:?} must be a local operation that calls nothing"
+                ));
+            }
+            fold_call_graph(fact, participant, resolve, path, folded)?;
+        }
+    }
+    path.pop();
+    Ok(())
 }
 
 /// One immutable wiring definition in the release closure.
@@ -426,9 +573,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-2 bytes.
+    /// Parse, validate, and admit only canonical format-3 bytes.
     ///
-    /// The version is classified before the format-2 schema is decoded. This is
+    /// The version is classified before the format-3 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -483,14 +630,6 @@ impl ServingManifest {
             }
         }
 
-        let operation_imports: BTreeSet<_> = self
-            .components
-            .iter()
-            .flat_map(|component| component.operations.values())
-            .flat_map(|operation| &operation.dependencies)
-            .map(|dependency| dependency.operation.as_str())
-            .collect();
-        let mut operation_providers = BTreeMap::new();
         for component in &self.components {
             validate_package_member(&package_versions, &component.package_id)?;
             validate_text(&component.component, "component")?;
@@ -512,24 +651,9 @@ impl ServingManifest {
                         );
                     }
                 }
-                // Only an imported full interface needs a unique provider.
-                // Export-only handlers can be selected directly by the host.
-                if operation_imports.contains(export.as_str())
-                    && let Some(previous) = operation_providers.insert(export, component)
-                {
+                if operation.fresh_only && operation.permissions.is_empty() {
                     return invalid(format!(
-                        "operation interface {export:?} has ambiguous component providers: {}::{} digest {} and {}::{} digest {}",
-                        previous.package_id,
-                        previous.component,
-                        previous.digest.as_str(),
-                        component.package_id,
-                        component.component,
-                        component.digest.as_str(),
-                    ));
-                }
-                if operation.fresh_only && operation.registered_operation.is_none() {
-                    return invalid(format!(
-                        "unregistered export {export:?} must not require a fresh credential"
+                        "export {export:?} requires no permission, so it must not require a fresh credential"
                     ));
                 }
                 validate_registered_operation(
@@ -537,6 +661,26 @@ impl ServingManifest {
                     &component.package_id,
                     operation.registered_operation.as_deref(),
                 )?;
+                if let Some(registered) = &operation.registered_operation
+                    && !operation.permissions.contains(registered)
+                {
+                    return invalid(format!(
+                        "export {export:?} permissions omit its own registered operation"
+                    ));
+                }
+                for permission in &operation.permissions {
+                    validate_release_operation(&package_versions, permission)?;
+                }
+                if let Some(participant) = &operation.participant
+                    && !(operation.permissions.contains(participant)
+                        && component.operations.get(participant).is_some_and(|local| {
+                            local.registered_operation.as_deref() == Some(participant.as_str())
+                        }))
+                {
+                    return invalid(format!(
+                        "participant {participant:?} of export {export:?} is not a registered local operation in its permissions"
+                    ));
+                }
                 if operation
                     .registered_operation
                     .as_deref()
@@ -579,7 +723,6 @@ impl ServingManifest {
                 })?;
             }
         }
-        validate_component_dependency_closure(&package_versions, &self.components)?;
 
         let mut routes = BTreeSet::new();
         for route in &self.routes {
@@ -726,146 +869,6 @@ impl ServingManifest {
     }
 }
 
-type ComponentOperationKey = (String, String, String);
-
-fn validate_component_dependency_closure(
-    package_versions: &BTreeMap<&str, &str>,
-    components: &BTreeSet<ServingComponent>,
-) -> Result<(), CatalogIdentityError> {
-    let mut graph = BTreeMap::<ComponentOperationKey, Vec<ComponentOperationKey>>::new();
-    for component in components {
-        for (operation_name, operation) in &component.operations {
-            let key = (
-                component.package_id.clone(),
-                component.digest.as_str().to_owned(),
-                operation_name.clone(),
-            );
-            if graph.contains_key(&key) {
-                return invalid(format!(
-                    "component operation tuple {key:?} occurs more than once"
-                ));
-            }
-            let mut targets = Vec::with_capacity(operation.dependencies.len());
-            for dependency in &operation.dependencies {
-                validate_package_member(package_versions, &dependency.package)?;
-                let release_version = package_versions
-                    .get(dependency.package.as_str())
-                    .expect("dependency package membership was validated");
-                if *release_version != dependency.version {
-                    return invalid(format!(
-                        "component dependency {}@{} differs from release member {}@{}",
-                        dependency.package, dependency.version, dependency.package, release_version
-                    ));
-                }
-                validate_digest(&dependency.digest, "component-dependency-digest")?;
-                validate_canonical_operation_for_package(
-                    &dependency.operation,
-                    &dependency.package,
-                    &dependency.version,
-                )?;
-                let matches = components
-                    .iter()
-                    .filter(|candidate| {
-                        candidate.package_id == dependency.package
-                            && candidate.digest.as_str() == dependency.digest
-                            && candidate.operations.get(&dependency.operation).is_some_and(
-                                |operation| {
-                                    operation.registered_operation.as_deref()
-                                        == Some(dependency.operation.as_str())
-                                },
-                            )
-                    })
-                    .count();
-                if matches != 1 {
-                    return invalid(format!(
-                        "component dependency {}@{} digest {} operation {:?} resolves to {matches} exact component facts",
-                        dependency.package,
-                        dependency.version,
-                        dependency.digest,
-                        dependency.operation
-                    ));
-                }
-                if let Some(participant) = &dependency.participant {
-                    let owner_version = package_versions[component.package_id.as_str()];
-                    validate_canonical_operation_for_package(
-                        participant,
-                        &component.package_id,
-                        owner_version,
-                    )?;
-                    if !component
-                        .operations
-                        .get(participant)
-                        .is_some_and(|operation| {
-                            operation.registered_operation.as_deref() == Some(participant.as_str())
-                        })
-                    {
-                        return invalid(format!(
-                            "participant {participant:?} is not a registered local operation"
-                        ));
-                    }
-                    let base = components
-                        .iter()
-                        .find(|candidate| {
-                            candidate.package_id == dependency.package
-                                && candidate.digest.as_str() == dependency.digest
-                                && candidate.operations.contains_key(&dependency.operation)
-                        })
-                        .expect("exact dependency provider validated");
-                    if base.operations[&dependency.operation].pre_commit.is_none() {
-                        return invalid("selected base operation declares no pre-commit interface");
-                    }
-                    targets.push((
-                        component.package_id.clone(),
-                        component.digest.as_str().to_owned(),
-                        participant.clone(),
-                    ));
-                }
-                targets.push((
-                    dependency.package.clone(),
-                    dependency.digest.clone(),
-                    dependency.operation.clone(),
-                ));
-            }
-            graph.insert(key, targets);
-        }
-    }
-
-    let mut incoming = graph
-        .keys()
-        .cloned()
-        .map(|operation| (operation, 0_usize))
-        .collect::<BTreeMap<_, _>>();
-    for dependencies in graph.values() {
-        for dependency in dependencies {
-            *incoming
-                .get_mut(dependency)
-                .expect("exact dependency validation populated every target") += 1;
-        }
-    }
-    let mut pending = incoming
-        .iter()
-        .filter(|(_, count)| **count == 0)
-        .map(|(operation, _)| operation.clone())
-        .collect::<VecDeque<_>>();
-    let mut visited = 0_usize;
-    while let Some(operation) = pending.pop_front() {
-        visited += 1;
-        for dependency in &graph[&operation] {
-            let count = incoming
-                .get_mut(dependency)
-                .expect("exact dependency validation populated every target");
-            *count -= 1;
-            if *count == 0 {
-                pending.push_back(dependency.clone());
-            }
-        }
-    }
-    if visited != graph.len() {
-        return invalid("component operation dependency closure contains a cycle");
-    }
-    Ok(())
-}
-
 fn validate_format_version(document: &Value) -> Result<(), CatalogIdentityError> {
     let Some(version) = document.get("format-version") else {
         return invalid("serving manifest format-version is required");
@@ -963,6 +966,24 @@ fn validate_registered_operation(
     validate_canonical_operation_for_package(operation, package_id, package_version)
 }
 
+/// Require an operation identity that belongs to one release package.
+fn validate_release_operation(
+    package_versions: &BTreeMap<&str, &str>,
+    operation: &str,
+) -> Result<(), CatalogIdentityError> {
+    if package_versions
+        .iter()
+        .any(|(package_id, package_version)| {
+            validate_canonical_operation_for_package(operation, package_id, package_version).is_ok()
+        })
+    {
+        return Ok(());
+    }
+    invalid(format!(
+        "permission {operation:?} belongs to no package of the effective release"
+    ))
+}
+
 fn contains_retired_identity(value: &Value) -> bool {
     match value {
         Value::Object(object) => object.iter().any(|(key, value)| {
@@ -1046,13 +1067,11 @@ mod tests {
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: Some("overlay:transform/map@3.0.0".into()),
-                        dependencies: vec![ComponentOperationDependency {
-                            participant: None,
-                            package: "base".into(),
-                            version: "1.0.0".into(),
-                            digest: COMPONENT_A.into(),
-                            operation: "base:widget/get@1.0.0".into(),
-                        }],
+                        permissions: BTreeSet::from([
+                            "base:widget/get@1.0.0".into(),
+                            "overlay:transform/map@3.0.0".into(),
+                        ]),
+                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),
@@ -1069,7 +1088,8 @@ mod tests {
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: Some("base:widget/get@1.0.0".into()),
-                        dependencies: Vec::new(),
+                        permissions: BTreeSet::from(["base:widget/get@1.0.0".into()]),
+                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),
@@ -1223,63 +1243,208 @@ mod tests {
         assert_eq!(forward.digest(), reversed.digest());
     }
 
+    fn admitted(
+        package_id: &str,
+        package_version: &str,
+        digest: &str,
+        operations: Vec<(&str, crate::AdmittedComponentOperation)>,
+    ) -> AdmittedComponent {
+        AdmittedComponent {
+            scope: crate::ComponentPackageScope {
+                tenant_id: "t1".into(),
+                package_id: package_id.into(),
+                package_version: package_version.into(),
+            },
+            component: package_id.into(),
+            interface_version: "0.1".into(),
+            operations: operations
+                .into_iter()
+                .map(|(name, operation)| (name.to_owned(), operation))
+                .collect(),
+            component_digest: digest.into(),
+            imports: Vec::new(),
+            imports_fingerprint: digest.into(),
+            effects: Vec::new(),
+        }
+    }
+
+    fn admitted_operation(
+        registered: &str,
+        statement: Option<&str>,
+        dependencies: Vec<ComponentOperationDependency>,
+    ) -> crate::AdmittedComponentOperation {
+        crate::AdmittedComponentOperation {
+            pre_commit: None,
+            registered_operation: Some(registered.into()),
+            fresh_only: false,
+            committed_result_schema: None,
+            dependencies,
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+            statements: statement
+                .map(|sql| {
+                    let digest = crate::digest(sql.as_bytes());
+                    BTreeMap::from([(
+                        digest,
+                        ComponentSqlStatement {
+                            name: "statement".into(),
+                            path: "statement.sql".into(),
+                            sql: sql.into(),
+                            binds: Vec::new(),
+                            columns: Vec::new(),
+                            transactional: true,
+                        },
+                    )])
+                })
+                .unwrap_or_default(),
+        }
+    }
+
     #[test]
-    fn component_dependency_closure_is_exact_and_acyclic() {
-        let mut missing = components().into_iter().collect::<Vec<_>>();
-        let overlay = missing
-            .iter_mut()
+    fn projection_folds_each_call_graph_once_at_publish() {
+        const OVERLAY: &str = "overlay:receiving/record@3.0.0";
+        const PARTICIPANT: &str = "overlay:receiving/record-participant@3.0.0";
+        const BASE: &str = "base:receiving/record@1.0.0";
+        let mut base_operation =
+            admitted_operation(BASE, Some("INSERT INTO receipt DEFAULT VALUES"), Vec::new());
+        base_operation.pre_commit = Some("base:receiving/record-pre-commit@1.0.0".into());
+        base_operation.fresh_only = true;
+        let base = admitted("base", "1.0.0", COMPONENT_A, vec![(BASE, base_operation)]);
+        let dependency = ComponentOperationDependency {
+            participant: Some(PARTICIPANT.into()),
+            package: "base".into(),
+            version: "1.0.0".into(),
+            digest: COMPONENT_A.into(),
+            operation: BASE.into(),
+        };
+        let overlay = admitted(
+            "overlay",
+            "3.0.0",
+            COMPONENT_B,
+            vec![
+                (
+                    OVERLAY,
+                    admitted_operation(OVERLAY, None, vec![dependency.clone()]),
+                ),
+                (
+                    PARTICIPANT,
+                    admitted_operation(
+                        PARTICIPANT,
+                        Some("INSERT INTO inspection DEFAULT VALUES"),
+                        Vec::new(),
+                    ),
+                ),
+            ],
+        );
+        let resolve = |_: &ComponentOperationDependency| Some(&base);
+        let projected = ServingComponent::project(&overlay, &resolve).expect("the graph folds");
+        let entry = &projected.operations[OVERLAY];
+        assert_eq!(
+            entry.permissions,
+            BTreeSet::from([BASE.into(), OVERLAY.into(), PARTICIPANT.into()])
+        );
+        assert!(
+            entry.fresh_only,
+            "the entry inherits the callee's fresh-credential rule"
+        );
+        assert_eq!(entry.participant.as_deref(), Some(PARTICIPANT));
+        assert_eq!(
+            entry.statements.len(),
+            2,
+            "the entry holds the SQL of its whole graph"
+        );
+        let participant = &projected.operations[PARTICIPANT];
+        assert_eq!(
+            participant.permissions,
+            BTreeSet::from([PARTICIPANT.into()])
+        );
+        assert!(participant.participant.is_none() && !participant.fresh_only);
+
+        let unresolved = |_: &ComponentOperationDependency| None;
+        let error = ServingComponent::project(&overlay, &unresolved)
+            .expect_err("an unresolved dependency was folded");
+        assert!(error.to_string().contains("has no admitted fact"));
+
+        let mut cyclic_base = base.clone();
+        cyclic_base.operations.get_mut(BASE).unwrap().dependencies =
+            vec![ComponentOperationDependency {
+                participant: None,
+                package: "overlay".into(),
+                version: "3.0.0".into(),
+                digest: COMPONENT_B.into(),
+                operation: OVERLAY.into(),
+            }];
+        let cyclic = |dependency: &ComponentOperationDependency| {
+            Some(if dependency.package == "base" {
+                &cyclic_base
+            } else {
+                &overlay
+            })
+        };
+        let error = ServingComponent::project(&overlay, &cyclic)
+            .expect_err("a call graph cycle was folded");
+        assert!(error.to_string().contains("calls itself"));
+    }
+
+    #[test]
+    fn permissions_hold_the_registered_operation_and_release_packages_only() {
+        let mut missing_own = components();
+        let mut overlay = missing_own
+            .iter()
             .find(|component| component.package_id == "overlay")
-            .expect("the fixture carries the overlay component");
+            .cloned()
+            .unwrap();
+        missing_own.remove(&overlay);
         overlay
             .operations
             .get_mut("overlay:transform/map@3.0.0")
             .unwrap()
-            .dependencies[0]
-            .digest = COMPONENT_B.into();
+            .permissions
+            .remove("overlay:transform/map@3.0.0");
+        missing_own.insert(overlay.clone());
         let error = ServingManifest::new(
             release(),
-            missing.into_iter().collect(),
+            missing_own,
             routes(),
             wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
-        .expect_err("a missing exact component dependency was accepted");
+        .expect_err("permissions without the export's own operation were accepted");
         assert!(
             error
                 .to_string()
-                .contains("resolves to 0 exact component facts")
+                .contains("omit its own registered operation")
         );
 
-        let mut cyclic = components().into_iter().collect::<Vec<_>>();
-        let base = cyclic
-            .iter_mut()
-            .find(|component| component.package_id == "base")
-            .expect("the fixture carries the base component");
-        base.operations
-            .get_mut("base:widget/get@1.0.0")
-            .unwrap()
-            .dependencies = vec![ComponentOperationDependency {
-            participant: None,
-            package: "overlay".into(),
-            version: "3.0.0".into(),
-            digest: COMPONENT_B.into(),
-            operation: "overlay:transform/map@3.0.0".into(),
-        }];
+        let mut outside = components();
+        outside.remove(&overlay);
+        let operation = overlay
+            .operations
+            .get_mut("overlay:transform/map@3.0.0")
+            .unwrap();
+        operation
+            .permissions
+            .insert("overlay:transform/map@3.0.0".into());
+        operation
+            .permissions
+            .insert("stranger:widget/get@1.0.0".into());
+        outside.insert(overlay);
         let error = ServingManifest::new(
             release(),
-            cyclic.into_iter().collect(),
+            outside,
             routes(),
             wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
-        .expect_err("a component operation dependency cycle was accepted");
-        assert!(error.to_string().contains("cycle"));
+        .expect_err("a permission outside the release was accepted");
+        assert!(error.to_string().contains("belongs to no package"));
     }
 
     #[test]
-    fn only_canonical_format_two_bytes_are_admitted() {
+    fn only_canonical_format_three_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -1384,14 +1549,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 3, 4] {
+        for version in [0, 1, 2, 4] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format two may enter the decoder");
+                .expect_err("only format three may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {

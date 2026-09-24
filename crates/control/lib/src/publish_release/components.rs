@@ -1,10 +1,9 @@
 //! Exact component facts and their operation dependencies.
 
 use super::{
-    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, BTreeMap, BTreeSet,
-    ComponentPackageScope, DependencyDigestRule, MintManifestError, MintManifestErrorKind,
-    ReleaseWiringTarget, ServingAttachment, ServingComponent, ServingComponentOperation, VecDeque,
-    WiringDocument,
+    AdmittedComponent, AdmittedComponentOperation, BTreeMap, BTreeSet, ComponentPackageScope,
+    DependencyDigestRule, MintManifestError, MintManifestErrorKind, ReleaseWiringTarget,
+    ServingAttachment, ServingComponent, VecDeque, WiringDocument,
 };
 
 pub(super) fn resolve_wiring_components(
@@ -349,48 +348,28 @@ fn validate_component_dependency_cycles<'a>(
     Ok(())
 }
 
+/// Project one release component with each export's call graph folded in.
+///
+/// The dependencies of a composed component run inside its own bytes, so the
+/// manifest lists only the component itself. Admission found the declared
+/// base embedded in the bytes, and the fold reads that base's admitted fact.
 pub(super) fn project_serving_component(
     fact: &AdmittedComponent,
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    rule: DependencyDigestRule,
 ) -> Result<ServingComponent, MintManifestError> {
-    let digest = ArtifactHash::parse(fact.component_digest.clone()).map_err(|error| {
+    let resolve = |dependency: &wamn_catalog::ComponentOperationDependency| {
+        resolve_component_dependency(dependency, component_facts, rule).ok()
+    };
+    ServingComponent::project(fact, &resolve).map_err(|error| {
         MintManifestError::with_source(
-            MintManifestErrorKind::Component,
+            MintManifestErrorKind::OperationDependency,
             format!(
-                "component {:?} stores a non-canonical digest",
+                "component {:?} does not fold into one release component",
                 fact.component
             ),
             error,
         )
-    })?;
-    Ok(ServingComponent {
-        package_id: fact.scope.package_id.clone(),
-        component: fact.component.clone(),
-        interface_version: fact.interface_version.clone(),
-        digest,
-        operations: fact
-            .operations
-            .iter()
-            .map(|(name, operation)| {
-                (
-                    name.clone(),
-                    ServingComponentOperation {
-                        pre_commit: operation.pre_commit.clone(),
-                        committed_result_schema: operation.committed_result_schema.as_ref().map(
-                            |schema| {
-                                String::from_utf8(wamn_execution_contract::canonical_json_bytes(
-                                    &schema.schema,
-                                ))
-                                .expect("canonical JSON uses UTF-8")
-                            },
-                        ),
-                        registered_operation: operation.registered_operation.clone(),
-                        fresh_only: operation.fresh_only,
-                        dependencies: operation.dependencies.clone(),
-                        statements: operation.statements.clone(),
-                    },
-                )
-            })
-            .collect(),
     })
 }
 

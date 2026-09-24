@@ -5887,6 +5887,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-run-state",
  "wash-runtime",
+ "wasmparser 0.251.0",
  "wasmtime",
  "wat",
  "wit-component 0.252.0",

@@ -874,7 +874,9 @@ fn operation_dependency_imports(
             ));
         }
     }
-    let mut imports = pins.into_keys().collect::<BTreeSet<_>>();
+    // A dependency composes into the component bytes at build, so it is not an
+    // import. Only a base's pre-commit slot remains one.
+    let mut imports = BTreeSet::new();
     for operation in operations.values() {
         if let Some(pre_commit) = &operation.pre_commit {
             imports.insert(pre_commit.as_str());
@@ -1348,7 +1350,7 @@ mod tests {
         let facts = normalize_component_fact(
             declared,
             format!("sha256:{}", "a".repeat(64)),
-            [dependency.operation.clone()],
+            Vec::<String>::new(),
             Vec::new(),
         )
         .expect("an exact audited operation dependency admits");
@@ -1360,15 +1362,17 @@ mod tests {
     }
 
     #[test]
-    fn operation_dependency_must_be_exact_and_audited() {
+    fn operation_dependency_must_be_exact_and_composed() {
         let dependency = operation_dependency();
-        let mut missing = declaration();
-        operation_mut(&mut missing).dependencies = vec![dependency.clone()];
+        // A dependency composes into the bytes at build. One left as an
+        // import is an undeclared application call.
+        let mut imported = declaration();
+        operation_mut(&mut imported).dependencies = vec![dependency.clone()];
         assert_eq!(
             normalize_component_fact(
-                missing,
+                imported,
                 format!("sha256:{}", "a".repeat(64)),
-                Vec::new(),
+                [dependency.operation.clone()],
                 Vec::new(),
             )
             .unwrap_err()
@@ -1384,7 +1388,7 @@ mod tests {
             normalize_component_fact(
                 invalid_digest,
                 format!("sha256:{}", "a".repeat(64)),
-                [dependency.operation.clone()],
+                Vec::<String>::new(),
                 Vec::new(),
             )
             .unwrap_err()
@@ -1400,7 +1404,7 @@ mod tests {
             normalize_component_fact(
                 mismatched_coordinate,
                 format!("sha256:{}", "a".repeat(64)),
-                [dependency.operation.clone()],
+                Vec::<String>::new(),
                 Vec::new(),
             )
             .unwrap_err()
@@ -1414,7 +1418,7 @@ mod tests {
             normalize_component_fact(
                 duplicate,
                 format!("sha256:{}", "a".repeat(64)),
-                [dependency.operation.clone()],
+                Vec::<String>::new(),
                 Vec::new(),
             )
             .unwrap_err()
@@ -1432,7 +1436,7 @@ mod tests {
             normalize_component_fact(
                 conflicting,
                 format!("sha256:{}", "a".repeat(64)),
-                [dependency.operation],
+                Vec::<String>::new(),
                 Vec::new(),
             )
             .unwrap_err()
@@ -1845,7 +1849,7 @@ mod tests {
         let facts = normalize_component_fact(
             declared,
             format!("sha256:{}", "a".repeat(64)),
-            [dependency.operation.clone()],
+            Vec::<String>::new(),
             vec![inherited_fixture_effect()],
         )
         .expect("an inherited effect admits");
@@ -1874,7 +1878,7 @@ mod tests {
             normalize_component_fact(
                 declared,
                 format!("sha256:{}", "a".repeat(64)),
-                [dependency.operation],
+                Vec::<String>::new(),
                 vec![widened],
             )
             .unwrap_err()

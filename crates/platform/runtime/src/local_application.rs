@@ -399,19 +399,8 @@ pub fn validate_local_facts(
                 .operations
                 .get(name)
                 .context("local operation is outside the manifest")?;
-            let schema = operation.committed_result_schema.as_ref().map(|schema| {
-                String::from_utf8(wamn_execution_contract::canonical_json_bytes(
-                    &schema.schema,
-                ))
-                .expect("canonical JSON is UTF-8")
-            });
             anyhow::ensure!(
-                selected.committed_result_schema == schema
-                    && selected.pre_commit == operation.pre_commit
-                    && selected.registered_operation == operation.registered_operation
-                    && selected.fresh_only == operation.fresh_only
-                    && selected.dependencies == operation.dependencies
-                    && selected.statements == operation.statements,
+                selected.carries(operation),
                 "local operation differs from its manifest projection"
             );
         }
@@ -664,7 +653,8 @@ mod tests {
                         committed_result_schema: None,
                         registered_operation: None,
                         fresh_only: false,
-                        dependencies: Vec::new(),
+                        permissions: BTreeSet::new(),
+                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),

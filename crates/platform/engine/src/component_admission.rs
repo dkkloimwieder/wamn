@@ -265,20 +265,44 @@ pub fn validate_component_admission(
         .imports(raw)
         .map(|(name, _)| name.to_string())
         .collect::<Vec<_>>();
+    // An application's components compose at build into one component, so a
+    // declared dependency is not an import. Its base must be embedded in these
+    // bytes, unchanged, under the digest the declaration names. Publish then
+    // folds the call graph from the admitted facts of that exact base.
+    let embedded = embedded_component_digests(component_bytes).map_err(|source| {
+        ComponentAdmissionError::new(
+            ComponentAdmissionErrorKind::InvalidComponentBytes,
+            &component_name,
+            source,
+        )
+    })?;
+    let missing_bases = request
+        .declaration
+        .operations
+        .values()
+        .flat_map(|operation| &operation.dependencies)
+        .filter(|dependency| !embedded.contains(&dependency.digest))
+        .map(|dependency| format!("{}@{}", dependency.operation, dependency.digest))
+        .collect::<BTreeSet<_>>();
+    if !missing_bases.is_empty() {
+        return Err(ComponentAdmissionError::new(
+            ComponentAdmissionErrorKind::OperationDependencyMismatch,
+            &component_name,
+            anyhow::anyhow!(
+                "declared operation dependencies are not composed into the component bytes: {missing_bases:?}"
+            ),
+        ));
+    }
     // The Component Model exposes one top-level import list, not a call
     // graph from each export. Preserve the operation-owned declarations, while
     // showing only the structural fact the bytes support: their exact union.
+    // Only a base's pre-commit slot remains an import, and only in the base's
+    // own bytes, because the overlay's build plugs it with its participant.
     let declared_dependency_imports = request
         .declaration
         .operations
         .values()
-        .flat_map(|operation| {
-            operation
-                .dependencies
-                .iter()
-                .map(|dependency| dependency.operation.clone())
-                .chain(operation.pre_commit.iter().cloned())
-        })
+        .flat_map(|operation| operation.pre_commit.iter().cloned())
         .collect::<BTreeSet<_>>();
     let byte_dependency_imports = imports
         .iter()
@@ -473,6 +497,27 @@ fn derive_effects(
                 }),
         )
         .collect()
+}
+
+/// The digest of each component that these bytes embed unchanged.
+///
+/// A composed component defines each member as a nested component section. The
+/// section holds the member's exact bytes, so its digest is the member's
+/// admitted digest.
+fn embedded_component_digests(component_bytes: &[u8]) -> anyhow::Result<BTreeSet<String>> {
+    let mut digests = BTreeSet::new();
+    for payload in wasmparser::Parser::new(0).parse_all(component_bytes) {
+        if let wasmparser::Payload::ComponentSection {
+            unchecked_range, ..
+        } = payload?
+        {
+            let member = component_bytes
+                .get(unchecked_range)
+                .ok_or_else(|| anyhow::anyhow!("a nested component section is out of range"))?;
+            digests.insert(component_digest(member));
+        }
+    }
+    Ok(digests)
 }
 
 /// SHA-256 identity of exact component bytes.
@@ -692,6 +737,46 @@ mod tests {
         }
     }
 
+    /// The base component that exports the dependency operation.
+    fn base_bytes() -> Vec<u8> {
+        component_bytes_exporting(DEPENDENCY_OPERATION, "", "", ManglingAndAbi::Standard32)
+    }
+
+    /// Append `member` to `outer` as a nested component section, unchanged.
+    ///
+    /// This is the one structural fact admission reads from a composition:
+    /// the member's exact bytes inside the composed bytes.
+    fn composed(outer: &[u8], member: &[u8]) -> Vec<u8> {
+        let mut bytes = outer.to_vec();
+        bytes.push(4);
+        let mut size = member.len();
+        loop {
+            let byte = u8::try_from(size & 0x7f).expect("seven bits fit in a byte");
+            size >>= 7;
+            bytes.push(if size == 0 { byte } else { byte | 0x80 });
+            if size == 0 {
+                break;
+            }
+        }
+        bytes.extend_from_slice(member);
+        bytes
+    }
+
+    /// A declaration whose base is embedded under its exact digest.
+    fn embedded_dependency(base: &[u8]) -> ComponentOperationDependency {
+        ComponentOperationDependency {
+            digest: component_digest(base),
+            ..dependency(DEPENDENCY_OPERATION)
+        }
+    }
+
+    /// The request of a base package, which owns its pre-commit slot.
+    fn base_request() -> ComponentAdmissionRequest {
+        let mut request = request();
+        request.declaration.scope.package_id = "platform_fixture".to_string();
+        request
+    }
+
     #[test]
     fn declaration_and_byte_handler_export_sets_must_match_exactly() {
         let engine = crate::build_engine(&[]).expect("engine builds");
@@ -854,12 +939,13 @@ mod tests {
                 .unwrap();
             let mut request = request();
             if imported {
+                request = base_request();
                 request
                     .declaration
                     .operations
                     .get_mut(OPERATION)
                     .unwrap()
-                    .dependencies = vec![dependency(TYPED_OPERATION)];
+                    .pre_commit = Some(TYPED_OPERATION.to_owned());
             } else {
                 let declaration = request.declaration.operations.remove(OPERATION).unwrap();
                 request
@@ -908,33 +994,26 @@ mod tests {
     }
 
     #[test]
-    fn exact_operation_dependency_is_byte_verified_and_admitted() {
+    fn a_declared_dependency_is_admitted_when_its_base_is_embedded() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = component_bytes(&format!("import {DEPENDENCY_OPERATION};"));
+        let base = base_bytes();
+        let bytes = composed(&component_bytes(""), &base);
         let mut request = request();
         request
             .declaration
             .operations
             .get_mut(OPERATION)
             .expect("fixture operation exists")
-            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
-        request.effect_free_operation_dependencies =
-            BTreeSet::from([DEPENDENCY_OPERATION.to_string()]);
+            .dependencies = vec![embedded_dependency(&base)];
 
         let component = validate_component_admission(&engine, &bytes, request)
-            .expect("an exact operation dependency admits")
+            .expect("a composed operation dependency admits")
             .component;
 
-        assert_eq!(
-            component.imports,
-            [
-                DEPENDENCY_OPERATION.to_string(),
-                NODE_TYPES_IMPORT.to_string()
-            ]
-        );
+        assert_eq!(component.imports, [NODE_TYPES_IMPORT.to_string()]);
         assert_eq!(
             component.operations[OPERATION].dependencies,
-            [dependency(DEPENDENCY_OPERATION)]
+            [embedded_dependency(&base)]
         );
         assert!(component.effects.is_empty());
     }
@@ -946,9 +1025,10 @@ mod tests {
     #[test]
     fn multi_export_admission_checks_global_union_and_preserves_attachment() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = component_bytes_with_exports(
-            &format!("import {DEPENDENCY_OPERATION};"),
-            "export second: wamn:node/handler@0.1.0;",
+        let base = base_bytes();
+        let bytes = composed(
+            &component_bytes_with_exports("", "export second: wamn:node/handler@0.1.0;"),
+            &base,
         );
         let mut request = request();
         let mut second = request
@@ -957,26 +1037,27 @@ mod tests {
             .get(OPERATION)
             .expect("fixture operation exists")
             .clone();
-        second.dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+        second.dependencies = vec![embedded_dependency(&base)];
         request
             .declaration
             .operations
             .insert("second".to_string(), second);
 
         let component = validate_component_admission(&engine, &bytes, request)
-            .expect("the component-global dependency union admits")
+            .expect("a dependency of one export admits")
             .component;
 
         assert!(component.operations[OPERATION].dependencies.is_empty());
         assert_eq!(
             component.operations["second"].dependencies,
-            [dependency(DEPENDENCY_OPERATION)]
+            [embedded_dependency(&base)]
         );
     }
 
     #[test]
-    fn operation_dependencies_refuse_missing_extra_and_mismatch() {
+    fn operation_dependencies_refuse_an_unembedded_base_and_an_application_import() {
         let engine = crate::build_engine(&[]).expect("engine builds");
+        let base = base_bytes();
 
         let mut missing_request = request();
         missing_request
@@ -984,65 +1065,73 @@ mod tests {
             .operations
             .get_mut(OPERATION)
             .expect("fixture operation exists")
-            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+            .dependencies = vec![embedded_dependency(&base)];
         let missing = validate_component_admission(&engine, &component_bytes(""), missing_request)
-            .expect_err("a declared dependency absent from bytes refuses");
+            .expect_err("a declared dependency whose base is not embedded refuses");
         assert_eq!(
             missing.kind(),
             ComponentAdmissionErrorKind::OperationDependencyMismatch
         );
-        assert!(missing.to_string().contains("missing="));
+        assert!(missing.to_string().contains("not composed"));
 
-        let extra = validate_component_admission(
-            &engine,
-            &component_bytes(&format!("import {DEPENDENCY_OPERATION};")),
-            request(),
-        )
-        .expect_err("an undeclared application import refuses");
-        assert_eq!(
-            extra.kind(),
-            ComponentAdmissionErrorKind::OperationDependencyMismatch
-        );
-        assert!(extra.to_string().contains("extra="));
-
-        let mut mismatch_request = request();
-        mismatch_request
+        let mut other_request = request();
+        other_request
             .declaration
             .operations
             .get_mut(OPERATION)
             .expect("fixture operation exists")
-            .dependencies = vec![dependency("platform-fixture:widget/load-maker@1.0.0")];
-        let mismatch = validate_component_admission(
+            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+        let other = validate_component_admission(
             &engine,
-            &component_bytes(&format!("import {DEPENDENCY_OPERATION};")),
-            mismatch_request,
+            &composed(&component_bytes(""), &base),
+            other_request,
         )
-        .expect_err("a different exact application import refuses");
+        .expect_err("a base embedded under another digest refuses");
         assert_eq!(
-            mismatch.kind(),
+            other.kind(),
             ComponentAdmissionErrorKind::OperationDependencyMismatch
         );
-        assert!(mismatch.to_string().contains("missing="));
-        assert!(mismatch.to_string().contains("extra="));
+
+        let mut imported_request = request();
+        imported_request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = vec![embedded_dependency(&base)];
+        let imported = validate_component_admission(
+            &engine,
+            &composed(
+                &component_bytes(&format!("import {DEPENDENCY_OPERATION};")),
+                &base,
+            ),
+            imported_request,
+        )
+        .expect_err("a dependency left as an import refuses");
+        assert_eq!(
+            imported.kind(),
+            ComponentAdmissionErrorKind::OperationDependencyMismatch
+        );
+        assert!(imported.to_string().contains("extra="));
     }
 
     #[test]
-    fn operation_dependency_import_must_have_the_handler_signature() {
+    fn pre_commit_import_must_have_the_handler_signature() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let mut request = request();
+        let mut request = base_request();
         request
             .declaration
             .operations
             .get_mut(OPERATION)
             .expect("fixture operation exists")
-            .dependencies = vec![dependency(WRONG_DEPENDENCY_OPERATION)];
+            .pre_commit = Some(WRONG_DEPENDENCY_OPERATION.to_owned());
 
         let error = validate_component_admission(
             &engine,
             &component_bytes(&format!("import {WRONG_DEPENDENCY_OPERATION};")),
             request,
         )
-        .expect_err("a dependency import with the wrong run type refuses");
+        .expect_err("a pre-commit import with the wrong run type refuses");
 
         assert_eq!(
             error.kind(),
@@ -1098,31 +1187,31 @@ mod tests {
         assert_eq!(facts.connections[0].store_alias, "erp");
     }
 
-    /// The defect this closes. A wrapper carries an EMPTY capability
-    /// list of its own and still reaches Postgres or HTTP through the
-    /// operation it calls. The gate's effect-free-case clause keys on
+    /// A base carries an EMPTY capability list of its own and still reaches
+    /// whatever its participant does through its pre-commit slot. The gate's
+    /// effect-free-case clause keys on
     /// `jsonb_array_length(library.effects) > 0`
     /// (`scenario-worker/src/store/admission.rs:181`), so a non-empty
     /// projection is what denies that path.
     #[test]
-    fn a_wrapper_reaching_an_effect_through_a_declared_dependency_is_not_effect_free() {
+    fn a_base_reaching_an_effect_through_its_pre_commit_slot_is_not_effect_free() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(&format!("import {DEPENDENCY_OPERATION};"));
-        let mut request = request();
+        let mut request = base_request();
         request
             .declaration
             .operations
             .get_mut(OPERATION)
             .expect("fixture operation exists")
-            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+            .pre_commit = Some(DEPENDENCY_OPERATION.to_owned());
 
         let component = validate_component_admission(&engine, &bytes, request)
-            .expect("a wrapper over an effectful dependency still admits")
+            .expect("a base with an unconfirmed pre-commit slot still admits")
             .component;
 
-        // Guard the guard. The wrapper's own capability list is empty:
-        // the node types import is the ABI's own and leaves the host not at
-        // all, so the posture below comes from the dependency alone.
+        // Guard the guard. The base's own capability list is empty: the node
+        // types import is the ABI's own and leaves the host not at all, so the
+        // posture below comes from the pre-commit slot alone.
         assert_eq!(
             component.imports,
             [
@@ -1140,32 +1229,32 @@ mod tests {
         );
     }
 
-    /// The negative control. The rule is a UNION, not a ban on dependencies:
-    /// an ambient own import and a dependency confirmed as effect-free both add
-    /// nothing, so the wrapper keeps the effect-free case path.
+    /// The negative control. A composed dependency adds no inherited effect:
+    /// its base's imports are the composed component's own imports, so an
+    /// ambient import and an effect-free base keep the effect-free case path.
     #[test]
-    fn a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path() {
+    fn a_composed_dependency_takes_its_effects_from_the_composed_imports() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = component_bytes(&format!(
-            "import wasi:clocks/monotonic-clock@0.2.12; import {DEPENDENCY_OPERATION};"
-        ));
+        let base = base_bytes();
+        let bytes = composed(
+            &component_bytes("import wasi:clocks/monotonic-clock@0.2.12;"),
+            &base,
+        );
         let mut request = request();
         request
             .declaration
             .operations
             .get_mut(OPERATION)
             .expect("fixture operation exists")
-            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
-        request.effect_free_operation_dependencies =
-            BTreeSet::from([DEPENDENCY_OPERATION.to_string()]);
+            .dependencies = vec![embedded_dependency(&base)];
 
         let component = validate_component_admission(&engine, &bytes, request)
-            .expect("a wrapper over an effect-free dependency admits")
+            .expect("a composition over an effect-free base admits")
             .component;
 
         assert!(
             component.effects.is_empty(),
-            "an effect-free closure must keep the effect-free case path: {:?}",
+            "an effect-free composition must keep the effect-free case path: {:?}",
             component.effects
         );
     }

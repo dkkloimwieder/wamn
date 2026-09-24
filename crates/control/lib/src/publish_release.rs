@@ -13,11 +13,11 @@ use anyhow::{Context as _, ensure};
 use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, ArtifactHash,
-    AttachmentTarget, ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationKind,
-    PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRelease, ServingRoute,
-    ServingWiring, WiringDocument, validate_resolved_wiring_compatibility,
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, AttachmentTarget,
+    ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationKind, PackageCoordinate,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
+    ServingRegistration, ServingRelease, ServingRoute, ServingWiring, WiringDocument,
+    validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_schema_control::{
@@ -1779,7 +1779,7 @@ fn project_wiring_document(
             error,
         )
     })?;
-    let component_closure = resolve_component_dependency_closure(&resolved, component_facts, rule)?;
+    resolve_component_dependency_closure(&resolved, component_facts, rule)?;
     validate_anonymous_wiring_closure(request.attachments, target, document, &resolved)?;
     let entry_operation = resolved_wiring_entry_operation(document, &resolved)?;
     wirings.insert(ServingWiring {
@@ -1788,8 +1788,8 @@ fn project_wiring_document(
         wiring_version: target.wiring_version,
         graph_hash: document.wiring_hash(),
     });
-    for fact in component_closure {
-        components.insert(project_serving_component(&fact)?);
+    for fact in resolved.values() {
+        components.insert(project_serving_component(fact, component_facts, rule)?);
     }
     for (node_id, fact) in resolved {
         membership.insert(ReleaseComponentMembership {
@@ -1862,9 +1862,8 @@ fn project_routes(
                 )
             })?;
         let roots = BTreeMap::from([(operation.clone(), fact.clone())]);
-        for member in resolve_component_dependency_closure(&roots, component_facts, rule)? {
-            components.insert(project_serving_component(&member)?);
-        }
+        resolve_component_dependency_closure(&roots, component_facts, rule)?;
+        components.insert(project_serving_component(fact, component_facts, rule)?);
         membership.insert(ReleaseComponentMembership {
             binding: MemberBinding::Route {
                 component: component.clone(),
@@ -2478,10 +2477,14 @@ mod tests {
     fn fresh_only_component_policy_survives_release_projection() {
         let operation = "base:widget/get@1.0.0";
         let mut component = closure_component("registered-component", Some(operation));
-        let baseline = project_serving_component(&component).unwrap();
+        let baseline =
+            project_serving_component(&component, &BTreeMap::new(), DependencyDigestRule::Declared)
+                .unwrap();
         assert!(!baseline.operations[operation].fresh_only);
         component.operations.get_mut(operation).unwrap().fresh_only = true;
-        let projected = project_serving_component(&component).unwrap();
+        let projected =
+            project_serving_component(&component, &BTreeMap::new(), DependencyDigestRule::Declared)
+                .unwrap();
         assert!(projected.operations[operation].fresh_only);
         assert_eq!(
             serde_json::to_value(&projected).unwrap()["operations"][operation]["fresh-only"],
@@ -2979,6 +2982,13 @@ mod tests {
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
+        let folded = project_serving_component(&overlay, &facts, DependencyDigestRule::Declared)
+            .expect("the composed overlay folds its base");
+        assert_eq!(
+            folded.operations[overlay_operation].permissions,
+            BTreeSet::from([base_operation.to_owned(), overlay_operation.to_owned()]),
+            "the release lists the overlay alone, with its base's authority folded in"
+        );
 
         base.operations
             .get_mut(base_operation)
@@ -3160,8 +3170,9 @@ mod tests {
                 },
             );
 
-        let serving = project_serving_component(&admitted)
-            .expect("an admitted component projects to serving facts");
+        let serving =
+            project_serving_component(&admitted, &BTreeMap::new(), DependencyDigestRule::Declared)
+                .expect("an admitted component projects to serving facts");
 
         assert_eq!(
             serving.operations[operation].statement(&digest),

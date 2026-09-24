@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use wamn_catalog::{
     ArtifactHash, AttachmentAuthPolicy, AttachmentKind, AttachmentTarget, CatalogIdentityError,
-    ComponentOperationDependency, DefinitionHash, EffectiveReleaseId, OperationKind,
-    PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
-    ServingManifest, ServingRegistration, ServingRegistrationInput, ServingRelease, ServingRoute,
-    ServingWiring, parse_attachment_auth_policy,
+    DefinitionHash, EffectiveReleaseId, OperationKind, PackageCoordinate, ServingAttachment,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
+    ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring,
+    parse_attachment_auth_policy,
 };
 
 mod mint_vector {
@@ -55,7 +55,8 @@ fn components() -> BTreeSet<ServingComponent> {
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
-                    dependencies: Vec::new(),
+                    permissions: BTreeSet::new(),
+                    participant: None,
                     statements: BTreeMap::new(),
                 },
             )]),
@@ -72,7 +73,10 @@ fn components() -> BTreeSet<ServingComponent> {
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
-                    dependencies: Vec::new(),
+                    permissions: BTreeSet::from([
+                        "platform-fixture-overlay:widget/get@3.0.0".into()
+                    ]),
+                    participant: None,
                     statements: BTreeMap::new(),
                 },
             )]),
@@ -165,7 +169,7 @@ fn manifest() -> ServingManifest {
             },
         )]),
     )
-    .expect("the format-two fixture is valid")
+    .expect("the format-three fixture is valid")
 }
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -180,13 +184,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_two_preimage_and_digest_are_pinned() {
+fn the_format_three_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), mint_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), mint_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(mint_vector::CANONICAL_BYTES)
-        .expect("the format-two vector is admitted by the reader");
+        .expect("the format-three vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), mint_vector::DIGEST);
 
@@ -200,7 +204,7 @@ fn the_format_two_preimage_and_digest_are_pinned() {
 }
 
 #[test]
-fn fresh_only_is_digest_bound_without_changing_format_two_default_bytes() {
+fn fresh_only_is_digest_bound_without_changing_format_three_default_bytes() {
     let baseline = manifest();
     let mut fresh = baseline.clone();
     fresh.components = fresh
@@ -216,9 +220,9 @@ fn fresh_only_is_digest_bound_without_changing_format_two_default_bytes() {
         })
         .collect();
     let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
-        .expect("format-two reader admits registered fresh-only operations");
+        .expect("format-three reader admits registered fresh-only operations");
     assert_eq!(admitted, fresh);
-    assert_eq!(admitted.format_version, 2);
+    assert_eq!(admitted.format_version, 3);
     assert_ne!(digest, baseline.digest());
     assert_eq!(baseline.canonical_bytes(), mint_vector::CANONICAL_BYTES);
 }
@@ -240,7 +244,7 @@ fn fresh_only_release_reader_refuses_unregistered_exports_and_non_boolean_flags(
         .collect();
     let error = ServingManifest::from_canonical_bytes(&unregistered.canonical_bytes())
         .expect_err("unregistered palette export cannot require fresh authentication");
-    assert!(error.to_string().contains("unregistered export"));
+    assert!(error.to_string().contains("requires no permission"));
 
     for value in [json!(null), json!("true"), json!(1)] {
         let mut document = serde_json::to_value(manifest()).unwrap();
@@ -362,7 +366,8 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
         registered_operation: None,
         fresh_only: false,
         committed_result_schema: None,
-        dependencies: Vec::new(),
+        permissions: BTreeSet::new(),
+        participant: None,
         statements: BTreeMap::new(),
     };
     ServingManifest::new(
@@ -393,6 +398,11 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
                         registered_operation: export
                             .starts_with(&format!("{package}:"))
                             .then(|| export.to_owned()),
+                        permissions: export
+                            .starts_with(&format!("{package}:"))
+                            .then(|| export.to_owned())
+                            .into_iter()
+                            .collect(),
                         ..operation.clone()
                     },
                 )]),
@@ -413,48 +423,13 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
     .expect("one provider and one consumer form a valid manifest")
 }
 
-fn add_operation_import(
-    manifest: &mut ServingManifest,
-    package: &str,
-    export: &str,
-    version: &str,
-) {
-    let mut consumer = manifest
-        .components
-        .iter()
-        .find(|component| component.package_id == "consumer")
-        .expect("fixture consumer")
-        .clone();
-    assert!(manifest.components.remove(&consumer));
-    consumer
-        .operations
-        .get_mut("consumer:entry/run@1.0.0")
-        .expect("consumer operation")
-        .dependencies = vec![ComponentOperationDependency {
-        participant: None,
-        package: package.into(),
-        version: version.into(),
-        digest: COMPONENT_A.into(),
-        operation: export.into(),
-    }];
-    assert!(manifest.components.insert(consumer));
-}
-
 #[test]
-fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them() {
+fn duplicate_export_only_interfaces_are_admitted() {
     // The platform interface is exported by an application component under the
     // application's own package id, the shape a published manifest carries.
-    //
-    // Only the second entry reaches the import half, and the asymmetry is the
-    // point rather than an omission. An import names its provider through a
-    // dependency operation token, and
-    // `validate_canonical_operation_for_package` requires that token to carry
-    // its dependency package's own id. No application package may be `wamn`, so
-    // no publisher can mint an import of `wamn:node/handler@0.1.0`. Asserting a
-    // refusal on it would pin a path production cannot reach.
-    for (package, export, version, importable) in [
-        ("orders", "wamn:node/handler@0.1.0", "0.1.0", false),
-        ("provider", "provider:entry/run@1.0.0", "1.0.0", true),
+    for (package, export, version) in [
+        ("orders", "wamn:node/handler@0.1.0", "0.1.0"),
+        ("provider", "provider:entry/run@1.0.0", "1.0.0"),
     ] {
         let mut candidate = operation_provider_manifest(package, export, version);
         let mut other = candidate
@@ -465,104 +440,14 @@ fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them()
             .clone();
         other.component = "another-provider".into();
         other.digest = artifact_hash(COMPONENT_B);
-        other
-            .operations
-            .get_mut(export)
-            .unwrap()
-            .registered_operation = None;
+        let operation = other.operations.get_mut(export).unwrap();
+        operation.registered_operation = None;
+        operation.permissions.clear();
         assert!(candidate.components.insert(other));
         let (admitted, _) = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
             .expect("the host can address duplicate export-only interfaces directly");
         assert_eq!(admitted, candidate);
-
-        if !importable {
-            continue;
-        }
-
-        add_operation_import(&mut candidate, package, export, version);
-        let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
-            .expect_err("one selected digest cannot disambiguate an imported interface");
-        let detail = error.to_string();
-        for expected in [
-            "ambiguous component providers",
-            export,
-            COMPONENT_A,
-            COMPONENT_B,
-        ] {
-            assert!(detail.contains(expected), "{expected}: {detail}");
-        }
     }
-}
-
-#[test]
-fn imported_provider_ambiguity_does_not_deduplicate_coordinates_or_digests() {
-    let export = "provider:entry/run@1.0.0";
-    for same_digest in [false, true] {
-        let mut candidate = operation_provider_manifest("provider", export, "1.0.0");
-        add_operation_import(&mut candidate, "provider", export, "1.0.0");
-        ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
-            .expect("one exact imported provider is admitted");
-        let mut other = candidate
-            .components
-            .iter()
-            .find(|component| component.component == "provider")
-            .expect("fixture provider")
-            .clone();
-        if same_digest {
-            other.component = "same-bytes-another-provider".into();
-        } else {
-            other.digest = artifact_hash(COMPONENT_B);
-        }
-        assert!(candidate.components.insert(other));
-        let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
-            .expect_err("each provider remains distinct at native resolution");
-        assert!(error.to_string().contains("ambiguous component providers"));
-    }
-}
-
-#[test]
-fn imported_interface_identity_includes_the_complete_version() {
-    let export = "provider:entry/run@1.0.0";
-    let mut candidate = operation_provider_manifest("provider", export, "1.0.0");
-    add_operation_import(&mut candidate, "provider", export, "1.0.0");
-    let mut other = candidate
-        .components
-        .iter()
-        .find(|component| component.component == "provider")
-        .expect("fixture provider")
-        .clone();
-    other.component = "another-version".into();
-    other.digest = artifact_hash(COMPONENT_B);
-    let mut operation = other.operations.remove(export).unwrap();
-    operation.registered_operation = None;
-    other
-        .operations
-        .insert("provider:entry/run@2.0.0".into(), operation);
-    assert!(candidate.components.insert(other));
-    let (admitted, _) = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
-        .expect("a different full interface version is not a competing provider");
-    assert_eq!(admitted, candidate);
-}
-
-#[test]
-fn a_unique_imported_provider_must_still_match_the_exact_dependency_digest() {
-    let export = "provider:entry/run@1.0.0";
-    let mut candidate = operation_provider_manifest("provider", export, "1.0.0");
-    add_operation_import(&mut candidate, "provider", export, "1.0.0");
-    let mut provider = candidate
-        .components
-        .iter()
-        .find(|component| component.component == "provider")
-        .expect("fixture provider")
-        .clone();
-    assert!(candidate.components.remove(&provider));
-    provider.digest = artifact_hash(COMPONENT_B);
-    assert!(candidate.components.insert(provider));
-    let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
-        .expect_err("one provider cannot replace the pinned artifact provenance");
-    let detail = error.to_string();
-    assert!(detail.contains("resolves to 0 exact component facts"));
-    assert!(detail.contains(COMPONENT_A));
 }
 
 #[test]

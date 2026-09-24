@@ -628,61 +628,27 @@ pub(crate) fn authorize_release_closure(
     });
     if !operation_admitted
         || !entry_released
-        || !root.is_some_and(|root| {
-            released_operation_reachable(manifest, root, &origin.operation, invocation)
-        })
+        || !root
+            .is_some_and(|root| released_operation_reachable(root, &origin.operation, invocation))
     {
         return Err(ConnectionError::AttestationInvalid);
     }
     Ok(())
 }
 
+/// The invocation must be the released entry itself. An application's
+/// components compose at build into one component, so a call inside it keeps
+/// the entry's invocation identity.
 fn released_operation_reachable(
-    manifest: &ServingManifest,
     root: &ServingComponent,
     root_operation: &str,
     invocation: &ConnectionInvocation,
 ) -> bool {
-    let mut pending = vec![(root, root_operation)];
-    let mut visited = HashSet::new();
-    while let Some((component, operation)) = pending.pop() {
-        if !visited.insert((
-            component.package_id.as_str(),
-            component.component.as_str(),
-            component.interface_version.as_str(),
-            component.digest.as_str(),
-            operation,
-        )) {
-            continue;
-        }
-        let Some(facts) = component.operations.get(operation) else {
-            return false;
-        };
-        if component.package_id == invocation.package_id
-            && component.component == invocation.component
-            && component.digest.as_str() == invocation.component_digest
-            && operation == invocation.operation
-        {
-            return true;
-        }
-        for dependency in &facts.dependencies {
-            if !manifest.release.packages.iter().any(|package| {
-                package.package_id() == dependency.package
-                    && package.package_version() == dependency.version
-            }) {
-                return false;
-            }
-            let Some(target) = manifest.components.iter().find(|candidate| {
-                candidate.package_id == dependency.package
-                    && candidate.digest.as_str() == dependency.digest
-                    && candidate.operations.contains_key(&dependency.operation)
-            }) else {
-                return false;
-            };
-            pending.push((target, dependency.operation.as_str()));
-        }
-    }
-    false
+    root.operations.contains_key(root_operation)
+        && root.package_id == invocation.package_id
+        && root.component == invocation.component
+        && root.digest.as_str() == invocation.component_digest
+        && root_operation == invocation.operation
 }
 
 /// Require the snapshot to carry the wiring hash, component and interface
