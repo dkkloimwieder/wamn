@@ -40,7 +40,10 @@ url = { workspace = true }
 ring = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 tracing-subscriber = { workspace = true }
-wat = "=1.252.0"
+wat = "=1.254.0"
+# The lowering tests encode a node component from WIT in-process.
+wit-component = { version = "=0.254.0", features = ["dummy-module"] }
+wit-parser = "=0.254.0"
 wamn-test-postgres = { workspace = true }
 
 [lints]

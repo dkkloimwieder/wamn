@@ -5,8 +5,8 @@
 //! `MAIN_PORT` / `ERROR_PORT`. These names are PERSISTED bytes: an edge stored
 //! with one side's spelling is read back and filtered against the other's, so a
 //! rename on one side alone never fails loudly — the walk simply finds no
-//! successors and every affected edge goes silently dead. `wamn-runtime` is the
-//! only crate that links BOTH declarations, which is why the guard lives here.
+//! successors and every affected edge goes silently dead. `wamn-workflow`
+//! links BOTH declarations directly, which is why the guard lives here.
 //!
 //! Single-homing the constant was considered and REJECTED: it resolves the
 //! duplication by COUPLING, buying the singularity with a new bounded-context

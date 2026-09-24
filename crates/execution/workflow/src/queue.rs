@@ -14,10 +14,12 @@ use wamn_run_state::{FailKind, RunStore as _};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
-    ProductionReapResult, ProductionRouterAction, ReleaseIdentity, SessionClaims, WamnPostgres,
-    production_router_action, production_router_result_action,
+    ProductionReapResult, ReleaseIdentity, SessionClaims, WamnPostgres,
 };
 
+use crate::router_action::{
+    ProductionRouterAction, production_router_action, production_router_result_action,
+};
 use crate::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
     CandidateWiringTarget, RouterDriver, RouterDriverRequest, Verdict,

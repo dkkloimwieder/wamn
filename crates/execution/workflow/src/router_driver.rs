@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
+use crate::wiring_lowering::{WiringScope, lower_resolved_wiring};
 use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::{
@@ -707,6 +708,17 @@ impl RouterDriver {
                 .into());
             }
         };
+        let scope = WiringScope {
+            tenant_id: &target.tenant_id,
+            package_id: &target.package_id,
+            environment: &target.environment,
+        };
+        let wiring = lower_resolved_wiring(scope, &resolved).map_err(|_| {
+            CandidateExecutionRefusal::new(
+                CandidateExecutionRefusalKind::Definition,
+                "candidate-definition-invalid",
+            )
+        })?;
         let facts = CatalogFacts::from_resolved(&resolved)?;
         if let Some(active) = self.cache.get_version(
             &target.tenant_id,
@@ -735,7 +747,7 @@ impl RouterDriver {
                 version: resolved.version,
             },
             Arc::clone(&resolved.graph_hash),
-            resolved.wiring,
+            wiring,
             facts,
         ) {
             CacheInsert::Installed(active) => Ok(active),
@@ -777,6 +789,12 @@ impl RouterDriver {
             )
             .await?
             .ok_or_else(|| anyhow::anyhow!("release-wiring-not-found"))?;
+        let scope = WiringScope {
+            tenant_id: &request.tenant_id,
+            package_id: &request.package_id,
+            environment: &request.environment,
+        };
+        let wiring = lower_resolved_wiring(scope, &resolved).context("lower active wiring")?;
         let facts = CatalogFacts::from_resolved(&resolved)?;
         match self.cache.insert_version(
             VersionKey {
@@ -788,7 +806,7 @@ impl RouterDriver {
                 version: resolved.version,
             },
             Arc::clone(&resolved.graph_hash),
-            resolved.wiring,
+            wiring,
             facts,
         ) {
             CacheInsert::Installed(active) => Ok(active),

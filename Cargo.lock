@@ -6323,7 +6323,6 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-platform-identity",
- "wamn-router",
  "wamn-run-state",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6331,8 +6330,6 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wat",
- "wit-component 0.254.0",
- "wit-parser 0.254.0",
 ]
 
 [[package]]
@@ -6555,6 +6552,8 @@ dependencies = [
  "wamn-test-postgres",
  "wash-runtime",
  "wat",
+ "wit-component 0.254.0",
+ "wit-parser 0.254.0",
 ]
 
 [[package]]

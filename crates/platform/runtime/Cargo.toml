@@ -28,7 +28,6 @@ wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-pg-core = { workspace = true }
-wamn-router = { workspace = true }
 # `tenant-key`: the shipped runtime needs the framed scope digest to check a
 # guest credential against the tenant it will serve (wamn-0h0g.22.6.7).
 wamn-run-state = { workspace = true, features = ["tenant-key"] }
@@ -91,8 +90,6 @@ wamn-catalog = { workspace = true, features = ["test-util"] }
 # no-trap test hermetic — no wasm32-wasip2 build, no fixture artifact. Same
 # exact pin the one existing precedent uses (crates/execution/host).
 wat = "=1.254.0"
-wit-component = { version = "=0.254.0", features = ["dummy-module"] }
-wit-parser = "=0.254.0"
 # wamn-0h0g.12.6: the outbound-injection test needs a real span context, which
 # only a `tracing-opentelemetry` layer over an SDK tracer provider produces.
 opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }

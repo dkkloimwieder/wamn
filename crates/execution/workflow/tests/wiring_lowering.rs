@@ -6,7 +6,7 @@ use wamn_event_wire::Op;
 use wamn_router::{
     DEDUP_ID_FIELD, Delivery, NodeCall, NodeOutcome, Step, Terminal, Verdict, WalkStatus, Wiring,
 };
-use wamn_runtime::wiring_lowering::{
+use wamn_workflow::{
     GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringErrorKind, WiringOperationFact,
     WiringParameterFact, WiringScope, lower_active_wiring,
 };
@@ -137,7 +137,7 @@ fn document(to_port: Option<&str>) -> WiringDocument {
 fn lower<'a>(
     document: &'a WiringDocument,
     operations: &'a [WiringOperationFact],
-) -> Result<Wiring, wamn_runtime::wiring_lowering::WiringLoweringError> {
+) -> Result<Wiring, wamn_workflow::WiringLoweringError> {
     lower_active_wiring(
         GatedActiveWiring {
             scope: scope("prod"),

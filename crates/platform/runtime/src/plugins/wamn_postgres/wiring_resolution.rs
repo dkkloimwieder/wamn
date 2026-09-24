@@ -6,16 +6,8 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use serde::Deserialize;
 use tokio_postgres::types::ToSql;
-use wamn_catalog::{
-    AdmittedComponent, WiringDocument, WiringResponse, validate_resolved_wiring_compatibility,
-};
-use wamn_router::Wiring;
+use wamn_catalog::{AdmittedComponent, WiringDocument, validate_resolved_wiring_compatibility};
 use wamn_run_state::AuthorityClass;
-
-use crate::wiring_lowering::{
-    GatedActiveWiring, ScopedWiringOperationFacts, WiringScope, lower_active_wiring,
-    project_component_operations,
-};
 
 use super::{CandidateBindingWorld, WamnPostgres};
 
@@ -367,14 +359,16 @@ SELECT NOT EXISTS ( \
        ) \
 )";
 
-/// An immutable wiring and its resolved facts for the router and component source.
+/// An immutable wiring and its resolved catalog facts.
+///
+/// The workflow layer lowers `document` into the graph that the router walks.
 #[derive(Debug, Clone)]
 pub struct ResolvedActiveWiring {
     pub version: u32,
     pub effective_release_id: u32,
     pub graph_hash: Arc<str>,
-    pub wiring: Wiring,
-    pub response: Option<WiringResponse>,
+    pub package_version: String,
+    pub document: WiringDocument,
     /// Complete admitted facts selected by each exact wiring node.
     pub node_components: Arc<BTreeMap<String, AdmittedComponent>>,
     pub components: Arc<[AdmittedComponent]>,
@@ -391,7 +385,7 @@ pub enum CandidateWiringResolution {
 }
 
 impl ResolvedActiveWiring {
-    /// The admitted fact whose digest selected one router node.
+    /// The admitted fact whose digest selects one wiring node.
     pub fn component_by_digest(&self, digest: &str) -> Option<&AdmittedComponent> {
         self.components
             .iter()
@@ -475,10 +469,7 @@ impl WamnPostgres {
                             == u32::try_from(wiring_version).expect("validated wiring version")
                 });
                 fact.map(|fact| {
-                    lower_resolved_wiring(
-                        tenant_id,
-                        package_id,
-                        environment,
+                    resolved_wiring(
                         DecodedWiring {
                             version: fact.document.version,
                             effective_release_id: local.manifest.release.effective_release_id.get(),
@@ -500,10 +491,7 @@ impl WamnPostgres {
                 .context("query exact release wiring");
             match selected {
                 Ok(None) => Ok(None),
-                Ok(Some(row)) => {
-                    decode_released_wiring(tenant_id, package_id, environment, wiring_id, &row)
-                        .map(Some)
-                }
+                Ok(Some(row)) => decode_released_wiring(wiring_id, &row).map(Some),
                 Err(error) => Err(error),
             }
         };
@@ -710,13 +698,7 @@ impl WamnPostgres {
                         .and_then(CandidateBindingWorld::from_json);
                     match live_binding_world {
                         Ok(live_binding_world) if &live_binding_world == expected_binding_world => {
-                            match decode_active_wiring(
-                                tenant_id,
-                                package_id,
-                                environment,
-                                wiring_id,
-                                &row,
-                            ) {
+                            match decode_active_wiring(wiring_id, &row) {
                                 Ok(resolved) => {
                                     Ok(CandidateWiringResolution::Resolved(Box::new(resolved)))
                                 }
@@ -878,9 +860,6 @@ fn decode_wiring(wiring_id: &str, row: &tokio_postgres::Row) -> anyhow::Result<D
 }
 
 fn decode_released_wiring(
-    tenant_id: &str,
-    package_id: &str,
-    environment: &str,
     wiring_id: &str,
     row: &tokio_postgres::Row,
 ) -> anyhow::Result<ResolvedActiveWiring> {
@@ -899,14 +878,7 @@ fn decode_released_wiring(
         "release-wiring-node-closure-incomplete"
     );
     let components = decode_release_components(row, 6)?;
-    lower_resolved_wiring(
-        tenant_id,
-        package_id,
-        environment,
-        decoded,
-        node_components,
-        components,
-    )
+    resolved_wiring(decoded, node_components, components)
 }
 
 /// The release component list at column `first`, and its manifest count after it.
@@ -930,9 +902,6 @@ fn decode_release_components(
 }
 
 fn decode_active_wiring(
-    tenant_id: &str,
-    package_id: &str,
-    environment: &str,
     wiring_id: &str,
     row: &tokio_postgres::Row,
 ) -> anyhow::Result<ResolvedActiveWiring> {
@@ -967,20 +936,11 @@ fn decode_active_wiring(
         node_components.insert(node_id.clone(), component.clone());
     }
     let components = node_components.values().cloned().collect();
-    lower_resolved_wiring(
-        tenant_id,
-        package_id,
-        environment,
-        decoded,
-        node_components,
-        components,
-    )
+    resolved_wiring(decoded, node_components, components)
 }
 
-fn lower_resolved_wiring(
-    tenant_id: &str,
-    package_id: &str,
-    environment: &str,
+/// Check each node's admitted component against the document, and keep both.
+fn resolved_wiring(
     decoded: DecodedWiring,
     resolved: BTreeMap<String, AdmittedComponent>,
     components: Vec<AdmittedComponent>,
@@ -989,8 +949,6 @@ fn lower_resolved_wiring(
         validate_resolved_wiring_compatibility(&decoded.document, &resolved)
             .context("validate resolved response contracts")?;
     }
-    let mut executable = decoded.document.clone();
-    let mut operations = Vec::with_capacity(resolved.len());
     for (node_id, component) in &resolved {
         let node = decoded
             .document
@@ -1004,46 +962,15 @@ fn lower_resolved_wiring(
                 && components.contains(component),
             "release-wiring-node-binding-mismatch"
         );
-        let runtime_key = component.component_digest.clone();
-        executable
-            .nodes
-            .get_mut(node_id)
-            .expect("the resolved node belongs to the cloned document")
-            .component
-            .clone_from(&runtime_key);
-        for mut operation in project_component_operations(component) {
-            operation.component.clone_from(&runtime_key);
-            if !operations.contains(&operation) {
-                operations.push(operation);
-            }
-        }
     }
     verify_served_effect_projections(&components)?;
-    let scope = WiringScope {
-        tenant_id,
-        package_id,
-        environment,
-    };
-    let wiring = lower_active_wiring(
-        GatedActiveWiring {
-            scope,
-            package_version: &decoded.package_version,
-            document: &executable,
-        },
-        ScopedWiringOperationFacts {
-            scope,
-            package_version: &decoded.package_version,
-            operations: &operations,
-        },
-    )
-    .context("lower active wiring")?;
 
     Ok(ResolvedActiveWiring {
         version: decoded.version,
         effective_release_id: decoded.effective_release_id,
         graph_hash: Arc::from(decoded.graph_hash),
-        wiring,
-        response: decoded.document.response,
+        package_version: decoded.package_version,
+        document: decoded.document,
         node_components: Arc::new(resolved),
         components: components.into(),
     })
@@ -1136,10 +1063,7 @@ mod tests {
         operation.registered_operation = Some(registered.to_owned());
         admitted.operations.insert(registered.to_owned(), operation);
         let resolve = |admitted: AdmittedComponent| {
-            lower_resolved_wiring(
-                "tenant-a",
-                "orders",
-                "prod",
+            resolved_wiring(
                 DecodedWiring {
                     version: 1,
                     effective_release_id: 7,
@@ -1162,7 +1086,7 @@ mod tests {
             schema,
         });
         let resolved = resolve(admitted.clone()).expect("admitted committed result resolves");
-        assert_eq!(resolved.response, document.response);
+        assert_eq!(resolved.document.response, document.response);
         assert_eq!(resolved.components.as_ref(), &[admitted]);
     }
 
@@ -1217,10 +1141,7 @@ mod tests {
         dependency.scope.package_version = "1.0.0".to_owned();
         let graph_hash = document.wiring_hash().as_str().to_owned();
 
-        let resolved = lower_resolved_wiring(
-            "tenant-a",
-            "overlay",
-            "prod",
+        let resolved = resolved_wiring(
             DecodedWiring {
                 version: 3,
                 effective_release_id: 7,
@@ -1234,16 +1155,8 @@ mod tests {
             ]),
             vec![base.clone(), overlay.clone(), dependency.clone()],
         )
-        .expect("exact node targets lower");
+        .expect("exact node targets resolve");
 
-        assert_eq!(
-            resolved.wiring.node("base").unwrap().component,
-            base.component_digest
-        );
-        assert_eq!(
-            resolved.wiring.node("overlay").unwrap().component,
-            overlay.component_digest
-        );
         assert_eq!(base.component_digest, overlay.component_digest);
         assert_ne!(base, overlay);
         assert_eq!(
@@ -1354,7 +1267,7 @@ mod tests {
 
     /// wamn-0h0g.21.11. The delivery path must refuse the fabricated purity
     /// claim, not merely the publication path. Deleting the call in
-    /// `lower_resolved_wiring` leaves this failing.
+    /// `resolved_wiring` leaves this failing.
     #[test]
     fn the_serving_path_refuses_an_effect_projection_no_validator_derived() {
         let served = vec![migration_defaulted(&["wamn:postgres/client@0.1.0"])];

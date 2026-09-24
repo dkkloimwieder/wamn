@@ -90,8 +90,7 @@ pub use pool::{
 pub use production_claim::{
     ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorKind,
     ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseRenewal, ProductionReapResult, ProductionRouterAction, production_router_action,
-    production_router_result_action,
+    ProductionLeaseRenewal, ProductionReapResult,
 };
 #[cfg(feature = "test-util")]
 pub use resources::retained_transaction_for_test;

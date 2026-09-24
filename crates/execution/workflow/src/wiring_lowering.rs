@@ -17,6 +17,7 @@ use wamn_catalog::{
 use wamn_router::{
     ERROR_PORT, Terminal, Wiring, WiringEdge as RouterEdge, WiringError, WiringNode as RouterNode,
 };
+use wamn_runtime::plugins::wamn_postgres::ResolvedActiveWiring;
 
 /// Tenant/package/environment identity shared by a wiring and its admitted facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,6 +174,46 @@ impl From<WiringError> for WiringLoweringError {
             source: Some(source),
         }
     }
+}
+
+/// Lower one resolved wiring into the graph that the router walks.
+///
+/// Each node's component becomes the digest of its admitted component, which
+/// is the router's instance-pool key. Two nodes can share a digest and keep
+/// different package identities in `resolved.node_components`.
+pub fn lower_resolved_wiring(
+    scope: WiringScope<'_>,
+    resolved: &ResolvedActiveWiring,
+) -> Result<Wiring, WiringLoweringError> {
+    let mut executable = resolved.document.clone();
+    let mut operations = Vec::with_capacity(resolved.node_components.len());
+    for (node_id, component) in resolved.node_components.iter() {
+        let runtime_key = component.component_digest.clone();
+        executable
+            .nodes
+            .get_mut(node_id)
+            .expect("the resolution checked that each resolved node belongs to the document")
+            .component
+            .clone_from(&runtime_key);
+        for mut operation in project_component_operations(component) {
+            operation.component.clone_from(&runtime_key);
+            if !operations.contains(&operation) {
+                operations.push(operation);
+            }
+        }
+    }
+    lower_active_wiring(
+        GatedActiveWiring {
+            scope,
+            package_version: &resolved.package_version,
+            document: &executable,
+        },
+        ScopedWiringOperationFacts {
+            scope,
+            package_version: &resolved.package_version,
+            operations: &operations,
+        },
+    )
 }
 
 /// Lower one gated active wiring into the exact graph the router executes.
@@ -516,5 +557,110 @@ mod tests {
         assert_eq!(projected.input_ports, BTreeSet::from(["input".to_string()]));
         assert_eq!(projected.output_ports, BTreeSet::from(["main".to_string()]));
         assert!(projected.parameters["mapping"].required);
+    }
+
+    /// A package-scoped fact for `operation`. All fixtures share one digest.
+    fn admitted(
+        package_id: &str,
+        package_version: &str,
+        operation: &str,
+    ) -> wamn_catalog::AdmittedComponent {
+        wamn_catalog::normalize_component_fact(
+            ComponentDeclaration {
+                scope: ComponentPackageScope {
+                    tenant_id: "tenant-a".to_owned(),
+                    package_id: package_id.to_owned(),
+                    package_version: package_version.to_owned(),
+                },
+                component: "entity".to_owned(),
+                interface_version: "0.1.0".to_owned(),
+                operations: BTreeMap::from([(
+                    operation.to_owned(),
+                    ComponentOperationDeclaration {
+                        pre_commit: None,
+                        committed_result_schema: None,
+                        fresh_only: false,
+                        registered_operation: Some(operation.to_owned()),
+                        dependencies: Vec::new(),
+                        input_ports: vec![ComponentPortDeclaration {
+                            name: "input".to_owned(),
+                            schema: json!({}),
+                        }],
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                    },
+                )]),
+                connections: Vec::new(),
+            },
+            format!("sha256:{}", "a".repeat(64)),
+            ["wasi:logging/logging@0.1.0".to_owned()],
+            Vec::new(),
+        )
+        .expect("fixture component admits")
+        .component
+    }
+
+    #[test]
+    fn same_digest_nodes_lower_to_the_shared_digest() {
+        let document = WiringDocument::parse(&json!({
+            "format-version": "0.1",
+            "wiring-id": "compose-orders",
+            "version": 3,
+            "entry": "base",
+            "nodes": {
+                "base": {
+                    "component": "entity",
+                    "interface-version": "0.1.0",
+                    "operation": "base:entity/create@1.0.0"
+                },
+                "overlay": {
+                    "component": "entity",
+                    "interface-version": "0.1.0",
+                    "operation": "overlay:entity/create@2.0.0",
+                    "terminal": "respond"
+                }
+            },
+            "edges": [{
+                "from": "base",
+                "from-port": "error",
+                "to": "overlay",
+                "to-port": "input"
+            }]
+        }))
+        .expect("cross-package fixture wiring admits");
+        let base = admitted("base", "1.0.0", "base:entity/create@1.0.0");
+        let overlay = admitted("overlay", "2.0.0", "overlay:entity/create@2.0.0");
+        let resolved = ResolvedActiveWiring {
+            version: 3,
+            effective_release_id: 7,
+            graph_hash: std::sync::Arc::from(document.wiring_hash().as_str()),
+            package_version: "2.0.0".to_owned(),
+            document,
+            node_components: std::sync::Arc::new(BTreeMap::from([
+                ("base".to_owned(), base.clone()),
+                ("overlay".to_owned(), overlay.clone()),
+            ])),
+            components: vec![base.clone(), overlay.clone()].into(),
+        };
+
+        let wiring = lower_resolved_wiring(
+            WiringScope {
+                tenant_id: "tenant-a",
+                package_id: "overlay",
+                environment: "prod",
+            },
+            &resolved,
+        )
+        .expect("exact node targets lower");
+
+        assert_eq!(base.component_digest, overlay.component_digest);
+        assert_eq!(
+            wiring.node("base").unwrap().component,
+            base.component_digest
+        );
+        assert_eq!(
+            wiring.node("overlay").unwrap().component,
+            overlay.component_digest
+        );
     }
 }

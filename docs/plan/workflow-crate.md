@@ -139,7 +139,7 @@ The WMS graph `inventory_move_and_label` sits behind the HTTP route `/inventory/
 | host `router_response.rs`, `queue.rs`, `queue/` | `wamn-workflow` |
 | host `readiness.rs` | split: route readiness stays, wiring preload moves |
 | runtime `wiring_lowering.rs`, `tests/wiring_lowering.rs`, `tests/port_constant_agreement.rs` | `wamn-workflow` |
-| runtime `wiring_resolution.rs` | the SQL and the fetch stay. The lowering into `Wiring` moves. |
+| runtime `wiring_resolution.rs` | the SQL, the fetch, and the catalog checks stay. `ResolvedActiveWiring` carries the authored document and its package version. The digest swap and the lowering into `Wiring` move to `lower_resolved_wiring`. |
 | runtime `production_claim.rs` router mapping | `wamn-workflow`. The `RunStore` adapter stays. |
 | control `enqueue_run.rs` | stays in `wamn-control`. It reads the release snapshot through `publish_release::read_release_snapshot`, so a move would make the workflow crate depend on all of `wamn-control`. |
 | catalog `ServingWiring`, `ServingRegistration`, wiring attachments, Cron | the manifest workflow section |

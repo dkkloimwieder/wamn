@@ -64,7 +64,7 @@ pub(crate) struct PreparedResponse {
 
 impl PreparedResponse {
     pub(crate) fn from_resolved(resolved: &ResolvedActiveWiring) -> anyhow::Result<Option<Self>> {
-        let Some(declaration) = &resolved.response else {
+        let Some(declaration) = &resolved.document.response else {
             return Ok(None);
         };
         let committed = declaration
@@ -72,8 +72,9 @@ impl PreparedResponse {
             .as_ref()
             .map(|node_id| {
                 let node = resolved
-                    .wiring
-                    .node(node_id)
+                    .document
+                    .nodes
+                    .get(node_id)
                     .context("declared committed node is absent")?;
                 let operation = resolved
                     .node_components
