@@ -38,7 +38,7 @@ The [attachments](publication/attachments.json) expose five authenticated POST r
 
 The Acme receipt operation awaits the declared base operation through a generated typed WIT interface.
 It returns the base receipt result unchanged and performs no additional SQL.
-The nested call retains the same caller and enforces the callee permission.
+The build composes the overlay with its base, so the call reaches the base inside one component. The release folds the base permission into the overlay entry's grant.
 The effective release resolves `base_receiving` to one exact implementation.
 The overlay's compiled requirement remains separate from that selected implementation.
 

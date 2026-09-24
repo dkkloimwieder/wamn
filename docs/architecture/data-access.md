@@ -169,18 +169,20 @@ For `per_input` commands, each item owns one transaction on one PostgreSQL conne
 The transaction resource never crosses a wiring edge, and separate outer items have no shared atomicity.
 A composed write followed by a projection is not one transaction.
 A declared pre-commit participant can extend a base command within its transaction.
-The base declares the typed callback input. A forwarding operation selects a participant from its own admitted component.
-The release pins the base dependency and the participant component. The host requires the original caller to hold both operation permissions.
+The base declares the typed callback input. The overlay operation that forwards to the base names the participant.
+The overlay build composes the overlay, its pinned base, and the participant into one component.
+The release folds the base operation and the participant into the overlay entry's grant, so the host requires the original caller to hold every one of those permissions.
 The generated contracts carry ordinary typed values. Application code owns the transaction sequence and conditional business rules.
 
 `wamn:postgres/statements` provides an execution-only `transaction-view` resource with call-scoped access.
-The base calls `transaction.select-participant` before its nested call. The native dispatcher binds the admitted participant to the existing transaction owner.
-The participant calls `participant-view` to obtain a resource in its own store. No resource crosses the application operation interface.
+The host binds the participant that the release publishes for the entry, and `selected-participation` returns it.
+The base calls `transaction.select-participant` with that participant before it calls its pre-commit slot. The call reaches the participant inside the composed component.
+The participant calls `participant-view` to obtain a view of the same invocation's transaction. No resource crosses the application operation interface.
 The resource holds no connection. Retaining it cannot extend the transaction lifetime.
-Resource ownership does not replace application authorization or revocation when the call ends.
-Each use checks that invocation, its operation, the original caller, tenant, release, database identity, deadline, and admitted statements.
-The participant cannot commit, roll back, open an independent SQL connection, or delegate its view.
-SQL uses the same held connection and records the participant operation before restoring the owner operation.
+Each use checks the invocation, the original caller, tenant, release, database identity, deadline, and the entry's statements.
+One selection lends one view. The view cannot commit or roll back.
+The participant runs in the entry's invocation scope, so the host does not separate the participant's other SQL from the base's SQL. The published grant covers both.
+SQL uses the same held connection and records the participant operation before restoring the entry operation.
 Return, trap, cancellation, deadline, or transaction completion revokes access. Finalization cancels and waits for active view SQL before using the connection.
 The earlier cross-component borrowed-resource contract failed with `mismatched resource types` on the current pin.
 That result does not describe participant-local resources. Explicit resource transfer between stores remains unimplemented.

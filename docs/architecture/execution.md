@@ -11,8 +11,11 @@ Route concurrency limits refuse excess work with HTTP 429.
 
 The HTTP ingress path authenticates the caller before invoking application code.
 The host compares the route, operation, permissions, wiring, and release facts before dispatch.
-Each nested operation retains the original caller and needs its own declared authority.
-Component membership or an imported interface alone grants no permission to call an operation.
+Publish decides authorization, and the runtime trusts the loaded release.
+An application's components compose at build into one component, so a call inside an application reaches no host.
+Publish folds each export's call graph into its released operation: the union of the permissions, `fresh_only` if any callee sets it, and the union of the statements.
+The host checks that grant once, before the entry runs, under the original caller.
+Component membership alone grants no permission to call an operation.
 
 An attachment with auth policy `none` has no principal, so it cannot write.
 If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release mint](../../crates/control/lib/src/publish_release/components.rs) refuses it.
@@ -53,7 +56,7 @@ Independent components can use different lifetimes in one workload.
 The host does not split linked stores to permit reuse.
 
 Each call receives a new host-owned authority scope.
-Capability and nested calls use that scope, and cancellation revokes it independently of native store teardown.
+Capability calls use that scope, and cancellation revokes it independently of native store teardown.
 A retained guest context cannot select the next call's permissions.
 A call that leaves host resource handles open discards those resources and retires its instance while preserving its completed result.
 The host never clears a resource table and then reuses that instance, because old handles can alias new resources.
@@ -62,8 +65,8 @@ Trusted component code owns request-local caller data, caller-dependent cache cl
 The host does not sanitize guest memory or enforce those promises against faulty or malicious trusted code.
 Use fresh instances wherever that trust is unacceptable.
 `maxConcurrency = 1` serializes calls on an instance. It does not isolate guest memory or background tasks.
-One absolute deadline covers initialization, execution, and nested calls.
-A child cannot extend that deadline.
+One absolute deadline covers initialization and execution.
+A guest cannot extend that deadline.
 
 Connection activation changes the generation selected for new work.
 Admitted runs that carry a generation pin continue to use that exact immutable generation.
@@ -98,7 +101,7 @@ All cleanup paths retain their resource bounds and return failures to their owne
 The [engine operation module](../../crates/platform/engine/src/operation.rs) runs one component export through native dispatch with `invoke_operation`.
 It owns the deadline, workload loading, and invocation state.
 It reaches the host through two traits: `ApplicationHost` gives the loaded application, and `InvocationPolicy` grants and revokes the authority of each call.
-The [host operation module](../../crates/execution/host/src/operation.rs) implements both traits and owns authority and dependency calls.
+The [host operation module](../../crates/execution/host/src/operation.rs) implements both traits and owns authority.
 The [driver](../../crates/execution/host/src/router_driver.rs) walks a wiring graph and calls the operation module for each node.
 The [route path](../../crates/execution/host/src/route.rs) calls it once for a route target and never enters the driver.
 A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
@@ -107,13 +110,12 @@ The caller decides whether to send a new request.
 Typed operation inputs and successful results contain owned lists or records.
 Admission checks the context, node errors, and every nested value.
 It refuses store-owned resources at these boundaries.
-Nested calls use the typed entrypoint under the existing authority and deadline.
+A composed call inside an application uses the typed entrypoint.
 JSON adapters serve HTTP and dynamic routing.
 The pure router owns deterministic graph decisions.
 After initialization, the host records caller, SQL, claims, causation, and effect authority in an invocation scope.
 Native callbacks restore the trace context from that scope.
 Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
-Candidate execution still refuses nested calls.
 The host owns durable queue claims and settlement through the `RunStore` trait of `wamn-run-state`.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
@@ -123,13 +125,13 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
 - An authenticated route caller binds its principal id.
-- A nested call binds the executing principal of its parent.
 - A post-commit registration delivery binds `wamn:materializer`.
 - An automation delivery binds its admitted service principal.
 - A legacy queue delivery or management candidate case binds `wamn:executor`.
 
 The same transaction binds the executing operation as `app.operation`.
-A node binds the operation token that it runs, so a nested call binds its own token.
+A node binds the operation token of the entry that it runs. A composed callee runs under that token.
+A participant statement records the participant operation and then restores the entry's token.
 A registration delivery binds the token of its handler.
 A host queue claim, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
@@ -213,7 +215,7 @@ A delayed mint cannot restart the lifetime.
 The host reconsiders admission freshness after permission reads.
 Age bounds limit delayed admission without promising that identity remains unchanged during a pause.
 
-Fresh-only operations require PAT authentication, including nested calls under the original caller.
+Fresh-only operations require PAT authentication. An entry whose call graph reaches a fresh-only operation is fresh-only.
 A session that otherwise has permission receives `fresh-credential-required`.
 The client does not replay that operation or silently replace its credential.
 Authentication deadlines bound new admission and do not cancel work already accepted.
@@ -230,7 +232,7 @@ External federation and unbuilt identity design remain in the [identity plan](..
 
 ### Consistent session access
 
-Sessions and PATs use the same operation permission checks, including nested operations.
+Sessions and PATs use the same operation permission checks, including the folded grant of an entry.
 The legacy `fresh-only` metadata and client methods no longer require a PAT.
 Every human session receives the same current authority checks without operation-specific password prompts.
 Renewal stays automatic during active use and never extends the absolute login deadline.
@@ -521,7 +523,7 @@ Queue shutdown bounds its current turn and auxiliary cleanup.
 A turn beyond the budget retains the existing durable lease for recovery.
 The [enqueue-run command](../operations/queued-automation.md) admits production automation under an active service principal.
 The host reads that principal and its current application permissions before each delivery.
-The normal operation checks also apply to nested calls.
+The normal operation checks also apply to the folded grant of each entry.
 The legacy `fresh-only` restriction still refuses queued service callers. Human session support does not widen queued automation.
 SIGTERM and SIGINT share the host cleanup budget. The budget retains the native drain and plugin shutdown allowances.
 An aborted call loses its invocation authority, and native teardown releases its store.

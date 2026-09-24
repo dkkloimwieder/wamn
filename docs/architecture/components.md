@@ -40,15 +40,13 @@ Update inputs distinguish an omitted field, explicit null, and a value.
 The application still decides whether a field accepts null.
 Receiving permits `supplier_id`; Acme permits `acme_inspection_required` and `acme_quality_status`.
 Each update uses its existing SQL and permissions. Acme's update does not call Receiving's update.
-The generated `run-json` adapter serves HTTP and dynamic routing, while nested receipt calls use the typed `run` function.
-Native dispatch carries owned values between stores and retains the caller's authority and deadline.
+The generated `run-json` adapter serves HTTP and dynamic routing, while the composed receipt call uses the typed `run` function.
 Admission refuses resource handles in this operation boundary because those handles belong to one store.
 
-Application operation dependencies resolve to exact admitted providers.
-Every interface imported by the admitted closure has one provider, including its interface version.
-Repeated export-only handlers do not create that uniqueness requirement.
-Dependency membership alone does not authorize a nested operation.
-The [execution rules](execution.md) retain the original caller and each operation's authority.
+An application operation dependency names an exact base by digest.
+The overlay build composes that base into the overlay component, and admission requires the base to be embedded unchanged under that digest.
+A composed component also exports the interfaces of its members. The host routes only to declared operations.
+Dependency membership alone does not authorize an operation. Publish folds each dependency into the entry's grant, and the [execution rules](execution.md) check that grant.
 
 Release membership names package versions and component digests.
 Publication uses WAMN-owned OCI media types and retains the component configuration needed to establish admission.
