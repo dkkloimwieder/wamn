@@ -1,0 +1,13 @@
+{
+  "name": "@wamn/wms-client",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@wamn/web-runtime": "^0.1.0",
+    "@wamn/ui": "^0.1.0"
+  }
+}

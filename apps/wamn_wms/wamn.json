@@ -3,6 +3,9 @@
     "id": "wamn_wms",
     "version": "1.0.0"
   },
+  "client_package": {
+    "name": "@wamn/wms-client"
+  },
   "required_platform_policy_contract": {
     "id": "wms_data_access",
     "state": "satisfied"
