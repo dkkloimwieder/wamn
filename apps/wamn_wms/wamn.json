@@ -244,6 +244,12 @@
             "location_id",
             "status"
           ],
+          "values": {
+            "status": [
+              "available",
+              "held"
+            ]
+          },
           "claim": {
             "table": "pallet_command",
             "identities": {

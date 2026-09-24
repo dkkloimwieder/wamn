@@ -1198,6 +1198,47 @@ fn an_operation_the_release_does_not_serve_gets_no_component() {
     );
 }
 
+/// A create that accepts fewer values than the model declares states them,
+/// and the form offers only those (wamn-wtwn).
+#[test]
+fn a_create_offers_only_the_values_it_declares() {
+    let narrowed = |values: serde_json::Value, action: &str| {
+        let mut manifest = fixture::manifest();
+        manifest["models"]["widget"]["operations"][action]["values"] = values;
+        fixture::try_generate_with(&fixture::catalog(), &manifest)
+    };
+    let package = narrowed(serde_json::json!({"code": ["standard"]}), "create")
+        .expect("a create narrows a writable enum field");
+    let files = emit(&fixture::client_release_of(&package));
+    let create = widget(&files)
+        .split("export function WidgetCreateForm")
+        .next()
+        .and_then(|before| before.rsplit("const CREATE_INPUT").next())
+        .expect("the create form states its input schema");
+    assert!(
+        create.contains("  code: z.enum([\"standard\"]).optional(),\n"),
+        "the create checks the one value it accepts: {create}"
+    );
+    assert!(create.contains("  code?: \"standard\";\n"));
+    assert!(
+        !create.contains("priority"),
+        "a value the create refuses is never offered"
+    );
+
+    for (values, action) in [
+        (serde_json::json!({"code": ["standard"]}), "update"),
+        (serde_json::json!({"note": ["standard"]}), "create"),
+        (serde_json::json!({"code": ["urgent"]}), "create"),
+        (serde_json::json!({"code": []}), "create"),
+    ] {
+        let error = narrowed(values.clone(), action).expect_err("an invalid narrowing is refused");
+        assert!(
+            error.to_string().contains("values for"),
+            "{values} on {action}: {error}"
+        );
+    }
+}
+
 /// The batch names `widget_maker` twice and its revision names the inspector,
 /// so the form sends the revision of the inspector row the operator chose
 /// (wamn-nv87). No page prop carries it.

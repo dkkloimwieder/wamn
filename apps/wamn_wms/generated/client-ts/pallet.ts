@@ -16,7 +16,7 @@ export interface PalletCreateRequest {
   /** `string` */
   requestId: string;
   /** `text` */
-  status: "available" | "consumed" | "held";
+  status: "available" | "held";
 }
 
 /** What `wamn-wms:pallet/create@1.0.0` calls its input members. */

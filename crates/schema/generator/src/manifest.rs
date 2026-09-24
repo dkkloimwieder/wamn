@@ -2453,6 +2453,13 @@ pub struct OperationDeclaration {
     pub authored_sql: Option<AuthoredSqlDeclaration>,
     #[serde(default)]
     pub writable_fields: Vec<String>,
+    /// The values a create accepts for a writable enum field, when it accepts
+    /// fewer than the model declares.
+    ///
+    /// A WMS pallet can end `consumed`, but a new pallet is `available` or
+    /// `held`, so its create states the two.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub values: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub revision_field: Option<String>,
     #[serde(default)]

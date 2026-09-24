@@ -836,7 +836,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet/create@1.0.0",
-    "definition-hash": "sha256:6f1871c082704b08044b2a1e5b29a203a5a33365d859aaded688bf505c48a8fb",
+    "definition-hash": "sha256:94c501945bfbc911240735386116fb953db338130990f99b13bb66d1049f41ff",
     "definition": {
       "id": "pallet-create-http",
       "kind": "http",
@@ -882,8 +882,7 @@
               "type": "string",
               "enum": [
                 "available",
-                "held",
-                "consumed"
+                "held"
               ]
             }
           }

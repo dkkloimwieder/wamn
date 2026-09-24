@@ -80,14 +80,14 @@ const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 const CREATE_INPUT = z.object({
   locationId: z.string().regex(UUID_TEXT, "expected a UUID"),
   palletCode: z.string(),
-  status: z.enum(["available", "consumed", "held"]),
+  status: z.enum(["available", "held"]),
 });
 
 /** What the form for `wamn-wms:pallet/create@1.0.0` can start with. */
 export interface PalletCreateFormInitial {
   locationId?: Uuid;
   palletCode?: string;
-  status?: "available" | "consumed" | "held";
+  status?: "available" | "held";
 }
 
 /** What the form for `wamn-wms:pallet/create@1.0.0` takes. */
@@ -213,11 +213,10 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
               allowEmpty={false}
               choices={[
                 { value: "available", text: "available" },
-                { value: "consumed", text: "consumed" },
                 { value: "held", text: "held" },
               ]}
               value={String(field().state.value ?? "")}
-              onChange={(value) => field().handleChange(value as "available" | "consumed" | "held")}
+              onChange={(value) => field().handleChange(value as "available" | "held")}
               error={refusalMarks(refusal()?.member ?? null, "status") ? (refusal()?.code ?? "refused") : null}
             />
           )}

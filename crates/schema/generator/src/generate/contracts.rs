@@ -1020,6 +1020,11 @@ fn input_contract(
             if let Some((referenced, _)) = column_reference(manifest, table, field) {
                 members.insert("references".to_owned(), json!({"model": referenced}));
             }
+            // A create that accepts fewer values than the model declares
+            // states them, so a client offers only those.
+            if let Some(values) = operation.values.get(field) {
+                members.insert("values".to_owned(), json!(values));
+            }
             declared
         })
         .collect::<Vec<_>>();

@@ -130,7 +130,7 @@ pub const PALLET_CREATE_INPUT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &["available", "consumed", "held"],
+        values: &["available", "held"],
     },
 ];
 
@@ -246,7 +246,7 @@ pub const PALLET_CREATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
             path: "status",
             type_name: "text",
             nullable: false,
-            values: &["available", "consumed", "held"],
+            values: &["available", "held"],
         },
         required: true,
         minimum: None,

@@ -298,6 +298,24 @@ fn validate_operation(
             ));
         }
     }
+    // A create narrows a writable enum field to some of the values the model
+    // declares, and never to none, so a form always offers a choice.
+    for (field, values) in &operation.values {
+        let declared = model.enum_fields.get(field);
+        if action != CrudAction::Create
+            || !writable.contains(field)
+            || values.is_empty()
+            || values.iter().collect::<BTreeSet<_>>().len() != values.len()
+            || !declared.is_some_and(|declared| values.iter().all(|value| declared.contains(value)))
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{context} values for {field} must be a create's writable enum field, narrowed to distinct values the model declares"
+                ),
+            ));
+        }
+    }
 
     if let Some(revision_field) = &operation.revision_field {
         let column = validate_field(table, model_name, revision_field)?;
