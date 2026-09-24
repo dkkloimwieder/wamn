@@ -95,6 +95,10 @@ fn request_trace(
         let digest = text("wamn.component_digest")
             .strip_prefix("sha256:")
             .unwrap_or_default();
+        // A route span names its attachment. A workflow span names its wiring
+        // and node instead.
+        let route = !text("wamn.attachment_id").is_empty();
+        let workflow = !text("wamn.wiring_id").is_empty() && !text("wamn.node_id").is_empty();
         ensure!(
             text("wamn.tenant") == tenant
                 && text("wamn.project") == project
@@ -102,14 +106,10 @@ fn request_trace(
                 && hex_identifier(digest, 32)
                 && digest.bytes().all(|byte| !byte.is_ascii_uppercase())
                 && text("wamn.caller_credential_kind") == "pat"
-                && [
-                    "wamn.wiring_id",
-                    "wamn.node_id",
-                    "wamn.operation",
-                    "wamn.caller_principal_id"
-                ]
-                .iter()
-                .all(|key| !text(key).is_empty()),
+                && route != workflow
+                && ["wamn.operation", "wamn.caller_principal_id"]
+                    .iter()
+                    .all(|key| !text(key).is_empty()),
             "invocation does not carry the expected host identity"
         );
         invocations.insert(
