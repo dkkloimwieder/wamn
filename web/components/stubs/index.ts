@@ -143,26 +143,34 @@ export function groupStub(): { transport: Transport; sent: WireRequest[] } {
   };
 }
 
-/** One transport that answers the read with a record and the removal with an empty result. */
-export function deleteStub(): { transport: Transport; sent: WireRequest[] } {
+/**
+ * One transport that holds one widget at revision 7, as a server does.
+ *
+ * A removal with that revision completes with an empty result, and a removal
+ * with any other refuses as a conflict. `write` is a second writer that moves
+ * the revision after the page displayed the record.
+ */
+export function deleteStub(): { transport: Transport; sent: WireRequest[]; write: () => void } {
   const sent: WireRequest[] = [];
+  let version = 7;
   return {
     sent,
+    write: () => {
+      version += 1;
+    },
     transport: {
       invoke: (request: WireRequest) => {
         sent.push(request);
-        const reply: Outcome<JsonValue> = request.operation.includes("/get@")
-          ? {
-              status: "completed",
-              value: {
-                id: WIDGET,
-                code: "standard",
-                note: null,
-                edit_version: "7",
-                created_at: "2026-09-21T12:00:00.000000Z",
-              },
-            }
-          : { status: "completed", value: {} };
+        const item = request.items[0] as { [key: string]: JsonValue };
+        const expected = item["expected_edit_version"];
+        const reply: Outcome<JsonValue> =
+          expected === String(version)
+            ? { status: "completed", value: {} }
+            : {
+                status: "refused",
+                code: "concurrency_conflict",
+                detail: { expected: expected ?? null, observed: String(version) },
+              };
         return Promise.resolve(reply);
       },
     },

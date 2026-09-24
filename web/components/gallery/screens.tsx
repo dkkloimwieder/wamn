@@ -100,7 +100,10 @@ export function ScreenSections(): JSX.Element {
       </Section>
 
       <Section title={WidgetDeleteDeleteLabel} name="WidgetDeleteDelete">
-        <WidgetDeleteDelete transport={deleteStub().transport} key={{ id: WIDGET }} />
+        <WidgetDeleteDelete
+          transport={deleteStub().transport}
+          record={{ id: WIDGET, editVersion: "7" }}
+        />
       </Section>
     </>
   );

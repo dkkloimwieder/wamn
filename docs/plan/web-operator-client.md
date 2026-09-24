@@ -73,7 +73,7 @@ Facts from the code at `cdb6dd1e`, after Epics 1, 2, 3A, and 3B.
 - The browser trusts the platform for the values inside a reply. A reply whose value violates its own field contract reads as completed there and as uncertain in the terminal.
 - Components take the plan role: table, detail, form, delete. A shape with no role gets no component, and the index names it with the reason.
 - A form checks what the operator types with an emitted `zod` schema. It writes the reserved inputs from the runtime, and it marks the member that a refusal names. A repeated input group renders as a list.
-- A form whose plan binds a revision reads the record when it opens and sends the revision of that read, never one read at submit. A delete reads the record when the operator confirms. A revision with no binding is a prop.
+- A form whose plan binds a revision reads the record when it opens and sends the revision of that read, never one read at submit. A delete sends the key and the revision of the record that the page displayed, and reads nothing. A revision with no binding is a prop.
 - Names: the generator decides every member name and emits a field map beside each operation, so no name rule exists at run time. A contract name that does not reverse is refused at emit.
 - A bounded list returns `{ rows }`, and a page returns `{ item, nextCursor }`. A declared value domain types as a union. A request declares writable members, and a result keeps read only members.
 - `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging, row links, supplied fields, record link, revision binding. Paging names the input path of every page control.

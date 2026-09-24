@@ -532,9 +532,11 @@ fn a_revision_bound_form_sends_the_revision_it_read_when_it_opened() {
     );
 }
 
-/// A removal is not an edit that an operator undoes, so it confirms first.
+/// A removal is not an edit that an operator undoes, so it confirms first. It
+/// sends the revision of the record the page displayed and reads nothing, so a
+/// change another writer made after the page read it refuses (wamn-k2d4).
 #[test]
-fn a_delete_confirms_and_sends_the_revision_it_read() {
+fn a_delete_confirms_and_sends_the_revision_the_page_displayed() {
     let files = emit(&release());
     let widget = widget(&files);
     assert!(widget.contains(concat!(
@@ -543,8 +545,8 @@ fn a_delete_confirms_and_sends_the_revision_it_read() {
         "  readonly transport: Transport;\n",
     )));
     assert!(
-        widget.contains("  readonly key: WidgetGetDetailInput;"),
-        "the delete takes the record it removes"
+        widget.contains("  readonly record: Pick<WidgetGetResult, \"editVersion\" | \"id\">;"),
+        "the delete takes the key and the revision of the record the page displayed"
     );
     let remove = widget
         .split("export function WidgetDeleteDelete")
@@ -576,14 +578,14 @@ fn a_delete_confirms_and_sends_the_revision_it_read() {
         assert!(!remove.contains(markup), "the UI package owns {markup}");
     }
     assert!(
-        remove.contains("const record = await get(props.transport, ["),
-        "it reads the record first"
+        !remove.contains("get(props.transport"),
+        "the removal reads nothing: {remove}"
     );
     assert!(
         remove.contains(
-            "item = writeMember(item, [\"expectedEditVersion\"], readMember(record.value, [\"editVersion\"]) ?? null);"
+            "item = writeMember(item, [\"expectedEditVersion\"], readMember(props.record, [\"editVersion\"]) ?? null);"
         ),
-        "it sends the revision it read"
+        "it sends the revision the page displayed"
     );
     assert!(!remove.contains("<form.Field"), "a delete fills no field");
 }

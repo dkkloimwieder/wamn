@@ -2,7 +2,9 @@
  * The testing method for a delete screen, used once.
  *
  * A removal cannot be undone, so the screen asks in an alert dialog first. It
- * reads the record when the operator confirms, and sends the revision it read.
+ * sends the key and the revision of the record the page displayed, and reads
+ * nothing, so a change that a second writer makes after the page read the
+ * record refuses as a conflict, and the screen reports it (wamn-k2d4).
  *
  * The subject is the fixture's delete screen, written by
  * `crates/schema/generator/src/client_component.rs`. The command
@@ -19,10 +21,19 @@ import { WIDGET, deleteStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
 
+/** The record as a table row displayed it. */
+const DISPLAYED = { id: WIDGET, editVersion: "7" };
+
+const confirm = async () => {
+  fireEvent.click(screen.getByRole("button", { name: "delete" }));
+  await waitFor(() => expect(screen.getByRole("alertdialog")).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: "confirm" }));
+};
+
 describe("the generated delete", () => {
   it("sends nothing when the operator cancels", async () => {
     const { transport, sent } = stub();
-    render(() => <WidgetDeleteDelete transport={transport} key={{ id: WIDGET }} />);
+    render(() => <WidgetDeleteDelete transport={transport} record={DISPLAYED} />);
     fireEvent.click(screen.getByRole("button", { name: "delete" }));
     await waitFor(() => expect(screen.getByRole("alertdialog")).toBeDefined());
     expect(screen.getByText("remove this record?")).toBeDefined();
@@ -32,25 +43,44 @@ describe("the generated delete", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("removes the record with the revision it read once the operator confirms", async () => {
+  it("removes the record with the revision the page displayed once the operator confirms", async () => {
     const { transport, sent } = stub();
     const seen: Outcome<unknown>[] = [];
     render(() => (
       <WidgetDeleteDelete
         transport={transport}
-        key={{ id: WIDGET }}
+        record={DISPLAYED}
         onSubmitted={(outcome) => seen.push(outcome)}
       />
     ));
-    fireEvent.click(screen.getByRole("button", { name: "delete" }));
-    await waitFor(() => expect(screen.getByRole("alertdialog")).toBeDefined());
-
-    fireEvent.click(screen.getByRole("button", { name: "confirm" }));
+    await confirm();
     await waitFor(() => expect(seen).toHaveLength(1));
-    // One read, then one removal.
-    expect(sent).toHaveLength(2);
-    const removal = sent[1]?.items[0] as { [key: string]: JsonValue };
+    // One removal, and no read.
+    expect(sent).toHaveLength(1);
+    const removal = sent[0]?.items[0] as { [key: string]: JsonValue };
     expect(removal["id"]).toBe(WIDGET);
     expect(removal["expected_edit_version"]).toBe("7");
+    expect(seen[0]?.status).toBe("completed");
+  });
+
+  it("reports a conflict when a second writer changed the record after the page displayed it", async () => {
+    const { transport, sent, write } = stub();
+    const seen: Outcome<unknown>[] = [];
+    render(() => (
+      <WidgetDeleteDelete
+        transport={transport}
+        record={DISPLAYED}
+        onSubmitted={(outcome) => seen.push(outcome)}
+      />
+    ));
+    write();
+    await confirm();
+    await waitFor(() => expect(seen).toHaveLength(1));
+
+    expect(sent).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ status: "refused", code: "concurrency_conflict" });
+    await waitFor(() =>
+      expect(screen.getAllByText("concurrency_conflict").length).toBeGreaterThan(0),
+    );
   });
 });

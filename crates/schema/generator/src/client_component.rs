@@ -249,14 +249,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
             }
             Role::Delete => {
                 solid.insert("createSignal");
-                emit_delete(
-                    &mut body,
-                    screen,
-                    &mut runtime,
-                    &mut ui,
-                    &mut bindings,
-                    &records,
-                )?;
+                emit_delete(&mut body, screen, &mut runtime, &mut ui, &mut bindings)?;
             }
             role @ Role::Unsupported(_) => {
                 return Err(ClientComponentError::new(
@@ -1904,7 +1897,6 @@ fn emit_delete(
     runtime: &mut BTreeSet<&'static str>,
     ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
-    records: &BTreeMap<String, String>,
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
@@ -1954,18 +1946,24 @@ fn emit_delete(
     source.push_str("  readonly transport: Transport;\n");
     if let Some(binding) = screen.revision {
         let read = crate::client_ts::operation_stem(binding.read_operation);
-        let key = records
-            .get(binding.read_operation)
-            .cloned()
-            .unwrap_or_else(|| format!("{read}Request"));
-        bindings.insert(format!("type {read}Request"));
+        bindings.insert(format!("type {read}Result"));
+        let mut fields = [
+            member_path(binding.key_field)[0].clone(),
+            member_path(binding.revision_field)[0].clone(),
+        ];
+        fields.sort();
         writeln!(
             source,
-            "  /** The record to remove. The component reads it, and sends the\n   * revision it read, because `{}` states that binding. */",
+            "  /** The record to remove, as the page displayed it. The component sends\n   * its key and its revision and reads nothing, so a change another writer\n   * made after the page read it refuses as a conflict. `{}` states the fields. */",
             binding.read_operation
         )
         .expect("write");
-        writeln!(source, "  readonly key: {key};").expect("write");
+        writeln!(
+            source,
+            "  readonly record: Pick<{read}Result, {:?} | {:?}>;",
+            fields[0], fields[1]
+        )
+        .expect("write");
     } else {
         writeln!(
             source,
@@ -2003,35 +2001,18 @@ fn emit_delete(
     );
     source.push_str("\n  const remove = async () => {\n");
     if let Some(binding) = screen.revision {
-        let read = crate::client_ts::function_name(local_name(binding.read_operation)).map_err(
-            |error| {
-                ClientComponentError::new(
-                    ClientComponentErrorKind::UnwrittenRole,
-                    error.to_string(),
-                )
-            },
-        )?;
-        bindings.insert(read.clone());
         runtime.insert("readMember");
-        writeln!(
-            source,
-            "    const record = await {read}(props.transport, [\n      {{ ...props.key, requestId: newRequestId() }},\n    ]);"
-        )
-        .expect("write");
-        source.push_str(
-            "    if (record.status !== \"completed\") {\n      setRefusal({ code: record.status, member: null });\n      return;\n    }\n",
-        );
         writeln!(source, "    let item = {{}} as {stem}Request;").expect("write");
         writeln!(
             source,
-            "    item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            "    item = writeMember(item, {}, readMember(props.record, {}) ?? null);",
             member_literal(binding.command_key_input),
             member_literal(binding.key_field)
         )
         .expect("write");
         writeln!(
             source,
-            "    item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            "    item = writeMember(item, {}, readMember(props.record, {}) ?? null);",
             member_literal(binding.command_revision_input),
             member_literal(binding.revision_field)
         )
