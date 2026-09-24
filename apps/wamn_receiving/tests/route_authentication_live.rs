@@ -122,7 +122,9 @@ const RAW_BODY_LIMIT: usize = 1024 * 1024;
 /// Domain of the platform principal emails in every test tenant.
 const PLATFORM_DOMAIN: &str = "example.invalid";
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
-const BASE_OPERATIONS: [(&str, &str); 9] = [
+// Eleven base operations: the supplier record (wamn-rm14.8) added
+// supplier_create and supplier_query to the nine before it.
+const BASE_OPERATIONS: [(&str, &str); 11] = [
     ("location_list", "wamn-receiving:location/list@1.0.0"),
     (
         "purchase_order_get",
@@ -147,6 +149,8 @@ const BASE_OPERATIONS: [(&str, &str); 9] = [
         "receiving_record_receipt",
         "wamn-receiving:receiving/record-receipt@1.0.0",
     ),
+    ("supplier_create", "wamn-receiving:supplier/create@1.0.0"),
+    ("supplier_query", "wamn-receiving:supplier/query@1.0.0"),
 ];
 const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
     (
@@ -194,8 +198,10 @@ struct JourneyAttachment {
 }
 
 // Deployment-owned route spellings live in this one publication table rather
-// than leaking into operation or component identity.
-const JOURNEY_ATTACHMENTS: [JourneyAttachment; 14] = [
+// than leaking into operation or component identity. The base publishes 11
+// routes: the supplier record (wamn-rm14.8) added supplier-create-http and
+// supplier-query-http. The overlay publishes 5.
+const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
     JourneyAttachment {
         id: "location-list-http",
         package_id: BASE_PACKAGE_ID,
@@ -258,6 +264,20 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 14] = [
         wiring_id: "receiving_load_purchase_order_history",
         path: "/receiving/load_purchase_order_history",
         operation: HISTORY_OPERATION,
+    },
+    JourneyAttachment {
+        id: "supplier-create-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "supplier_create",
+        path: "/supplier/create",
+        operation: "wamn-receiving:supplier/create@1.0.0",
+    },
+    JourneyAttachment {
+        id: "supplier-query-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "supplier_query",
+        path: "/supplier/query",
+        operation: "wamn-receiving:supplier/query@1.0.0",
     },
     JourneyAttachment {
         id: "client-acme-receiving-purchase-order-get-http",

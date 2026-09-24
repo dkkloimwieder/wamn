@@ -340,6 +340,14 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
                 } else {
                     state.revision
                 };
+                // purchase_order.supplier_id references receiving.supplier, so
+                // the supplier that the update names exists first.
+                db.execute(
+                    "INSERT INTO receiving.supplier (id, name) VALUES ($1, $2 || '-' || $3)",
+                    &[&supplier, &fixture.key_prefix, &request_id],
+                )
+                .await
+                .context("insert the supplier that the update names")?;
                 (
                     "/purchase_order/update",
                     json!([{"request_id":request_id,
