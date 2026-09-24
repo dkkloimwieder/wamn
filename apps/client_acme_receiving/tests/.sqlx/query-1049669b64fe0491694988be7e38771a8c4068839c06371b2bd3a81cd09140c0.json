@@ -12,7 +12,7 @@
       {
         "ordinal": 1,
         "name": "observed_row_version",
-        "type_info": "Int8",
+        "type_info": "Int4",
         "origin": {
           "Table": {
             "table": "quality_inspection",
@@ -35,7 +35,7 @@
       {
         "ordinal": 4,
         "name": "row_version",
-        "type_info": "Int8",
+        "type_info": "Int4",
         "origin": "Expression"
       },
       {
@@ -54,7 +54,7 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Int8"
+        "Int4"
       ]
     },
     "nullable": [

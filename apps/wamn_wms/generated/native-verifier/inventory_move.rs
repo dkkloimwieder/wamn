@@ -8,7 +8,7 @@ pub struct ClaimCommandRow {
 #[derive(Debug, sqlx::FromRow)]
 pub struct FinalizeCommandRow {
     pub pallet_status: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -17,7 +17,7 @@ pub struct FindReplayRow {
     pub movement_id: uuid::Uuid,
     pub pallet_id: uuid::Uuid,
     pub pallet_status: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -28,14 +28,14 @@ pub struct InsertMovementRow {
 #[derive(Debug, sqlx::FromRow)]
 pub struct LockPalletRow {
     pub location_id: uuid::Uuid,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct MovePalletRow {
     pub location_id: uuid::Uuid,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
@@ -89,8 +89,8 @@ pub(crate) fn finalize_command_movement_id_bind_fixture() -> uuid::Uuid {
 pub(crate) fn finalize_command_pallet_status_bind_fixture() -> String {
     String::new()
 }
-pub(crate) fn finalize_command_row_version_bind_fixture() -> i64 {
-    0_i64
+pub(crate) fn finalize_command_row_version_bind_fixture() -> i32 {
+    0_i32
 }
 pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
     String::new()

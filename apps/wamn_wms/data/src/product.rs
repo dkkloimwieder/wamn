@@ -136,10 +136,9 @@ pub async fn update(
         })?;
     match (row.outcome.as_deref(), row.observed_row_version) {
         (Some("not_found"), _) => Err(AccessError::missing(AccessErrorKind::NotFound, "id", &id.0)),
-        (Some("concurrency_conflict"), Some(observed)) => Err(AccessError::conflict(
-            i64::from(expected_row_version),
-            i64::from(observed),
-        )),
+        (Some("concurrency_conflict"), Some(observed)) => {
+            Err(AccessError::conflict(expected_row_version, observed))
+        }
         (Some("updated"), _) => match (row.created_at, row.id, row.product_code, row.row_version) {
             (Some(created_at), Some(id), Some(product_code), Some(row_version)) => Ok(ProductRow {
                 created_at,

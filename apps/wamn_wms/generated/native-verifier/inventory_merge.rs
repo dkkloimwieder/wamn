@@ -13,12 +13,12 @@ pub struct ClaimCommandRow {
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct ConsumeSourceRow {
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct FinalizeCommandRow {
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -27,7 +27,7 @@ pub struct FindReplayRow {
     pub movement_id: uuid::Uuid,
     pub source_pallet_id: uuid::Uuid,
     pub target_pallet_id: uuid::Uuid,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -39,7 +39,7 @@ pub struct InsertMovementRow {
 pub struct LockBothPalletsRow {
     pub id: uuid::Uuid,
     pub location_id: uuid::Uuid,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
@@ -58,7 +58,7 @@ pub struct SelectSourceQuantityRow {
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct TouchTargetRow {
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
@@ -119,8 +119,8 @@ pub(crate) fn finalize_command_canonical_command_bind_fixture() -> Vec<u8> {
 pub(crate) fn finalize_command_movement_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn finalize_command_row_version_bind_fixture() -> i64 {
-    0_i64
+pub(crate) fn finalize_command_row_version_bind_fixture() -> i32 {
+    0_i32
 }
 pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
     String::new()

@@ -2,7 +2,7 @@
 //
 // `inventory` operations of package `wamn_wms`.
 
-import type { FieldMap, Int64, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-wms:inventory/adjust@1.0.0`. */
@@ -14,8 +14,8 @@ export interface InventoryAdjustRequest {
 }
 
 export interface InventoryAdjustRequestValue {
-  /** `int64` */
-  expectedRowVersion: Int64;
+  /** `int32` */
+  expectedRowVersion: number;
   /** `text` */
   idempotencyKey: string;
   /** `timestamptz` */
@@ -60,8 +60,8 @@ export interface InventoryAdjustResult {
   readonly palletId: Uuid;
   /** `text` */
   readonly palletStatus: "available" | "consumed" | "held";
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
 }
 
 /** What `wamn-wms:inventory/adjust@1.0.0` calls its result members. */
@@ -215,8 +215,8 @@ export interface InventoryMergeRequest {
 }
 
 export interface InventoryMergeRequestValue {
-  /** `int64` */
-  expectedRowVersion: Int64;
+  /** `int32` */
+  expectedRowVersion: number;
   /** `text` */
   idempotencyKey: string;
   /** `timestamptz` */
@@ -246,8 +246,8 @@ export const INVENTORY_MERGE_REQUEST_FIELDS: FieldMap = {
 export interface InventoryMergeResult {
   /** `uuid` */
   readonly movementId: Uuid;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `uuid` */
   readonly sourcePalletId: Uuid;
   /** `uuid` */
@@ -319,8 +319,8 @@ export interface InventoryMoveRequest {
 }
 
 export interface InventoryMoveRequestValue {
-  /** `int64` */
-  expectedRowVersion: Int64;
+  /** `int32` */
+  expectedRowVersion: number;
   /** `text` */
   idempotencyKey: string;
   /** `timestamptz` */
@@ -356,8 +356,8 @@ export interface InventoryMoveResult {
   readonly palletId: Uuid;
   /** `text` */
   readonly palletStatus: "available" | "consumed" | "held";
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
 }
 
 /** What `wamn-wms:inventory/move@1.0.0` calls its result members. */
@@ -424,8 +424,8 @@ export interface InventorySplitRequest {
 }
 
 export interface InventorySplitRequestValue {
-  /** `int64` */
-  expectedRowVersion: Int64;
+  /** `int32` */
+  expectedRowVersion: number;
   /** `text` */
   idempotencyKey: string;
   /** `text` */
@@ -469,8 +469,8 @@ export interface InventorySplitResult {
   readonly movementId: Uuid;
   /** `uuid` */
   readonly newPalletId: Uuid;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `uuid` */
   readonly sourcePalletId: Uuid;
   /** `text` */

@@ -947,7 +947,7 @@ mod tests {
         ensure!(
             pending.get::<_, i64>("inspection_count") == 1
                 && pending.get::<_, Option<String>>("status").as_deref() == Some("pending")
-                && pending.get::<_, Option<i64>>("row_version") == Some(1),
+                && pending.get::<_, Option<i32>>("row_version") == Some(1),
             "receipt redelivery did not preserve one pending inspection"
         );
 
@@ -965,14 +965,14 @@ mod tests {
         let approved = client
             .query_one(
                 OVERLAY_APPROVE_INSPECTION_SQL,
-                &[&recorded.receipt_id, &1_i64],
+                &[&recorded.receipt_id, &1_i32],
             )
             .await
             .context("execute exact Acme approve_inspection SQL")?;
         ensure!(
             approved.get::<_, String>("outcome") == "approved"
                 && approved.get::<_, Option<String>>("status").as_deref() == Some("approved")
-                && approved.get::<_, Option<i64>>("row_version") == Some(2)
+                && approved.get::<_, Option<i32>>("row_version") == Some(2)
                 && approved.get::<_, Option<i32>>("purchase_order_row_version") == Some(4),
             "Acme approve_inspection returned the wrong committed state"
         );

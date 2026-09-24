@@ -524,7 +524,7 @@
           },
           {
             "path": "expected_row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           }
@@ -548,7 +548,7 @@
           },
           {
             "path": "row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           },
@@ -632,7 +632,7 @@
             },
             {
               "name": "expected_row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ],
@@ -644,7 +644,7 @@
             },
             {
               "name": "observed_row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             },
             {
@@ -659,7 +659,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             },
             {

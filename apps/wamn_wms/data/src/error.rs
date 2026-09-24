@@ -107,7 +107,7 @@ impl AccessError {
     /// A stale write, carrying BOTH revisions: the expected one alone cannot
     /// tell a caller whether to retry or to look at what moved underneath.
     #[must_use]
-    pub fn conflict(expected: i64, observed: i64) -> Self {
+    pub fn conflict(expected: i32, observed: i32) -> Self {
         Self::new(
             AccessErrorKind::ConcurrencyConflict,
             serde_json::json!({

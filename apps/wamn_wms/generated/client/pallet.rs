@@ -38,7 +38,7 @@ pub const PALLET_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -90,8 +90,8 @@ pub struct PalletCreateResult {
     pub location_id: uuid::Uuid,
     /// `text`
     pub pallet_code: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `text`
     pub status: String,
     /// `timestamptz`
@@ -168,7 +168,7 @@ pub const PALLET_CREATE_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -319,7 +319,7 @@ pub const PALLET_CREATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -436,8 +436,8 @@ pub struct PalletGetResult {
     pub location_id: uuid::Uuid,
     /// `text`
     pub pallet_code: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `text`
     pub status: String,
     /// `timestamptz`
@@ -496,7 +496,7 @@ pub const PALLET_GET_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -611,7 +611,7 @@ pub const PALLET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -749,8 +749,8 @@ pub struct PalletQueryResult {
     pub location_id: uuid::Uuid,
     /// `text`
     pub pallet_code: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `text`
     pub status: String,
     /// `timestamptz`
@@ -845,7 +845,7 @@ pub const PALLET_QUERY_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -1091,7 +1091,7 @@ pub const PALLET_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

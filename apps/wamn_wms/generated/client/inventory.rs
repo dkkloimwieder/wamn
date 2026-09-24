@@ -62,7 +62,7 @@ pub const INVENTORY_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -109,8 +109,8 @@ pub struct InventoryAdjustRequest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryAdjustRequestValue {
-    /// `int64`
-    pub expected_row_version: i64,
+    /// `int32`
+    pub expected_row_version: i32,
     /// `text`
     pub idempotency_key: String,
     /// `timestamptz`
@@ -138,8 +138,8 @@ pub struct InventoryAdjustResult {
     pub pallet_id: uuid::Uuid,
     /// `text`
     pub pallet_status: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
 }
 
 /// Input descriptors for `wamn-wms:inventory/adjust@1.0.0`.
@@ -152,7 +152,7 @@ pub const INVENTORY_ADJUST_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "value.expected_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -228,7 +228,7 @@ pub const INVENTORY_ADJUST_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -261,7 +261,7 @@ pub const INVENTORY_ADJUST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema]
             wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
                     path: "value.expected_row_version",
-                    type_name: "int64",
+                    type_name: "int32",
                     nullable: false,
                     values: &[],
                 },
@@ -410,7 +410,7 @@ pub const INVENTORY_ADJUST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -669,8 +669,8 @@ pub struct InventoryMergeRequest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryMergeRequestValue {
-    /// `int64`
-    pub expected_row_version: i64,
+    /// `int32`
+    pub expected_row_version: i32,
     /// `text`
     pub idempotency_key: String,
     /// `timestamptz`
@@ -686,8 +686,8 @@ pub struct InventoryMergeRequestValue {
 pub struct InventoryMergeResult {
     /// `uuid`
     pub movement_id: uuid::Uuid,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `uuid`
     pub source_pallet_id: uuid::Uuid,
     /// `uuid`
@@ -706,7 +706,7 @@ pub const INVENTORY_MERGE_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "value.expected_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -746,7 +746,7 @@ pub const INVENTORY_MERGE_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -797,7 +797,7 @@ pub const INVENTORY_MERGE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
             wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
                     path: "value.expected_row_version",
-                    type_name: "int64",
+                    type_name: "int32",
                     nullable: false,
                     values: &[],
                 },
@@ -874,7 +874,7 @@ pub const INVENTORY_MERGE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema]
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -979,8 +979,8 @@ pub struct InventoryMoveRequest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryMoveRequestValue {
-    /// `int64`
-    pub expected_row_version: i64,
+    /// `int32`
+    pub expected_row_version: i32,
     /// `text`
     pub idempotency_key: String,
     /// `timestamptz`
@@ -1002,8 +1002,8 @@ pub struct InventoryMoveResult {
     pub pallet_id: uuid::Uuid,
     /// `text`
     pub pallet_status: String,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
 }
 
 /// Input descriptors for `wamn-wms:inventory/move@1.0.0`.
@@ -1016,7 +1016,7 @@ pub const INVENTORY_MOVE_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "value.expected_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -1074,7 +1074,7 @@ pub const INVENTORY_MOVE_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -1107,7 +1107,7 @@ pub const INVENTORY_MOVE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
             wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
                     path: "value.expected_row_version",
-                    type_name: "int64",
+                    type_name: "int32",
                     nullable: false,
                     values: &[],
                 },
@@ -1220,7 +1220,7 @@ pub const INVENTORY_MOVE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -1290,8 +1290,8 @@ pub struct InventorySplitRequest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventorySplitRequestValue {
-    /// `int64`
-    pub expected_row_version: i64,
+    /// `int32`
+    pub expected_row_version: i32,
     /// `text`
     pub idempotency_key: String,
     /// `text`
@@ -1317,8 +1317,8 @@ pub struct InventorySplitResult {
     pub movement_id: uuid::Uuid,
     /// `uuid`
     pub new_pallet_id: uuid::Uuid,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `uuid`
     pub source_pallet_id: uuid::Uuid,
     /// `text`
@@ -1335,7 +1335,7 @@ pub const INVENTORY_SPLIT_INPUT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "value.expected_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -1405,7 +1405,7 @@ pub const INVENTORY_SPLIT_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -1450,7 +1450,7 @@ pub const INVENTORY_SPLIT_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
             wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
                     path: "value.expected_row_version",
-                    type_name: "int64",
+                    type_name: "int32",
                     nullable: false,
                     values: &[],
                 },
@@ -1587,7 +1587,7 @@ pub const INVENTORY_SPLIT_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema]
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

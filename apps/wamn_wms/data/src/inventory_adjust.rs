@@ -34,7 +34,7 @@ pub struct AdjustCommand {
     pub status: String,
     pub quantity: String,
     pub reason_code: String,
-    pub expected_row_version: i64,
+    pub expected_row_version: i32,
     pub occurred_at: String,
 }
 
@@ -45,7 +45,7 @@ pub struct AdjustResult {
     pub pallet_id: String,
     pub adjusted_quantity: String,
     pub pallet_status: String,
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 /// The command's scalars in their one wire spelling.

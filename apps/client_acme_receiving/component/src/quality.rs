@@ -77,7 +77,7 @@ fn detail_error(error: &AccessError, id: &str) -> detail_contract::LoadPurchaseO
 fn approve_error(
     error: &AccessError,
     id: &str,
-    expected: i64,
+    expected: i32,
 ) -> approve_contract::ApproveInspectionError {
     approve_codec::map_error(error.kind().literal(), |key| {
         access_detail(

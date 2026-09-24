@@ -39,7 +39,7 @@ CREATE TABLE wms.pallet (
         CONSTRAINT pallet_location_id_fkey
         REFERENCES wms.location (id),
     status text NOT NULL,
-    row_version int8 NOT NULL DEFAULT 1,
+    row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -84,7 +84,7 @@ CREATE TABLE wms.inventory_move_command (
         CONSTRAINT inventory_move_command_movement_id_key UNIQUE,
     pallet_id uuid NOT NULL,
     pallet_status text,
-    row_version int8,
+    row_version int4,
     CONSTRAINT inventory_move_command_canonical_command_check
         CHECK (octet_length(canonical_command) > 0),
     CONSTRAINT inventory_move_command_pallet_status_check
@@ -109,7 +109,7 @@ CREATE TABLE wms.inventory_adjust_command (
         CONSTRAINT inventory_adjust_command_movement_id_key UNIQUE,
     pallet_id uuid NOT NULL,
     adjusted_quantity numeric,
-    row_version int8,
+    row_version int4,
     CONSTRAINT inventory_adjust_command_canonical_command_check
         CHECK (octet_length(canonical_command) > 0),
     CONSTRAINT inventory_adjust_command_adjusted_quantity_check
@@ -131,7 +131,7 @@ CREATE TABLE wms.inventory_merge_command (
         CONSTRAINT inventory_merge_command_movement_id_key UNIQUE,
     source_pallet_id uuid NOT NULL,
     target_pallet_id uuid NOT NULL,
-    row_version int8,
+    row_version int4,
     CONSTRAINT inventory_merge_command_canonical_command_check
         CHECK (octet_length(canonical_command) > 0),
     CONSTRAINT inventory_merge_command_source_pallet_id_target_pallet_id_check
@@ -149,7 +149,7 @@ CREATE TABLE wms.inventory_split_command (
     source_pallet_id uuid NOT NULL,
     new_pallet_id uuid NOT NULL DEFAULT gen_random_uuid()
         CONSTRAINT inventory_split_command_new_pallet_id_key UNIQUE,
-    row_version int8,
+    row_version int4,
     CONSTRAINT inventory_split_command_canonical_command_check
         CHECK (octet_length(canonical_command) > 0),
     CONSTRAINT inventory_split_command_row_version_check

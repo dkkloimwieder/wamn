@@ -452,7 +452,7 @@
           },
           {
             "path": "value.expected_row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           },
@@ -493,7 +493,7 @@
           },
           {
             "path": "row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           }
@@ -657,7 +657,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -708,7 +708,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -835,7 +835,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -871,7 +871,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ],
@@ -883,7 +883,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -961,7 +961,7 @@
           },
           {
             "path": "value.expected_row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           },
@@ -1002,7 +1002,7 @@
           },
           {
             "path": "row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           }
@@ -1156,7 +1156,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -1207,7 +1207,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -1311,7 +1311,7 @@
           "row": [
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -1347,7 +1347,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ],
@@ -1359,7 +1359,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -1418,7 +1418,7 @@
           },
           {
             "path": "value.expected_row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           },
@@ -1459,7 +1459,7 @@
           },
           {
             "path": "row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           }
@@ -1611,7 +1611,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -1677,7 +1677,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -1842,7 +1842,7 @@
           "row": [
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ]
@@ -1860,7 +1860,7 @@
           "row": [
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -1891,14 +1891,14 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ],
           "row": [
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -1985,7 +1985,7 @@
           },
           {
             "path": "value.expected_row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           },
@@ -2026,7 +2026,7 @@
           },
           {
             "path": "row_version",
-            "type": "int64",
+            "type": "int32",
             "nullable": false,
             "revision": true
           }
@@ -2216,7 +2216,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]
@@ -2272,7 +2272,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -2399,7 +2399,7 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -2498,7 +2498,7 @@
           "row": [
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             },
             {
@@ -2529,14 +2529,14 @@
             },
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": false
             }
           ],
           "row": [
             {
               "name": "row_version",
-              "type": "int64",
+              "type": "int32",
               "nullable": true
             }
           ]

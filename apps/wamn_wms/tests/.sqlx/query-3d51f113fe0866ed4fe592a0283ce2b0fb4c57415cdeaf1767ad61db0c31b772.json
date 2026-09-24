@@ -61,7 +61,7 @@
       {
         "ordinal": 5,
         "name": "row_version",
-        "type_info": "Int8",
+        "type_info": "Int4",
         "origin": {
           "Table": {
             "table": "pallet",

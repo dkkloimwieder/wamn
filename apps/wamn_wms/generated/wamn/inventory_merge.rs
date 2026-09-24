@@ -13,12 +13,12 @@ pub struct ClaimCommandRow {
 
 #[derive(Debug)]
 pub struct ConsumeSourceRow {
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 #[derive(Debug)]
 pub struct FinalizeCommandRow {
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -27,7 +27,7 @@ pub struct FindReplayRow {
     pub movement_id: wamn_postgres_statements::Uuid,
     pub source_pallet_id: wamn_postgres_statements::Uuid,
     pub target_pallet_id: wamn_postgres_statements::Uuid,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -39,7 +39,7 @@ pub struct InsertMovementRow {
 pub struct LockBothPalletsRow {
     pub id: wamn_postgres_statements::Uuid,
     pub location_id: wamn_postgres_statements::Uuid,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
@@ -58,7 +58,7 @@ pub struct SelectSourceQuantityRow {
 
 #[derive(Debug)]
 pub struct TouchTargetRow {
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
@@ -194,7 +194,7 @@ pub(crate) async fn finalize_command(
     idempotency_key: String,
     canonical_command: Vec<u8>,
     movement_id: wamn_postgres_statements::Uuid,
-    row_version: i64,
+    row_version: i32,
 ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction

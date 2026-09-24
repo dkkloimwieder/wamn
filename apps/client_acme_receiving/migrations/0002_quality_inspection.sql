@@ -4,7 +4,7 @@ CREATE TABLE receiving.quality_inspection (
         CONSTRAINT quality_inspection_receipt_id_fkey
         REFERENCES receiving.receipt (id),
     status text NOT NULL DEFAULT 'pending',
-    row_version int8 NOT NULL DEFAULT 1,
+    row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,

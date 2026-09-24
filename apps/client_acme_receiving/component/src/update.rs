@@ -26,10 +26,10 @@ pub(super) async fn handle(
     )
     .await
     .map(|row| codec::row!(row, contract::UpdateResult))
-    .map_err(|error| map_error(&error, &request.id, i64::from(request.expected_row_version)))
+    .map_err(|error| map_error(&error, &request.id, request.expected_row_version))
 }
 
-fn map_error(error: &AccessError, id: &str, expected: i64) -> contract::UpdateError {
+fn map_error(error: &AccessError, id: &str, expected: i32) -> contract::UpdateError {
     codec::map_error(error.kind().literal(), |key| {
         access_detail(
             error,

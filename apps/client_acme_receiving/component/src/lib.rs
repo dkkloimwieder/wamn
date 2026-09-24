@@ -137,7 +137,7 @@ fn access_detail(
     key: &str,
     operation: &str,
     not_found: Option<(&str, &str)>,
-    expected_row_version: Option<i64>,
+    expected_row_version: Option<i32>,
 ) -> Option<String> {
     match key {
         "field" => error.field().map(str::to_owned).or_else(|| {

@@ -156,7 +156,7 @@ pub(super) async fn assert_materializer_causation(
     anyhow::ensure!(
         inspection_rows.len() == 1
             && inspection_rows[0].get::<_, String>(0) == "pending"
-            && inspection_rows[0].get::<_, i64>(1) == 1,
+            && inspection_rows[0].get::<_, i32>(1) == 1,
         "receipt {receipt_id} did not materialize to exactly one pending revision-1 inspection"
     );
     // Spec test 4: the post-commit handler write stamps the materializer principal.

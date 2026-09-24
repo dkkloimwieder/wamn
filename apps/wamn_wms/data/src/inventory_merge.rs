@@ -33,7 +33,7 @@ pub struct MergeCommand {
     pub idempotency_key: String,
     pub source_pallet_id: String,
     pub target_pallet_id: String,
-    pub expected_row_version: i64,
+    pub expected_row_version: i32,
     pub occurred_at: String,
 }
 
@@ -44,7 +44,7 @@ pub struct MergeResult {
     pub source_pallet_id: String,
     pub target_pallet_id: String,
     pub target_status: String,
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 #[derive(Debug)]

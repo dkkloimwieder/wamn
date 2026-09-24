@@ -51,7 +51,7 @@ impl From<detail_sql::LoadPurchaseOrderDetailRow> for PurchaseOrderDetailValue {
 pub struct ApproveInspectionValue {
     pub receipt_id: WamnUuid,
     pub status: String,
-    pub row_version: i64,
+    pub row_version: i32,
     pub purchase_order_id: WamnUuid,
     pub purchase_order_row_version: i32,
 }
@@ -114,7 +114,7 @@ fn purchase_order_update_value(
                     format!(
                         "purchase_order row_version {observed} does not match {expected_row_version}"
                     ),
-                    i64::from(observed),
+                    observed,
                 ))
             },
         ),
@@ -168,7 +168,7 @@ fn purchase_order_update_value(
 
 fn approve_inspection_value(
     row: approve_sql::ApproveInspectionRow,
-    expected_row_version: i64,
+    expected_row_version: i32,
 ) -> Result<ApproveInspectionValue, AccessError> {
     match row.outcome.as_deref() {
         Some("not_found") => Err(AccessError::not_found("quality_inspection does not exist")),
@@ -288,7 +288,7 @@ pub async fn quality_load_purchase_order_detail(
 pub async fn quality_approve_inspection(
     connection: &mut Connection,
     receipt_id: &str,
-    expected_row_version: i64,
+    expected_row_version: i32,
 ) -> Result<ApproveInspectionValue, AccessError> {
     let receipt_id = parse_uuid(receipt_id, "receipt_id")?;
     let mut transaction = connection

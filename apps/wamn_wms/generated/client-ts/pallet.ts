@@ -2,7 +2,7 @@
 //
 // `pallet` operations of package `wamn_wms`.
 
-import type { FieldMap, Int64, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-wms:pallet/create@1.0.0`. */
@@ -40,8 +40,8 @@ export interface PalletCreateResult {
   readonly locationId: Uuid;
   /** `text` */
   readonly palletCode: string;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `text` */
   readonly status: "available" | "consumed" | "held";
   /** `timestamptz` */
@@ -135,8 +135,8 @@ export interface PalletGetResult {
   readonly locationId: Uuid;
   /** `text` */
   readonly palletCode: string;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `text` */
   readonly status: "available" | "consumed" | "held";
   /** `timestamptz` */
@@ -265,8 +265,8 @@ export interface PalletQueryRow {
   readonly locationId: Uuid;
   /** `text` */
   readonly palletCode: string;
-  /** `int64` */
-  readonly rowVersion: Int64;
+  /** `int32` */
+  readonly rowVersion: number;
   /** `text` */
   readonly status: "available" | "consumed" | "held";
   /** `timestamptz` */

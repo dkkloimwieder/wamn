@@ -5,10 +5,10 @@ use wamn_postgres_statements::Transaction;
 #[derive(Debug)]
 pub struct ApproveInspectionRow {
     pub outcome: Option<String>,
-    pub observed_row_version: Option<i64>,
+    pub observed_row_version: Option<i32>,
     pub receipt_id: Option<wamn_postgres_statements::Uuid>,
     pub status: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
     pub purchase_order_id: Option<wamn_postgres_statements::Uuid>,
     pub purchase_order_row_version: Option<i32>,
 }
@@ -19,7 +19,7 @@ pub(crate) const APPROVE_INSPECTION_DIGEST: &str =
 pub(crate) async fn approve_inspection(
     transaction: &mut Transaction,
     receipt_id: wamn_postgres_statements::Uuid,
-    expected_row_version: i64,
+    expected_row_version: i32,
 ) -> Result<ApproveInspectionRow, wamn_postgres_statements::StatementError> {
     let rows = transaction
         .run(

@@ -8,7 +8,7 @@ pub struct ClaimCommandRow {
 #[derive(Debug)]
 pub struct FinalizeCommandRow {
     pub pallet_status: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -17,7 +17,7 @@ pub struct FindReplayRow {
     pub movement_id: wamn_postgres_statements::Uuid,
     pub pallet_id: wamn_postgres_statements::Uuid,
     pub pallet_status: Option<String>,
-    pub row_version: Option<i64>,
+    pub row_version: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -28,14 +28,14 @@ pub struct InsertMovementRow {
 #[derive(Debug)]
 pub struct LockPalletRow {
     pub location_id: wamn_postgres_statements::Uuid,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
 #[derive(Debug)]
 pub struct MovePalletRow {
     pub location_id: wamn_postgres_statements::Uuid,
-    pub row_version: i64,
+    pub row_version: i32,
     pub status: String,
 }
 
@@ -133,7 +133,7 @@ pub(crate) async fn finalize_command(
     canonical_command: Vec<u8>,
     movement_id: wamn_postgres_statements::Uuid,
     pallet_status: String,
-    row_version: i64,
+    row_version: i32,
 ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction

@@ -282,7 +282,7 @@ export function PalletGetDetail(props: PalletGetDetailProps) {
         <DetailItem term="id">{cellText(readMember(record(), ["id"]), "uuid")}</DetailItem>
         <DetailItem term="location id">{cellText(readMember(record(), ["locationId"]), "uuid")}</DetailItem>
         <DetailItem term="pallet code">{cellText(readMember(record(), ["palletCode"]), "text")}</DetailItem>
-        <DetailItem term="row version">{cellText(readMember(record(), ["rowVersion"]), "int64")}</DetailItem>
+        <DetailItem term="row version">{cellText(readMember(record(), ["rowVersion"]), "int32")}</DetailItem>
         <DetailItem term="status">{cellText(readMember(record(), ["status"]), "text")}</DetailItem>
         <DetailItem term="updated at">{cellText(readMember(record(), ["updatedAt"]), "timestamptz")}</DetailItem>
         <DetailItem term="updated by">{cellText(readMember(record(), ["updatedBy"]), "uuid")}</DetailItem>
@@ -321,7 +321,7 @@ const QUERY_COLUMNS: ColumnDef<GridFeatures, PalletQueryRow>[] = [
   {
     accessorKey: "rowVersion",
     header: "row version",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int64"),
+    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
   },
   {
     accessorKey: "status",

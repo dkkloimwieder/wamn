@@ -62,7 +62,8 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     .await?;
     let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
-    let initial_revision = 9_007_199_254_740_993_i64;
+    // A revision near the top of int4, with room for the moves that follow.
+    let initial_revision = 2_147_483_547_i64;
     crate::business_fixture::seed_fixture(&admin, initial_revision).await?;
     let runtime = crate::business_fixture::runtime_phase(application.endpoint.clone());
     let route = crate::wms_runtime_live::Route::local(

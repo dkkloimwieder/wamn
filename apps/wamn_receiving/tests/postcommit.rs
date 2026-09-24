@@ -399,7 +399,7 @@ async fn assert_replay_and_progress(
     evidence["original_source"] = source_message(&original);
     evidence["consumer_before"] = consumer_state(&before_consumer);
     let approved = request(&http, document, phase, overlay_route_path("quality_approve_inspection"), json!([{
-        "request_id":"postcommit-approve", "receipt_id":materializer.receipt_id, "expected_row_version":"1"
+        "request_id":"postcommit-approve", "receipt_id":materializer.receipt_id, "expected_row_version":1
     }])).await?;
     let approved_state = inspection(project, &materializer.receipt_id).await?;
     ensure!(

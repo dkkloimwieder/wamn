@@ -63,7 +63,7 @@ import { Panel, Waiting } from "./panel.js";
 interface PickedPallet {
   readonly id: string;
   readonly code: string;
-  readonly rowVersion: string;
+  readonly rowVersion: number;
 }
 
 /**
@@ -102,7 +102,7 @@ export function WmsScreens(props: {
   const [splitFill, setSplitFill] = createSignal<InventorySplitFormInitial>({});
   const [palletFill, setPalletFill] = createSignal<PalletCreateFormInitial>({});
 
-  const pickPallet = (row: { id: string; palletCode: string; rowVersion: string }) =>
+  const pickPallet = (row: { id: string; palletCode: string; rowVersion: number }) =>
     setPallet({ id: row.id, code: row.palletCode, rowVersion: row.rowVersion });
   // The release binds no read that supplies a command's revision, so the
   // page hands each command the revision of the pallet row the operator
@@ -160,7 +160,7 @@ export function WmsScreens(props: {
                 <InventoryMoveForm
                   transport={transport}
                   initial={initial}
-                  valueExpectedRowVersion={pallet()?.rowVersion ?? ""}
+                  valueExpectedRowVersion={pallet()?.rowVersion ?? 0}
                   onSubmitted={read}
                 />
               )}
@@ -175,7 +175,7 @@ export function WmsScreens(props: {
                 <InventoryAdjustForm
                   transport={transport}
                   initial={initial}
-                  valueExpectedRowVersion={pallet()?.rowVersion ?? ""}
+                  valueExpectedRowVersion={pallet()?.rowVersion ?? 0}
                   onSubmitted={read}
                 />
               )}
@@ -189,7 +189,7 @@ export function WmsScreens(props: {
           <Show when={pallet()} fallback={<Waiting>{needsTarget}</Waiting>}>
             <InventoryMergeForm
               transport={transport}
-              valueExpectedRowVersion={pallet()?.rowVersion ?? ""}
+              valueExpectedRowVersion={pallet()?.rowVersion ?? 0}
               onSubmitted={read}
             />
           </Show>
@@ -202,7 +202,7 @@ export function WmsScreens(props: {
                 <InventorySplitForm
                   transport={transport}
                   initial={initial}
-                  valueExpectedRowVersion={pallet()?.rowVersion ?? ""}
+                  valueExpectedRowVersion={pallet()?.rowVersion ?? 0}
                   onSubmitted={read}
                 />
               )}

@@ -36,7 +36,7 @@ pub struct SplitCommand {
     pub quantity: String,
     pub new_pallet_code: String,
     pub to_location_id: String,
-    pub expected_row_version: i64,
+    pub expected_row_version: i32,
     pub occurred_at: String,
 }
 
@@ -47,7 +47,7 @@ pub struct SplitResult {
     pub source_pallet_id: String,
     pub new_pallet_id: String,
     pub source_status: String,
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 #[derive(Debug)]

@@ -4,7 +4,7 @@ interface adjust {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record adjust-request {
-    expected-row-version: s64,
+    expected-row-version: s32,
     idempotency-key: string,
     occurred-at: string,
     pallet-id: string,
@@ -15,8 +15,8 @@ interface adjust {
   }
 
   record concurrency-conflict-detail {
-    expected-row-version: s64,
-    observed-row-version: s64,
+    expected-row-version: s32,
+    observed-row-version: s32,
   }
 
   record idempotency-conflict-detail {
@@ -66,7 +66,7 @@ interface adjust {
     pallet-id: string,
     adjusted-quantity: string,
     pallet-status: string,
-    row-version: s64,
+    row-version: s32,
   }
 
   record adjust-outcome {
@@ -129,7 +129,7 @@ interface merge {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record merge-request {
-    expected-row-version: s64,
+    expected-row-version: s32,
     idempotency-key: string,
     occurred-at: string,
     source-pallet-id: string,
@@ -137,8 +137,8 @@ interface merge {
   }
 
   record concurrency-conflict-detail {
-    expected-row-version: s64,
-    observed-row-version: s64,
+    expected-row-version: s32,
+    observed-row-version: s32,
   }
 
   record idempotency-conflict-detail {
@@ -182,7 +182,7 @@ interface merge {
     source-pallet-id: string,
     target-pallet-id: string,
     target-status: string,
-    row-version: s64,
+    row-version: s32,
   }
 
   record merge-outcome {
@@ -198,7 +198,7 @@ interface move {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record move-request {
-    expected-row-version: s64,
+    expected-row-version: s32,
     idempotency-key: string,
     occurred-at: string,
     pallet-id: string,
@@ -206,8 +206,8 @@ interface move {
   }
 
   record concurrency-conflict-detail {
-    expected-row-version: s64,
-    observed-row-version: s64,
+    expected-row-version: s32,
+    observed-row-version: s32,
   }
 
   record idempotency-conflict-detail {
@@ -257,7 +257,7 @@ interface move {
     pallet-id: string,
     location-id: string,
     pallet-status: string,
-    row-version: s64,
+    row-version: s32,
   }
 
   record move-outcome {
@@ -273,7 +273,7 @@ interface split {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record split-request {
-    expected-row-version: s64,
+    expected-row-version: s32,
     idempotency-key: string,
     new-pallet-code: string,
     occurred-at: string,
@@ -285,8 +285,8 @@ interface split {
   }
 
   record concurrency-conflict-detail {
-    expected-row-version: s64,
-    observed-row-version: s64,
+    expected-row-version: s32,
+    observed-row-version: s32,
   }
 
   record idempotency-conflict-detail {
@@ -349,7 +349,7 @@ interface split {
     source-pallet-id: string,
     new-pallet-id: string,
     source-status: string,
-    row-version: s64,
+    row-version: s32,
   }
 
   record split-outcome {

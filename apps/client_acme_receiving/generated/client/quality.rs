@@ -50,7 +50,7 @@ pub const QUALITY_FIELDS: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -71,8 +71,8 @@ pub const QUALITY_FIELDS: &[FieldDescriptor] = &[
 /// Input for `client-acme-receiving:quality/approve-inspection@3.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QualityApproveInspectionRequest {
-    /// `int64`
-    pub expected_row_version: i64,
+    /// `int32`
+    pub expected_row_version: i32,
     /// `uuid`
     pub receipt_id: uuid::Uuid,
     /// `text`
@@ -88,8 +88,8 @@ pub struct QualityApproveInspectionResult {
     pub purchase_order_row_version: i32,
     /// `uuid`
     pub receipt_id: uuid::Uuid,
-    /// `int64`
-    pub row_version: i64,
+    /// `int32`
+    pub row_version: i32,
     /// `text`
     pub status: String,
 }
@@ -98,7 +98,7 @@ pub struct QualityApproveInspectionResult {
 pub const QUALITY_APPROVE_INSPECTION_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "expected_row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -138,7 +138,7 @@ pub const QUALITY_APPROVE_INSPECTION_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "int64",
+        type_name: "int32",
         nullable: false,
         values: &[],
     },
@@ -154,7 +154,7 @@ pub const QUALITY_APPROVE_INSPECTION_INPUT_SCHEMA: &[wamn_client::descriptor::Fi
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "expected_row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },
@@ -229,7 +229,7 @@ pub const QUALITY_APPROVE_INSPECTION_RESULT_SCHEMA: &[wamn_client::descriptor::F
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "int64",
+            type_name: "int32",
             nullable: false,
             values: &[],
         },

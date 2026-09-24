@@ -722,7 +722,7 @@ async fn receiving_release_journey(
     let approve = serde_json::to_vec(&serde_json::json!([{
         "request_id": "quality-approve",
         "receipt_id": PREEXISTING_QUALITY_RECEIPT_ID,
-        "expected_row_version": "1",
+        "expected_row_version": 1,
     }]))?;
     let response = invoke_journey_route(
         &JourneyRuntime {
@@ -741,7 +741,7 @@ async fn receiving_release_journey(
     let value = successful_value(&response, "quality-approve")?;
     anyhow::ensure!(
         value["status"] == "approved"
-            && value["row_version"] == "2"
+            && value["row_version"] == 2
             && value["purchase_order_id"] == "00000000-0000-0000-0000-000000000303"
             && value["purchase_order_row_version"] == 3,
         "quality.approve_inspection returned the wrong result: {value}"

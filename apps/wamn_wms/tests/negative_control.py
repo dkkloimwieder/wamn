@@ -25,7 +25,7 @@ baseline_source = json.loads((args.baseline_dir / 'source.json').read_text())
 assert baseline['exit_code'] == 0, 'the unmodified gate must pass first'
 assert baseline_source['changed_source_sha256'][relative] == digest, 'the tested source changed'
 needle = b'let revision = row["row_version"].clone();'
-replacement = b'let revision = serde_json::json!((row["row_version"].as_str().unwrap().parse::<i64>().unwrap() + 1).to_string());'
+replacement = b'let revision = serde_json::json!(row["row_version"].as_i64().unwrap() + 1);'
 assert original.count(needle) == 1, 'mutate only the read-to-command revision binding'
 mutated = original.replace(needle, replacement)
 command = ['cargo', 'test', '--locked', '--offline', '-p', 'wamn-wms-tests', '--example', 'wms_move',

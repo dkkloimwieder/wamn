@@ -25,7 +25,7 @@ class HttpFixture:
         fixture = self
         self.movement = {"movement_id": "44444444-0000-0000-0000-000000000009",
                          "pallet_id": ids.pallet, "location_id": ids.destination,
-                         "pallet_status": "available", "row_version": "2"}
+                         "pallet_status": "available", "row_version": 2}
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *_args):
@@ -36,7 +36,7 @@ class HttpFixture:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     if self.path == "/pallet/get":
                         value = {"id": ids.pallet, "location_id": ids.source,
-                                 "pallet_code": "WMS-TUI-PREFLIGHT", "row_version": "1",
+                                 "pallet_code": "WMS-TUI-PREFLIGHT", "row_version": 1,
                                  "status": "available", "created_at": "2026-09-10T10:00:00Z",
                                  "created_by": "00000000-0000-4000-8000-0000000000f1",
                                  "updated_at": "2026-09-10T10:00:00Z",

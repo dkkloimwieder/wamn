@@ -4,13 +4,13 @@ interface approve-inspection {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record approve-inspection-request {
-    expected-row-version: s64,
+    expected-row-version: s32,
     receipt-id: string,
   }
 
   record concurrency-conflict-detail {
-    expected-row-version: s64,
-    observed-row-version: s64,
+    expected-row-version: s32,
+    observed-row-version: s32,
   }
 
   record invalid-input-detail {
@@ -44,7 +44,7 @@ interface approve-inspection {
   record approve-inspection-result {
     receipt-id: string,
     status: string,
-    row-version: s64,
+    row-version: s32,
     purchase-order-id: string,
     purchase-order-row-version: s32,
   }

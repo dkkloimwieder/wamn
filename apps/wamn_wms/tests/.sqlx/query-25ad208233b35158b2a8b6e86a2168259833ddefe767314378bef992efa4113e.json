@@ -17,7 +17,7 @@
       {
         "ordinal": 1,
         "name": "row_version",
-        "type_info": "Int8",
+        "type_info": "Int4",
         "origin": {
           "Table": {
             "table": "inventory_move_command",
@@ -32,7 +32,7 @@
         "Bytea",
         "Uuid",
         "Text",
-        "Int8"
+        "Int4"
       ]
     },
     "nullable": [

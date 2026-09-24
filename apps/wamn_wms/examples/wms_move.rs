@@ -169,7 +169,7 @@ mod tests {
     fn pallet_row() -> Value {
         json!({
             "id": PALLET_ID, "location_id": "33333333-0000-0000-0000-000000000001",
-            "pallet_code": "P-2", "row_version": "7", "status": "available",
+            "pallet_code": "P-2", "row_version": 7, "status": "available",
             "created_at": "2026-09-10T10:00:00Z", "created_by": ACTOR,
             "updated_at": "2026-09-10T10:00:00Z", "updated_by": ACTOR
         })
@@ -178,7 +178,7 @@ mod tests {
     fn movement() -> Value {
         json!({
             "movement_id": "33333333-0000-0000-0000-000000000009", "pallet_id": PALLET_ID,
-            "location_id": DESTINATION, "pallet_status": "available", "row_version": "8"
+            "location_id": DESTINATION, "pallet_status": "available", "row_version": 8
         })
     }
 
@@ -274,7 +274,7 @@ mod tests {
         app.resolve(MOVE, request.attempt, result);
         let sent = transport.0.lock().unwrap();
         assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].body, br#"[{"request_id":"move","value":{"expected_row_version":"7","idempotency_key":"idem-move","occurred_at":"2026-09-10T10:00:00.000000Z","pallet_id":"33333333-0000-0000-0000-000000000002","to_location_id":"33333333-0000-0000-0000-000000000003"}}]"#);
+        assert_eq!(sent[0].body, br#"[{"request_id":"move","value":{"expected_row_version":7,"idempotency_key":"idem-move","occurred_at":"2026-09-10T10:00:00.000000Z","pallet_id":"33333333-0000-0000-0000-000000000002","to_location_id":"33333333-0000-0000-0000-000000000003"}}]"#);
         assert!(matches!(
             app.generated.screen(MOVE).submission().state(),
             State::Succeeded { .. }

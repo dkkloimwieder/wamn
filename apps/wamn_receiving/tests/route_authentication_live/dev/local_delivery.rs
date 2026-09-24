@@ -141,9 +141,9 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         first.locations(token, "timing-original", &["DOCK-1", "DOCK-2"]).await?;
         let updated = first.request(token, "/purchase_order/update", json!([{
             "request_id":"local-update", "id":"00000000-0000-0000-0000-000000000301",
-            "expected_row_version":"1", "change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}
+            "expected_row_version":1, "change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}
         }])).await?;
-        ensure!(updated[0]["value"]["row_version"] == "2", "the authenticated command did not commit its revision");
+        ensure!(updated[0]["value"]["row_version"] == 2, "the authenticated command did not commit its revision");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
 
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
@@ -221,7 +221,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 
 async fn require_revision(url: &str) -> anyhow::Result<()> {
     let (client, task) = connect(url).await?;
-    let version: i64 = client.query_one("SELECT row_version FROM receiving.purchase_order WHERE id='00000000-0000-0000-0000-000000000301'", &[]).await?.get(0);
+    let version: i32 = client.query_one("SELECT row_version FROM receiving.purchase_order WHERE id='00000000-0000-0000-0000-000000000301'", &[]).await?.get(0);
     task.abort();
     ensure!(
         version == 2,

@@ -15,7 +15,7 @@ struct JsonRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRoot {
-    expected_row_version: JsonInt64,
+    expected_row_version: i32,
     idempotency_key: String,
     occurred_at: String,
     pallet_id: String,
@@ -28,7 +28,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::MoveItem>, CodecError>
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::MoveRequest {
-                    expected_row_version: request.value.expected_row_version.0,
+                    expected_row_version: request.value.expected_row_version,
                     idempotency_key: request.value.idempotency_key,
                     occurred_at: request.value.occurred_at,
                     pallet_id: request.value.pallet_id,
@@ -60,7 +60,7 @@ pub(crate) fn encode(output: &[contract::MoveOutcome]) -> String {
                     "pallet_id": value.pallet_id,
                     "location_id": value.location_id,
                     "pallet_status": value.pallet_status,
-                    "row_version": value.row_version.to_string(),
+                    "row_version": value.row_version,
                 }
             }),
             Err(error) => json!({
@@ -104,11 +104,11 @@ fn error_value(error: &contract::MoveError) -> Value {
             let mut detail = Map::new();
             detail.insert(
                 "expected_row_version".to_owned(),
-                json!(JsonInt64(value.expected_row_version)),
+                json!(value.expected_row_version),
             );
             detail.insert(
                 "observed_row_version".to_owned(),
-                json!(JsonInt64(value.observed_row_version)),
+                json!(value.observed_row_version),
             );
             ("concurrency_conflict", detail)
         }
@@ -246,12 +246,12 @@ pub(crate) fn map_error(
         }
         "concurrency_conflict" => {
             let Some(expected_row_version) =
-                detail("expected_row_version").and_then(|value| value.parse::<i64>().ok())
+                detail("expected_row_version").and_then(|value| value.parse::<i32>().ok())
             else {
                 return contract::MoveError::InternalError;
             };
             let Some(observed_row_version) =
-                detail("observed_row_version").and_then(|value| value.parse::<i64>().ok())
+                detail("observed_row_version").and_then(|value| value.parse::<i32>().ok())
             else {
                 return contract::MoveError::InternalError;
             };

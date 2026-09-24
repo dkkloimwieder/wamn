@@ -199,7 +199,7 @@ pub(super) async fn trigger(
             .header("Host", &cluster.inputs.route_host).bearer_auth(&token)
             .header("traceparent", format!("00-{update_trace}-1111111111111111-01"))
             .json(&json!([{"request_id":"materializer-order","id":"00000000-0000-0000-0000-000000000304",
-                "expected_row_version":"1","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]))
+                "expected_row_version":1,"change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]))
             .send().await?;
         ensure!(update.status() == reqwest::StatusCode::OK, "the materializer order update must return HTTP 200");
         let update: Value = update.json().await?;
@@ -207,7 +207,7 @@ pub(super) async fn trigger(
         ensure!(update.as_array().is_some_and(|items| items.len() == 1)
             && update[0]["request_id"] == "materializer-order"
             && update[0]["value"]["id"] == "00000000-0000-0000-0000-000000000304"
-            && update[0]["value"]["row_version"] == "2"
+            && update[0]["value"]["row_version"] == 2
             && update[0]["value"]["acme_inspection_required"] == true
             && update[0]["value"]["acme_quality_status"] == "pending",
             "the materializer order update must retain its expected state");
@@ -231,7 +231,7 @@ pub(super) async fn trigger(
             && receipt[0]["value"].as_object().is_some_and(|value| value.len() == 4)
             && receipt[0]["value"]["purchase_order_id"] == "00000000-0000-0000-0000-000000000304"
             && receipt[0]["value"]["purchase_order_status"] == "complete"
-            && receipt[0]["value"]["row_version"] == "3"
+            && receipt[0]["value"]["row_version"] == 3
             && receipt[0]["value"].get("acme_inspection_required").is_none()
             && receipt[0]["value"].get("acme_quality_status").is_none()
             && receipt_id.len() == 36 && receipt_id.bytes().all(|byte| byte == b'-'
@@ -250,7 +250,7 @@ pub(super) async fn trigger(
         ensure!(detail.as_array().is_some_and(|items| items.len() == 1)
             && detail[0]["request_id"] == "materializer-receipt-detail"
             && detail[0]["value"]["id"] == "00000000-0000-0000-0000-000000000304"
-            && detail[0]["value"]["row_version"] == "3"
+            && detail[0]["value"]["row_version"] == 3
             && detail[0]["value"]["acme_inspection_required"] == true
             && detail[0]["value"]["acme_quality_status"] == "pending",
             "the separate materializer Receipt detail read must retain its expected state");

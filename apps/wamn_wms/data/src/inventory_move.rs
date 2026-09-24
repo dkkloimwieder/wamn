@@ -36,7 +36,7 @@ pub struct MoveCommand {
     pub idempotency_key: String,
     pub pallet_id: String,
     pub to_location_id: String,
-    pub expected_row_version: i64,
+    pub expected_row_version: i32,
     pub occurred_at: String,
 }
 
@@ -47,7 +47,7 @@ pub struct MoveResult {
     pub pallet_id: String,
     pub location_id: String,
     pub pallet_status: String,
-    pub row_version: i64,
+    pub row_version: i32,
 }
 
 /// The command's scalars in their one wire spelling.
