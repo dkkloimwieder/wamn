@@ -229,6 +229,7 @@
                   "maker_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
                   "expected_edit_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
                   "grade": {"type": "string", "enum": ["first", "second"]},
+                  "inspector_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
                   "line": {
                     "type": "array",
                     "minItems": 1,

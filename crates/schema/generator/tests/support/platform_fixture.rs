@@ -180,6 +180,7 @@ pub(crate) fn client_release() -> ClientContractIr {
                                         "maker_id": {"type": ["string", "null"], "format": "uuid"},
                                         "expected_edit_version": {"type": "string"},
                                         "grade": {"type": "string", "enum": ["first", "second"]},
+                                        "inspector_id": {"type": ["string", "null"], "format": "uuid"},
                                         "line": {
                                             "type": "array",
                                             "minItems": 1,

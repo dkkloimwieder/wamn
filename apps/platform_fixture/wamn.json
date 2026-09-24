@@ -526,6 +526,15 @@
             ]
           },
           {
+            "label": "Inspector",
+            "nullable": true,
+            "path": "value.inspector_id",
+            "references": {
+              "model": "widget_maker"
+            },
+            "type": "uuid"
+          },
+          {
             "label": "Line",
             "nullable": false,
             "path": "value.line[].widget_id",

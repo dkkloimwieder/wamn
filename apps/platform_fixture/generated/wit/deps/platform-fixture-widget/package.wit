@@ -436,6 +436,7 @@ interface record-batch {
     expected-edit-version: s64,
     grade: string,
     idempotency-key: string,
+    inspector-id: option<string>,
     line: list<record-batch-line>,
     maker-id: option<string>,
     note: option<string>,

@@ -716,6 +716,7 @@ fn initial_values_reach_a_nested_member_and_name_no_group() {
             "export interface WidgetRecordBatchFormInitial {\n",
             "  value?: {\n",
             "    grade?: \"first\" | \"second\";\n",
+            "    inspectorId?: Uuid | null;\n",
             "    makerId?: Uuid | null;\n",
             "    note?: string | null;\n",
             "  };\n",
@@ -890,8 +891,8 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     assert!(widget.contains(concat!(
         "  createEffect(() => {\n",
         "    formValues();\n",
-        "    setWidgetListNarrowed((form.getFieldValue(`value.makerId`) as string | null) ?? null);\n",
-        "    void readWidgetListOptions(null);\n",
+        "    setValueLineWidgetIdNarrowed((form.getFieldValue(`value.makerId`) as string | null) ?? null);\n",
+        "    void readValueLineWidgetIdOptions(null);\n",
         "  });\n",
     )));
     assert!(
@@ -903,7 +904,7 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     assert!(
         widget.contains(concat!(
             "    if (narrowed === null || narrowed === \"\") {\n",
-            "      setWidgetListOptions(emptyPage<WidgetListRow>());\n",
+            "      setValueLineWidgetIdOptions(emptyPage<WidgetListRow>());\n",
             "      return;\n",
             "    }\n",
         )),
@@ -968,7 +969,7 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
     );
     assert!(
         maker.contains(
-            "props.onFillWidgetRecordBatch?.(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"makerId\"], cell.row.original.id))"
+            "props.onFillWidgetRecordBatch?.(writeMember(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"inspectorId\"], cell.row.original.id), [\"value\", \"makerId\"], cell.row.original.id))"
         ),
         "a nested input path is written one member at a time"
     );
@@ -1055,8 +1056,8 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
     // searches by it.
     assert!(
         create.contains(concat!(
-            "    if (widgetMakerQuerySearch() !== \"\") {\n",
-            "      request = writeMember(request, [\"filter\", \"name\"], [widgetMakerQuerySearch()]) as WidgetMakerQueryRequest;\n",
+            "    if (makerIdSearch() !== \"\") {\n",
+            "      request = writeMember(request, [\"filter\", \"name\"], [makerIdSearch()]) as WidgetMakerQueryRequest;\n",
             "    }\n",
         )),
         "the search sends the declared filter, which takes a list of values"
@@ -1067,14 +1068,14 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
             "              label=\"maker id\"\n",
         )) && create.contains(concat!(
             "              onSearch={(text) => {\n",
-            "                setWidgetMakerQuerySearch(text);\n",
-            "                void readWidgetMakerQueryOptions(null);\n",
+            "                setMakerIdSearch(text);\n",
+            "                void readMakerIdOptions(null);\n",
             "              }}\n",
         )),
         "the selector hands its search to the list it reads"
     );
     assert!(
-        create.contains("    void readWidgetMakerQueryOptions(null);\n"),
+        create.contains("    void readMakerIdOptions(null);\n"),
         "a search reads from the first page, because a cursor names a position \
          in the answer the old value produced"
     );
@@ -1089,15 +1090,13 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
         "the next page carries the cursor the last reply returned"
     );
     assert!(
-        create.contains(
-            "        : appendPage(widgetMakerQueryOptions(), rows, outcome.value.nextCursor),"
-        ),
+        create.contains("        : appendPage(makerIdOptions(), rows, outcome.value.nextCursor),"),
         "a page appends, as a table does"
     );
     assert!(
         create.contains(concat!(
-            "              hasNextPage={hasNextPage(widgetMakerQueryOptions())}\n",
-            "              onNextPage={() => void readWidgetMakerQueryOptions(widgetMakerQueryOptions().cursor)}\n",
+            "              hasNextPage={hasNextPage(makerIdOptions())}\n",
+            "              onNextPage={() => void readMakerIdOptions(makerIdOptions().cursor)}\n",
         )),
         "the next page control reads the cursor the selector holds"
     );

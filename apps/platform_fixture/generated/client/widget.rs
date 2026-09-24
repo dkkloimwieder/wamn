@@ -1480,6 +1480,8 @@ pub struct WidgetRecordBatchRequestValue {
     pub grade: String,
     /// `text`
     pub idempotency_key: String,
+    /// `uuid`, omittable
+    pub inspector_id: Option<Option<uuid::Uuid>>,
     /// `array`
     pub line: Vec<WidgetRecordBatchRequestValueLine>,
     /// `uuid`, omittable
@@ -1527,6 +1529,12 @@ pub const WIDGET_RECORD_BATCH_INPUT: &[FieldDescriptor] = &[
         path: "value.idempotency_key",
         type_name: "text",
         nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "value.inspector_id",
+        type_name: "uuid",
+        nullable: true,
         values: &[],
     },
     FieldDescriptor {
@@ -1619,6 +1627,18 @@ pub const WIDGET_RECORD_BATCH_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSche
                     values: &[],
                 },
                 required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.inspector_id",
+                    type_name: "uuid",
+                    nullable: true,
+                    values: &[],
+                },
+                required: false,
                 minimum: None,
                 maximum: None,
                 children: &[],
