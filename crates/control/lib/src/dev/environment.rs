@@ -86,8 +86,10 @@ pub async fn provision(
     admin: &Client,
     root: &Path,
     platform_domain: &str,
+    package_sources: &[PathBuf],
 ) -> anyhow::Result<DevEnvironment> {
     wamn_control_provision::validate_platform_domain(platform_domain)?;
+    let identity = dev_activation_identity(package_sources)?;
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
         .await
@@ -163,7 +165,6 @@ pub async fn provision(
     // The template is taken HERE, while the project database is provisioned and
     // still pristine: the loop applies package migrations, the standup does not.
     // A clone of this is what every run starts from.
-    let identity = dev_activation_identity();
     let template =
         prepare_target_template(admin, system_url, &route.database_url, root, &identity).await?;
 
@@ -847,19 +848,32 @@ pub async fn spawn_journey_management_gate(
     )
 }
 
-pub fn dev_activation_identity() -> DevActivationIdentity {
+/// The identity every run of this environment activates under. Its schema is
+/// the one the package sources declare for their models.
+pub fn dev_activation_identity(
+    package_sources: &[PathBuf],
+) -> anyhow::Result<DevActivationIdentity> {
+    let mut schemas = std::collections::BTreeSet::new();
+    for root in package_sources {
+        let manifest = super::config::read_package_manifest(root)?;
+        schemas.extend(manifest.models.into_values().map(|model| model.schema));
+    }
+    let mut schemas = schemas.into_iter();
+    let (Some(schema), None) = (schemas.next(), schemas.next()) else {
+        anyhow::bail!("the package sources must declare exactly one model schema");
+    };
     let process = std::process::id();
-    DevActivationIdentity {
+    Ok(DevActivationIdentity {
         tenant: TENANT.to_owned(),
         catalog: "default".to_owned(),
         environment: ENVIRONMENT.to_owned(),
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
-        schema: "receiving".to_owned(),
+        schema,
         host_group: "wamn-dev-receiving".to_owned(),
         host_name: format!("wamn-dev-receiving-{process}"),
         runner: format!("wamn-dev-receiving-{process}"),
-    }
+    })
 }
 
 pub fn write_dev_config(
@@ -932,4 +946,17 @@ pub fn write_dev_config(
     std::fs::write(&path, serde_json::to_vec_pretty(&config)?)
         .context("write the strict product-command configuration")?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_activation_schema_is_the_one_the_package_declares() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_fixture");
+        let identity =
+            dev_activation_identity(&[fixture]).expect("the fixture declares one schema");
+        assert_eq!(identity.schema, "inventory");
+    }
 }
