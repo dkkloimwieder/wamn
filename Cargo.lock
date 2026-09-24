@@ -5699,6 +5699,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-component-composer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+ "sha2 0.11.0",
+ "wac-graph",
+ "wasmparser 0.251.0",
+ "wat",
+]
+
+[[package]]
 name = "wamn-component-policy"
 version = "0.1.0"
 

@@ -1,0 +1,20 @@
+[package]
+name = "wamn-component-composer"
+description = "Build-time composition of an overlay component with its base and participants."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+wac-graph.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+wasmparser.workspace = true
+wat = "1.252"
+
+[lints]
+workspace = true

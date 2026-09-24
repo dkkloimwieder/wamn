@@ -33,12 +33,26 @@ tools/build-components all
 These are alternative selections. The last command selects every guest from Cargo metadata.
 Each selected guest gets one Cargo invocation, with the retained release profile and virtualization step.
 Pass the resolved base app directories when building an overlay.
+If an overlay is composed and its base app is not in the selection, the build fails.
 Do not combine guests into a new grouped Cargo invocation.
 Cargo combines dependency features within each invocation, which can change artifact bytes.
 
+After virtualization, the tool composes each overlay whose component declaration names a base operation dependency.
+`wamn-component-composer` joins the overlay component, each base component, and each participant component into one component.
+[`tools/component-composition.json`](../../tools/component-composition.json) names the participant crates of each overlay package.
+A selected overlay also builds those participant crates.
+The declarations give each link.
+The overlay imports each base operation that it depends on, and the base supplies that operation.
+The base imports its pre-commit interface, and the participant that the overlay dependency names supplies it.
+The composed component exports every export of its members.
+Imports that no member supplies stay imports of the composed component.
+Each member is embedded with its bytes unchanged.
+The composed component replaces the overlay output in `virtualized/std-empty-environment`.
+The composer does not compare the base bytes with the digest pin in `wamn.json`. Publication checks the pin.
+
 The build tool requires `jq` and `sha256sum`.
 `build-only app APP_DIRECTORY...` and `build-only all` emit an artifact plan to stdout.
-`virtualize-only ARTIFACT_PLAN` refuses changed inputs or raw hashes before it updates outputs.
+`virtualize-only ARTIFACT_PLAN` refuses changed inputs or raw hashes before it updates outputs. It then composes the overlays.
 `watch-roots app APP_DIRECTORY...` lists selected source dependencies without building them.
 It also includes the shared platform WIT sources, so interface edits rebuild the selected components.
 For a manifest-only change, inspect `cargo metadata --no-deps` before deciding whether compilation is needed.

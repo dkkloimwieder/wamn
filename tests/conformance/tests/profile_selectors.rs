@@ -14,6 +14,8 @@ const ROOT_MANIFEST: &str = "Cargo.toml";
 const COMPONENT_MANIFESTS: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"];
 const COMPONENT_TOOL: &str = "tools/build-components";
 const COMPONENT_VIRTUALIZATION: &str = "tools/component-virtualization.json";
+const COMPONENT_COMPOSITION: &str = "tools/component-composition.json";
+const COMPOSER_PACKAGE: &str = "wamn-component-composer";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -253,14 +255,17 @@ if [[ "${1:-}" == run ]]; then
   if [[ "$status" == 0 ]]; then
     input=''
     output=''
+    overlay=''
     while (($# > 0)); do
       case "$1" in
         --input) input="$2"; shift 2 ;;
         --output) output="$2"; shift 2 ;;
+        --overlay) overlay="$2"; shift 2 ;;
         *) shift ;;
       esac
     done
-    command cp -- "$input" "$output"
+    # The composer names its overlay input with --overlay.
+    command cp -- "${input:-$overlay}" "$output"
   fi
   exit "$status"
 fi
@@ -282,6 +287,14 @@ exit "${WAMN_FAKE_BUILD_STATUS:-23}"
     permissions.set_mode(0o755);
     fs::set_permissions(&fake, permissions).expect("failed to make fake Cargo executable");
     fake
+}
+
+/// Whether a captured Cargo invocation runs the given tool package.
+fn runs_package(invocation: &[String], package: &str) -> bool {
+    invocation.get(1).is_some_and(|argument| argument == "run")
+        && invocation
+            .windows(2)
+            .any(|arguments| arguments[0] == "-p" && arguments[1] == package)
 }
 
 fn write_fake_metadata(directory: &Path, manifest: &Path, metadata: &[u8]) {
@@ -542,7 +555,11 @@ fn component_build_requires_declared_app_crates_and_accepts_new_cargo_members() 
     let capture = scratch.join("captured argv");
     let metadata_directory = scratch.join("canned metadata");
     fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
-    for relative in [COMPONENT_TOOL, COMPONENT_VIRTUALIZATION] {
+    for relative in [
+        COMPONENT_TOOL,
+        COMPONENT_VIRTUALIZATION,
+        COMPONENT_COMPOSITION,
+    ] {
         let destination = scratch.join(relative);
         fs::create_dir_all(destination.parent().expect("fixture file has a parent"))
             .expect("failed to create fixture directory");
@@ -778,11 +795,22 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     );
 
     let invocations = captured_invocations(&capture);
+    let tool_package = virtualization["tool"]["package"]
+        .as_str()
+        .expect("virtualizer package must be a string");
     let virtualizer_runs = invocations
         .iter()
-        .filter(|invocation| invocation.get(1).is_some_and(|argument| argument == "run"))
+        .filter(|invocation| runs_package(invocation, tool_package))
         .collect::<Vec<_>>();
     assert_eq!(virtualizer_runs.len(), artifacts.len());
+    assert_eq!(
+        invocations
+            .iter()
+            .filter(|invocation| runs_package(invocation, COMPOSER_PACKAGE))
+            .count(),
+        1,
+        "the all profile composes the one overlay that depends on a base operation"
+    );
     let mut actual_inputs = BTreeSet::new();
     for invocation in virtualizer_runs {
         let package_position = invocation
@@ -1037,7 +1065,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     assert_eq!(
         virtualize_only_invocations
             .iter()
-            .filter(|invocation| invocation.get(1).is_some_and(|argument| argument == "run"))
+            .filter(|invocation| runs_package(invocation, tool_package))
             .count(),
         artifacts.len()
     );

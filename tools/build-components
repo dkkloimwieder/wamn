@@ -69,6 +69,7 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_VIRTUALIZATION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-virtualization.json"
+readonly WAMN_COMPOSITION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-composition.json"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
@@ -117,6 +118,14 @@ readonly WAMN_PROFILE
 [[ -r "$WAMN_VIRTUALIZATION_MANIFEST" ]] || {
   wamn_fail 65 "cannot read $WAMN_VIRTUALIZATION_MANIFEST"
 }
+jq -e '
+  (keys | sort) == ["participants", "tool"]
+  and (.tool | keys | sort) == ["manifest", "package"]
+  and (.participants | type == "object")
+  and ([.participants[] | select(type != "array" or any(.[]; type != "string"))] | length == 0)
+' "$WAMN_COMPOSITION_MANIFEST" >/dev/null 2>&1 || {
+  wamn_fail 65 "cannot read a valid $WAMN_COMPOSITION_MANIFEST"
+}
 if [[ "$WAMN_CARGO" == */* ]]; then
   [[ -x "$WAMN_CARGO" ]] || {
     wamn_fail 127 "Cargo executable is not executable: $WAMN_CARGO"
@@ -156,6 +165,20 @@ WAMN_PACKAGE_COMPONENTS="$(
 )" || wamn_fail 65 'could not read application component declarations'
 readonly WAMN_PACKAGE_COMPONENTS
 
+# Participant components are not package components. A selected application
+# builds the participants that tools/component-composition.json names for it,
+# so its composition has every member.
+declare WAMN_COMPOSITION_MEMBERS
+WAMN_COMPOSITION_MEMBERS="$(
+  for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
+    jq -r --slurpfile composition "$WAMN_COMPOSITION_MANIFEST" \
+      '$composition[0].participants[.package.id? // ""] // [] | .[]' "$application" || {
+      wamn_fail 65 "cannot read the composition members of $application"
+    }
+  done | sort -u | jq -Rn '[inputs | select(length > 0)]'
+)" || wamn_fail 65 'could not read composition members'
+readonly WAMN_COMPOSITION_MEMBERS
+
 declare -a WAMN_METADATA=()
 declare WAMN_WORKSPACE_METADATA
 for manifest in "${WAMN_MANIFESTS[@]}"; do
@@ -172,11 +195,12 @@ readonly WAMN_METADATA
 declare WAMN_ABSENT_PACKAGE_COMPONENTS
 WAMN_ABSENT_PACKAGE_COMPONENTS="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -er -s \
-    --argjson package_components "$WAMN_PACKAGE_COMPONENTS" '
+    --argjson package_components "$WAMN_PACKAGE_COMPONENTS" \
+    --argjson composition_members "$WAMN_COMPOSITION_MEMBERS" '
     [.[]
      | (.packages | map({key: .id, value: .name}) | from_entries) as $names
      | .workspace_members[] | $names[.]] as $members
-    | ($package_components - $members) | join(", ")
+    | ($package_components + $composition_members - $members) | join(", ")
   '
 )" || wamn_fail 65 'could not read component workspace membership from locked metadata'
 readonly WAMN_ABSENT_PACKAGE_COMPONENTS
@@ -188,13 +212,16 @@ declare WAMN_PLAN
 WAMN_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" \
     --argjson manifests "$WAMN_MANIFEST_LIST" \
-    --argjson package_components "$WAMN_PACKAGE_COMPONENTS" '
+    --argjson package_components "$WAMN_PACKAGE_COMPONENTS" \
+    --argjson composition_members "$WAMN_COMPOSITION_MEMBERS" '
     [to_entries[]
      | .key as $index
      | .value as $metadata
      | $metadata.packages[]
      | select(.id as $id | $metadata.workspace_members | index($id) != null)
-     | select($profile == "all" or (.name as $name | $package_components | index($name) != null))
+     | select($profile == "all"
+              or (.name as $name
+                  | $package_components + $composition_members | index($name) != null))
      | {manifest: $manifests[$index], packages: [.name]}]
     | sort_by(.manifest, .packages[0])
     | select(length > 0)
@@ -499,6 +526,106 @@ wamn_virtualize() {
   trap - EXIT
 }
 
+wamn_artifact_output() {
+  jq -er --arg package "$2" \
+    '[.virtualization.artifacts[] | select(.package == $package) | .output]
+     | select(length == 1) | .[0]' <<<"$1"
+}
+
+wamn_single_component() {
+  jq -er '(.components // {}) | keys | select(length == 1) | .[0]' "$1"
+}
+
+# An overlay whose declaration names a base operation dependency is composed
+# with its base and its participants into one component. The composed
+# component replaces the overlay output, which publication reads.
+wamn_compose() {
+  local -r artifact_plan="$1"
+  local composer_manifest composer_package application application_root
+  local package_id component declaration output dependency base_package base_version
+  local base_manifest base_root base_component base_declaration base_output participant
+  local participant_output composer_status candidate
+  local -a arguments
+
+  composer_manifest="$WAMN_REPOSITORY_ROOT/$(jq -r '.tool.manifest' "$WAMN_COMPOSITION_MANIFEST")"
+  composer_package="$(jq -r '.tool.package' "$WAMN_COMPOSITION_MANIFEST")"
+
+  for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
+    jq -e '(.base_dependencies // {}) | length > 0' "$application" >/dev/null || continue
+    application_root="$(dirname -- "$application")"
+    package_id="$(jq -r '.package.id' "$application")"
+    component="$(wamn_single_component "$application")" || {
+      wamn_fail 65 "compose $package_id: the overlay must declare exactly one component"
+    }
+    declaration="$application_root/publication/components/$component.json.in"
+    [[ -r "$declaration" ]] || wamn_fail 65 "compose $package_id: cannot read $declaration"
+    if ! jq -e '[.operations[]?.dependencies[]?] | length > 0' "$declaration" >/dev/null; then
+      printf 'build-components: %s names no base operation dependency; not composed\n' \
+        "$package_id" >&2
+      continue
+    fi
+    output="$(wamn_artifact_output "$artifact_plan" "${component//_/-}")" || {
+      wamn_fail 65 "compose $package_id: the artifact plan has no output for $component"
+    }
+    arguments=(--overlay-declaration "$declaration" --overlay "$output")
+
+    while IFS= read -r dependency; do
+      base_package="$(jq -r '.package' <<<"$dependency")"
+      base_version="$(jq -r '.version' <<<"$dependency")"
+      base_manifest=''
+      for candidate in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
+        if jq -e --arg package "$base_package" --arg version "$base_version" \
+          '.package.id == $package and .package.version == $version' \
+          "$candidate" >/dev/null; then
+          base_manifest="$candidate"
+        fi
+      done
+      [[ -n "$base_manifest" ]] || {
+        wamn_fail 65 "compose $package_id: select its base application $base_package@$base_version in the same build"
+      }
+      base_root="$(dirname -- "$base_manifest")"
+      base_component="$(wamn_single_component "$base_manifest")" || {
+        wamn_fail 65 "compose $package_id: base $base_package must declare exactly one component"
+      }
+      base_declaration="$base_root/publication/components/$base_component.json.in"
+      [[ -r "$base_declaration" ]] || {
+        wamn_fail 65 "compose $package_id: cannot read $base_declaration"
+      }
+      base_output="$(wamn_artifact_output "$artifact_plan" "${base_component//_/-}")" || {
+        wamn_fail 65 "compose $package_id: the artifact plan has no output for $base_component"
+      }
+      arguments+=(--base-declaration "$base_declaration" --base "$base_output")
+    done < <(jq -c '.base_dependencies[] | {package, version}' "$application")
+
+    while IFS= read -r participant; do
+      participant_output="$(wamn_artifact_output "$artifact_plan" "$participant")" || {
+        wamn_fail 65 "compose $package_id: the artifact plan has no output for $participant"
+      }
+      arguments+=(--participant "$participant_output")
+    done < <(jq -r --arg package "$package_id" \
+      '.participants[$package] // [] | .[]' "$WAMN_COMPOSITION_MANIFEST")
+
+    trap wamn_cleanup_partial_output EXIT
+    WAMN_PENDING_OUTPUT="${output}.composed.$$"
+    rm -f -- "$WAMN_PENDING_OUTPUT"
+    composer_status=0
+    "$WAMN_CARGO" run --locked --offline \
+      --manifest-path "$composer_manifest" \
+      -p "$composer_package" -- \
+      "${arguments[@]}" --output "$WAMN_PENDING_OUTPUT" || composer_status=$?
+    if ((composer_status != 0)); then
+      wamn_fail "$composer_status" "composition failed for $package_id"
+    fi
+    [[ -s "$WAMN_PENDING_OUTPUT" ]] || {
+      wamn_fail 65 "composer produced no component for $package_id"
+    }
+    mv -f -- "$WAMN_PENDING_OUTPUT" "$output"
+    WAMN_PENDING_OUTPUT=''
+    trap - EXIT
+    printf 'build-components: composed %s -> %s\n' "$package_id" "$output" >&2
+  done
+}
+
 if [[ "$WAMN_MODE" != virtualize-only ]]; then
   wamn_build
 fi
@@ -515,3 +642,4 @@ if [[ "$WAMN_MODE" == virtualize-only \
 fi
 
 wamn_virtualize "$WAMN_CURRENT_ARTIFACT_PLAN"
+wamn_compose "$WAMN_CURRENT_ARTIFACT_PLAN"
