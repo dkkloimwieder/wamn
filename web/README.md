@@ -8,7 +8,7 @@ The generator writes the bindings, and this directory holds what the bindings ca
 | [runtime](runtime/) | `@wamn/web-runtime`: the wire contract, and the transport that classifies one response |
 | [ui](ui/README.md) | `@wamn/ui`: the copied Zaidan components, the theme, and the exports that generated components render through |
 | [components](components/README.md) | The harness that type checks and tests generated components |
-| [demo](demo/README.md) | Disposable page that runs the generated Receiving components against a local stack |
+| [demo](demo/README.md) | Disposable page that runs the generated Receiving or WMS components against a local stack |
 
 ## Runtime
 

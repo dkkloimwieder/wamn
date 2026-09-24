@@ -2,17 +2,17 @@
  * The whole demo page.
  *
  * It signs in by cookie, builds one transport, and mounts the generated
- * components under it. There is no router, no navigation and no layout system,
+ * components of one application under it. WAMN_DEMO_APP selects the
+ * application when Vite starts. There is no router, no navigation and no layout system,
  * because the page exists to judge the components and is deleted afterward.
  */
 
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 
 import {
   Button,
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
   Field,
@@ -28,28 +28,19 @@ import {
   type Environment,
   type Outcome,
   type SessionKeeper,
-  type Transport,
 } from "@wamn/web-runtime";
-import {
-  LocationListTable,
-  LocationListTableLabel,
-  PurchaseOrderGetDetail,
-  PurchaseOrderGetDetailLabel,
-  PurchaseOrderQueryTable,
-  PurchaseOrderQueryTableLabel,
-  PurchaseOrderUpdateForm,
-  PurchaseOrderUpdateFormLabel,
-  ReceiptGetDetail,
-  ReceiptGetDetailLabel,
-  ReceiptQueryTable,
-  ReceiptQueryTableLabel,
-  ReceivingLoadPurchaseOrderHistoryTable,
-  ReceivingLoadPurchaseOrderHistoryTableLabel,
-  ReceivingLoadReceiptScreenTable,
-  ReceivingLoadReceiptScreenTableLabel,
-  ReceivingRecordReceiptForm,
-  ReceivingRecordReceiptFormLabel,
-} from "@wamn/receiving-client/components/index.js";
+import { ReceivingScreens } from "./receiving.js";
+import { WmsScreens } from "./wms.js";
+
+/** What each application brings to the page. */
+const PAGES = {
+  receiving: { title: "Receiving demo", account: "receiving-demo@wamn.dev", Screens: ReceivingScreens },
+  wms: { title: "WMS demo", account: "wms-demo@wamn.dev", Screens: WmsScreens },
+} as const;
+
+/** The application that Vite selected when it started. */
+const page = PAGES[__WAMN_DEMO_APP__];
+document.title = page.title;
 
 /**
  * The environment this page signed in to, from the address.
@@ -64,16 +55,12 @@ function addressedAudience(): string | null {
 }
 
 export function App() {
-  const [email, setEmail] = createSignal("receiving-demo@wamn.dev");
+  const [email, setEmail] = createSignal<string>(page.account);
   const [password, setPassword] = createSignal("");
   const [reachable, setReachable] = createSignal<Environment[]>([]);
   const [signedIn, setSignedIn] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string | null>(null);
   const [outcome, setOutcome] = createSignal<string | null>(null);
-  // One purchase order and one receipt feed every screen that needs a record.
-  // A row link writes them, and the operator can also paste one.
-  const [order, setOrder] = createSignal("");
-  const [receipt, setReceipt] = createSignal("");
 
   let keeper: SessionKeeper | null = null;
   function keep(aud: string): SessionKeeper {
@@ -122,7 +109,7 @@ export function App() {
       <header class="border-b">
         <div class="mx-auto flex max-w-screen-2xl items-center justify-between gap-4 px-6 py-3">
           <div class="flex items-baseline gap-3">
-            <h1 class="text-base font-semibold uppercase">Receiving demo</h1>
+            <h1 class="text-base font-semibold uppercase">{page.title}</h1>
             <Show when={signedIn()}>
               <span class="text-xs text-muted-foreground">
                 signed in, and the browser holds the session in an HttpOnly cookie
@@ -222,159 +209,12 @@ export function App() {
         <Show when={transport()}>
           {(ready) => (
             <div class="flex flex-col gap-6">
-              <Card size="sm">
-                <CardContent class="flex flex-wrap items-end gap-6">
-                  <Field class="max-w-md">
-                    <FieldLabel for="demo-order">selected purchase order</FieldLabel>
-                    <Input
-                      id="demo-order"
-                      type="text"
-                      placeholder="choose a row in Purchase orders"
-                      value={order()}
-                      onInput={(event) => setOrder(event.currentTarget.value)}
-                    />
-                  </Field>
-                  <div class="flex flex-col gap-1 pb-2">
-                    <span class="text-xs uppercase text-muted-foreground">selected receipt</span>
-                    <span class="font-mono text-sm">{receipt() === "" ? "none" : receipt()}</span>
-                  </div>
-                </CardContent>
-              </Card>
-              {screens(ready(), { order, setOrder, receipt, setReceipt }, read)}
+              <page.Screens transport={ready()} read={read} />
             </div>
           )}
         </Show>
       </main>
     </div>
-  );
-}
-
-/** One screen on the page: a card with its title and the operation it calls. */
-function Panel(props: { title: string; operation: string; children: JSX.Element }) {
-  return (
-    <Card class="min-w-0">
-      <CardHeader>
-        <CardTitle>
-          <h2>{props.title}</h2>
-        </CardTitle>
-        <CardDescription class="font-mono">{props.operation}</CardDescription>
-      </CardHeader>
-      <CardContent class="min-w-0">{props.children}</CardContent>
-    </Card>
-  );
-}
-
-/** What a screen shows until the record it needs is chosen. */
-function Waiting(props: { children: JSX.Element }) {
-  return (
-    <p class="border border-dashed p-8 text-center text-sm text-muted-foreground">
-      {props.children}
-    </p>
-  );
-}
-
-/** What the page holds for the screens that name one record. */
-interface Picked {
-  readonly order: () => string;
-  readonly setOrder: (id: string) => void;
-  readonly receipt: () => string;
-  readonly setReceipt: (id: string) => void;
-}
-
-/** The generated screens, in the order an operator meets them. */
-function screens(transport: Transport, picked: Picked, read: (outcome: Outcome<unknown>) => void) {
-  const { order, setOrder, receipt, setReceipt } = picked;
-  const needsOrder = "Choose a purchase order in the table above.";
-  return (
-    <>
-      <Panel title={PurchaseOrderQueryTableLabel} operation="purchase_order.query">
-        <PurchaseOrderQueryTable
-          transport={transport}
-          onRowSelect={(row) => setOrder(row.id)}
-          onOpenPurchaseOrderGet={(row) => setOrder(row.id)}
-          onOutcome={read}
-        />
-      </Panel>
-
-      <div class="grid gap-6 xl:grid-cols-2">
-        <Panel title={PurchaseOrderGetDetailLabel} operation="purchase_order.get">
-          <Show when={order() !== ""} fallback={<Waiting>{needsOrder}</Waiting>}>
-            <PurchaseOrderGetDetail
-              transport={transport}
-              input={{ id: order() }}
-              onOutcome={read}
-            />
-          </Show>
-        </Panel>
-
-        <Panel title={PurchaseOrderUpdateFormLabel} operation="purchase_order.update">
-          <Show when={order() !== ""} fallback={<Waiting>{needsOrder}</Waiting>}>
-            <PurchaseOrderUpdateForm
-              transport={transport}
-              key={{ id: order() }}
-              onSubmitted={read}
-            />
-          </Show>
-        </Panel>
-      </div>
-
-      <Panel title={ReceivingRecordReceiptFormLabel} operation="receiving.record_receipt">
-        <Show when={order() !== ""} fallback={<Waiting>{needsOrder}</Waiting>}>
-          <ReceivingRecordReceiptForm
-            transport={transport}
-            initial={{ value: { purchaseOrderId: order() } }}
-            onSubmitted={read}
-          />
-        </Show>
-      </Panel>
-
-      <Panel title={ReceivingLoadReceiptScreenTableLabel} operation="receiving.load_receipt_screen">
-        <Show when={order() !== ""} fallback={<Waiting>{needsOrder}</Waiting>}>
-          <ReceivingLoadReceiptScreenTable
-            transport={transport}
-            fixed={{ purchaseOrderId: order() }}
-            onOutcome={read}
-          />
-        </Show>
-      </Panel>
-
-      <Panel
-        title={ReceivingLoadPurchaseOrderHistoryTableLabel}
-        operation="receiving.load_purchase_order_history"
-      >
-        <Show when={order() !== ""} fallback={<Waiting>{needsOrder}</Waiting>}>
-          <ReceivingLoadPurchaseOrderHistoryTable
-            transport={transport}
-            fixed={{ id: order(), limit: 20 }}
-            onOutcome={read}
-          />
-        </Show>
-      </Panel>
-
-      <div class="grid gap-6 xl:grid-cols-2">
-        <Panel title={ReceiptQueryTableLabel} operation="receipt.query">
-          <ReceiptQueryTable
-            transport={transport}
-            onRowSelect={(row) => setReceipt(row.id)}
-            onOpenReceiptGet={(row) => setReceipt(row.id)}
-            onOutcome={read}
-          />
-        </Panel>
-
-        <Panel title={ReceiptGetDetailLabel} operation="receipt.get">
-          <Show
-            when={receipt() !== ""}
-            fallback={<Waiting>Choose a receipt in the table beside this one.</Waiting>}
-          >
-            <ReceiptGetDetail transport={transport} input={{ id: receipt() }} onOutcome={read} />
-          </Show>
-        </Panel>
-      </div>
-
-      <Panel title={LocationListTableLabel} operation="location.list">
-        <LocationListTable transport={transport} onOutcome={read} />
-      </Panel>
-    </>
   );
 }
 

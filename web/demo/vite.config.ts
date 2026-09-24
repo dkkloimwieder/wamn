@@ -15,8 +15,23 @@ import tailwindcss from "@tailwindcss/vite";
 import solid from "vite-plugin-solid";
 import { defineConfig, type ProxyOptions } from "vite";
 
-/** The five models of the Receiving release, which are its path prefixes. */
-const MODELS = ["/purchase_order", "/receipt", "/receiving", "/location", "/supplier"];
+/**
+ * The path prefixes of each release: one for each model or module that serves
+ * a route. WAMN_DEMO_APP selects one set, and the page of the same name.
+ */
+const PREFIXES = {
+  receiving: ["/purchase_order", "/receipt", "/receiving", "/location", "/supplier"],
+  wms: ["/pallet", "/inventory", "/location", "/product", "/pallet_quantity", "/inventory_movement"],
+} as const;
+
+/** The application this server demonstrates. Receiving, when the variable is unset. */
+function application(): keyof typeof PREFIXES {
+  const app = process.env["WAMN_DEMO_APP"] ?? "receiving";
+  if (app !== "receiving" && app !== "wms") {
+    throw new Error(`WAMN_DEMO_APP is receiving or wms, not ${app}`);
+  }
+  return app;
+}
 
 /** One path inside this package, as an absolute path. */
 function local(path: string): string {
@@ -42,17 +57,19 @@ function environment(): { issuer: string; routeHost: string; route: string } {
 }
 
 export default defineConfig(() => {
+  const app = application();
   const { issuer, routeHost, route } = environment();
   const proxy: Record<string, ProxyOptions> = {
     // The issuer signed its own certificate, so this hop does not verify it.
     // Nothing outside the loopback address is reachable here.
     "/password": { target: issuer, secure: false, changeOrigin: true },
   };
-  for (const model of MODELS) {
-    proxy[model] = { target: route, headers: { host: routeHost } };
+  for (const prefix of PREFIXES[app]) {
+    proxy[prefix] = { target: route, headers: { host: routeHost } };
   }
   return {
     plugins: [solid(), tailwindcss()],
+    define: { __WAMN_DEMO_APP__: JSON.stringify(app) },
     // The generated modules live outside this package, so the names they
     // import are resolved here. A bare import from a generated file would
     // otherwise walk up a directory tree that installs nothing.
@@ -62,6 +79,7 @@ export default defineConfig(() => {
         { find: "@wamn/ui/styles.css", replacement: local("../ui/src/styles.css") },
         { find: /^@wamn\/ui$/, replacement: local("../ui/src/index.ts") },
         { find: "@wamn/receiving-client", replacement: local("../../apps/wamn_receiving/generated/client-ts") },
+        { find: "@wamn/wms-client", replacement: local("../../apps/wamn_wms/generated/client-ts") },
         { find: /^solid-js$/, replacement: local("node_modules/solid-js") },
         { find: /^@tanstack\/solid-table$/, replacement: local("node_modules/@tanstack/solid-table") },
         { find: /^@tanstack\/solid-form$/, replacement: local("node_modules/@tanstack/solid-form") },
@@ -76,7 +94,13 @@ export default defineConfig(() => {
       proxy,
       // The web/ui stylesheet names its font files by path, and a path outside
       // this package is refused unless it is allowed here.
-      fs: { allow: [local(".."), local("../../apps/wamn_receiving/generated/client-ts")] },
+      fs: {
+        allow: [
+          local(".."),
+          local("../../apps/wamn_receiving/generated/client-ts"),
+          local("../../apps/wamn_wms/generated/client-ts"),
+        ],
+      },
     },
   };
 });
