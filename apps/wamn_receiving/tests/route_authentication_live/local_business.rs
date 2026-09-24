@@ -253,7 +253,7 @@ async fn transactional_participation(
         ui.committed_result().is_some_and(|result| {
             result["purchase_order_id"] == "00000000-0000-0000-0000-000000000720"
                 && result["purchase_order_status"] == "complete"
-                && result["row_version"] == "2"
+                && result["row_version"] == 2
                 && result["receipt_id"].as_str().is_some()
         }),
         "the production UI did not show the committed receipt result"

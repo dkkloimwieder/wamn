@@ -98,26 +98,20 @@ Deployment tests retain startup, restart, queue, CDC/materializer, and label del
 Build only the components that these tests use:
 
 ```bash
-for package in receiving client-acme-receiving wms http-route prior-commit; do
-  cargo build --manifest-path apps/Cargo.toml --locked --offline \
-    --target wasm32-wasip2 -p "$package" || exit
-done
-cargo build --locked --offline -p wamn-component-virtualizer
-mkdir -p target/virtualized/std-empty-environment
-for component in receiving client_acme_receiving wms prior_commit; do
-  target/debug/wamn-component-virtualizer \
-    --input "apps/target/wasm32-wasip2/debug/$component.wasm" \
-    --output "target/virtualized/std-empty-environment/$component.wasm"
-done
+tools/build-components app apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
+cargo build --manifest-path apps/Cargo.toml --locked --offline \
+  --target wasm32-wasip2 -p http-route
 ```
 
+The tool composes Acme with the Receiving base and the Acme participant into one component.
+It writes the application components to `apps/target/virtualized/std-empty-environment`.
 These paths use the default Cargo target directories.
 If you set `CARGO_TARGET_DIR`, use that directory for both workspace build outputs.
 
 Run the local business assertions:
 
 ```bash
-WAMN_APPLICATION_COMPONENTS="$PWD/target/virtualized/std-empty-environment" \
+WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
   cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
     --lib local_business:: -- --ignored --test-threads=1
@@ -126,6 +120,13 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
 Run the prior-commit fixture admission and exact forwarding assertions:
 
 ```bash
+cargo build --manifest-path apps/Cargo.toml --locked --offline \
+  --target wasm32-wasip2 -p prior-commit
+cargo build --locked --offline -p wamn-component-virtualizer
+mkdir -p target/virtualized/std-empty-environment
+target/debug/wamn-component-virtualizer \
+  --input apps/target/wasm32-wasip2/debug/prior_commit.wasm \
+  --output target/virtualized/std-empty-environment/prior_commit.wasm
 WAMN_PRIOR_COMMIT_COMPONENT="$PWD/target/virtualized/std-empty-environment/prior_commit.wasm" \
   cargo test --locked --offline -p wamn-receiving-tests --lib counter_parent_ -- --ignored
 ```

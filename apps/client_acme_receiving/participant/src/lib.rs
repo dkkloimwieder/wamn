@@ -6,10 +6,15 @@
 //! The Acme Receiving record-receipt participant, as its own component.
 //!
 //! The base Receiving component calls it through its pre-commit import. It
-//! imports no base interface, so the base, the overlay and this participant
-//! compose without a cycle.
+//! exports the base's pre-commit interface and types its own interface with the
+//! base's request record, so composition plugs it into that import. It imports
+//! no base interface, so the base, the overlay and this participant compose
+//! without a cycle.
 
 use exports::client_acme_receiving::receiving::record_receipt_participant::Guest as RecordReceiptParticipant;
+use exports::wamn_receiving::receiving::record_receipt_pre_commit::{
+    Guest as RecordReceiptPreCommit, RecordReceiptPreCommitRequest,
+};
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
 use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorKind};
 
@@ -21,6 +26,7 @@ wit_bindgen::generate!({
         world client-acme-receiving-participant {
           import wamn:postgres/types@0.1.0;
           import wamn:postgres/statements@0.1.0;
+          export wamn-receiving:receiving/record-receipt-pre-commit@1.0.0;
           export client-acme-receiving:receiving/record-receipt-participant@3.0.0;
         }
     "#,
@@ -89,8 +95,8 @@ mod receipt_participant_codec {
 impl RecordReceiptParticipant for Component {
     async fn run(
         _context: NodeContext,
-        mut input: exports::client_acme_receiving::receiving::record_receipt_participant::RecordReceiptParticipantRequest,
-    ) -> Result<exports::client_acme_receiving::receiving::record_receipt_participant::RecordReceiptParticipantRequest, NodeError>{
+        mut input: RecordReceiptPreCommitRequest,
+    ) -> Result<RecordReceiptPreCommitRequest, NodeError> {
         receipt_participant_codec::normalize(&mut input).map_err(|error| {
             NodeError::InvalidInput(ErrorDetail {
                 message: error.context().to_owned(),
@@ -126,6 +132,15 @@ impl RecordReceiptParticipant for Component {
         })?;
         <Self as RecordReceiptParticipant>::run(context, request).await?;
         Ok(emission(input))
+    }
+}
+
+impl RecordReceiptPreCommit for Component {
+    async fn run(
+        context: NodeContext,
+        input: RecordReceiptPreCommitRequest,
+    ) -> Result<RecordReceiptPreCommitRequest, NodeError> {
+        <Self as RecordReceiptParticipant>::run(context, input).await
     }
 }
 

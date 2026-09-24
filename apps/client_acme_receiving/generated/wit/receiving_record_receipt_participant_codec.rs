@@ -58,17 +58,17 @@ struct JsonRequest {
 }
 
 #[allow(dead_code)]
-pub(crate) fn decode(input: &str) -> Result<contract::RecordReceiptParticipantRequest, CodecError> {
+pub(crate) fn decode(input: &str) -> Result<contract::RecordReceiptPreCommitRequest, CodecError> {
     let request: JsonRequest = serde_json::from_str(input)
         .map_err(|_| CodecError("operation input does not match its declared object"))?;
-    Ok(contract::RecordReceiptParticipantRequest {
+    Ok(contract::RecordReceiptPreCommitRequest {
         purchase_order_id: request.purchase_order_id,
         receipt_id: request.receipt_id,
     })
 }
 
 pub(crate) fn normalize(
-    request: &mut contract::RecordReceiptParticipantRequest,
+    request: &mut contract::RecordReceiptPreCommitRequest,
 ) -> Result<(), CodecError> {
     {
         let value = &mut request.purchase_order_id;
@@ -103,9 +103,8 @@ macro_rules! export_operation {
             impl __contract::Guest for $component {
                 async fn run(
                     _context: __node::NodeContext,
-                    input: __contract::RecordReceiptParticipantRequest,
-                ) -> Result<__contract::RecordReceiptParticipantRequest, __node::NodeError>
-                {
+                    input: __contract::RecordReceiptPreCommitRequest,
+                ) -> Result<__contract::RecordReceiptPreCommitRequest, __node::NodeError> {
                     let mut state = $state;
                     let mut input = input;
                     __codec::normalize(&mut input).map_err(invalid)?;

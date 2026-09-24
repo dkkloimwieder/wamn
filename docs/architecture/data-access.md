@@ -171,6 +171,8 @@ A composed write followed by a projection is not one transaction.
 A declared pre-commit participant can extend a base command within its transaction.
 The base declares the typed callback input. The overlay operation that forwards to the base names the participant.
 The overlay build composes the overlay, its pinned base, and the participant into one component.
+The generator types the participant's interface with the base's pre-commit request record and declares no request type of its own.
+The participant also exports the base's pre-commit interface, so composition plugs it into the base's import.
 The release folds the base operation and the participant into the overlay entry's grant, so the host requires the original caller to hold every one of those permissions.
 The generated contracts carry ordinary typed values. Application code owns the transaction sequence and conditional business rules.
 

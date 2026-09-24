@@ -1143,7 +1143,11 @@ pub(super) fn emit_custom_operation_wit(
             insert_bytes(files, &package_path, source.into_bytes())?;
         }
     }
-    let codec = emit_custom_codec(local_name, operation);
+    let codec_name = participant_base(manifest, operation).map_or_else(
+        || local_name.to_owned(),
+        |(_, base_operation)| format!("{}_pre_commit", base_local_name(base_operation)),
+    );
+    let codec = emit_custom_codec(&codec_name, operation);
     insert_bytes(
         files,
         &format!(
@@ -1173,6 +1177,8 @@ fn emit_custom_group(
                     .any(|candidate| candidate == operation_name)
             }) {
             emit_forwarding_interface(package, version, group, local_name, dependency)
+        } else if let Some((dependency, base_operation)) = participant_base(manifest, operation) {
+            emit_participant_interface(local_name, dependency, base_operation)
         } else {
             emit_owned_interface(package, version, group, local_name, manifest, operation)
         };
@@ -1228,6 +1234,53 @@ fn emit_forwarding_interface(
         "package {package}:{}@{version};\n\ninterface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n  use {dependency_package}:{}/{interface}@{}.{{{interface}-item, {interface}-outcome}};\n\n  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n",
         wit_name(group),
         wit_name(group),
+        dependency.version
+    )
+}
+
+/// The base dependency and base operation whose pre-commit a participant implements.
+///
+/// A participant rides the claim of the base operation it names, so
+/// `idempotent_by.inherited` identifies the pre-commit interface it implements.
+fn participant_base<'a>(
+    manifest: &'a PackageManifest,
+    operation: &'a CustomOperationDeclaration,
+) -> Option<(&'a crate::manifest::BaseDependencyRequirement, &'a str)> {
+    if operation.transaction != Some(crate::manifest::CommandTransaction::Participant) {
+        return None;
+    }
+    let Some(crate::manifest::CommandIdempotence::Inherited(inherited)) = &operation.idempotent_by
+    else {
+        return None;
+    };
+    let dependency = manifest.base_dependencies.get(&inherited.base)?;
+    Some((dependency, inherited.operation.as_str()))
+}
+
+fn base_local_name(base_operation: &str) -> &str {
+    base_operation
+        .split_once('.')
+        .map_or(base_operation, |(_, local_name)| local_name)
+}
+
+/// A participant's interface, typed by the base's pre-commit request record.
+///
+/// Composition plugs this export into the base's pre-commit import, so the
+/// request must be the base's own type. The participant declares none.
+fn emit_participant_interface(
+    local_name: &str,
+    dependency: &crate::manifest::BaseDependencyRequirement,
+    base_operation: &str,
+) -> String {
+    let (base_group, _) = base_operation
+        .split_once('.')
+        .expect("validated base operation has a group and local name");
+    let dependency_package = dependency.package.replace('_', "-");
+    let interface = wit_name(local_name);
+    let pre_commit = format!("{}-pre-commit", wit_name(base_local_name(base_operation)));
+    format!(
+        "interface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n  use {dependency_package}:{}/{pre_commit}@{}.{{{pre_commit}-request}};\n\n  run: async func(ctx: node-context, input: {pre_commit}-request) -> result<{pre_commit}-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n",
+        wit_name(base_group),
         dependency.version
     )
 }
