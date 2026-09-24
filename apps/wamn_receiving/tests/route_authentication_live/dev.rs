@@ -445,6 +445,7 @@ pub(super) async fn assert_dev_command(
         admin.as_ref(),
         root,
         PLATFORM_DOMAIN,
+        &inputs.environment.package_sources,
     )
     .await?;
     let (project, project_task) = connect(&environment.route.database_url).await?;

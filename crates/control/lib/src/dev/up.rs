@@ -96,6 +96,7 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         admin.as_ref(),
         &args.root,
         &inputs.platform_domain,
+        &inputs.package_sources,
     )
     .await?;
     let event_scope = wamn_control_registry::Triple::new(

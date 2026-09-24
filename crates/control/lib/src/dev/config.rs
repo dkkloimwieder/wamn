@@ -1211,7 +1211,7 @@ pub fn resolve_dev_packages(
     })
 }
 
-fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
+pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
     let path = root.join(PACKAGE_MANIFEST_FILE);
     let bytes = fs::read(&path).map_err(|source| {
         DevPackageError::manifest(DevPackageErrorKind::ManifestRead, path.clone(), source)

@@ -91,6 +91,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         admin.as_ref(),
         root,
         PLATFORM_DOMAIN,
+        &inputs.environment.package_sources,
     )
     .await?;
     let system_acl = current_database_acl(admin.as_ref()).await?;
