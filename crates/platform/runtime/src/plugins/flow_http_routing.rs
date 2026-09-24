@@ -32,8 +32,8 @@ use tracing::Instrument as _;
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentKind, AttachmentTarget, OperationKind, ServingAttachment,
-    ServingManifest, parse_attachment_auth_policy,
+    AttachmentAuthPolicy, AttachmentKind, AttachmentTarget, ServingAttachment, ServingManifest,
+    parse_attachment_auth_policy,
 };
 use wamn_platform_identity::{PAT_TOKEN_PREFIX, PreparedIdentityReads, PrincipalKind};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
@@ -1119,8 +1119,8 @@ fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
 }
 
 /// Whether an attachment only reads: it targets a route whose operation kind is
-/// get, query or projection, the read kinds of `client_plan.rs` in the
-/// generator. A wiring can write, so it never reads only.
+/// one of `OperationKind::READ_KINDS`. A wiring can write, so it never reads
+/// only.
 fn serves_read(manifest: &ServingManifest, attachment: &ServingAttachment) -> bool {
     let AttachmentTarget::Route {
         component,
@@ -1133,10 +1133,7 @@ fn serves_read(manifest: &ServingManifest, attachment: &ServingAttachment) -> bo
         route.package_id == attachment.package_id
             && &route.component == component
             && &route.operation == operation
-            && matches!(
-                route.kind,
-                OperationKind::Get | OperationKind::Query | OperationKind::Projection
-            )
+            && route.kind.is_read()
     })
 }
 

@@ -201,6 +201,17 @@ pub enum OperationKind {
     EventHandler,
 }
 
+impl OperationKind {
+    /// The kinds that read without changing a record.
+    pub const READ_KINDS: [Self; 3] = [Self::Get, Self::Query, Self::Projection];
+
+    /// Whether this kind reads without changing a record.
+    #[must_use]
+    pub fn is_read(self) -> bool {
+        Self::READ_KINDS.contains(&self)
+    }
+}
+
 /// One component export that a route calls once, with no graph walk.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

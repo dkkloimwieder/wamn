@@ -9,6 +9,10 @@
 //! The plan borrows its contract facts from [`ClientContractIr`]. It is a plain
 //! Rust value: generation does not serialize it, and it carries no version.
 
+use serde::Deserialize as _;
+use serde::de::IntoDeserializer as _;
+use wamn_catalog::OperationKind;
+
 use crate::client_ir::{
     CURSOR_INPUT, ClientContractIr, FILTER_PREFIX, FieldIr, FilterIr, LIMIT_INPUT, LimitIr,
     ModelIr, OperationIr, SORT_DIRECTION_INPUT, SORT_FIELD_INPUT, SortIr, leaf_fields,
@@ -29,9 +33,6 @@ const SUPPLIED_PATHS: [(&str, SuppliedKind); 5] = [
 
 /// The operation kind that no operator calls.
 const PRIVATE_KIND: &str = "event_handler";
-
-/// Operation kinds that read without changing a record.
-const READ_KINDS: [&str; 3] = ["get", "query", "projection"];
 
 /// What an operator does on one screen.
 ///
@@ -605,7 +606,9 @@ impl<'a> ScreenPlan<'a> {
     /// A read clears its rows when the operator changes an input.
     #[must_use]
     pub fn is_read(&self) -> bool {
-        READ_KINDS.contains(&self.contract.kind.as_str())
+        let kind: Result<OperationKind, serde::de::value::Error> =
+            OperationKind::deserialize(self.contract.kind.as_str().into_deserializer());
+        kind.is_ok_and(OperationKind::is_read)
     }
 
     /// Whether the operator confirms before the screen submits.
