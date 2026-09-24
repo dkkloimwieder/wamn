@@ -34,13 +34,13 @@ case "${1-}" in
   install-operator)
     cluster=$2; work=$3; values=$4
     helm upgrade --install --create-namespace --kubeconfig "$work/kubeconfig" --kube-context "kind-$cluster" \
-      --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+      --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
       -f "$work/operator-base.yaml" -f "$values" --wait --timeout 5m
     ;;
   install-host)
     cluster=$2; work=$3; namespace=$4; values=$5
     helm upgrade --install --kubeconfig "$work/kubeconfig" --kube-context "kind-$cluster" \
-      --namespace "$namespace" wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+      --namespace "$namespace" wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
       -f "$values" --wait --timeout 5m
     ;;
   helm-releases) helm list --kubeconfig "$3/kubeconfig" --kube-context "kind-$2" --all-namespaces -o json ;;

@@ -62,13 +62,13 @@ case "$action" in
   install-operator)
     work=${3:?work directory}; values=${4:?operator values}
     helm upgrade --install --create-namespace --kubeconfig "$work/kubeconfig" \
-      --kube-context "kind-$cluster" --namespace wamn-system wamn "$chart" --version 2.9.0 \
+      --kube-context "kind-$cluster" --namespace wamn-system wamn "$chart" --version 2.10.0 \
       -f "$work/operator-base.yaml" -f "$values" --wait --timeout 5m
     ;;
   install-host)
     work=${3:?work directory}; namespace=${4:?namespace}; base=${5:?base values}; overlay=${6:?overlay values}
     helm upgrade --install --kubeconfig "$work/kubeconfig" --kube-context "kind-$cluster" \
-      --namespace "$namespace" wamn-host "$chart" --version 2.9.0 \
+      --namespace "$namespace" wamn-host "$chart" --version 2.10.0 \
       -f "$base" -f "$overlay" --wait --timeout 5m
     ;;
   image-labels) docker image inspect --format '{{json .Config.Labels}}' "$cluster" ;;

@@ -17,7 +17,7 @@ Apply repository-wide resource restrictions from [AGENTS.md](../../AGENTS.md).
 The [deploy tree](../../deploy/README.md) contains infrastructure, platform manifests, test Jobs, and SQL.
 Use the direct upstream revision pinned in `Cargo.toml`.
 Use the runtime-operator chart version in the install command in `deploy/infra/values-wamn.yaml`.
-The retained runtime-operator installation uses chart `2.9.0`.
+The retained runtime-operator installation uses chart `2.10.0`.
 Install its CRDs before the operator release.
 Helm does not update existing CRDs during a chart upgrade.
 
@@ -148,7 +148,7 @@ For the retained Receiving example:
 
 ```bash
 helm upgrade --install -n wamn-system wamn-host \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
   -f deploy/platform/values-host-default.yaml \
   -f deploy/platform/values-host-receiving-pat.yaml
 kubectl -n wamn-system rollout status deployment/hostgroup-default --timeout=150s

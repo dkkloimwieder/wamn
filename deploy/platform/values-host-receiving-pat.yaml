@@ -2,7 +2,7 @@
 # Apply both files, in this order:
 #
 #   helm upgrade --install -n wamn-system wamn-host \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
 #     -f deploy/platform/values-host-default.yaml \
 #     -f deploy/platform/values-host-receiving-pat.yaml
 #

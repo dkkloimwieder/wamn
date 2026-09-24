@@ -14,7 +14,7 @@
 # half of it switched off:
 #
 #   helm upgrade --install -n wamn-system wamn-host \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
 #     -f deploy/platform/values-host-default.yaml
 #   kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
 #
@@ -31,7 +31,7 @@
 #
 # WHY THIS ENVIRONMENT'S HOST NAMESPACE EQUALS THE OPERATOR'S RELEASE NAMESPACE.
 # Giving the host tier a namespace of its own is not free at the pinned chart
-# (upstream rev 68ebece9 = chart 2.9.0), and both failure modes are in the chart
+# (upstream rev f9b37fc3 = chart 2.10.0), and both failure modes are in the chart
 # source rather than in anything we wrote:
 #   * templates/certificates.yaml:24 looks the CA up in `.Release.Namespace`
 #     only. A host release in its own namespace, at the chart defaults
@@ -40,7 +40,7 @@
 #     certificate the operator's NATS does not trust, and never registers.
 #   * With `generate: false` instead, nothing renders `wasmcloud-runtime-tls` or
 #     `wasmcloud-data-tls` into that namespace, and the host Pod mounts both by
-#     name (templates/runtime/deployment.yaml:83-89), so it never starts.
+#     name (templates/runtime/deployment.yaml:98-104), so it never starts.
 # Either way the CA plus those two client-cert Secrets have to be distributed
 # into every environment namespace, and nothing does that today. Keeping this
 # environment's host namespace equal to the operator's release namespace
@@ -65,7 +65,7 @@ global:
     # namespace (chart values.yaml:28-31 defaults this to true); re-rendering
     # them here would collide on Helm ownership metadata. `global.tls.enabled`
     # stays at its default true, so the host still mounts them and still speaks
-    # mTLS on both NATS connections (templates/runtime/deployment.yaml:83-89).
+    # mTLS on both NATS connections (templates/runtime/deployment.yaml:98-104).
     generate: false
   nats:
     # -- Both default to `nats://nats.<this release's namespace>.svc.cluster.local:4222`
@@ -91,8 +91,8 @@ runtime:
   # -- THE HOST IMAGE CARRIAGE. `runtime.image` is the chart-wide host image
   # (chart values.yaml:285-289). `hostGroups[].image` is only an OPTIONAL
   # per-group override in which any of registry/repository/tag set there win and
-  # unset keys inherit this one (chart values.yaml:358-363, implemented at
-  # templates/runtime/deployment.yaml:7-10) — so with one host group per
+  # unset keys inherit this one (chart values.yaml:414-419, implemented at
+  # templates/runtime/deployment.yaml:21-24) — so with one host group per
   # environment release, this is where the environment's runtime revision is
   # pinned.
   image:
@@ -105,11 +105,11 @@ runtime:
       # -- This environment's namespace, and the environment identity the
       # operator's wrong-target lock is enforced against: the host Pod's
       # namespace becomes `Host.Environment`
-      # (templates/runtime/deployment.yaml:135-138 + :162), and with
+      # (templates/runtime/deployment.yaml:150-153 + :185), and with
       # `operator.allowSharedHosts: false` a WorkloadDeployment can only
       # schedule onto hosts whose Environment equals its own namespace. Empty
       # would mean the release namespace; naming it makes the identity explicit
-      # (chart values.yaml:338-343). Three values must agree with it:
+      # (chart values.yaml:394-399). Three values must agree with it:
       # `operator.watchNamespaces` and `operator.hostNamespaces` in
       # deploy/infra/values-wamn.yaml, and the WorkloadDeployments'
       # `metadata.namespace` + `spec.template.spec.environment`.
@@ -237,7 +237,7 @@ runtime:
           readOnly: true
       # [wamn-0h0g.15.155] Verify the in-cluster registry instead of dropping to
       # plain HTTP. This replaces `extraArgs: [--allow-insecure-registries]`,
-      # which chart 2.9.0 argues against in exactly these terms (chart
+      # which chart 2.10.0 argues against in exactly these terms (chart
       # values.yaml:270-272): the flag "does not relax verification but replaces
       # it: every registry drops to plain HTTP, so nothing is verified and
       # credentials travel in the clear".
@@ -247,7 +247,7 @@ runtime:
       # on here, since only `certificates.generate` is switched off — and the
       # chart concatenates these entries onto the chart-wide `runtime.ociCaPaths`
       # to render one `--oci-ca-path=` per path
-      # (templates/runtime/deployment.yaml:189-190).
+      # (templates/runtime/deployment.yaml:212-213).
       #
       # *** NOT ROLLABLE ON ITS OWN. *** Two things must be true first, and both
       # now are:

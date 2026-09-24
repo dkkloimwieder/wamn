@@ -14,7 +14,7 @@
 #
 # WHAT THE CHART NEEDS AND WILL NOT SUPPLY. A host Pod mounts
 # `wasmcloud-runtime-tls` and `wasmcloud-data-tls` by name, resolved in its own
-# namespace (templates/runtime/deployment.yaml:83-89), and passes them to both
+# namespace (templates/runtime/deployment.yaml:98-104), and passes them to both
 # NATS connections as `--scheduler-nats-tls-{ca,cert,key}` and
 # `--data-nats-tls-{ca,cert,key}` (:164-173). The chart renders those two
 # Secrets only into the namespaces of the host groups declared in the SAME
@@ -52,7 +52,7 @@
 #      operator without Pod RBAC or informer cache access there.
 #      tests/conformance/tests/chart_seam_governance.rs enforces the agreement.
 #   3. `deploy/platform/runtime-operator-events-rbac.example.yaml`, instantiated
-#      into this namespace. Chart 2.9.0 grants only core-group Events while its
+#      into this namespace. Chart 2.10.0 grants only core-group Events while its
 #      native recorder writes `events.k8s.io/v1`; the overlay supplies that
 #      missing write grant to the existing operator ServiceAccount.
 #   4. `deploy/platform/registry-credentials.example.yaml`, instantiated into

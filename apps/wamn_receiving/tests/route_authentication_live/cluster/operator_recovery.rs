@@ -531,7 +531,7 @@ impl Recovery<'_> {
         let charts: Value = serde_json::from_slice(&fs::read(
             source.join("deployment-crds-001/distributed-chart-identities.json"),
         )?)?;
-        let path = source.join("deployment-crds-001/helm-show-crds-2.9.0.stdout");
+        let path = source.join("deployment-crds-001/helm-show-crds-2.10.0.stdout");
         let raw = self
             .run(
                 "distributed-crds-client-decode",
@@ -551,7 +551,7 @@ impl Recovery<'_> {
         let expected = serde_json::Deserializer::from_slice(&raw)
             .into_iter::<Value>()
             .collect::<Result<Vec<_>, _>>()?;
-        let names = records["versions"]["2.9.0"]
+        let names = records["versions"]["2.10.0"]
             .as_object()
             .context("the retained chart has CRD records")?
             .keys()
@@ -579,7 +579,7 @@ impl Recovery<'_> {
                 .context("the distributed CRD is installed")?;
             let expected_hash = digest(&crd["spec"])?;
             ensure!(
-                records["versions"]["2.9.0"][name]["spec_sha256"] == expected_hash,
+                records["versions"]["2.10.0"][name]["spec_sha256"] == expected_hash,
                 "the captured distributed CRD source changed: {name}"
             );
             ensure!(
@@ -608,7 +608,7 @@ impl Recovery<'_> {
         }
         self.write(
             "installed-crd-identity",
-            &json!({"result":"pass","chart":charts["2.9.0"],"source":records["source_commit"],
+            &json!({"result":"pass","chart":charts["2.10.0"],"source":records["source_commit"],
             "defaults":["conversion.strategy=None","preserveUnknownFields=false"],"crds":rows}),
         )
     }
@@ -805,7 +805,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         array(&operator, "/spec/template/spec/containers")?
             .iter()
             .any(
-                |container| container["image"] == "ghcr.io/wasmcloud/runtime-operator:2.9.0"
+                |container| container["image"] == "ghcr.io/wasmcloud/runtime-operator:2.10.0"
                     && container["args"]
                         .as_array()
                         .is_some_and(|args| args

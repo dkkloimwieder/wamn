@@ -16,7 +16,7 @@
 # Install, in this order — the CRDs must exist before any host release or
 # WorkloadDeployment is applied:
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
 #     -f deploy/infra/values-wamn.yaml
 #   # then this environment's host base plus its application/release overlay
 #
@@ -40,8 +40,8 @@
 #
 # WHERE THE 365 COMES FROM, measured not repeated: the chart hard-codes it,
 # `{{- $ca = genCA "wasmcloud CA" 365 }}` at
-# charts/runtime-operator/templates/certificates.yaml:31, pinned upstream rev 68ebece9
-# = chart 2.9.0. No value exposes it. The four leaves this release signs —
+# charts/runtime-operator/templates/certificates.yaml:31, pinned upstream rev f9b37fc3
+# = chart 2.10.0. No value exposes it. The four leaves this release signs —
 # `wasmcloud-operator-tls`, `wasmcloud-nats-tls`, `wasmcloud-runtime-tls`,
 # `wasmcloud-data-tls` — are `genSignedCert … 365 $ca` at :44, :52, :60 and :81,
 # so THEY EXPIRE ON THE SAME DAY as the CA that signed them, not staggered.
@@ -66,7 +66,7 @@
 #     wasmcloud-ca wasmcloud-operator-tls wasmcloud-nats-tls \
 #     wasmcloud-runtime-tls wasmcloud-data-tls
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
 #     -f deploy/infra/values-wamn.yaml          # re-mints all five
 #   # every pod holding the old PEM in memory must be restarted. NATS first —
 #   # nothing can register against a server still presenting the old cert:
@@ -129,7 +129,7 @@
 #   runtime.hostGroups[].volumes      -> {{- with .volumes }}
 #   runtime.hostGroups[].volumeMounts -> {{- with .volumeMounts }}
 # Both expressions remain in templates/runtime/deployment.yaml at upstream
-# 68ebece9c537f8bb4b5c9999f274ec68d60f35a9, the v2.9.0 release commit.
+# f9b37fc3ab52db32378f88b116a24a763b4484db, the v2.10.0 release commit.
 # The same source passes group env entries through unchanged. Resource blocks
 # replace the chart-wide block and remove defaultHeapMemory, coreInstances,
 # guestMemoryMode and maxConcurrentStarts before rendering Kubernetes resources.
@@ -140,7 +140,7 @@
 # carries no fork patches. Release manifests arrive over OCI, not ConfigMaps.
 #
 # Reinspect the exact source:
-#   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' 68ebece9c537f8bb4b5c9999f274ec68d60f35a9 -- charts/runtime-operator/templates/runtime/deployment.yaml
+#   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' f9b37fc3ab52db32378f88b116a24a763b4484db -- charts/runtime-operator/templates/runtime/deployment.yaml
 # Distributed render and image identity requirements: wamn-0h0g.15.54.
 # Live stage 4 tests remain separate and unexecuted by this source inspection.
 
@@ -195,7 +195,7 @@ runtime:
   # deploy/platform/values-host-<environment>.yaml. `runtime.image` — the
   # chart-wide host image, which is the carriage our `wamn-host` image actually
   # rides (chart values.yaml:285-289; `hostGroups[].image` is only an optional
-  # per-group override, chart values.yaml:358-363) — moved there with them.
+  # per-group override, chart values.yaml:414-419) — moved there with them.
   #
   # Every chart template that touches host groups reaches them through `range`,
   # so an empty list renders nothing rather than failing.

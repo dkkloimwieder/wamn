@@ -2,8 +2,8 @@
 # Install the exact upstream CLI used by WAMN publication commands.
 set -euo pipefail
 
-readonly version=2.9.0
-readonly digest=590130b23d897e80ba948c15cfd317e946e1b22b73b6d534af57dfec1e4f4bf6
+readonly version=2.10.0
+readonly digest=64f8e61d352fa8102569bea7333e4d86e09bdfe718e800cef7a7ca2fedc5880a
 readonly asset=wash-x86_64-unknown-linux-gnu
 readonly repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly install_dir="$repo_root/.tools/wash/$version"

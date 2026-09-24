@@ -1,8 +1,8 @@
 {
   "spec_hash_encoding": "UTF-8 JSON of CRD .spec, sorted keys, compact separators, ensure_ascii=False",
-  "source_commit": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "source_commit": "f9b37fc3ab52db32378f88b116a24a763b4484db",
   "versions": {
-    "2.9.0": {
+    "2.10.0": {
       "artifacts.runtime.wasmcloud.dev": {
         "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_artifacts.yaml",
         "api_version": "apiextensions.k8s.io/v1",
@@ -55,9 +55,9 @@
             "storage": true
           }
         ],
-        "file_sha256": "385b56a0544fa15df048f5824eb99e354a8f3654ca5465775223de37641f547e",
-        "spec_sha256": "66cbc474f4199799b02d5263b96e0774b9d12526010c21daf240153e46e7757e",
-        "source_file_sha256": "385b56a0544fa15df048f5824eb99e354a8f3654ca5465775223de37641f547e",
+        "file_sha256": "25e9d994b930f6656b77e8d44c8bbf0260b4b3254becf970ba4442564e1132e4",
+        "spec_sha256": "2041537a62a9cad8e90bc3ea5257e327e95b1ec705409e61aeac9a36b316beb1",
+        "source_file_sha256": "25e9d994b930f6656b77e8d44c8bbf0260b4b3254becf970ba4442564e1132e4",
         "source_file_byte_identical": true
       },
       "workloadreplicasets.runtime.wasmcloud.dev": {
@@ -74,9 +74,9 @@
             "storage": true
           }
         ],
-        "file_sha256": "877b2127b51867b7411910121f0892ed1f1b9200825a7bb3687b72df334f9fc9",
-        "spec_sha256": "b6017a0434466233ae1e51de09e33d36baa79e7479016c035f3598e6a9f6bf84",
-        "source_file_sha256": "877b2127b51867b7411910121f0892ed1f1b9200825a7bb3687b72df334f9fc9",
+        "file_sha256": "3c2833c9573e5be4be76e2c9b1b6cd5ddb834d39f849aab7c023d562dd85dd7b",
+        "spec_sha256": "d0a572142dbbb1b38b73386ef3e69fa2a650428e117c31c645e3ce8ad98fe6c0",
+        "source_file_sha256": "3c2833c9573e5be4be76e2c9b1b6cd5ddb834d39f849aab7c023d562dd85dd7b",
         "source_file_byte_identical": true
       },
       "workloads.runtime.wasmcloud.dev": {
@@ -93,10 +93,97 @@
             "storage": true
           }
         ],
-        "file_sha256": "426c9325ce1bb7d0d5d12a592ca6c2376fb10469f063b2fcc5b96fa03f6e18cc",
-        "spec_sha256": "9be1e077da54ec84505bf104768f971b00b15974f0010bb4318579b25f2b6242",
-        "source_file_sha256": "426c9325ce1bb7d0d5d12a592ca6c2376fb10469f063b2fcc5b96fa03f6e18cc",
+        "file_sha256": "7e69079346f917809539afacd1673c7fefb2459b35527260bf4c2c074aa1cf9a",
+        "spec_sha256": "b5579989e506b4d2e89c38dd4e15c21308ba8d654a17b98c517048d7c5cf49d2",
+        "source_file_sha256": "7e69079346f917809539afacd1673c7fefb2459b35527260bf4c2c074aa1cf9a",
         "source_file_byte_identical": true
+      }
+    },
+    "2.9.0": {
+      "artifacts.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_artifacts.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "artifacts.runtime.wasmcloud.dev",
+        "resource_kind": "Artifact",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "f12ca639438a0410e7415723a66196c1e4f9dc898e2eaf385213224b8813ed22",
+        "spec_sha256": "822bd091bee0209a72dd953171dc69d152369a0c327ae5e589c4fdb423eab159"
+      },
+      "hosts.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_hosts.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "hosts.runtime.wasmcloud.dev",
+        "resource_kind": "Host",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "35418ad8284cdb0daba21e6c43a44d2914e8ca9de11265bb2a588573ef6b773c",
+        "spec_sha256": "ecdd001c039a6822379d80510561f16959cad38f46ab289975d07049322afe6c"
+      },
+      "workloaddeployments.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloaddeployments.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloaddeployments.runtime.wasmcloud.dev",
+        "resource_kind": "WorkloadDeployment",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "385b56a0544fa15df048f5824eb99e354a8f3654ca5465775223de37641f547e",
+        "spec_sha256": "66cbc474f4199799b02d5263b96e0774b9d12526010c21daf240153e46e7757e"
+      },
+      "workloadreplicasets.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloadreplicasets.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloadreplicasets.runtime.wasmcloud.dev",
+        "resource_kind": "WorkloadReplicaSet",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "877b2127b51867b7411910121f0892ed1f1b9200825a7bb3687b72df334f9fc9",
+        "spec_sha256": "b6017a0434466233ae1e51de09e33d36baa79e7479016c035f3598e6a9f6bf84"
+      },
+      "workloads.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloads.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloads.runtime.wasmcloud.dev",
+        "resource_kind": "Workload",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "426c9325ce1bb7d0d5d12a592ca6c2376fb10469f063b2fcc5b96fa03f6e18cc",
+        "spec_sha256": "9be1e077da54ec84505bf104768f971b00b15974f0010bb4318579b25f2b6242"
       }
     },
     "2.8.0": {

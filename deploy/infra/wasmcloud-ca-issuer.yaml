@@ -3,7 +3,7 @@
 # WHAT THIS UNBLOCKS. Ruling wamn-0h0g.13.50 makes the host tier one Helm
 # release per environment. That shape does not converge when the host release
 # gets a namespace of its own, and both failure modes are in the pinned chart
-# (upstream rev 68ebece9 = chart 2.9.0) rather than in anything we wrote:
+# (upstream rev f9b37fc3 = chart 2.10.0) rather than in anything we wrote:
 #   * at the chart defaults (`global.tls.enabled: true` +
 #     `global.certificates.generate: true`), templates/certificates.yaml:24 looks
 #     the CA up with `lookup "v1" "Secret" .Release.Namespace …`. A second
@@ -12,7 +12,7 @@
 #     never registers;
 #   * with `generate: false` instead, nothing renders `wasmcloud-runtime-tls` or
 #     `wasmcloud-data-tls` into that namespace, and templates/runtime/
-#     deployment.yaml:83-89 mounts both BY NAME, resolved in the POD's
+#     deployment.yaml:98-104 mounts both BY NAME, resolved in the POD's
 #     namespace. The Pod never starts.
 # Both need the same thing: certificates signed by the operator release's CA,
 # present in the environment namespace. This file is the cluster-scoped half of
