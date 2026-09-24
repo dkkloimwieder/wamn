@@ -6,7 +6,6 @@
 //! One package-grain component for executable Acme Receiving overlay operations.
 
 use exports::client_acme_receiving::receiving::record_receipt::Guest as RecordReceipt;
-use exports::client_acme_receiving::receiving::record_receipt_participant::Guest as RecordReceiptParticipant;
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
 use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorKind};
 
@@ -42,7 +41,6 @@ wit_bindgen::generate!({
           export client-acme-receiving:quality/approve-inspection@3.0.0;
           export client-acme-receiving:quality/create-inspection@3.0.0;
           export client-acme-receiving:receiving/record-receipt@3.0.0;
-          export client-acme-receiving:receiving/record-receipt-participant@3.0.0;
         }
     "#,
     path: [
@@ -134,17 +132,6 @@ fn private_node_error(error: &AccessError) -> NodeError {
     }
 }
 
-fn participant_node_error(error: &AccessError) -> NodeError {
-    match error.kind() {
-        AccessErrorKind::Timeout => NodeError::Cancelled,
-        AccessErrorKind::PermissionDenied => NodeError::Terminal(ErrorDetail {
-            message: error.context().to_owned(),
-            code: Some("permission_denied".to_owned()),
-        }),
-        _ => private_node_error(error),
-    }
-}
-
 fn access_detail(
     error: &AccessError,
     key: &str,
@@ -176,11 +163,6 @@ mod receipt_codec {
     include!("../../generated/wit/receiving_record_receipt_codec.rs");
 }
 
-mod receipt_participant_codec {
-    use super::exports::client_acme_receiving::receiving::record_receipt_participant as contract;
-    include!("../../generated/wit/receiving_record_receipt_participant_codec.rs");
-}
-
 impl RecordReceipt for Component {
     async fn run(
         context: NodeContext,
@@ -204,49 +186,6 @@ impl RecordReceipt for Component {
         })?;
         let output = <Self as RecordReceipt>::run(context, input).await?;
         Ok(emission(receipt_codec::encode(&output)))
-    }
-}
-
-impl RecordReceiptParticipant for Component {
-    async fn run(
-        _context: NodeContext,
-        mut input: exports::client_acme_receiving::receiving::record_receipt_participant::RecordReceiptParticipantRequest,
-    ) -> Result<exports::client_acme_receiving::receiving::record_receipt_participant::RecordReceiptParticipantRequest, NodeError>{
-        receipt_participant_codec::normalize(&mut input).map_err(|error| {
-            NodeError::InvalidInput(ErrorDetail {
-                message: error.context().to_owned(),
-                code: Some("invalid_input".to_owned()),
-            })
-        })?;
-        let mut transaction =
-            wamn_postgres_statements::participant_view()
-                .await
-                .map_err(|error| {
-                    participant_node_error(
-                        &wamn_client_acme_receiving_data_access::operation::participant_view_error(
-                            &error,
-                        ),
-                    )
-                })?;
-        wamn_client_acme_receiving_data_access::operation::record_receipt_participant(
-            &mut transaction,
-            &input.receipt_id,
-            &input.purchase_order_id,
-        )
-        .await
-        .map_err(|error| participant_node_error(&error))?;
-        Ok(input)
-    }
-
-    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let request = receipt_participant_codec::decode(&input).map_err(|error| {
-            NodeError::InvalidInput(ErrorDetail {
-                message: error.context().to_owned(),
-                code: Some("invalid_input".to_owned()),
-            })
-        })?;
-        <Self as RecordReceiptParticipant>::run(context, request).await?;
-        Ok(emission(input))
     }
 }
 

@@ -9,6 +9,7 @@ resolver = "2"
 # `platform/no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
 members = [
     "client_acme_receiving/component",
+    "client_acme_receiving/participant",
     "platform_fixture/component",
     "platform_fixture_overlay/component",
     "wamn_receiving/component",

@@ -1,0 +1,22 @@
+[package]
+name = "client-acme-receiving-participant"
+version.workspace = true
+edition.workspace = true
+description = "Acme Receiving record-receipt participant component"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid.workspace = true
+wamn-client-acme-receiving-data-access = { workspace = true }
+wamn-postgres-statements = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+test = true
+bench = false
+
+[lints]
+workspace = true

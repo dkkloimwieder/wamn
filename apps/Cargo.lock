@@ -103,6 +103,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "client-acme-receiving-participant"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wamn-client-acme-receiving-data-access",
+ "wamn-postgres-statements",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "connection-http-standard"
 version = "0.1.0"
 dependencies = [

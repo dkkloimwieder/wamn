@@ -13,6 +13,12 @@
       "output_file": "blob_put.wasm"
     },
     {
+      "package": "client-acme-receiving-participant",
+      "workspace_manifest": "apps/Cargo.toml",
+      "raw_file": "client_acme_receiving_participant.wasm",
+      "output_file": "client_acme_receiving_participant.wasm"
+    },
+    {
       "package": "prior-commit",
       "workspace_manifest": "apps/Cargo.toml",
       "raw_file": "prior_commit.wasm",
