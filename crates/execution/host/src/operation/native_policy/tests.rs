@@ -751,7 +751,6 @@ impl Fixture {
             .find_map(|(id, fact)| (fact == &self.root).then_some(id))
             .expect("root native identity");
         self.workload
-            .resolved
             .dispatch_target(id, NATIVE_POLICY_ID)
             .await
             .expect("native root dispatch target")
@@ -1066,7 +1065,6 @@ async fn run_case(case: Case) {
     );
     fixture
         .workload
-        .resolved
         .unbind_all_plugins()
         .await
         .expect("unbind fixture workload");
@@ -1217,7 +1215,6 @@ async fn assert_postgres_bind_warns() {
     assert_eq!(postgres.scope_registrations(), 0);
     fixture
         .workload
-        .resolved
         .unbind_all_plugins()
         .await
         .expect("unbind fixture workload");

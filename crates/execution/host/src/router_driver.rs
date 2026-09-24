@@ -607,7 +607,7 @@ impl RouterDriver {
                 Some(PlatformComponent::Executor),
             )
             .await;
-        let cleanup = application.workload.resolved.unbind_all_plugins().await;
+        let cleanup = application.workload.unbind_all_plugins().await;
         match (result, cleanup) {
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error.context("unbind candidate native application")),
