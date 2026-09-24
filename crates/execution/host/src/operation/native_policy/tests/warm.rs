@@ -28,6 +28,7 @@ pub(super) fn starts(fixture: &Fixture) -> usize {
 pub(super) async fn close(fixture: &Fixture) {
     fixture
         .workload
+        .resolved
         .unbind_all_plugins()
         .await
         .expect("close native pools");

@@ -408,6 +408,7 @@ impl OperationHost {
         for id in application.workload.facts_by_component_id.keys() {
             let target = application
                 .workload
+                .resolved
                 .dispatch_target(id, NATIVE_POLICY_ID)
                 .await?;
             prepare_native(

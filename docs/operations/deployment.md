@@ -277,7 +277,7 @@ These maintenance verbs do not authorize shared development targets or a new sch
 
 The deployment owner selects exact reviewed component digests on `wamn-host`.
 Keep the selection empty when guest-code correctness is not a sufficient isolation boundary.
-Review and test the component before granting trust.
+Review and test the entire linked unit before granting trust.
 Require alternating callers on an observed reused instance, request-local data, and no unfinished guest tasks after return.
 [Native dispatch](../architecture/execution.md#native-dispatch) defines the host and component responsibilities.
 

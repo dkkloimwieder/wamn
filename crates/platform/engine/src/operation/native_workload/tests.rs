@@ -124,7 +124,11 @@ async fn native_loader_allows_repeated_export_only_handlers() {
         names,
         std::collections::BTreeSet::from(["http-request", "transform"])
     );
-    workload.unbind_all_plugins().await.expect("unbind");
+    workload
+        .resolved
+        .unbind_all_plugins()
+        .await
+        .expect("unbind");
 }
 
 #[tokio::test]
@@ -179,15 +183,19 @@ async fn native_loader_checks_repeated_bytes_before_cache_access() {
 }
 
 #[tokio::test]
-async fn native_mixed_workload_keeps_each_component_lifetime() {
+async fn native_mixed_workload_preserves_fresh_shared_store_units() {
     use wash_runtime::engine::ctx::SharedCtx;
     use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
     use wash_runtime::wasmtime::component::{Accessor, Instance};
 
-    fn counter(name: &str, export: &str) -> NativeComponent {
-        let mut input = component(name, export, None, 0);
+    fn counter(name: &str, export: &str, import: Option<&str>) -> NativeComponent {
+        let mut input = component(name, export, import, 0);
+        let imported = import.map_or_else(String::new, |name| {
+            format!(r#"(import "{name}" (instance (export "run" (func (result u32)))))"#)
+        });
         input.bytes = wat::parse_str(format!(
             r#"(component
+            {imported}
             (core module $code
                 (global $calls (mut i32) (i32.const 0))
                 (func (export "run") (result i32)
@@ -235,17 +243,25 @@ async fn native_mixed_workload_keeps_each_component_lifetime() {
         }
     }
 
-    let warm = counter("warm", HANDLER);
-    let fresh = counter("fresh", OPERATION);
-    let reuse =
-        crate::warm_reuse::WarmReuse::new(std::slice::from_ref(&warm.fact.component_digest), 1, 60)
-            .expect("deployment trust");
-    let workload = load_with_reuse(vec![warm, fresh], reuse, Vec::new())
+    let warm = counter("warm", HANDLER, None);
+    let fresh = counter("fresh", OPERATION, None);
+    let linked = counter("linked", PARENT, Some(OPERATION));
+    let reuse = crate::warm_reuse::WarmReuse::new(
+        &[
+            warm.fact.component_digest.clone(),
+            linked.fact.component_digest.clone(),
+        ],
+        1,
+        60,
+    )
+    .expect("deployment trust");
+    let workload = load_with_reuse(vec![warm, fresh, linked], reuse, Vec::new())
         .await
         .expect("mixed native workload");
     for (id, fact) in &workload.facts_by_component_id {
         let export = fact.operations.keys().next().expect("export");
         let target = workload
+            .resolved
             .dispatch_target(id, "mixed-workload-test")
             .await
             .expect("target");
@@ -273,6 +289,7 @@ async fn native_mixed_workload_keeps_each_component_lifetime() {
         );
     }
     workload
+        .resolved
         .unbind_all_plugins()
         .await
         .expect("close mixed pools");

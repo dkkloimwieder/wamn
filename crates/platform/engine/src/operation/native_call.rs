@@ -145,8 +145,9 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
             let warm = request
                 .application
                 .workload
+                .resolved
                 .warm_instance_policy(&native_id)
-                .await?
+                .await
                 .keeps_instances_warm();
             let component_id = accessor.with(|mut access| {
                 let active = &mut access.get().active_ctx;

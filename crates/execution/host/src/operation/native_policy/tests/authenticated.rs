@@ -552,6 +552,7 @@ async fn assert_case(
     );
     fixture
         .workload
+        .resolved
         .unbind_all_plugins()
         .await
         .expect("unbind the owned native workload");
