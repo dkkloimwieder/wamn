@@ -743,8 +743,8 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
         .expect("a maker row opens the batch form");
     assert_eq!(
         batch.pairs,
-        [("id", "value.maker_id")],
-        "the row's key fills the input that names that model"
+        [("id", "value.inspector_id"), ("id", "value.maker_id")],
+        "the row's key fills each input that names that model"
     );
 
     let widgets = screen(&plan, "list");

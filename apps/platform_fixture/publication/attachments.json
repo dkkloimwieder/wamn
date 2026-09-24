@@ -288,7 +288,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/record-batch@1.0.0",
-    "definition-hash": "sha256:7d98afdd3f46ccdae8bbd55a4cf7dcfedcb5982e3cd19162aabb9573f2946f6b",
+    "definition-hash": "sha256:f80b3df7166aaf192b4967c0d799d07f2cc605430d9be4f5e6d5579bbba699df",
     "definition": {
       "id": "widget-record-batch-http",
       "kind": "http",
@@ -319,6 +319,8 @@
               "type": "object",
               "required": [
                 "idempotency_key",
+                "expected_edit_version",
+                "grade",
                 "line"
               ],
               "additionalProperties": false,
@@ -334,6 +336,23 @@
                   ]
                 },
                 "maker_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "expected_edit_version": {
+                  "type": "string"
+                },
+                "grade": {
+                  "type": "string",
+                  "enum": [
+                    "first",
+                    "second"
+                  ]
+                },
+                "inspector_id": {
                   "type": [
                     "string",
                     "null"

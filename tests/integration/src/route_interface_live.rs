@@ -274,6 +274,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
             "/widget/record_batch",
             &json!([{"request_id": "batch", "value": {
                 "idempotency_key": "batch-1", "note": null, "maker_id": null,
+                "expected_edit_version": "1", "grade": "first",
                 "line": [{"widget_id": other, "amount": "1"}],
             }}]),
         )

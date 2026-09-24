@@ -509,6 +509,32 @@
             "type": "uuid"
           },
           {
+            "label": "Expected edit version",
+            "nullable": false,
+            "path": "value.expected_edit_version",
+            "revision": true,
+            "type": "int64"
+          },
+          {
+            "label": "Grade",
+            "nullable": false,
+            "path": "value.grade",
+            "type": "text",
+            "values": [
+              "first",
+              "second"
+            ]
+          },
+          {
+            "label": "Inspector",
+            "nullable": true,
+            "path": "value.inspector_id",
+            "references": {
+              "model": "widget_maker"
+            },
+            "type": "uuid"
+          },
+          {
             "label": "Line",
             "nullable": false,
             "path": "value.line[].widget_id",

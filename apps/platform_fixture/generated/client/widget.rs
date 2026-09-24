@@ -1474,8 +1474,14 @@ pub struct WidgetRecordBatchRequest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetRecordBatchRequestValue {
+    /// `int64`
+    pub expected_edit_version: i64,
+    /// `text`
+    pub grade: String,
     /// `text`
     pub idempotency_key: String,
+    /// `uuid`, omittable
+    pub inspector_id: Option<Option<uuid::Uuid>>,
     /// `array`
     pub line: Vec<WidgetRecordBatchRequestValueLine>,
     /// `uuid`, omittable
@@ -1508,9 +1514,27 @@ pub const WIDGET_RECORD_BATCH_INPUT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "value.expected_edit_version",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "value.grade",
+        type_name: "text",
+        nullable: false,
+        values: &["first", "second"],
+    },
+    FieldDescriptor {
         path: "value.idempotency_key",
         type_name: "text",
         nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "value.inspector_id",
+        type_name: "uuid",
+        nullable: true,
         values: &[],
     },
     FieldDescriptor {
@@ -1573,12 +1597,48 @@ pub const WIDGET_RECORD_BATCH_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSche
         children: &[
             wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
+                    path: "value.expected_edit_version",
+                    type_name: "int64",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.grade",
+                    type_name: "text",
+                    nullable: false,
+                    values: &["first", "second"],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
                     path: "value.idempotency_key",
                     type_name: "text",
                     nullable: false,
                     values: &[],
                 },
                 required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.inspector_id",
+                    type_name: "uuid",
+                    nullable: true,
+                    values: &[],
+                },
+                required: false,
                 minimum: None,
                 maximum: None,
                 children: &[],
@@ -1663,7 +1723,7 @@ pub const WIDGET_RECORD_BATCH_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSch
     }];
 
 pub const WIDGET_RECORD_BATCH_KIND: &str = "command";
-pub const WIDGET_RECORD_BATCH_REQUIRES_COMPOSITION: bool = false;
+pub const WIDGET_RECORD_BATCH_REQUIRES_COMPOSITION: bool = true;
 pub const WIDGET_RECORD_BATCH_REPLAY: Option<&str> = Some("claim");
 pub const WIDGET_RECORD_BATCH_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_RECORD_BATCH_RESULT_OPAQUE: bool = false;

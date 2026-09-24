@@ -381,6 +381,14 @@ fn member_path(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// The prop that carries one revision input no read supplies.
+///
+/// A nested revision such as `value.expected_row_version` is one prop,
+/// `valueExpectedRowVersion`, because a prop name holds no dot.
+fn revision_prop(path: &str) -> String {
+    crate::client_ts::to_camel(&path.replace('.', "_"))
+}
+
 /// The repeated ancestor of one input path, when the contract declares one.
 ///
 /// A contract marks a repeated member with `[]`, and every member below it
@@ -1240,13 +1248,16 @@ fn emit_form(
             source.push_str(
                 "  /** The revision this command sends. The release binds no read that supplies it. */\n",
             );
-            writeln!(
+            write!(
                 source,
-                "  readonly {}: {stem}Request[{:?}];",
-                crate::client_ts::to_camel(revision),
-                crate::client_ts::to_camel(revision)
+                "  readonly {}: {stem}Request",
+                revision_prop(revision)
             )
             .expect("write");
+            for name in member_path(revision) {
+                write!(source, "[{name:?}]").expect("write");
+            }
+            source.push_str(";\n");
         }
     }
     source.push_str("  /** Called with the outcome of every submission. */\n");
@@ -1357,7 +1368,7 @@ fn emit_form(
                 source,
                 "      item = writeMember(item, {}, props.{});",
                 member_literal(revision),
-                crate::client_ts::to_camel(revision)
+                revision_prop(revision)
             )
             .expect("write");
         }
@@ -1504,6 +1515,18 @@ fn foreign_alias(model: &str, name: &str) -> String {
     crate::client_ts::to_camel(&format!("{model}_{name}"))
 }
 
+/// The names of one selector's state, from the input it fills.
+///
+/// Two inputs can read the same list, so the state is named after the input,
+/// never after the list: `value.maker_id` gives `valueMakerIdOptions` and
+/// `readValueMakerIdOptions`.
+fn selector_state(input: &str) -> (String, String) {
+    let state = crate::client_ts::to_camel(&input.replace("[]", "").replace('.', "_"));
+    let mut state_upper = state.clone();
+    state_upper[..1].make_ascii_uppercase();
+    (state, state_upper)
+}
+
 /// The state and the read that back one selector.
 ///
 /// Each selector owns its options. Two inputs that name the same model read
@@ -1515,6 +1538,7 @@ fn emit_selector_state(
     runtime: &mut BTreeSet<&'static str>,
 ) {
     let alias = foreign_alias(populated.list_model, populated.list_name);
+    let (state, state_upper) = selector_state(populated.input);
     let stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
     let rows = match populated.list_rows {
         Rows::List { key } => key,
@@ -1543,7 +1567,7 @@ fn emit_selector_state(
     }
     writeln!(
         source,
-        "  const [{alias}Options, set{stem}Options] = createSignal<PageState<{stem}Row>>(emptyPage<{stem}Row>());"
+        "  const [{state}Options, set{state_upper}Options] = createSignal<PageState<{stem}Row>>(emptyPage<{stem}Row>());"
     )
     .expect("write");
     // A narrowed selector holds the value it narrows by, so the next page of
@@ -1551,14 +1575,14 @@ fn emit_selector_state(
     if populated.narrowed_by.is_some() {
         writeln!(
             source,
-            "  const [{alias}Narrowed, set{stem}Narrowed] = createSignal<string | null>(null);"
+            "  const [{state}Narrowed, set{state_upper}Narrowed] = createSignal<string | null>(null);"
         )
         .expect("write");
     }
     if populated.search_input.is_some() {
         writeln!(
             source,
-            "  const [{alias}Search, set{stem}Search] = createSignal(\"\");"
+            "  const [{state}Search, set{state_upper}Search] = createSignal(\"\");"
         )
         .expect("write");
     }
@@ -1572,7 +1596,7 @@ fn emit_selector_state(
     };
     writeln!(
         source,
-        "  const read{stem}Options = async (cursor: string | null) => {{"
+        "  const read{state_upper}Options = async (cursor: string | null) => {{"
     )
     .expect("write");
     if let Some(narrowing) = populated.narrowed_by {
@@ -1581,7 +1605,7 @@ fn emit_selector_state(
         // none. The selector offers nothing instead of asking.
         writeln!(
             source,
-            "    const narrowed = {alias}Narrowed();\n    if (narrowed === null || narrowed === \"\") {{\n      set{stem}Options(emptyPage<{stem}Row>());\n      return;\n    }}"
+            "    const narrowed = {state}Narrowed();\n    if (narrowed === null || narrowed === \"\") {{\n      set{state_upper}Options(emptyPage<{stem}Row>());\n      return;\n    }}"
         )
         .expect("write");
         let member = crate::client_ts::to_camel(
@@ -1608,7 +1632,7 @@ fn emit_selector_state(
     if let Some(path) = populated.search_input {
         writeln!(
             source,
-            "    if ({alias}Search() !== \"\") {{\n      request = writeMember(request, {}, [{alias}Search()]) as {stem}Request;\n    }}",
+            "    if ({state}Search() !== \"\") {{\n      request = writeMember(request, {}, [{state}Search()]) as {stem}Request;\n    }}",
             member_literal(path)
         )
         .expect("write");
@@ -1623,7 +1647,7 @@ fn emit_selector_state(
     }
     writeln!(
         source,
-        "    const outcome = await {alias}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return;\n    }}\n    const rows = outcome.value.{rows} as {stem}Row[];\n    set{stem}Options(\n      cursor === null\n        ? firstPage(rows, {next_cursor})\n        : appendPage({alias}Options(), rows, {next_cursor}),\n    );\n  }};"
+        "    const outcome = await {alias}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return;\n    }}\n    const rows = outcome.value.{rows} as {stem}Row[];\n    set{state_upper}Options(\n      cursor === null\n        ? firstPage(rows, {next_cursor})\n        : appendPage({state}Options(), rows, {next_cursor}),\n    );\n  }};"
     )
     .expect("write");
 
@@ -1631,11 +1655,11 @@ fn emit_selector_state(
         let source_member = member_path(narrowing.input).join(".");
         writeln!(
             source,
-            "  createEffect(() => {{\n    formValues();\n    set{stem}Narrowed((form.getFieldValue(`{source_member}`) as string | null) ?? null);\n    void read{stem}Options(null);\n  }});"
+            "  createEffect(() => {{\n    formValues();\n    set{state_upper}Narrowed((form.getFieldValue(`{source_member}`) as string | null) ?? null);\n    void read{state_upper}Options(null);\n  }});"
         )
         .expect("write");
     } else {
-        writeln!(source, "  void read{stem}Options(null);").expect("write");
+        writeln!(source, "  void read{state_upper}Options(null);").expect("write");
     }
 }
 
@@ -1656,13 +1680,12 @@ fn emit_selector_control(
 ) {
     ui.insert("RecordSelect");
     let pad = " ".repeat(indent);
-    let alias = foreign_alias(populated.list_model, populated.list_name);
-    let stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
+    let (state, state_upper) = selector_state(populated.input);
     let key = crate::client_ts::to_camel(populated.key_field);
     let display = crate::client_ts::to_camel(populated.display_field);
     writeln!(
         source,
-        "{pad}<RecordSelect\n{pad}  label={label:?}\n{pad}  options={{{alias}Options().rows}}\n{pad}  optionValue={{(row) => String(row.{key})}}\n{pad}  optionLabel={{(row) => String(row.{display})}}\n{pad}  value={{field().state.value == null ? null : String(field().state.value)}}\n{pad}  onChange={{(value) => field().handleChange(value ?? \"\")}}"
+        "{pad}<RecordSelect\n{pad}  label={label:?}\n{pad}  options={{{state}Options().rows}}\n{pad}  optionValue={{(row) => String(row.{key})}}\n{pad}  optionLabel={{(row) => String(row.{display})}}\n{pad}  value={{field().state.value == null ? null : String(field().state.value)}}\n{pad}  onChange={{(value) => field().handleChange(value ?? \"\")}}"
     )
     .expect("write");
     // The search asks the list again from its first page, because a cursor
@@ -1670,14 +1693,14 @@ fn emit_selector_control(
     if populated.search_input.is_some() {
         writeln!(
             source,
-            "{pad}  onSearch={{(text) => {{\n{pad}    set{stem}Search(text);\n{pad}    void read{stem}Options(null);\n{pad}  }}}}"
+            "{pad}  onSearch={{(text) => {{\n{pad}    set{state_upper}Search(text);\n{pad}    void read{state_upper}Options(null);\n{pad}  }}}}"
         )
         .expect("write");
     }
     if populated.cursor_input.is_some() {
         writeln!(
             source,
-            "{pad}  hasNextPage={{hasNextPage({alias}Options())}}\n{pad}  onNextPage={{() => void read{stem}Options({alias}Options().cursor)}}"
+            "{pad}  hasNextPage={{hasNextPage({state}Options())}}\n{pad}  onNextPage={{() => void read{state_upper}Options({state}Options().cursor)}}"
         )
         .expect("write");
     }
@@ -1832,9 +1855,17 @@ fn emit_input_control(
             )
             .expect("write");
         }
+        // The control hands back text. The field's type is the union of the
+        // declared values, and the control offers only those values.
+        let union = input
+            .values
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
         writeln!(
             source,
-            "{pad}  ]}}\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(value) => field().handleChange(value)}}\n{pad}  {error}\n{pad}/>"
+            "{pad}  ]}}\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(value) => field().handleChange(value as {union})}}\n{pad}  {error}\n{pad}/>"
         )
         .expect("write");
         return;
