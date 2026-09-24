@@ -863,7 +863,16 @@ impl FlowHttpRouting {
         }
         // Permission I/O cannot extend the evidence that admitted this request.
         // Once returned, nested work retains this caller without reauthentication.
-        session.check_admission().map_err(|_| unauthorized())?;
+        // If the key evidence expired during that I/O, the same token is
+        // verified once more on fresh keys, and a token past its own age still
+        // refuses (wamn-co0p).
+        if session.check_admission().is_err() {
+            authentication
+                .verifier
+                .verify(token)
+                .await
+                .map_err(|_| unauthorized())?;
+        }
         Ok(AuthenticatedCaller {
             attachment_id: attachment_id.into(),
             principal_id: session.claims().sub.as_str().into(),

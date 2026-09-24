@@ -224,6 +224,24 @@ async fn pending_admission_rechecks_token_and_key_deadlines_after_permission_wor
 }
 
 #[tokio::test]
+async fn verification_near_the_key_deadline_admits_across_it() {
+    let server = Server::start().await;
+    let token = signed(&header(), &claims());
+    let (verifier, _, key_clock) = server.verifier();
+    verifier.verify(&token).await.expect("warm key");
+    key_clock.advance(Duration::from_secs(290));
+    let pending = verifier
+        .verify(&token)
+        .await
+        .expect("verification inside the refresh window");
+    key_clock.advance(Duration::from_secs(20));
+    pending
+        .check_admission()
+        .expect("admission after the old key deadline");
+    assert_eq!(server.count(), 2, "the key set refreshed ahead of expiry");
+}
+
+#[tokio::test]
 async fn token_age_is_read_after_a_delayed_key_fetch_not_before_it() {
     let server = Server::start().await;
     let (verifier, token_clock, _) = server.verifier();
@@ -262,10 +280,14 @@ async fn two_local_verifiers_refuse_removed_key_by_deadline_with_and_without_jwk
         first_clock.advance(Duration::from_secs(299));
         second_clock.advance(Duration::from_secs(299));
         for verifier in [&first, &second] {
-            verifier
-                .verify(&token)
-                .await
-                .expect("unexpired key evidence");
+            // Inside the last thirty seconds the cache refreshes ahead of
+            // expiry. An available issuer then states the removal before the
+            // deadline, and an unavailable one leaves the unexpired evidence.
+            assert_eq!(
+                verifier.verify(&token).await.is_ok(),
+                !available,
+                "JWKS available={available}"
+            );
         }
         first_clock.advance(Duration::from_secs(1));
         second_clock.advance(Duration::from_secs(1));
@@ -275,6 +297,6 @@ async fn two_local_verifiers_refuse_removed_key_by_deadline_with_and_without_jwk
                 "JWKS available={available}"
             );
         }
-        assert_eq!(server.count(), if available { 4 } else { 2 });
+        assert_eq!(server.count(), if available { 6 } else { 2 });
     }
 }

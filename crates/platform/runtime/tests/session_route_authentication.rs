@@ -646,6 +646,51 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 1);
     token_clock.set(1000);
 
+    // A real blocked permission SELECT crosses the key cache deadline before
+    // final admission. The router verifies the same token once more on fresh
+    // keys and admits it, because the issuer signed it (wamn-co0p).
+    let before = statements(&admin, &generation).await?;
+    let fetches = server.count();
+    admin
+        .batch_execute("BEGIN; LOCK TABLE app_system.permissions IN ACCESS EXCLUSIVE MODE")
+        .await?;
+    let (result, released) = tokio::join!(
+        route.authenticate_authorization_for_test(ATTACHMENT, Some(&authorization)),
+        async {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    admin
+                        .batch_execute("SELECT pg_stat_clear_snapshot()")
+                        .await?;
+                    let waiting: bool = admin
+                        .query_one(
+                            "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE usename = $1 \
+                         AND wait_event_type = 'Lock' AND query LIKE '%app_system.permissions%')",
+                            &[&generation],
+                        )
+                        .await?
+                        .get(0);
+                    if waiting {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            .context("permission query reached lock barrier")??;
+            key_clock.advance(Duration::from_secs(300));
+            admin.batch_execute("COMMIT").await?;
+            Ok::<_, anyhow::Error>(())
+        }
+    );
+    released?;
+    result
+        .expect("a token the issuer signed is admitted across the key deadline")
+        .expect("host-owned caller");
+    assert_permission_reads(&before, &statements(&admin, &generation).await?, 1);
+    assert_eq!(server.count(), fetches + 1, "one fetch of fresh keys");
+
     let before = statements(&admin, &generation).await?;
     key_clock.advance(Duration::from_secs(300));
     server.remove_keys();
@@ -659,7 +704,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 0);
     assert_eq!(
         server.count(),
-        2,
+        3,
         "expired known key refreshes the configured endpoint"
     );
     server.stop().await;
