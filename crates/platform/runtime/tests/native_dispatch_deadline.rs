@@ -31,7 +31,7 @@ enum Case {
     LinkedStart,
     Export,
     Cancellation,
-    NativeDeadlineOnly,
+    NativeDeadline,
 }
 
 // Each hostile guest runs in its own process. A broken epoch yield must fail
@@ -43,15 +43,6 @@ fn isolated(name: &str, case: Case) {
             .env(CHILD_MARKER, name)
             .output()
             .expect("start isolated deadline test");
-        if matches!(case, Case::NativeDeadlineOnly) {
-            assert_eq!(output.status.code(), Some(124), "{output:?}");
-            assert!(
-                String::from_utf8_lossy(&output.stderr)
-                    .contains("native deadline elapsed while root initialization kept running"),
-                "the negative control must reach the hostile initialization: {output:?}"
-            );
-            return;
-        }
         assert!(
             output.status.success(),
             "{name} failed with {}\n{}\n{}",
@@ -113,10 +104,10 @@ fn native_dispatch_cancellation_releases_capacity() {
 }
 
 #[test]
-fn native_call_deadline_alone_does_not_bound_root_start() {
+fn native_call_deadline_bounds_root_start() {
     isolated(
-        "native_call_deadline_alone_does_not_bound_root_start",
-        Case::NativeDeadlineOnly,
+        "native_call_deadline_bounds_root_start",
+        Case::NativeDeadline,
     );
 }
 
@@ -250,7 +241,7 @@ async fn assert_deadline(case: Case) {
     let engine = build_engine_with_host_memory(&[], budgets).expect("production WAMN engine");
     let start_loop = "(func $start (loop br 0)) (start $start)";
     let components = match case {
-        Case::RootStart | Case::NativeDeadlineOnly => vec![component(
+        Case::RootStart | Case::NativeDeadline => vec![component(
             "root",
             &scalar_component(start_loop, "i32.const 7", false),
         )],
@@ -266,11 +257,29 @@ async fn assert_deadline(case: Case) {
     let hostile = target(&engine, components).await;
     let entered = Arc::new(AtomicBool::new(false));
     let (answer, reply) = oneshot::channel();
-    if matches!(case, Case::NativeDeadlineOnly) {
-        native_deadline_control(&engine, hostile, entered, answer).await;
-        unreachable!("the negative control ends at its process watchdog");
-    }
-    if matches!(case, Case::Cancellation) {
+    if matches!(case, Case::NativeDeadline) {
+        // Since wash-runtime 2.10 the call's own deadline bounds instantiation
+        // too, so no enclosing deadline is needed to stop a looping start.
+        let started = Instant::now();
+        let error = timeout_at(
+            started + CALL_BUDGET + CLEANUP_BUDGET,
+            hostile.dispatch(Run {
+                deadline: CALL_BUDGET,
+                entered: Arc::clone(&entered),
+                started: None,
+                answer,
+            }),
+        )
+        .await
+        .expect("the native call deadline stops the root start loop")
+        .expect_err("a looping root start produces no outcome");
+        assert!(
+            format!("{error:#}")
+                .contains("dispatched call produced no outcome within its deadline"),
+            "{error:#}"
+        );
+        assert!(!entered.load(Ordering::SeqCst));
+    } else if matches!(case, Case::Cancellation) {
         let (started, start) = oneshot::channel();
         let call = Run {
             // The enclosing deadline must win over this native relative timeout.
@@ -333,8 +342,9 @@ async fn assert_deadline(case: Case) {
         engine.guest_memory().high_water() >= PAGE,
         "the hostile guest allocated memory"
     );
-    // Native cancellation aborts an owned task. Let that task unwind, under a
-    // bound, before judging its store's memory and allocator refunds.
+    // Native cancellation traps the abandoned call's store at its next epoch
+    // yield. Let that store drop, under a bound, before judging its memory and
+    // allocator refunds.
     timeout_at(Instant::now() + CLEANUP_BUDGET, async {
         while engine.guest_memory().in_use() != 0 {
             tokio::task::yield_now().await;
@@ -372,38 +382,4 @@ async fn assert_deadline(case: Case) {
         7
     );
     assert_eq!(engine.guest_memory().in_use(), 0);
-}
-
-async fn native_deadline_control(
-    engine: &Engine,
-    target: DispatchTarget,
-    entered: Arc<AtomicBool>,
-    answer: oneshot::Sender<u32>,
-) {
-    // Arm only after compilation and resolution. The observation below must
-    // also check that the root allocated memory before this watchdog wins.
-    let (done, finished) = mpsc::channel();
-    let watchdog = std::thread::spawn(move || {
-        if finished.recv_timeout(CLEANUP_BUDGET) == Err(mpsc::RecvTimeoutError::Timeout) {
-            eprintln!("native startup control watchdog expired");
-            std::process::exit(124);
-        }
-    });
-    let mut dispatch = Box::pin(target.dispatch(Run {
-        deadline: CALL_BUDGET,
-        entered: Arc::clone(&entered),
-        started: None,
-        answer,
-    }));
-    tokio::select! {
-        result = &mut dispatch => panic!("native dispatch stopped the root start loop: {result:?}"),
-        () = tokio::time::sleep(2 * CALL_BUDGET) => {}
-    }
-    assert_eq!(engine.guest_memory().in_use(), PAGE);
-    assert!(!entered.load(Ordering::SeqCst));
-    eprintln!("native deadline elapsed while root initialization kept running");
-    let result = dispatch.await;
-    done.send(()).expect("stop negative-control watchdog");
-    watchdog.join().expect("join negative-control watchdog");
-    panic!("native dispatch stopped before the external watchdog: {result:?}");
 }

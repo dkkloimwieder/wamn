@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::time::Duration;
 
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
@@ -157,6 +157,7 @@ fn build_engine_inner(
     config: Option<wasmtime::Config>,
 ) -> anyhow::Result<Engine> {
     validate_pooling_capacity_environment(std::env::vars_os().map(|(key, _)| key))?;
+    configure_abandoned_call_grace();
     anyhow::ensure!(
         host_memory.max_guest_memory > 0,
         "max guest memory must be greater than zero"
@@ -182,6 +183,36 @@ fn build_engine_inner(
         builder = builder.with_wasm_proposal(*proposal);
     }
     builder.build()
+}
+
+/// The wash-runtime setting that names its abandoned-call grace, in whole seconds.
+const ABANDONED_CALL_GRACE_ENV: &str = "WASH_ABANDONED_CALL_GRACE_SECS";
+
+/// WAMN's abandoned-call grace: a cancelled call stops at its next epoch yield.
+///
+/// Since wash-runtime 2.10 (#5565) a dispatched call's store runs in a task of
+/// its own, and cancelling the dispatch only signals that task. A guest that
+/// never yields to its host keeps the signal unread, so the store drops only
+/// when the epoch callback traps the abandoned call, after this grace and as
+/// much guest execution again. Upstream's default of 10 seconds holds a
+/// cancelled call's memory and capacity for 20 seconds. A WAMN cancellation
+/// revokes the call's authority, and a store serves one call at a time, so no
+/// other call shares the trap (wamn-i0iy.4).
+const ABANDONED_CALL_GRACE_SECS: &str = "0";
+
+/// Configure wash-runtime's abandoned-call grace once, before any store exists.
+///
+/// wash-runtime reads the grace from its environment only, once, on first use.
+/// Every WAMN engine is built here, so the value is set before any dispatch
+/// reads it, and an operator's value does not replace it.
+fn configure_abandoned_call_grace() {
+    static CONFIGURED: Once = Once::new();
+    CONFIGURED.call_once(|| {
+        // SAFETY: std serializes its own environment reads and writes, and
+        // wash-runtime reads this variable through std. The remaining hazard is
+        // a concurrent C `getenv`, and engine construction starts none.
+        unsafe { std::env::set_var(ABANDONED_CALL_GRACE_ENV, ABANDONED_CALL_GRACE_SECS) };
+    });
 }
 
 /// Reject environment entries that can override WAMN's capacity budgets.
@@ -237,6 +268,17 @@ mod tests {
     use super::*;
 
     const PAGE: usize = 64 * 1024;
+
+    /// wash-runtime names no other way to set this grace. If it changes the
+    /// setting, the cancellation tests of the host and runtime fail with it.
+    #[test]
+    fn every_engine_sets_the_abandoned_call_grace_to_zero() {
+        build_engine(&[]).expect("production WAMN engine");
+        assert_eq!(
+            std::env::var("WASH_ABANDONED_CALL_GRACE_SECS").as_deref(),
+            Ok("0")
+        );
+    }
 
     fn cache_test_path() -> PathBuf {
         let nonce = SystemTime::now()

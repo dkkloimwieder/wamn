@@ -84,7 +84,7 @@ An absent header or null column means that no change was reported.
 Nested calls still inherit the enclosing deadline. Their remaining time is not a separate node deadline adjustment.
 
 Native dispatch retires warm instances after traps, deadlines, or cancellation.
-Caller authority ends immediately. Physical teardown follows native cancellation rules. A spinning abandoned guest must exceed both the native grace and its continuous-execution threshold.
+Caller authority ends immediately. Physical teardown follows native cancellation rules. The engine sets wash-runtime's abandoned-call grace to zero, so a cancelled call's store traps at its next epoch yield and returns its memory.
 Successful calls can reuse an eligible instance only when no host resource handles remain.
 A full pool serves overflow from fresh stores.
 Native idle reclamation and a 1,000-call instance limit bound retention.

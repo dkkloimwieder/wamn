@@ -227,9 +227,15 @@ async fn assert_readiness(case: Case) {
                 result.expect_err("an infinite initializer must reach the enclosing deadline");
             assert!(Instant::now() >= deadline);
             assert!(Instant::now() < deadline + CLEANUP);
+            // Readiness gives wash-runtime the enclosing deadline as the call's
+            // own deadline. Both timers name the same instant, and since 2.10
+            // the call's own deadline bounds instantiation, so either one can
+            // end the call first.
+            let error = format!("{error:#}");
             assert!(
-                format!("{error:#}").contains("native readiness enclosing deadline elapsed"),
-                "{error:#}"
+                error.contains("native readiness enclosing deadline elapsed")
+                    || error.contains("dispatched call produced no outcome within its deadline"),
+                "{error}"
             );
         }
     }
