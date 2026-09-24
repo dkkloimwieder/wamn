@@ -22,14 +22,11 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::Accessor;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::RouterDriver;
 use crate::operation::{
     OperationHost, OperationRefusal, OperationRefusalKind, authorize_registered_operation,
 };
 use crate::route::{RouteCall, invoke_route};
 use wamn_engine::operation::node_types;
-
-mod wiring;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -44,8 +41,13 @@ mod bindings {
 }
 
 use bindings::wamn::router_delivery::delivery::{
-    self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryReport, DeliveryRequest,
-    FailureKind as WireFailureKind, ParentCausation, PermissionDenial, Source,
+    self, DeliveryReport, DeliveryRequest, FailureKind as WireFailureKind, ParentCausation,
+    PermissionDenial, Source,
+};
+/// The wire types of `wamn:router-delivery` that the wiring layer settles into.
+pub use bindings::wamn::router_delivery::delivery::{
+    DeliveryError, DeliveryFailure, DeliveryOutcome, EffectOutcome, Emission, FailedOutcome,
+    FailureKind, PartialCompletion,
 };
 
 /// Host-plugin identity for the one guest-to-router bridge.
@@ -74,14 +76,14 @@ const DELIVERY_ERROR: &str = "wamn.delivery.error";
 // `a_refusal_reads_the_same_to_a_dashboard_and_to_a_live_view`.
 const PERMISSION_DENIED: &str = "permission-denied";
 const FRESH_CREDENTIAL_REQUIRED: &str = "fresh-credential-required";
-const EXECUTION_FAILED: &str = "execution-failed";
+pub const EXECUTION_FAILED: &str = "execution-failed";
 
 /// The wiring arm of the bridge. A route never reaches it.
 ///
-/// The router driver implements it. `wamn-xs9a.4` moves the driver and its
-/// implementation into the workflow layer.
+/// The router driver in `wamn-workflow` implements it. This crate never
+/// depends on that crate.
 #[async_trait::async_trait]
-pub(crate) trait WiringDelivery: Send + Sync {
+pub trait WiringDelivery: Send + Sync {
     /// Resolve and check every wiring that a synchronous attachment targets.
     async fn preload(&self) -> anyhow::Result<WiringPreload>;
 
@@ -94,29 +96,41 @@ pub(crate) trait WiringDelivery: Send + Sync {
 }
 
 /// The synchronous wirings one readiness evaluation resolved.
-pub(crate) struct WiringPreload {
-    pub(crate) wirings: usize,
+#[derive(Debug)]
+pub struct WiringPreload {
+    pub wirings: usize,
     /// The release components the wirings name, or `None` when no
     /// synchronous attachment targets a wiring.
-    pub(crate) components: Option<Arc<[AdmittedComponent]>>,
+    pub components: Option<Arc<[AdmittedComponent]>>,
 }
 
 /// One delivery that the bridge resolved to a wiring target.
-pub(crate) struct WiringCall<'a> {
-    source: SourceRef<'a>,
-    delivery_id: String,
-    package_id: &'a str,
-    target: &'a AttachmentTarget,
-    wiring_id: &'a str,
-    wiring_version: u32,
-    caller_attached: bool,
-    payload: serde_json::Value,
-    caller: Option<AuthenticatedCaller>,
-    traceparent: Option<String>,
-    tracestate: Option<String>,
-    causation: Causation,
-    attributes: &'a [KeyValue],
-    deadline_adjustments: &'a mut Vec<crate::DeadlineAdjustment>,
+#[derive(Debug)]
+pub struct WiringCall<'a> {
+    pub source: SourceRef<'a>,
+    pub delivery_id: String,
+    pub package_id: &'a str,
+    pub target: &'a AttachmentTarget,
+    pub wiring_id: &'a str,
+    pub wiring_version: u32,
+    pub caller_attached: bool,
+    pub payload: serde_json::Value,
+    pub caller: Option<AuthenticatedCaller>,
+    pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
+    pub causation: Causation,
+    pub attributes: &'a [KeyValue],
+    /// The bridge reports these to the guest beside the outcome.
+    pub deadline_adjustments: &'a mut Vec<DeadlineAdjustment>,
+}
+
+/// A node deadline changed by the host execution limit.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct DeadlineAdjustment {
+    pub node: String,
+    pub requested_ms: u64,
+    pub effective_ms: u64,
 }
 
 /// The one bridge shared by attachment and registration ingress.
@@ -133,10 +147,10 @@ pub struct RouterDeliveryBridge {
 
 impl RouterDeliveryBridge {
     /// Bind the bridge to the process's operation host, its loaded manifest,
-    /// and the router driver that serves wiring targets, if any.
+    /// and the wiring layer that serves wiring targets, if any.
     pub fn new(
         operations: Arc<OperationHost>,
-        driver: Option<Arc<RouterDriver>>,
+        wirings: Option<Arc<dyn WiringDelivery>>,
         jetstream: Arc<WamnJetstream>,
         project: &str,
     ) -> anyhow::Result<Self> {
@@ -149,7 +163,7 @@ impl RouterDeliveryBridge {
         )?;
         Ok(Self {
             operations,
-            wirings: driver.map(|driver| driver as Arc<dyn WiringDelivery>),
+            wirings,
             release,
             jetstream,
             metrics: None,
@@ -165,7 +179,18 @@ impl RouterDeliveryBridge {
         self
     }
 
-    fn record(&self, attributes: &[KeyValue], class: DeliveryClass) {
+    /// The loaded release this bridge serves.
+    pub fn release(&self) -> &Arc<LoadedRelease> {
+        &self.release
+    }
+
+    /// The JetStream plugin that publishes taps and derived events.
+    pub fn jetstream(&self) -> &Arc<WamnJetstream> {
+        &self.jetstream
+    }
+
+    /// Count one delivery under its class.
+    pub fn record(&self, attributes: &[KeyValue], class: DeliveryClass) {
         if let Some(metrics) = &self.metrics {
             metrics.record(attributes, class);
         }
@@ -216,7 +241,7 @@ impl RouterDeliveryBridge {
         &self,
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
-        deadline_adjustments: &mut Vec<crate::DeadlineAdjustment>,
+        deadline_adjustments: &mut Vec<DeadlineAdjustment>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
         let DeliveryRequest {
             source,
@@ -340,7 +365,7 @@ impl RouterDeliveryBridge {
 
     /// Settle a delivery that the route path or the driver refused, or that
     /// failed to execute.
-    async fn refuse(
+    pub async fn refuse(
         &self,
         source: SourceRef<'_>,
         delivery_id: &str,
@@ -408,7 +433,7 @@ impl RouterDeliveryBridge {
     /// are deliberately not built: they would put a publish on every
     /// `Step::Invoke`. Nothing here forecloses them — a per-edge phase is another
     /// variant on a subject that already scopes to one delivery.
-    async fn tap(
+    pub async fn tap(
         &self,
         source: SourceRef<'_>,
         delivery_id: &str,
@@ -554,8 +579,9 @@ impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
     }
 }
 
+/// The ingress source of one delivery.
 #[derive(Debug, Clone, Copy)]
-enum SourceRef<'a> {
+pub enum SourceRef<'a> {
     Attachment(&'a str),
     Registration(&'a str),
 }
@@ -563,14 +589,14 @@ enum SourceRef<'a> {
 impl<'a> SourceRef<'a> {
     /// The bridge's two ingress kinds, as the label a metric attribute and a
     /// delivery preview both carry.
-    fn kind(self) -> &'static str {
+    pub fn kind(self) -> &'static str {
         match self {
             SourceRef::Attachment(_) => "attachment",
             SourceRef::Registration(_) => "registration",
         }
     }
 
-    fn id(self) -> &'a str {
+    pub fn id(self) -> &'a str {
         match self {
             SourceRef::Attachment(id) | SourceRef::Registration(id) => id,
         }
@@ -579,7 +605,7 @@ impl<'a> SourceRef<'a> {
     /// The platform component that executes a callerless delivery from this
     /// source. A registration delivery stays callerless and executes as
     /// `wamn:materializer`. An anonymous attachment has no executing principal.
-    fn platform(self) -> Option<PlatformComponent> {
+    pub fn platform(self) -> Option<PlatformComponent> {
         match self {
             SourceRef::Attachment(_) => None,
             SourceRef::Registration(_) => Some(PlatformComponent::Materializer),
@@ -700,7 +726,8 @@ fn caller_matches_source(
     }
 }
 
-fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
+/// The wire refusal for an operation the caller may not invoke.
+pub fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
     let detail = PermissionDenial {
         operation: denial.operation().to_owned(),
     };
@@ -716,7 +743,7 @@ fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
 /// the driver match in [`RouterDeliveryBridge::deliver`]; the
 /// bridge classifies nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeliveryClass {
+pub enum DeliveryClass {
     Delivered,
     PermissionDenied,
     FreshCredentialRequired,
@@ -794,10 +821,10 @@ fn delivery_attributes(source: SourceRef<'_>, target: &AttachmentTarget) -> Vec<
 /// How one route call settled: what the caller receives, and the live view's
 /// label and result for it.
 #[derive(Debug)]
-struct RouteSettlement {
-    outcome: DeliveryOutcome,
-    label: &'static str,
-    result: serde_json::Value,
+pub(crate) struct RouteSettlement {
+    pub(crate) outcome: DeliveryOutcome,
+    pub(crate) label: &'static str,
+    pub(crate) result: serde_json::Value,
 }
 
 /// Lower the one export call of a route.
@@ -806,7 +833,7 @@ struct RouteSettlement {
 /// failure that a wiring reports after its last attempt, and the caller sees
 /// one shape. The labels and results are the ones [`settled_preview`] gives
 /// the same wiring outcome.
-fn settle_route(
+pub(crate) fn settle_route(
     outcome: Result<node_types::Emission, node_types::NodeError>,
 ) -> anyhow::Result<RouteSettlement> {
     let failed = |kind, detail: node_types::ErrorDetail| RouteSettlement {
@@ -864,13 +891,10 @@ mod tests {
         assert!(super::result_actors("invalid").is_empty());
     }
 
+    use super::*;
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
-    use wamn_router::{ErrorDetail, Failure, FailureKind, Outcome, Verdict, WalkStatus};
-
-    use super::wiring::{lower_outcome, settled_preview};
-    use super::*;
 
     const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":3,"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"routes":[],"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
 
@@ -1085,142 +1109,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn terminal_mapping_preserves_each_router_class_without_node_coordinates() {
-        let outcome = Outcome {
-            status: WalkStatus::Failed,
-            result: serde_json::Value::Null,
-            failure: Some(Failure {
-                node: "retired-coordinate".into(),
-                kind: FailureKind::InvalidInput,
-                detail: ErrorDetail::coded("bad-order", "order is invalid"),
-            }),
-            hops: 1,
-            verdict: None,
-        };
-
-        let DeliveryOutcome::Failed(failure) = lower_outcome(outcome).expect("failure maps") else {
-            panic!("failed walk must remain a failed delivery")
-        };
-        assert!(matches!(failure.kind, WireFailureKind::InvalidInput));
-        assert_eq!(failure.code.as_deref(), Some("bad-order"));
-        assert_eq!(failure.message, "order is invalid");
-    }
-
-    /// A route answers each node outcome exactly as its one-node respond
-    /// wiring does: the caller's outcome and the live view's label and result
-    /// both match. A retryable or rate-limited error reads as the wiring's
-    /// failure after its last attempt, because a route never retries.
-    #[test]
-    fn a_route_settles_each_node_outcome_as_its_one_node_wiring() {
-        let detail = || node_types::ErrorDetail {
-            message: "order is invalid".into(),
-            code: Some("bad-order".into()),
-        };
-        let failed = |kind| Outcome {
-            status: WalkStatus::Failed,
-            result: serde_json::Value::Null,
-            failure: Some(Failure {
-                node: "operation".into(),
-                kind,
-                detail: ErrorDetail::coded("bad-order", "order is invalid"),
-            }),
-            hops: 1,
-            verdict: None,
-        };
-        let cases = [
-            (
-                Ok(node_types::Emission {
-                    payload: r#"{"accepted":true}"#.into(),
-                    port: None,
-                }),
-                Outcome {
-                    status: WalkStatus::Completed,
-                    result: serde_json::json!({"accepted": true}),
-                    failure: None,
-                    hops: 1,
-                    verdict: Some(Verdict::Respond {
-                        payload: serde_json::json!({"accepted": true}),
-                        node_id: "operation".into(),
-                    }),
-                },
-            ),
-            (
-                Err(node_types::NodeError::Retryable(detail())),
-                failed(FailureKind::RetryExhausted),
-            ),
-            (
-                Err(node_types::NodeError::RateLimited(
-                    node_types::RateLimitDetail {
-                        detail: detail(),
-                        retry_after_ms: Some(10),
-                    },
-                )),
-                failed(FailureKind::RetryExhausted),
-            ),
-            (
-                Err(node_types::NodeError::Terminal(detail())),
-                failed(FailureKind::Terminal),
-            ),
-            (
-                Err(node_types::NodeError::InvalidInput(detail())),
-                failed(FailureKind::InvalidInput),
-            ),
-            (
-                Err(node_types::NodeError::Cancelled),
-                outcome_of(WalkStatus::Cancelled, None),
-            ),
-        ];
-        for (route, wiring) in cases {
-            let settled = settle_route(route).expect("every node outcome settles");
-            let (label, result) = settled_preview(&wiring);
-            assert_eq!((settled.label, &settled.result), (label, &*result));
-            assert_eq!(
-                format!("{:?}", settled.outcome),
-                format!(
-                    "{:?}",
-                    lower_outcome(wiring).expect("the wiring outcome lowers")
-                ),
-            );
-        }
-
-        assert!(
-            settle_route(Ok(node_types::Emission {
-                payload: "not json".into(),
-                port: None,
-            }))
-            .is_err(),
-            "invalid JSON is an execution failure, as on the wiring path"
-        );
-    }
-
-    #[test]
-    fn a_first_verdict_stands_when_later_frontier_work_fails() {
-        let outcome = Outcome {
-            status: WalkStatus::Failed,
-            result: serde_json::Value::Null,
-            failure: Some(Failure {
-                node: "later-terminal".into(),
-                kind: FailureKind::SecondVerdict,
-                detail: ErrorDetail::coded("second-verdict", "later terminal refused"),
-            }),
-            hops: 2,
-            verdict: Some(Verdict::Respond {
-                payload: serde_json::json!({"accepted": true}),
-                node_id: "respond".into(),
-            }),
-        };
-
-        let DeliveryOutcome::Respond(payload) =
-            lower_outcome(outcome).expect("the first verdict remains caller truth")
-        else {
-            panic!("a later failure must not replace the first terminal verdict")
-        };
-        assert_eq!(payload, r#"{"accepted":true}"#);
-    }
-
-    // ---- the instruments ---------------------------------------------------
-
     /// One meter over an in-memory exporter. The provider is owned by the test,
     /// not by `opentelemetry::global`, so each test reads back exactly the
     /// series its own recorder emitted.
@@ -1413,152 +1301,4 @@ mod tests {
     // wamn-hopk R5: the two series were pinned by scanning this file's own
     // implementation half, a technique whose vacuous-match hazard the deleted
     // comment documented. A metric-export contract is a live-probe question.
-
-    fn outcome_of(status: WalkStatus, verdict: Option<Verdict>) -> Outcome {
-        Outcome {
-            status,
-            result: serde_json::Value::Null,
-            failure: None,
-            hops: 1,
-            verdict,
-        }
-    }
-
-    /// The live view shows the caller's truth, not a second opinion: for every
-    /// outcome shape, the preview's label agrees with what `lower_outcome`
-    /// actually returns — including the two arms whose ORDER decides the answer.
-    #[test]
-    fn a_settled_preview_never_contradicts_what_the_caller_received() {
-        let respond = Verdict::Respond {
-            payload: serde_json::json!({"accepted": true}),
-            node_id: "respond".into(),
-        };
-
-        let responded = outcome_of(WalkStatus::Completed, Some(respond.clone()));
-        let (label, result) = settled_preview(&responded);
-        assert_eq!(label, "respond");
-        assert_eq!(*result, serde_json::json!({"accepted": true}));
-
-        // A running walk is refused whatever verdict it carries — `lower_outcome`
-        // tests `Running` BEFORE the verdict, so a preview that read the verdict
-        // first would promise a caller a response it never got.
-        let (label, _) = settled_preview(&outcome_of(WalkStatus::Running, Some(respond.clone())));
-        assert_eq!(label, EXECUTION_FAILED);
-        assert!(matches!(
-            lower_outcome(outcome_of(WalkStatus::Running, Some(respond.clone()))),
-            Err(DeliveryError::ExecutionFailed)
-        ));
-
-        // A first verdict stands over a later frontier failure, so the preview
-        // shows the verdict rather than the failure.
-        let mut second_verdict = outcome_of(WalkStatus::Failed, Some(respond));
-        second_verdict.failure = Some(Failure {
-            node: "later-terminal".into(),
-            kind: FailureKind::SecondVerdict,
-            detail: ErrorDetail::coded("second-verdict", "later terminal refused"),
-        });
-        assert_eq!(settled_preview(&second_verdict).0, "respond");
-
-        // Verdictless walks read off the status alone.
-        assert_eq!(
-            settled_preview(&outcome_of(WalkStatus::Cancelled, None)).0,
-            "cancelled"
-        );
-        assert_eq!(
-            settled_preview(&outcome_of(WalkStatus::Completed, None)).0,
-            EXECUTION_FAILED
-        );
-        assert_eq!(
-            settled_preview(&outcome_of(WalkStatus::Completed, Some(Verdict::Discard))).0,
-            "discard"
-        );
-
-        // A failure's preview carries the caller's own code and message and
-        // nothing the caller did not get.
-        let mut failed = outcome_of(WalkStatus::Failed, None);
-        failed.failure = Some(Failure {
-            node: "retired-coordinate".into(),
-            kind: FailureKind::InvalidInput,
-            detail: ErrorDetail::coded("bad-order", "order is invalid"),
-        });
-        let (label, result) = settled_preview(&failed);
-        assert_eq!(label, "failed");
-        assert_eq!(
-            *result,
-            serde_json::json!({"code": "bad-order", "message": "order is invalid"})
-        );
-    }
-}
-
-#[cfg(test)]
-mod partial_tests {
-    use super::bindings::wamn::router_delivery::delivery::{
-        EffectOutcome as WireEffectOutcome, FailedOutcome,
-    };
-    use super::wiring::lower_with_evidence;
-    use super::*;
-    use crate::router_response::PartialEvidence;
-    use serde_json::json;
-    use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
-
-    fn evidence() -> PartialEvidence {
-        PartialEvidence {
-            committed_result: json!([{"request_id":"move-1","value":{"movement_id":"movement-1"}}]),
-            effect_outcome: Some(wamn_execution_contract::EffectOutcome::ResponseLost),
-        }
-    }
-
-    #[test]
-    fn declared_evidence_crosses_the_bridge_with_the_original_failure() {
-        let outcome = Outcome {
-            status: WalkStatus::Failed,
-            result: json!({"unselected":"must not cross the boundary"}),
-            failure: Some(wamn_router::Failure {
-                node: "store".to_owned(),
-                kind: FailureKind::Terminal,
-                detail: wamn_router::ErrorDetail::coded("write_failed", "label store failed"),
-            }),
-            hops: 3,
-            verdict: None,
-        };
-        let DeliveryOutcome::PartiallyCompleted(partial) =
-            lower_with_evidence(outcome, Some(evidence())).unwrap()
-        else {
-            panic!("a declared committed result must survive the downstream failure")
-        };
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&partial.committed_result).unwrap(),
-            evidence().committed_result
-        );
-        assert!(matches!(
-            partial.effect_outcome,
-            Some(WireEffectOutcome::ResponseLost)
-        ));
-        let FailedOutcome::Failed(failure) = partial.failed_outcome else {
-            panic!("original node failure")
-        };
-        assert!(matches!(failure.kind, WireFailureKind::Terminal));
-        assert_eq!(failure.code.as_deref(), Some("write_failed"));
-        assert_eq!(failure.message, "label store failed");
-    }
-
-    #[test]
-    fn existing_verdict_still_wins_over_later_partial_evidence() {
-        let outcome = Outcome {
-            status: WalkStatus::Failed,
-            result: json!({"later":"ignored"}),
-            failure: None,
-            hops: 3,
-            verdict: Some(Verdict::Respond {
-                node_id: "respond".to_owned(),
-                payload: json!({"first":true}),
-            }),
-        };
-        let DeliveryOutcome::Respond(payload) =
-            lower_with_evidence(outcome, Some(evidence())).unwrap()
-        else {
-            panic!("first verdict stands")
-        };
-        assert_eq!(payload, r#"{"first":true}"#);
-    }
 }

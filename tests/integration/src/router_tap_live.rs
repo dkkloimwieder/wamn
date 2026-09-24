@@ -353,7 +353,7 @@ mod tests {
             let bridge = Arc::new(
                 RouterDeliveryBridge::new(
                     route.driver.operations(),
-                    Some(Arc::clone(&route.driver)),
+                    Some(Arc::clone(&route.driver) as Arc<dyn wamn_execution_host::WiringDelivery>),
                     Arc::clone(&jetstream),
                     PROJECT,
                 )

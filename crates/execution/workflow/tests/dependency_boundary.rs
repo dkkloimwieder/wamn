@@ -69,7 +69,7 @@ fn the_execution_host_links_no_workflow_crate() {
 }
 
 #[test]
-#[ignore = "turns on in wamn-xs9a.4, when the driver leaves wamn-execution-host"]
+#[ignore = "turns on in wamn-xs9a.3: the host links wamn-router only through wamn-runtime"]
 fn the_execution_host_links_no_router() {
     assert_links_none("wamn-execution-host", &["wamn-router"]);
 }

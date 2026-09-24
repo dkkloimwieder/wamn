@@ -22,8 +22,8 @@ use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
-    OperationHost, OperationScope, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
-    RouterReadinessProbe, RouterReadinessStatus, WiringCacheCapacity,
+    OperationHost, OperationScope, RouterDeliveryBridge, RouterReadinessProbe,
+    RouterReadinessStatus,
 };
 use wamn_platform_identity::{
     assign_project_role, create_service, issue_pat, route_caller_subject,
@@ -39,6 +39,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 use wamn_runtime::plugins::{WamnCredentials, WamnLogging};
+use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wash_runtime::wasmtime::component::Component;
 
 use super::{LocalApplicationConfig, LocalApplicationRuntime, PreparedLocalApplication};
@@ -316,9 +317,12 @@ pub(super) async fn assemble(
             cache_capacity: WiringCacheCapacity::default(),
         },
     ));
-    let readiness = RouterReadinessProbe::new(driver.operations(), Some(Arc::clone(&driver)))
-        .refresh()
-        .await;
+    let readiness = RouterReadinessProbe::new(
+        driver.operations(),
+        Some(Arc::clone(&driver) as Arc<dyn wamn_execution_host::WiringDelivery>),
+    )
+    .refresh()
+    .await;
     anyhow::ensure!(
         readiness.status == RouterReadinessStatus::Ready,
         "local application release is not ready: {readiness:?}"
@@ -332,7 +336,7 @@ pub(super) async fn assemble(
     );
     let bridge = Arc::new(RouterDeliveryBridge::new(
         driver.operations(),
-        Some(driver),
+        Some(driver as Arc<dyn wamn_execution_host::WiringDelivery>),
         jetstream,
         input.project,
     )?);

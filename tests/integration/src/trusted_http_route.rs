@@ -46,9 +46,7 @@ use wamn_engine::component_artifact::{
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_execution_host::{
-    OperationHost, OperationScope, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
-};
+use wamn_execution_host::{OperationHost, OperationScope};
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -58,6 +56,7 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_schema_control::connections::ComponentConnectionRequirement;
+use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 
 /// The one tenant every seeded row and every claim is scoped to.
 pub const TENANT: &str = "tenant-a";
@@ -929,7 +928,7 @@ mod tests {
     use tokio::task::{JoinHandle, JoinSet};
     use tokio_postgres::{Client, NoTls};
 
-    use wamn_execution_host::{
+    use wamn_workflow::{
         CandidateCaseRequest, CandidateWiringTarget, RouterDelivery, RouterDriverRequest,
     };
 

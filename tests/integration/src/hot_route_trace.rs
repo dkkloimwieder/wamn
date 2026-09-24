@@ -32,7 +32,7 @@ mod tests {
     };
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tracing_subscriber::layer::SubscriberExt as _;
-    use wamn_execution_host::RouterDriverRequest;
+    use wamn_workflow::RouterDriverRequest;
 
     use crate::trusted_http_route::{
         self, ENVIRONMENT, PACKAGE, RouteOptions, TENANT, WIRING_ID, WIRING_VERSION,

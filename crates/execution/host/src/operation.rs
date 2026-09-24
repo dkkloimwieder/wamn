@@ -52,7 +52,7 @@ mod native_policy;
 use invocation_policy::ApplicationHost;
 use native_call::prepare_native;
 use native_policy::{NATIVE_POLICY_ID, NativePolicyResources, new_native_policy};
-pub(crate) use native_policy::{NativeFacts, NativePolicy};
+pub use native_policy::{NativeFacts, NativePolicy};
 use native_workload::{NativeApplication, NativeComponent};
 use native_workload::{NativeWorkloadSpec, load_native_application};
 
@@ -62,31 +62,31 @@ const COMPONENT_FETCH_CONCURRENCY: usize = 2;
 
 /// Why an originating caller cannot invoke a registered operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OperationRefusalKind {
+pub enum OperationRefusalKind {
     PermissionDenied,
     FreshCredentialRequired,
 }
 
 /// Exact operation authority missing from the originating caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OperationRefusal {
+pub struct OperationRefusal {
     kind: OperationRefusalKind,
     operation: Box<str>,
 }
 
 impl OperationRefusal {
-    pub(crate) fn new(kind: OperationRefusalKind, operation: impl Into<Box<str>>) -> Self {
+    pub fn new(kind: OperationRefusalKind, operation: impl Into<Box<str>>) -> Self {
         Self {
             kind,
             operation: operation.into(),
         }
     }
 
-    pub(crate) fn kind(&self) -> OperationRefusalKind {
+    pub fn kind(&self) -> OperationRefusalKind {
         self.kind
     }
 
-    pub(crate) fn operation(&self) -> &str {
+    pub fn operation(&self) -> &str {
         &self.operation
     }
 }
@@ -103,7 +103,7 @@ impl fmt::Display for OperationRefusal {
 
 impl std::error::Error for OperationRefusal {}
 
-pub(crate) fn authorize_registered_operation(
+pub fn authorize_registered_operation(
     caller: Option<&AuthenticatedCaller>,
     operation: Option<&str>,
     fresh_only: bool,
@@ -155,9 +155,9 @@ impl Extractor for TraceHeaders<'_> {
 /// The mirror image of [`TraceHeaders`]: that one reads the caller's headers in,
 /// this one writes the host's own span out.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct NodeTraceContext {
-    pub(crate) traceparent: Option<String>,
-    pub(crate) tracestate: Option<String>,
+pub struct NodeTraceContext {
+    pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
 }
 
 impl opentelemetry::propagation::Injector for NodeTraceContext {
@@ -186,10 +186,7 @@ impl opentelemetry::propagation::Injector for NodeTraceContext {
 /// `opentelemetry::global::tracer`: the runtime's `initialize_observability`
 /// installs the layer but no global tracer provider, so the global tracer is a
 /// silent no-op.
-pub(crate) fn node_trace_context(
-    traceparent: Option<&str>,
-    tracestate: Option<&str>,
-) -> NodeTraceContext {
+pub fn node_trace_context(traceparent: Option<&str>, tracestate: Option<&str>) -> NodeTraceContext {
     let mut carrier = NodeTraceContext::default();
     let context = tracing::Span::current().context();
     opentelemetry::global::get_text_map_propagator(|propagator| {
@@ -206,7 +203,7 @@ pub(crate) fn node_trace_context(
 }
 
 /// The caller's W3C parent, or `None` when the header is absent or malformed.
-pub(crate) fn remote_trace_context(
+pub fn remote_trace_context(
     traceparent: Option<&str>,
     tracestate: Option<&str>,
 ) -> Option<opentelemetry::Context> {
@@ -227,20 +224,21 @@ pub(crate) fn remote_trace_context(
 ///
 /// A route has no wiring position, so it names the empty wiring, version 0
 /// and the empty node, the same as its effect spans.
-pub(crate) struct InvocationSite<'a> {
-    pub(crate) tenant_id: &'a str,
-    pub(crate) project: &'a str,
-    pub(crate) environment: &'a str,
-    pub(crate) wiring_id: &'a str,
-    pub(crate) wiring_version: u32,
-    pub(crate) node_id: &'a str,
-    pub(crate) input_port: Option<&'a str>,
-    pub(crate) operation: &'a str,
-    pub(crate) component_digest: &'a str,
-    pub(crate) caller: Option<&'a AuthenticatedCaller>,
+#[derive(Debug)]
+pub struct InvocationSite<'a> {
+    pub tenant_id: &'a str,
+    pub project: &'a str,
+    pub environment: &'a str,
+    pub wiring_id: &'a str,
+    pub wiring_version: u32,
+    pub node_id: &'a str,
+    pub input_port: Option<&'a str>,
+    pub operation: &'a str,
+    pub component_digest: &'a str,
+    pub caller: Option<&'a AuthenticatedCaller>,
 }
 
-pub(crate) fn invocation_span(
+pub fn invocation_span(
     site: &InvocationSite<'_>,
     remote_parent: Option<&opentelemetry::Context>,
 ) -> tracing::Span {
@@ -289,15 +287,15 @@ pub(crate) fn invocation_span(
 /// same loaded application.
 pub struct OperationHost {
     engine: Arc<Engine>,
-    pub(crate) postgres: Arc<WamnPostgres>,
+    pub postgres: Arc<WamnPostgres>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
     credentials: Arc<WamnCredentials>,
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
-    pub(crate) release: Arc<LoadedRelease>,
-    pub(crate) source: Arc<dyn ArtifactSource>,
-    pub(crate) project: String,
+    pub release: Arc<LoadedRelease>,
+    pub source: Arc<dyn ArtifactSource>,
+    pub project: String,
     schema: Option<String>,
     owner_prefix: String,
     warm_reuse: WarmReuse,
@@ -368,7 +366,7 @@ impl OperationHost {
     }
 
     /// The identity of the carried release, bound on every released call.
-    pub(crate) fn release_identity(&self) -> ReleaseIdentity {
+    pub fn release_identity(&self) -> ReleaseIdentity {
         ReleaseIdentity {
             effective_release_id: self.release.release().effective_release_id,
             manifest_digest: self.release.release().manifest_digest.clone(),
@@ -376,7 +374,7 @@ impl OperationHost {
     }
 
     /// The session claims of one call, before activation binds its principal.
-    pub(crate) fn claims(&self, tenant: &str, release: Option<ReleaseIdentity>) -> SessionClaims {
+    pub fn claims(&self, tenant: &str, release: Option<ReleaseIdentity>) -> SessionClaims {
         SessionClaims {
             tenant: tenant.to_owned(),
             project: Some(self.project.clone()),
@@ -397,7 +395,7 @@ impl OperationHost {
     ///
     /// A wiring reads the same list beside its graph, so a route and a wiring
     /// load one application.
-    pub(crate) async fn release_components(&self) -> anyhow::Result<Arc<[AdmittedComponent]>> {
+    pub async fn release_components(&self) -> anyhow::Result<Arc<[AdmittedComponent]>> {
         self.components
             .get_or_try_init(|| async {
                 let manifest = self.release.manifest();
@@ -418,10 +416,7 @@ impl OperationHost {
 
     /// Load the released application and initialize each component without
     /// invoking its handler, so the first request finds it resident.
-    pub(crate) async fn prepare_released(
-        &self,
-        components: &[AdmittedComponent],
-    ) -> anyhow::Result<()> {
+    pub async fn prepare_released(&self, components: &[AdmittedComponent]) -> anyhow::Result<()> {
         let application = self.released_application(components).await?;
         for id in application.workload.facts_by_component_id.keys() {
             let target = application
@@ -438,7 +433,7 @@ impl OperationHost {
         Ok(())
     }
 
-    pub(crate) async fn released_application(
+    pub async fn released_application(
         &self,
         components: &[AdmittedComponent],
     ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
@@ -480,7 +475,7 @@ impl OperationHost {
         Ok(Arc::clone(application))
     }
 
-    pub(crate) async fn load_application(
+    pub async fn load_application(
         &self,
         components: Vec<NativeComponent>,
     ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
@@ -560,7 +555,7 @@ impl ApplicationHost for OperationHost {
 }
 
 /// The connection invocation of one admitted component at one entry.
-pub(crate) fn component_invocation(
+pub fn component_invocation(
     component: &AdmittedComponent,
     operation: &str,
     entry: InvocationEntry,
@@ -589,7 +584,7 @@ pub(crate) fn component_invocation(
     }
 }
 
-pub(crate) fn validate_component_in_release(
+pub fn validate_component_in_release(
     release: &LoadedRelease,
     component: &AdmittedComponent,
 ) -> anyhow::Result<()> {
@@ -627,17 +622,17 @@ pub(crate) fn validate_component_in_release(
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct NodeAcquisition {
-    pub(crate) claims: SessionClaims,
-    pub(crate) invocation: ConnectionInvocation,
+pub struct NodeAcquisition {
+    pub claims: SessionClaims,
+    pub invocation: ConnectionInvocation,
     /// Event provenance for every transaction opened during this acquisition.
     /// This is intentionally independent of `caller`: post-commit delivery has
     /// causation but no caller identity.
-    pub(crate) causation: Option<Causation>,
+    pub causation: Option<Causation>,
     /// The platform component that executes a callerless delivery. Activation
     /// binds the caller principal as `app.user_id` when a caller exists, and
     /// this component's principal otherwise. A nested call keeps both.
-    pub(crate) platform: Option<PlatformComponent>,
+    pub platform: Option<PlatformComponent>,
 }
 
 impl NodeAcquisition {
@@ -731,7 +726,7 @@ fn max_host_call_ms() -> u64 {
     u64::try_from(MAX_HOST_CALL_DURATION.as_millis()).unwrap_or(u64::MAX)
 }
 
-pub(crate) fn bounded_node_deadline_ms(deadline_ms: Option<u64>) -> u64 {
+pub fn bounded_node_deadline_ms(deadline_ms: Option<u64>) -> u64 {
     deadline_ms
         .unwrap_or(max_host_call_ms())
         .clamp(1, max_host_call_ms())

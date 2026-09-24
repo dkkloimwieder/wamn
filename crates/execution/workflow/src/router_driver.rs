@@ -7,13 +7,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::operation::{
-    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
-    authorize_registered_operation, bounded_node_deadline_ms, component_invocation,
-    invocation_span, node_trace_context, remote_trace_context, validate_component_in_release,
-};
-use crate::readiness::synchronous_request_kind;
-use crate::router_delivery::WiringPreload;
 use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
 use anyhow::Context as _;
 use tracing::Instrument as _;
@@ -27,6 +20,12 @@ use wamn_engine::operation::{
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
+use wamn_execution_host::{
+    DeadlineAdjustment, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
+    WiringPreload, authorize_registered_operation, bounded_node_deadline_ms, component_invocation,
+    invocation_span, node_trace_context, remote_trace_context, synchronous_request_kind,
+    validate_component_in_release,
+};
 use wamn_project_state::PlatformComponent;
 use wamn_router::{
     ActiveWiring, CacheInsert, Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome,
@@ -249,15 +248,6 @@ pub struct CandidateCaseRequest {
     pub payload: serde_json::Value,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
-}
-
-/// A node deadline changed by the host execution limit.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct DeadlineAdjustment {
-    pub node: String,
-    pub requested_ms: u64,
-    pub effective_ms: u64,
 }
 
 /// Deadline changes retained when execution returns an error.
@@ -1090,8 +1080,8 @@ mod tests {
     };
 
     use super::*;
-    use crate::readiness::synchronous_route_count;
     use wamn_catalog::AttachmentKind;
+    use wamn_execution_host::synchronous_route_count;
 
     const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
     const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";

@@ -8,7 +8,6 @@ use std::time::Instant;
 use tokio::sync::Mutex as AsyncMutex;
 use wamn_catalog::{AttachmentKind, AttachmentTarget, ServingManifest};
 
-use crate::RouterDriver;
 use crate::operation::OperationHost;
 use crate::router_delivery::WiringDelivery;
 
@@ -80,7 +79,8 @@ async fn prepare_synchronous_release(
     })
 }
 
-pub(crate) fn synchronous_route_count(manifest: &ServingManifest) -> usize {
+/// The synchronous attachments that target a route.
+pub fn synchronous_route_count(manifest: &ServingManifest) -> usize {
     manifest
         .attachments
         .values()
@@ -91,7 +91,8 @@ pub(crate) fn synchronous_route_count(manifest: &ServingManifest) -> usize {
         .count()
 }
 
-pub(crate) fn synchronous_request_kind(kind: AttachmentKind) -> bool {
+/// Whether an attachment of this kind serves a synchronous request.
+pub fn synchronous_request_kind(kind: AttachmentKind) -> bool {
     matches!(
         kind,
         AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
@@ -215,11 +216,11 @@ pub struct RouterReadinessProbe {
 
 impl RouterReadinessProbe {
     /// Gate readiness on the release components, and on the synchronous
-    /// wirings of the router driver, if any.
-    pub fn new(operations: Arc<OperationHost>, driver: Option<Arc<RouterDriver>>) -> Self {
+    /// wirings of the wiring layer, if any.
+    pub fn new(operations: Arc<OperationHost>, wirings: Option<Arc<dyn WiringDelivery>>) -> Self {
         Self {
             operations,
-            wirings: driver.map(|driver| driver as Arc<dyn WiringDelivery>),
+            wirings,
             evaluation: AsyncMutex::new(()),
             state: Mutex::new(ReadinessState::new()),
         }

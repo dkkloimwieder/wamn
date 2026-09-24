@@ -1,25 +1,20 @@
 //! The wiring arm of the delivery bridge. The router driver walks the wiring
 //! and the bridge settles the delivery. A route never reaches this module.
-//!
-//! `wamn-xs9a.4` moves this module with the driver into the workflow layer.
 
 use std::borrow::Cow;
 
 use opentelemetry::KeyValue;
 use wamn_catalog::AttachmentTarget;
 use wamn_event_wire::Causation;
+use wamn_execution_host::{
+    DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome, EXECUTION_FAILED,
+    EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureKind as WireFailureKind,
+    OperationRefusal, PartialCompletion, ROUTER_DELIVERY_ID, RouterDeliveryBridge, SourceRef,
+    WiringCall, WiringDelivery, WiringPreload, lower_operation_refusal,
+};
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, RouterTapPhase};
 
-use super::bindings::wamn::router_delivery::delivery::{
-    DeliveryError, DeliveryFailure, DeliveryOutcome, EffectOutcome as WireEffectOutcome, Emission,
-    FailedOutcome, FailureKind as WireFailureKind, PartialCompletion,
-};
-use super::{
-    DeliveryClass, EXECUTION_FAILED, ROUTER_DELIVERY_ID, RouterDeliveryBridge, SourceRef,
-    WiringCall, WiringDelivery, WiringPreload, lower_operation_refusal,
-};
-use crate::operation::OperationRefusal;
 use crate::router_response::{InterruptedResponse, PartialEvidence};
 use crate::{RouterDriver, RouterDriverRequest};
 
@@ -50,7 +45,7 @@ impl WiringDelivery for RouterDriver {
             attributes,
             deadline_adjustments,
         } = call;
-        let release = &bridge.release.manifest().release;
+        let release = &bridge.release().manifest().release;
         let request = RouterDriverRequest {
             tenant_id: release.tenant_id.clone(),
             package_id: package_id.to_owned(),
@@ -159,7 +154,7 @@ async fn publish_emit(
         return Ok(());
     };
     bridge
-        .jetstream
+        .jetstream()
         .publish_derived(DerivedPublishRequest {
             component_id: ROUTER_DELIVERY_ID.to_owned(),
             package_id: package_id.to_owned(),
@@ -195,7 +190,7 @@ async fn publish_emit(
 ///
 /// The verdict payloads are BORROWED. The plugin copies only if it will publish,
 /// so a host with no data-plane NATS pays nothing for a preview it drops.
-pub(super) fn settled_preview(outcome: &Outcome) -> (&'static str, Cow<'_, serde_json::Value>) {
+pub(crate) fn settled_preview(outcome: &Outcome) -> (&'static str, Cow<'_, serde_json::Value>) {
     if matches!(outcome.status, WalkStatus::Running) {
         return (EXECUTION_FAILED, Cow::Owned(serde_json::Value::Null));
     }
@@ -227,7 +222,7 @@ pub(super) fn settled_preview(outcome: &Outcome) -> (&'static str, Cow<'_, serde
     }
 }
 
-pub(super) fn lower_with_evidence(
+pub(crate) fn lower_with_evidence(
     outcome: Outcome,
     evidence: Option<PartialEvidence>,
 ) -> Result<DeliveryOutcome, DeliveryError> {
@@ -269,7 +264,7 @@ fn partial_outcome(
     }))
 }
 
-pub(super) fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
+pub(crate) fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
     if matches!(outcome.status, WalkStatus::Running) {
         return Err(DeliveryError::ExecutionFailed);
     }
@@ -328,5 +323,310 @@ fn lower_failure_kind(kind: FailureKind) -> WireFailureKind {
         FailureKind::MissingDedupId => WireFailureKind::MissingDedupId,
         FailureKind::RespondWithoutCaller => WireFailureKind::RespondWithoutCaller,
         FailureKind::SecondVerdict => WireFailureKind::SecondVerdict,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wamn_engine::operation::node_types;
+    use wamn_router::{ErrorDetail, Failure};
+
+    use super::*;
+
+    /// A route's settlement, read through the host crate's test hook.
+    struct RouteSettlement {
+        outcome: DeliveryOutcome,
+        label: &'static str,
+        result: serde_json::Value,
+    }
+
+    fn settle_route(
+        outcome: Result<node_types::Emission, node_types::NodeError>,
+    ) -> anyhow::Result<RouteSettlement> {
+        wamn_execution_host::settle_route_for_test(outcome).map(|(outcome, label, result)| {
+            RouteSettlement {
+                outcome,
+                label,
+                result,
+            }
+        })
+    }
+
+    #[test]
+    fn terminal_mapping_preserves_each_router_class_without_node_coordinates() {
+        let outcome = Outcome {
+            status: WalkStatus::Failed,
+            result: serde_json::Value::Null,
+            failure: Some(Failure {
+                node: "retired-coordinate".into(),
+                kind: FailureKind::InvalidInput,
+                detail: ErrorDetail::coded("bad-order", "order is invalid"),
+            }),
+            hops: 1,
+            verdict: None,
+        };
+
+        let DeliveryOutcome::Failed(failure) = lower_outcome(outcome).expect("failure maps") else {
+            panic!("failed walk must remain a failed delivery")
+        };
+        assert!(matches!(failure.kind, WireFailureKind::InvalidInput));
+        assert_eq!(failure.code.as_deref(), Some("bad-order"));
+        assert_eq!(failure.message, "order is invalid");
+    }
+
+    /// A route answers each node outcome exactly as its one-node respond
+    /// wiring does: the caller's outcome and the live view's label and result
+    /// both match. A retryable or rate-limited error reads as the wiring's
+    /// failure after its last attempt, because a route never retries.
+    #[test]
+    fn a_route_settles_each_node_outcome_as_its_one_node_wiring() {
+        let detail = || node_types::ErrorDetail {
+            message: "order is invalid".into(),
+            code: Some("bad-order".into()),
+        };
+        let failed = |kind| Outcome {
+            status: WalkStatus::Failed,
+            result: serde_json::Value::Null,
+            failure: Some(Failure {
+                node: "operation".into(),
+                kind,
+                detail: ErrorDetail::coded("bad-order", "order is invalid"),
+            }),
+            hops: 1,
+            verdict: None,
+        };
+        let cases = [
+            (
+                Ok(node_types::Emission {
+                    payload: r#"{"accepted":true}"#.into(),
+                    port: None,
+                }),
+                Outcome {
+                    status: WalkStatus::Completed,
+                    result: serde_json::json!({"accepted": true}),
+                    failure: None,
+                    hops: 1,
+                    verdict: Some(Verdict::Respond {
+                        payload: serde_json::json!({"accepted": true}),
+                        node_id: "operation".into(),
+                    }),
+                },
+            ),
+            (
+                Err(node_types::NodeError::Retryable(detail())),
+                failed(FailureKind::RetryExhausted),
+            ),
+            (
+                Err(node_types::NodeError::RateLimited(
+                    node_types::RateLimitDetail {
+                        detail: detail(),
+                        retry_after_ms: Some(10),
+                    },
+                )),
+                failed(FailureKind::RetryExhausted),
+            ),
+            (
+                Err(node_types::NodeError::Terminal(detail())),
+                failed(FailureKind::Terminal),
+            ),
+            (
+                Err(node_types::NodeError::InvalidInput(detail())),
+                failed(FailureKind::InvalidInput),
+            ),
+            (
+                Err(node_types::NodeError::Cancelled),
+                outcome_of(WalkStatus::Cancelled, None),
+            ),
+        ];
+        for (route, wiring) in cases {
+            let settled = settle_route(route).expect("every node outcome settles");
+            let (label, result) = settled_preview(&wiring);
+            assert_eq!((settled.label, &settled.result), (label, &*result));
+            assert_eq!(
+                format!("{:?}", settled.outcome),
+                format!(
+                    "{:?}",
+                    lower_outcome(wiring).expect("the wiring outcome lowers")
+                ),
+            );
+        }
+
+        assert!(
+            settle_route(Ok(node_types::Emission {
+                payload: "not json".into(),
+                port: None,
+            }))
+            .is_err(),
+            "invalid JSON is an execution failure, as on the wiring path"
+        );
+    }
+
+    #[test]
+    fn a_first_verdict_stands_when_later_frontier_work_fails() {
+        let outcome = Outcome {
+            status: WalkStatus::Failed,
+            result: serde_json::Value::Null,
+            failure: Some(Failure {
+                node: "later-terminal".into(),
+                kind: FailureKind::SecondVerdict,
+                detail: ErrorDetail::coded("second-verdict", "later terminal refused"),
+            }),
+            hops: 2,
+            verdict: Some(Verdict::Respond {
+                payload: serde_json::json!({"accepted": true}),
+                node_id: "respond".into(),
+            }),
+        };
+
+        let DeliveryOutcome::Respond(payload) =
+            lower_outcome(outcome).expect("the first verdict remains caller truth")
+        else {
+            panic!("a later failure must not replace the first terminal verdict")
+        };
+        assert_eq!(payload, r#"{"accepted":true}"#);
+    }
+
+    // ---- the instruments ---------------------------------------------------
+
+    fn outcome_of(status: WalkStatus, verdict: Option<Verdict>) -> Outcome {
+        Outcome {
+            status,
+            result: serde_json::Value::Null,
+            failure: None,
+            hops: 1,
+            verdict,
+        }
+    }
+
+    /// The live view shows the caller's truth, not a second opinion: for every
+    /// outcome shape, the preview's label agrees with what `lower_outcome`
+    /// actually returns — including the two arms whose ORDER decides the answer.
+    #[test]
+    fn a_settled_preview_never_contradicts_what_the_caller_received() {
+        let respond = Verdict::Respond {
+            payload: serde_json::json!({"accepted": true}),
+            node_id: "respond".into(),
+        };
+
+        let responded = outcome_of(WalkStatus::Completed, Some(respond.clone()));
+        let (label, result) = settled_preview(&responded);
+        assert_eq!(label, "respond");
+        assert_eq!(*result, serde_json::json!({"accepted": true}));
+
+        // A running walk is refused whatever verdict it carries — `lower_outcome`
+        // tests `Running` BEFORE the verdict, so a preview that read the verdict
+        // first would promise a caller a response it never got.
+        let (label, _) = settled_preview(&outcome_of(WalkStatus::Running, Some(respond.clone())));
+        assert_eq!(label, EXECUTION_FAILED);
+        assert!(matches!(
+            lower_outcome(outcome_of(WalkStatus::Running, Some(respond.clone()))),
+            Err(DeliveryError::ExecutionFailed)
+        ));
+
+        // A first verdict stands over a later frontier failure, so the preview
+        // shows the verdict rather than the failure.
+        let mut second_verdict = outcome_of(WalkStatus::Failed, Some(respond));
+        second_verdict.failure = Some(Failure {
+            node: "later-terminal".into(),
+            kind: FailureKind::SecondVerdict,
+            detail: ErrorDetail::coded("second-verdict", "later terminal refused"),
+        });
+        assert_eq!(settled_preview(&second_verdict).0, "respond");
+
+        // Verdictless walks read off the status alone.
+        assert_eq!(
+            settled_preview(&outcome_of(WalkStatus::Cancelled, None)).0,
+            "cancelled"
+        );
+        assert_eq!(
+            settled_preview(&outcome_of(WalkStatus::Completed, None)).0,
+            EXECUTION_FAILED
+        );
+        assert_eq!(
+            settled_preview(&outcome_of(WalkStatus::Completed, Some(Verdict::Discard))).0,
+            "discard"
+        );
+
+        // A failure's preview carries the caller's own code and message and
+        // nothing the caller did not get.
+        let mut failed = outcome_of(WalkStatus::Failed, None);
+        failed.failure = Some(Failure {
+            node: "retired-coordinate".into(),
+            kind: FailureKind::InvalidInput,
+            detail: ErrorDetail::coded("bad-order", "order is invalid"),
+        });
+        let (label, result) = settled_preview(&failed);
+        assert_eq!(label, "failed");
+        assert_eq!(
+            *result,
+            serde_json::json!({"code": "bad-order", "message": "order is invalid"})
+        );
+    }
+}
+
+#[cfg(test)]
+mod partial_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn evidence() -> PartialEvidence {
+        PartialEvidence {
+            committed_result: json!([{"request_id":"move-1","value":{"movement_id":"movement-1"}}]),
+            effect_outcome: Some(wamn_execution_contract::EffectOutcome::ResponseLost),
+        }
+    }
+
+    #[test]
+    fn declared_evidence_crosses_the_bridge_with_the_original_failure() {
+        let outcome = Outcome {
+            status: WalkStatus::Failed,
+            result: json!({"unselected":"must not cross the boundary"}),
+            failure: Some(wamn_router::Failure {
+                node: "store".to_owned(),
+                kind: FailureKind::Terminal,
+                detail: wamn_router::ErrorDetail::coded("write_failed", "label store failed"),
+            }),
+            hops: 3,
+            verdict: None,
+        };
+        let DeliveryOutcome::PartiallyCompleted(partial) =
+            lower_with_evidence(outcome, Some(evidence())).unwrap()
+        else {
+            panic!("a declared committed result must survive the downstream failure")
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&partial.committed_result).unwrap(),
+            evidence().committed_result
+        );
+        assert!(matches!(
+            partial.effect_outcome,
+            Some(WireEffectOutcome::ResponseLost)
+        ));
+        let FailedOutcome::Failed(failure) = partial.failed_outcome else {
+            panic!("original node failure")
+        };
+        assert!(matches!(failure.kind, WireFailureKind::Terminal));
+        assert_eq!(failure.code.as_deref(), Some("write_failed"));
+        assert_eq!(failure.message, "label store failed");
+    }
+
+    #[test]
+    fn existing_verdict_still_wins_over_later_partial_evidence() {
+        let outcome = Outcome {
+            status: WalkStatus::Failed,
+            result: json!({"later":"ignored"}),
+            failure: None,
+            hops: 3,
+            verdict: Some(Verdict::Respond {
+                node_id: "respond".to_owned(),
+                payload: json!({"first":true}),
+            }),
+        };
+        let DeliveryOutcome::Respond(payload) =
+            lower_with_evidence(outcome, Some(evidence())).unwrap()
+        else {
+            panic!("first verdict stands")
+        };
+        assert_eq!(payload, r#"{"first":true}"#);
     }
 }

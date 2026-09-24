@@ -380,7 +380,7 @@ pub(super) async fn build_journey_runtime(
     );
     let bridge = Arc::new(RouterDeliveryBridge::new(
         driver.operations(),
-        Some(driver),
+        Some(driver as Arc<dyn wamn_execution_host::WiringDelivery>),
         jetstream,
         PROJECT,
     )?);

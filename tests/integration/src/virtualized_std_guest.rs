@@ -16,10 +16,11 @@ mod tests {
     use hyper::{Method, Request, StatusCode};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use wamn_engine::engine::build_engine;
-    use wamn_execution_host::{ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriverRequest};
+    use wamn_execution_host::{ROUTER_DELIVERY_ID, RouterDeliveryBridge};
     use wamn_runtime::plugins::flow_http_routing::FLOW_HTTP_ROUTING_ID;
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
     use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream};
+    use wamn_workflow::RouterDriverRequest;
     use wash_runtime::engine::InstancePolicy;
     use wash_runtime::engine::ctx::{Ctx, SharedCtx};
     use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
@@ -622,7 +623,7 @@ mod tests {
         let bridge = Arc::new(
             RouterDeliveryBridge::new(
                 route.driver.operations(),
-                Some(Arc::clone(&route.driver)),
+                Some(Arc::clone(&route.driver) as Arc<dyn wamn_execution_host::WiringDelivery>),
                 jetstream,
                 PROJECT,
             )

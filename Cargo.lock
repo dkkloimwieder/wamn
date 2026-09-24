@@ -5894,7 +5894,6 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-platform-identity",
  "wamn-project-state",
- "wamn-router",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
@@ -6120,6 +6119,7 @@ dependencies = [
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "wamn-workflow",
  "wash-runtime",
  "wasm-encoder 0.251.0",
  "wasmparser 0.251.0",
@@ -6221,6 +6221,7 @@ dependencies = [
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "wamn-workflow",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -6523,6 +6524,38 @@ dependencies = [
 [[package]]
 name = "wamn-workflow"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "boon",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+ "wamn-catalog",
+ "wamn-control",
+ "wamn-control-provision",
+ "wamn-engine",
+ "wamn-event-wire",
+ "wamn-execution-contract",
+ "wamn-execution-host",
+ "wamn-project-state",
+ "wamn-router",
+ "wamn-run-state",
+ "wamn-runtime",
+ "wamn-schema-control",
+ "wamn-test-infrastructure",
+ "wamn-test-postgres",
+ "wash-runtime",
+ "wat",
+]
 
 [[package]]
 name = "want"

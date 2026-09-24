@@ -27,7 +27,8 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
-use crate::{OperationHost, OperationScope, RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use crate::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use wamn_execution_host::{OperationHost, OperationScope};
 use wamn_project_state::PlatformComponent;
 
 #[path = "automation_live/shutdown.rs"]

@@ -80,7 +80,7 @@ impl std::fmt::Debug for NativeFacts {
 
 impl NativeFacts {
     /// The facts of an entry call.
-    pub(crate) fn entry(acquisition: NodeAcquisition, caller: Option<AuthenticatedCaller>) -> Self {
+    pub fn entry(acquisition: NodeAcquisition, caller: Option<AuthenticatedCaller>) -> Self {
         Self {
             acquisition,
             caller,

@@ -6,6 +6,42 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-catalog = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-execution-contract = { workspace = true }
+# The route path, the operation host, and the delivery bridge. This crate sits
+# above it, and it never depends on this crate.
+wamn-execution-host = { workspace = true }
+wamn-project-state = { workspace = true }
+wamn-run-state = { workspace = true }
+wamn-router = { workspace = true }
+wamn-runtime = { workspace = true }
+wamn-engine = { workspace = true }
+wash-runtime = { workspace = true }
+anyhow = { workspace = true }
+boon = { workspace = true }
+async-trait = { workspace = true }
+opentelemetry = { workspace = true, features = ["metrics", "trace"] }
+tracing-opentelemetry = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+wamn-execution-host = { workspace = true, features = ["test-util"] }
+wamn-schema-control = { workspace = true }
+tokio-postgres = { workspace = true }
+wamn-control = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
+wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+url = { workspace = true }
+ring = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing-subscriber = { workspace = true }
+wat = "=1.252.0"
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

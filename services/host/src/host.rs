@@ -31,9 +31,7 @@ use wamn_engine::engine::{
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
-    DEFAULT_QUEUE_LEASE_TTL_MS, OperationHost, OperationScope, QueueService, QueueServiceConfig,
-    ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
-    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+    OperationHost, OperationScope, ROUTER_DELIVERY_ID, RouterDeliveryBridge, WiringDelivery,
 };
 use wamn_platform_identity::route_caller_subject;
 use wamn_runtime::component_artifact_source::{
@@ -50,6 +48,10 @@ use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPo
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_runtime::session_verifier::SessionVerifier;
+use wamn_workflow::{
+    DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, RouterDriver, RouterDriverConfig,
+    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+};
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -903,7 +905,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(operations) = operations.as_ref() {
         let readiness = wamn_execution_host::RouterReadinessProbe::new(
             Arc::clone(operations),
-            router_driver.clone(),
+            router_driver
+                .clone()
+                .map(|driver| driver as Arc<dyn WiringDelivery>),
         );
         let snapshot = readiness.refresh().await;
         anyhow::ensure!(
@@ -1000,7 +1004,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         plugins.push(Arc::new(
             RouterDeliveryBridge::new(
                 Arc::clone(operations),
-                router_driver.clone(),
+                router_driver
+                    .clone()
+                    .map(|driver| driver as Arc<dyn WiringDelivery>),
                 Arc::clone(&jetstream),
                 &args.project,
             )?

@@ -55,10 +55,7 @@ use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,
 };
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_execution_host::{
-    OperationHost, OperationScope, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
-    WiringCacheCapacity,
-};
+use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge};
 use wamn_gate_harness::journey::{BaseCandidate, JourneyDocument, MaterializerPhase};
 use wamn_platform_identity::{
     PrincipalKind, create_human, issue_pat, resolve_subject, route_caller_subject,
@@ -79,6 +76,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_runtime::session_verifier::SessionVerifier;
+use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::wasmtime::component::Component;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
