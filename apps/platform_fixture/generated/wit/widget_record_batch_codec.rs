@@ -23,6 +23,7 @@ struct JsonRequest {
 #[serde(deny_unknown_fields)]
 struct JsonRoot {
     expected_edit_version: JsonInt64,
+    grade: String,
     idempotency_key: String,
     line: Vec<JsonLine>,
     maker_id: Option<String>,
@@ -36,6 +37,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordBatchItem>, Code
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::RecordBatchRequest {
                     expected_edit_version: request.value.expected_edit_version.0,
+                    grade: request.value.grade,
                     idempotency_key: request.value.idempotency_key,
                     line: request
                         .value
@@ -120,6 +122,12 @@ fn normalize(
     request: &mut contract::RecordBatchRequest,
 ) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
+    {
+        let value = &mut request.grade;
+        if !["first", "second"].contains(&value.as_str()) {
+            return Err(invalid("value.grade"));
+        }
+    }
     if request.line.is_empty() {
         return Err(invalid("value.line[]"));
     }

@@ -299,8 +299,9 @@ mod record_batch {
         connection: &mut Connection,
         request: contract::RecordBatchRequest,
     ) -> Result<contract::RecordBatchResult, contract::RecordBatchError> {
-        // The contract declares `expected_edit_version` so that the component
-        // emitter meets a nested revision input. The batch does not use it.
+        // The contract declares `expected_edit_version` and `grade` so that
+        // the component emitter meets a nested revision input and an enum
+        // input. The batch does not use them.
         let batch = widget::Batch {
             idempotency_key: request.idempotency_key,
             note: request.note,

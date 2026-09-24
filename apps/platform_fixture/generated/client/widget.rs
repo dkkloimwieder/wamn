@@ -1477,6 +1477,8 @@ pub struct WidgetRecordBatchRequestValue {
     /// `int64`
     pub expected_edit_version: i64,
     /// `text`
+    pub grade: String,
+    /// `text`
     pub idempotency_key: String,
     /// `array`
     pub line: Vec<WidgetRecordBatchRequestValueLine>,
@@ -1514,6 +1516,12 @@ pub const WIDGET_RECORD_BATCH_INPUT: &[FieldDescriptor] = &[
         type_name: "int64",
         nullable: false,
         values: &[],
+    },
+    FieldDescriptor {
+        path: "value.grade",
+        type_name: "text",
+        nullable: false,
+        values: &["first", "second"],
     },
     FieldDescriptor {
         path: "value.idempotency_key",
@@ -1585,6 +1593,18 @@ pub const WIDGET_RECORD_BATCH_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSche
                     type_name: "int64",
                     nullable: false,
                     values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.grade",
+                    type_name: "text",
+                    nullable: false,
+                    values: &["first", "second"],
                 },
                 required: true,
                 minimum: None,

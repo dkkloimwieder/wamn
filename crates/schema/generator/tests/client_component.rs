@@ -715,6 +715,7 @@ fn initial_values_reach_a_nested_member_and_name_no_group() {
         widget.contains(concat!(
             "export interface WidgetRecordBatchFormInitial {\n",
             "  value?: {\n",
+            "    grade?: \"first\" | \"second\";\n",
             "    makerId?: Uuid | null;\n",
             "    note?: string | null;\n",
             "  };\n",

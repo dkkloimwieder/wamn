@@ -51,11 +51,18 @@ describe("a repeated group", () => {
 
   it("refuses a value whose spelling the release would refuse", async () => {
     const { transport, sent } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
+    render(() => (
+      <WidgetRecordBatchForm
+        transport={transport}
+        valueExpectedEditVersion="1"
+        initial={{ value: { grade: "first" } }}
+      />
+    ));
     fireEvent.click(screen.getByRole("button", { name: "add" }));
     // Every other control is filled, so the quantity is the only value left
-    // for the schema to refuse. Each one is chosen from its own list, and the
-    // maker comes first, because the line list narrows by it.
+    // for the schema to refuse. The grade starts filled. Each other one is
+    // chosen from its own list, and the maker comes first, because the line
+    // list narrows by it.
     await choose("Maker", "Northwind");
     await choose("Line", "priority");
     fireEvent.input(screen.getByLabelText("Batch note"), { target: { value: "a note" } });

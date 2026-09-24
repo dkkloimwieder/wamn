@@ -1843,9 +1843,17 @@ fn emit_input_control(
             )
             .expect("write");
         }
+        // The control hands back text. The field's type is the union of the
+        // declared values, and the control offers only those values.
+        let union = input
+            .values
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
         writeln!(
             source,
-            "{pad}  ]}}\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(value) => field().handleChange(value)}}\n{pad}  {error}\n{pad}/>"
+            "{pad}  ]}}\n{pad}  value={{String(field().state.value ?? \"\")}}\n{pad}  onChange={{(value) => field().handleChange(value as {union})}}\n{pad}  {error}\n{pad}/>"
         )
         .expect("write");
         return;

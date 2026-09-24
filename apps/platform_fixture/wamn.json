@@ -516,6 +516,16 @@
             "type": "int64"
           },
           {
+            "label": "Grade",
+            "nullable": false,
+            "path": "value.grade",
+            "type": "text",
+            "values": [
+              "first",
+              "second"
+            ]
+          },
+          {
             "label": "Line",
             "nullable": false,
             "path": "value.line[].widget_id",
