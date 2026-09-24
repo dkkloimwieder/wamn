@@ -47,10 +47,9 @@ The deployment owner can select reviewed component digests for native warm-insta
 [Deployment configuration](../operations/deployment.md#trusted-component-reuse) owns this selection and pool sizing.
 Application manifests cannot grant that trust.
 
-Warm eligibility covers the complete unit that shares a native store.
-If any member requires fresh execution, native dispatch keeps the entire shared unit fresh.
-Independent components can use different lifetimes in one workload.
-The host does not split linked stores to permit reuse.
+Each admitted component loads as its own native workload, so no two components share a store.
+Components of one application can use different lifetimes.
+The host links no component to another, so every nested call passes through the host's nested-call policy.
 
 Each call receives a new host-owned authority scope.
 Capability and nested calls use that scope, and cancellation revokes it independently of native store teardown.

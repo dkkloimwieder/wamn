@@ -564,7 +564,6 @@ impl NativePolicy {
             .prepare_transaction_participation(scope, &dependency.operation)?;
         let dispatch = application
             .workload
-            .resolved
             .dispatch_target(component_id, NATIVE_POLICY_ID)
             .await?;
         let deadline = bound.deadline.min(

@@ -111,7 +111,6 @@ pub async fn invoke_operation<H: ApplicationHost>(
             .context("native-node-component-fact-missing")?;
         let target = application
             .workload
-            .resolved
             .dispatch_target(id, application.policy.id())
             .await?;
         let input = serde_json::to_string(call.input).context("encode node input")?;

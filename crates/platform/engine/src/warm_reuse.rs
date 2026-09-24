@@ -7,7 +7,6 @@ use wamn_catalog::ArtifactHash;
 /// Trust granted by the deployment owner, never by an application manifest.
 ///
 /// Each digest names reviewed code whose caller data and tasks are request-local.
-/// The native runtime also requires every member of a shared store to be eligible.
 #[derive(Debug, Clone)]
 pub struct WarmReuse {
     trusted: BTreeSet<String>,
