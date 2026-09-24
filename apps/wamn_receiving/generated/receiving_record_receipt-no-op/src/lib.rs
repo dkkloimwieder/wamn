@@ -24,7 +24,7 @@ wit_bindgen::generate!({
         }
     ",
     path: [
-        "../../../../crates/execution/router/wit",
+        "../../../../crates/execution/workflow/router/wit",
         "../wit/deps/wamn-receiving-receiving",
     ],
     generate_all,
