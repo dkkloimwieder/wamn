@@ -1,7 +1,7 @@
 use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
 use wamn_schema_generator::client_plan::{
-    ClientPlan, LinkReason, NoRole, Role, RowLink, Rows, ScreenPlan, SuppliedKind,
+    ChosenRevision, ClientPlan, LinkReason, NoRole, Role, RowLink, Rows, ScreenPlan, SuppliedKind,
     UnsearchableSelector, effective_result_fields,
 };
 
@@ -851,5 +851,68 @@ fn the_result_fields_of_an_operation_have_one_owner() {
             .map(|field| field.path.as_str())
             .collect::<Vec<_>>(),
         "an operation with no route keeps the fields it declared"
+    );
+}
+
+/// A revision that states `revision_of` is supplied by the row the operator
+/// chooses for that input, and by no other input (wamn-nv87).
+///
+/// The batch names `widget_maker` twice. Without the declaration no path
+/// says whose revision it sends, so the page supplies it.
+#[test]
+fn a_revision_names_the_one_selector_whose_row_supplies_it() {
+    let ir = fixture::guarded_release();
+    let plan = ClientPlan::from_ir(&ir);
+    let batch = screen(&plan, "record_batch");
+    let revision = |input: &str| {
+        batch
+            .population
+            .iter()
+            .find(|populated| populated.input == input)
+            .expect("the input is chosen from a list")
+            .revision
+    };
+    assert_eq!(
+        revision("value.inspector_id"),
+        Some(ChosenRevision {
+            input: "value.expected_edit_version",
+            field: "edit_version",
+        }),
+        "the inspector's row supplies the revision declared for it"
+    );
+    assert_eq!(
+        revision("value.maker_id"),
+        None,
+        "the other input of the same model supplies nothing"
+    );
+    assert_eq!(
+        batch.revision_inputs,
+        ["value.expected_edit_version"],
+        "the revision stays reserved, so the operator never types it"
+    );
+
+    let undeclared = release();
+    let plan = ClientPlan::from_ir(&undeclared);
+    assert!(
+        screen(&plan, "record_batch")
+            .population
+            .iter()
+            .all(|populated| populated.revision.is_none()),
+        "no input supplies a revision that names no record"
+    );
+
+    // Only a revision names a record, and the input it names states a model.
+    let mut refused = fixture::manifest();
+    refused["custom_operations"]["widget.record_batch"]["input"]["fields"]
+        .as_array_mut()
+        .expect("the batch declares its input")
+        .iter_mut()
+        .find(|field| field["path"] == "value.expected_edit_version")
+        .expect("the batch takes a revision")["revision_of"] = json!("value.note");
+    let error = fixture::try_generate_with(&fixture::catalog(), &refused)
+        .expect_err("a revision of an input that names no model is refused");
+    assert!(
+        error.to_string().contains("revision_of value.note"),
+        "{error}"
     );
 }

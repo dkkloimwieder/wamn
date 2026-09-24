@@ -235,6 +235,21 @@ pub struct PopulatedInput<'a> {
     pub cursor_input: Option<&'a str>,
     /// How one selector narrows another, when the reference states it.
     pub narrowed_by: Option<Narrowing<'a>>,
+    /// The revision that the chosen row supplies, when a revision input
+    /// states `revision_of` this input.
+    pub revision: Option<ChosenRevision<'a>>,
+}
+
+/// A revision that the operator's choice in one selector supplies.
+///
+/// The row the operator chooses carries its record's revision, so the form
+/// sends the revision of the record it names and no page prop supplies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChosenRevision<'a> {
+    /// Input path of the command that takes the revision.
+    pub input: &'a str,
+    /// Result field of the list that carries the revision.
+    pub field: &'a str,
 }
 
 /// One selector whose list declares no filter on its display field.
@@ -792,6 +807,8 @@ impl<'a> Lister<'a> {
 
 /// Bind one screen's inputs to the lists that offer their records.
 fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<PopulatedInput<'a>> {
+    let contract: &'a OperationIr = screen.contract;
+    let input_leaves = leaf_fields(&contract.input_fields);
     screen
         .inputs
         .iter()
@@ -823,6 +840,21 @@ fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<Po
                     list_input,
                 })
             });
+            // The list's rows carry the revision of the record they name, in
+            // the one result field the contract marks as a revision.
+            let revision = input_leaves
+                .iter()
+                .find(|field| field.revision_of.as_deref() == Some(input.path.as_str()))
+                .and_then(|revision| {
+                    let field = list
+                        .columns
+                        .iter()
+                        .find(|column| column.revision && column.type_name == revision.type_name)?;
+                    Some(ChosenRevision {
+                        input: revision.path.as_str(),
+                        field: field.path.as_str(),
+                    })
+                });
             Some(PopulatedInput {
                 input: input.path.as_str(),
                 list_operation: list.operation,
@@ -834,6 +866,7 @@ fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<Po
                 search_input: list.search(),
                 cursor_input: list.cursor_input,
                 narrowed_by,
+                revision,
             })
         })
         .collect()

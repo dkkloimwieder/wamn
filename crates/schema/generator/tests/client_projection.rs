@@ -680,6 +680,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         nullable: false,
         required: true,
         revision: false,
+        revision_of: None,
         children: Vec::new(),
         minimum: None,
         maximum: None,

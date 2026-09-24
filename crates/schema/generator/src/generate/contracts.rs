@@ -968,6 +968,7 @@ fn crud_result_contract(
                 revision: model.operations.values().any(|operation| {
                     operation.revision_field.as_deref() == Some(column.name.as_str())
                 }),
+                revision_of: None,
                 values: if action == CrudAction::Delete && column.name == "outcome" {
                     vec![sql::OUTCOME_DELETED.to_owned()]
                 } else {

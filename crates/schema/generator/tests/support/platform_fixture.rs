@@ -77,8 +77,39 @@ pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>>
 }
 
 pub(crate) fn client_release() -> ClientContractIr {
-    let package = generate_fixture();
-    let contracts = contracts(&package);
+    client_release_of(&generate_fixture())
+}
+
+/// The fixture with the batch's revision naming its inspector (wamn-nv87).
+///
+/// The batch names `widget_maker` twice, in `value.maker_id` and
+/// `value.inspector_id`, so only `revision_of` says whose revision it takes.
+/// The maker gains a revision, so each row its list returns carries one.
+#[allow(dead_code, reason = "not every test module reads a guarded revision")]
+pub(crate) fn guarded_release() -> ClientContractIr {
+    let catalog = catalog_with(vec![Column::new(
+        "edit_version",
+        ColumnType::Int64,
+        false,
+        Some(ColumnDefault::int64(1)),
+        None,
+    )]);
+    let mut value = manifest();
+    value["models"]["widget_maker"]["operations"]["query"]["revision_field"] =
+        json!("edit_version");
+    let revision = value["custom_operations"]["widget.record_batch"]["input"]["fields"]
+        .as_array_mut()
+        .expect("the batch declares its input")
+        .iter_mut()
+        .find(|field| field["path"] == "value.expected_edit_version")
+        .expect("the batch takes a revision");
+    revision["revision_of"] = json!("value.inspector_id");
+    client_release_of(&generate_with(&catalog, &value))
+}
+
+/// The release a test's own package publishes, with the fixture's routes.
+pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr {
+    let contracts = contracts(package);
     let routes = [
         ("widget", "archive"),
         ("widget", "create"),
@@ -238,6 +269,11 @@ pub(crate) fn widget_index(ir: &ClientContractIr) -> usize {
 }
 
 pub(crate) fn catalog() -> CatalogIr {
+    catalog_with(Vec::new())
+}
+
+/// The fixture catalog, with more columns on the second model.
+pub(crate) fn catalog_with(maker_columns: Vec<Column>) -> CatalogIr {
     let widget = Table::new(
         "inventory",
         "widget",
@@ -312,7 +348,10 @@ pub(crate) fn catalog() -> CatalogIr {
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
             ),
-        ],
+        ]
+        .into_iter()
+        .chain(maker_columns)
+        .collect(),
         vec![Constraint::primary_key("widget_maker_id_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
     );

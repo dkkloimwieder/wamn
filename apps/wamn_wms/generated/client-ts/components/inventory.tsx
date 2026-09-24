@@ -454,8 +454,6 @@ export interface InventoryMergeFormProps {
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: InventoryMergeFormInitial;
-  /** The revision this command sends. The release binds no read that supplies it. */
-  readonly valueExpectedRowVersion: InventoryMergeRequest["value"]["expectedRowVersion"];
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<InventoryMergeResult>) => void;
 }
@@ -493,7 +491,12 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      item = writeMember(item, ["value", "expectedRowVersion"], props.valueExpectedRowVersion);
+      const valueTargetPalletIdChosen = valueTargetPalletIdRevision();
+      if (valueTargetPalletIdChosen === null) {
+        setRefusal({ code: "choose the record from its list", member: "value.target_pallet_id" });
+        return;
+      }
+      item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPalletIdChosen);
       const outcome = await merge(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventoryMergeFormLabel);
@@ -528,6 +531,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
   void readValueSourcePalletIdOptions(null);
   const [valueTargetPalletIdOptions, setValueTargetPalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueTargetPalletIdSearch, setValueTargetPalletIdSearch] = createSignal("");
+  const [valueTargetPalletIdRevision, setValueTargetPalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
   const readValueTargetPalletIdOptions = async (cursor: string | null) => {
     let request = { requestId: newRequestId() } as PalletQueryRequest;
     if (valueTargetPalletIdSearch() !== "") {
@@ -587,7 +591,12 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
               optionValue={(row) => String(row.id)}
               optionLabel={(row) => String(row.palletCode)}
               value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
+              onChange={(value) => {
+                field().handleChange(value ?? "");
+                setValueTargetPalletIdRevision(
+                  valueTargetPalletIdOptions().rows.find((row) => String(row.id) === value)?.rowVersion ?? null,
+                );
+              }}
               onSearch={(text) => {
                 setValueTargetPalletIdSearch(text);
                 void readValueTargetPalletIdOptions(null);

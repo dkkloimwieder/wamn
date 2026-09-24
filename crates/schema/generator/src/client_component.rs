@@ -1246,6 +1246,10 @@ fn emit_form(
         writeln!(source, "  readonly key: {key};").expect("write");
     } else {
         for revision in &screen.revision_inputs {
+            // The row the operator chooses supplies this one, so no prop does.
+            if chosen(screen, revision).is_some() {
+                continue;
+            }
             source.push_str(
                 "  /** The revision this command sends. The release binds no read that supplies it. */\n",
             );
@@ -1370,6 +1374,19 @@ fn emit_form(
         .expect("write");
     } else {
         for revision in &screen.revision_inputs {
+            if let Some(populated) = chosen(screen, revision) {
+                // The revision is the one the chosen row carried when the
+                // operator chose it, never one read now.
+                let (state, _) = selector_state(populated.input);
+                writeln!(
+                    source,
+                    "      const {state}Chosen = {state}Revision();\n      if ({state}Chosen === null) {{\n        setRefusal({{ code: \"choose the record from its list\", member: {:?} }});\n        return;\n      }}\n      item = writeMember(item, {}, {state}Chosen);",
+                    populated.input,
+                    member_literal(revision)
+                )
+                .expect("write");
+                continue;
+            }
             writeln!(
                 source,
                 "      item = writeMember(item, {}, props.{});",
@@ -1519,6 +1536,15 @@ fn populated<'a>(screen: &'a ScreenPlan<'_>, path: &str) -> Option<&'a Populated
         .find(|populated| populated.input == path)
 }
 
+/// The selector whose chosen row supplies one revision input, if any does.
+fn chosen<'a>(screen: &'a ScreenPlan<'_>, revision: &str) -> Option<&'a PopulatedInput<'a>> {
+    screen.population.iter().find(|populated| {
+        populated
+            .revision
+            .is_some_and(|chosen| chosen.input == revision)
+    })
+}
+
 /// The alias one module imports another model's binding under.
 ///
 /// Two models can each declare a `list`, so a foreign binding always carries
@@ -1595,6 +1621,15 @@ fn emit_selector_state(
         writeln!(
             source,
             "  const [{state}Search, set{state_upper}Search] = createSignal(\"\");"
+        )
+        .expect("write");
+    }
+    // The chosen row's revision, which the command sends for that record.
+    if let Some(revision) = populated.revision {
+        writeln!(
+            source,
+            "  const [{state}Revision, set{state_upper}Revision] = createSignal<{stem}Row[{:?}] | null>(null);",
+            crate::client_ts::to_camel(revision.field)
         )
         .expect("write");
     }
@@ -1697,9 +1732,24 @@ fn emit_selector_control(
     let display = crate::client_ts::to_camel(populated.display_field);
     writeln!(
         source,
-        "{pad}<RecordSelect\n{pad}  label={label:?}\n{pad}  options={{{state}Options().rows}}\n{pad}  optionValue={{(row) => String(row.{key})}}\n{pad}  optionLabel={{(row) => String(row.{display})}}\n{pad}  value={{field().state.value == null ? null : String(field().state.value)}}\n{pad}  onChange={{(value) => field().handleChange(value ?? \"\")}}"
+        "{pad}<RecordSelect\n{pad}  label={label:?}\n{pad}  options={{{state}Options().rows}}\n{pad}  optionValue={{(row) => String(row.{key})}}\n{pad}  optionLabel={{(row) => String(row.{display})}}\n{pad}  value={{field().state.value == null ? null : String(field().state.value)}}"
     )
     .expect("write");
+    // A choice that supplies a revision keeps the revision its row carried.
+    if let Some(revision) = populated.revision {
+        writeln!(
+            source,
+            "{pad}  onChange={{(value) => {{\n{pad}    field().handleChange(value ?? \"\");\n{pad}    set{state_upper}Revision(\n{pad}      {state}Options().rows.find((row) => String(row.{key}) === value)?.{} ?? null,\n{pad}    );\n{pad}  }}}}",
+            crate::client_ts::to_camel(revision.field)
+        )
+        .expect("write");
+    } else {
+        writeln!(
+            source,
+            "{pad}  onChange={{(value) => field().handleChange(value ?? \"\")}}"
+        )
+        .expect("write");
+    }
     // The search asks the list again from its first page, because a cursor
     // names a position in the answer the old value produced.
     if populated.search_input.is_some() {

@@ -1191,3 +1191,39 @@ fn an_operation_the_release_does_not_serve_gets_no_component() {
         "the index names it: {index}"
     );
 }
+
+/// The batch names `widget_maker` twice and its revision names the inspector,
+/// so the form sends the revision of the inspector row the operator chose
+/// (wamn-nv87). No page prop carries it.
+#[test]
+fn a_form_sends_the_revision_of_the_record_its_revision_names() {
+    let files = emit(&fixture::guarded_release());
+    let widget = widget(&files);
+    assert!(
+        !widget.contains("readonly valueExpectedEditVersion"),
+        "no prop carries a revision that a chosen row supplies"
+    );
+    assert!(widget.contains(
+        "  const [valueInspectorIdRevision, setValueInspectorIdRevision] = createSignal<WidgetMakerQueryRow[\"editVersion\"] | null>(null);\n"
+    ));
+    assert!(widget.contains(concat!(
+        "              onChange={(value) => {\n",
+        "                field().handleChange(value ?? \"\");\n",
+        "                setValueInspectorIdRevision(\n",
+        "                  valueInspectorIdOptions().rows.find((row) => String(row.id) === value)?.editVersion ?? null,\n",
+        "                );\n",
+        "              }}\n",
+    )));
+    assert!(widget.contains(concat!(
+        "      const valueInspectorIdChosen = valueInspectorIdRevision();\n",
+        "      if (valueInspectorIdChosen === null) {\n",
+        "        setRefusal({ code: \"choose the record from its list\", member: \"value.inspector_id\" });\n",
+        "        return;\n",
+        "      }\n",
+        "      item = writeMember(item, [\"value\", \"expectedEditVersion\"], valueInspectorIdChosen);\n",
+    )));
+    assert!(
+        !widget.contains("valueMakerIdRevision"),
+        "the other input of the same model supplies no revision"
+    );
+}

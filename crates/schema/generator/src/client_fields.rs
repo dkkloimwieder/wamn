@@ -11,6 +11,7 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         required,
         nullable,
         revision: false,
+        revision_of: None,
         values: Vec::new(),
         children: Vec::new(),
         minimum: None,
@@ -125,6 +126,10 @@ pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
             .get("revision")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        leaf.revision_of = declared
+            .get("revision_of")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         (leaf.label, leaf.description) = text(declared);
         leaf.references = reference(declared);
         insert(&mut tree, leaf, &path.split('.').collect::<Vec<_>>(), "");
@@ -380,6 +385,7 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
             if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
                 result.nullable &= hint.nullable;
                 result.revision = hint.revision;
+                result.revision_of.clone_from(&hint.revision_of);
                 result.label.clone_from(&hint.label);
                 result.description.clone_from(&hint.description);
                 result.references.clone_from(&hint.references);

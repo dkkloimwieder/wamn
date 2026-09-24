@@ -262,6 +262,12 @@ pub struct ContractFieldDeclaration {
     pub nullable: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub revision: bool,
+    /// The input whose record this revision guards, when it names one.
+    ///
+    /// A command that takes two records of one model cannot say which one a
+    /// revision belongs to by its path, so the revision states it here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_of: Option<String>,
     #[serde(default)]
     pub values: Vec<String>,
     /// Authored screen text. Flattening [`FieldText`] here is not available,
@@ -1435,6 +1441,22 @@ fn validate_contract_fields(
                 GenerateErrorKind::InvalidOperation,
                 format!(
                     "{operation_name} {contract} field {} marks a revision that is neither int32 nor int64",
+                    field.path
+                ),
+            ));
+        }
+        // A revision names the record of one sibling input, and that input
+        // names its model, so a client knows which chosen row supplies it.
+        if let Some(record) = field.revision_of.as_deref()
+            && (!field.revision
+                || !fields
+                    .iter()
+                    .any(|named| named.path == record && named.references.is_some()))
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation_name} {contract} field {} states revision_of {record}, which only a revision may state, naming an input that references a model",
                     field.path
                 ),
             ));

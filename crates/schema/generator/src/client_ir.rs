@@ -217,6 +217,10 @@ pub struct FieldIr {
     /// Whether this signed integer is a revision serialized as a decimal JSON string.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub revision: bool,
+    /// Input path whose record this revision guards, when the contract names
+    /// one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_of: Option<String>,
     /// Object members or repeated item members, ordered by path.
     pub children: Vec<FieldIr>,
     /// Declared repeated-item bounds.

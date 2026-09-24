@@ -108,7 +108,6 @@ export function WmsScreens(props: {
   // page hands each command the revision of the pallet row the operator
   // selected.
   const needsPallet = "Select a pallet row. A command sends the revision of that row.";
-  const needsTarget = "Select the target pallet row. Merge sends the target's revision.";
 
   return (
     <>
@@ -184,15 +183,10 @@ export function WmsScreens(props: {
         </Panel>
 
         <Panel title={InventoryMergeFormLabel} operation="inventory.merge">
-          {/* Merge names a pallet twice, so no row fills it, and it guards the
-              target's revision: select the target row, choose both pallets. */}
-          <Show when={pallet()} fallback={<Waiting>{needsTarget}</Waiting>}>
-            <InventoryMergeForm
-              transport={transport}
-              valueExpectedRowVersion={pallet()?.rowVersion ?? 0}
-              onSubmitted={read}
-            />
-          </Show>
+          {/* Merge names a pallet twice, so no row fills it. Its revision
+              names the target, so the form sends the revision of the target
+              row the operator chooses. */}
+          <InventoryMergeForm transport={transport} onSubmitted={read} />
         </Panel>
 
         <Panel title={InventorySplitFormLabel} operation="inventory.split">
