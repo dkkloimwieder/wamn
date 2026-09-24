@@ -12,6 +12,7 @@ import {
   cellText,
   checkedMember,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newRequestId,
@@ -231,7 +232,7 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, PurchaseOrderQueryTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.item;
@@ -353,6 +354,7 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

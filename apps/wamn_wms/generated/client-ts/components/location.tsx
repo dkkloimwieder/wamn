@@ -12,6 +12,7 @@ import {
   cellText,
   checkedMember,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newIdempotencyKey,
@@ -292,7 +293,7 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, LocationQueryTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.item;
@@ -417,6 +418,7 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

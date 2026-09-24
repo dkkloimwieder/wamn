@@ -507,6 +507,7 @@ fn emit_table(
         "appendPage",
         "cellText",
         "emptyPage",
+        "failedRead",
         "firstPage",
         "newRequestId",
         "startRead",
@@ -700,7 +701,8 @@ fn emit_table(
     ui.insert("announceOutcome");
     source.push_str("    if (outcome.status !== \"completed\") {\n");
     writeln!(source, "      announceOutcome(outcome, {stem}TableLabel);").expect("write");
-    source.push_str("      setPage({ ...page(), busy: false });\n      return;\n    }\n");
+    // The page keeps why the read failed, so the grid never reads as empty.
+    source.push_str("      setPage(failedRead(page(), outcome));\n      return;\n    }\n");
     let cursor_of = if rows_key == "item" {
         "outcome.value.nextCursor"
     } else {
@@ -791,7 +793,7 @@ fn emit_table(
     );
     // The skeleton stands in for rows only while the first page is read, so a
     // next page appends below the rows already shown.
-    source.push_str("      <DataGrid\n        table={table}\n        recordCount={page().rows.length}\n        isLoading={page().busy && page().rows.length === 0}\n        onRowClick={(row) => props.onRowSelect?.(row)}\n      >\n        <DataGridContainer>\n          <DataGridTable />\n        </DataGridContainer>\n      </DataGrid>\n");
+    source.push_str("      <DataGrid\n        table={table}\n        recordCount={page().rows.length}\n        isLoading={page().busy && page().rows.length === 0}\n        emptyMessage={page().refusal}\n        onRowClick={(row) => props.onRowSelect?.(row)}\n      >\n        <DataGridContainer>\n          <DataGridTable />\n        </DataGridContainer>\n      </DataGrid>\n");
     // A list that serves pages always shows its next page, disabled while the
     // release sent no cursor, so nothing below the rows appears or disappears.
     // A bounded list never pages, so it shows none.

@@ -9,6 +9,7 @@ import {
   appendPage,
   cellText,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newRequestId,
@@ -190,7 +191,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, ReceiptQueryTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.item;
@@ -262,6 +263,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

@@ -13,7 +13,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JsonValue, Outcome } from "@wamn/web-runtime";
+import { createTransport, type JsonValue, type Outcome } from "@wamn/web-runtime";
 
 import { WidgetQueryTable, WidgetQueryTableLabel } from "../fixture/components/widget.js";
 import { page, tableStub as stub } from "../stubs/index.js";
@@ -90,7 +90,7 @@ describe("the generated table for a page", () => {
     expect(second["cursor"]).toBeUndefined();
   });
 
-  it("states an outcome that is not a completion, and shows no row", async () => {
+  it("states an outcome that is not a completion in place of the empty message", async () => {
     const { transport } = stub([
       { status: "refused", code: "permission_denied", detail: null },
     ]);
@@ -101,8 +101,59 @@ describe("the generated table for a page", () => {
     fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]?.status).toBe("refused");
-    // The header row, and the one row the grid shows when it holds no record.
+    // The header row, and the one row the grid shows when it holds no record,
+    // which states the refusal (wamn-jh80).
     expect(screen.queryAllByRole("row")).toHaveLength(2);
-    expect(screen.getByText("No data available")).toBeDefined();
+    expect(screen.getAllByText("permission_denied").length).toBeGreaterThan(0);
+    expect(screen.queryByText("No data available")).toBeNull();
+  });
+
+  it("says no data only when a read completed with no row", async () => {
+    const { transport } = stub([page([], null)]);
+    render(() => <WidgetQueryTable transport={transport} />);
+    fireEvent.click(screen.getByText("read"));
+    await waitFor(() => expect(screen.getByText("No data available")).toBeDefined());
+  });
+
+  it("shows a refusal that the release answered over HTTP (wamn-jh80)", async () => {
+    // The two replies the WMS checklist saw: a 401 before any item ran, and a
+    // 200 whose one item is an undeclared refusal. The real transport reads
+    // each one, so the case covers the path from HTTP to the screen.
+    const replies = [
+      () => new Response(JSON.stringify({ error: { code: "unauthorized" } }), { status: 401 }),
+      (requestId: string) =>
+        new Response(JSON.stringify([{ request_id: requestId, error: { code: "internal_error" } }]), {
+          status: 200,
+        }),
+    ];
+    let next = 0;
+    const transport = createTransport({
+      baseUrl: "http://stub",
+      credential: "token",
+      fetch: (_url, init) => {
+        const items = JSON.parse(String(init?.body)) as { request_id: string }[];
+        const reply = replies[next] ?? replies[replies.length - 1];
+        next += 1;
+        return Promise.resolve(reply!(items[0]?.request_id ?? ""));
+      },
+    });
+    const seen: Outcome<unknown>[] = [];
+    render(() => (
+      <WidgetQueryTable transport={transport} onOutcome={(outcome) => seen.push(outcome)} />
+    ));
+
+    fireEvent.click(screen.getByText("read"));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]).toMatchObject({ status: "refused", code: "unauthenticated" });
+    await waitFor(() => expect(screen.getAllByText("unauthenticated").length).toBeGreaterThan(0));
+    expect(screen.queryByText("No data available")).toBeNull();
+
+    fireEvent.click(screen.getByText("read"));
+    await waitFor(() => expect(seen).toHaveLength(2));
+    expect(seen[1]?.status).toBe("uncertain");
+    await waitFor(() =>
+      expect(screen.getAllByText(/the server reported internal_error/).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText("No data available")).toBeNull();
   });
 });

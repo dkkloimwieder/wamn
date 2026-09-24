@@ -9,6 +9,7 @@ import {
   appendPage,
   cellText,
   emptyPage,
+  failedRead,
   firstPage,
   newRequestId,
   startRead,
@@ -95,7 +96,7 @@ export function LocationListTable(props: LocationListTableProps) {
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, LocationListTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.rows;
@@ -152,6 +153,7 @@ export function LocationListTable(props: LocationListTableProps) {
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

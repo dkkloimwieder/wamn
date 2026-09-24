@@ -9,6 +9,7 @@ import {
   appendPage,
   cellText,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newRequestId,
@@ -220,7 +221,7 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, InventoryMovementQueryTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.item;
@@ -292,6 +293,7 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

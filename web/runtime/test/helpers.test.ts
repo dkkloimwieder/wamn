@@ -22,7 +22,7 @@ describe("the page state", () => {
   });
 
   it("clears the cursor with the rows, because it names a place in the old list", () => {
-    expect(emptyPage<{ id: string }>()).toEqual({ rows: [], cursor: null, busy: false });
+    expect(emptyPage<{ id: string }>()).toEqual({ rows: [], cursor: null, busy: false, refusal: null });
   });
 
   it("states that a request is in flight and that it finished", () => {
@@ -34,7 +34,7 @@ describe("the page state", () => {
 
   it("replaces the rows of a bounded list, which carries no cursor", () => {
     const read = firstPage<{ id: string }>([{ id: "a" }]);
-    expect(read).toEqual({ rows: [{ id: "a" }], cursor: null, busy: false });
+    expect(read).toEqual({ rows: [{ id: "a" }], cursor: null, busy: false, refusal: null });
   });
 });
 

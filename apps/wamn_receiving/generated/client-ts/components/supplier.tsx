@@ -12,6 +12,7 @@ import {
   cellText,
   checkedMember,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newIdempotencyKey,
@@ -207,7 +208,7 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, SupplierQueryTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.item;
@@ -279,6 +280,7 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

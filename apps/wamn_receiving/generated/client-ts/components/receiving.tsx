@@ -14,6 +14,7 @@ import {
   cellText,
   checkedMember,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newIdempotencyKey,
@@ -167,7 +168,7 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, ReceivingLoadPurchaseOrderHistoryTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.rows;
@@ -204,6 +205,7 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
@@ -324,7 +326,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, ReceivingLoadReceiptScreenTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.rows;
@@ -381,6 +383,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

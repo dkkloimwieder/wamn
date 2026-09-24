@@ -12,6 +12,7 @@ import {
   cellText,
   checkedMember,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newIdempotencyKey,
@@ -381,7 +382,7 @@ export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, InventoryAggregateTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.rows;
@@ -418,6 +419,7 @@ export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>

@@ -9,6 +9,7 @@ import {
   appendPage,
   cellText,
   emptyPage,
+  failedRead,
   firstPage,
   hasNextPage,
   newRequestId,
@@ -184,7 +185,7 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, PalletQuantityQueryTableLabel);
-      setPage({ ...page(), busy: false });
+      setPage(failedRead(page(), outcome));
       return;
     }
     const rows = outcome.value.item;
@@ -256,6 +257,7 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
         table={table}
         recordCount={page().rows.length}
         isLoading={page().busy && page().rows.length === 0}
+        emptyMessage={page().refusal}
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
