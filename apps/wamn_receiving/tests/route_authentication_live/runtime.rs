@@ -178,33 +178,23 @@ pub(super) fn assert_direct_route_trace(
     );
 }
 
+/// A receipt through the Acme overlay is one invocation of the composed
+/// application. The pinned base and the participant run inside it, so the
+/// trace names only the overlay entry, and its SQL descends from that entry.
 pub(super) fn assert_nested_record_receipt_trace(
     spans: &[SpanData],
     trace_id: &str,
     overlay_digest: &str,
-    base_digest: &str,
     caller_principal_id: &str,
     credential_kind: &str,
-    participated: bool,
 ) {
     let components = trace_component_invocations(spans, trace_id);
     assert_eq!(
         components.len(),
-        if participated { 3 } else { 2 },
-        "trace {trace_id} must contain the exact receipt invocations"
+        1,
+        "trace {trace_id} must contain exactly the composed receipt invocation"
     );
-    let overlay = components
-        .iter()
-        .find(|span| {
-            span_attribute(span, "wamn.operation").as_deref() == Some(OVERLAY_RECORD_RECEIPT)
-        })
-        .copied()
-        .expect("overlay record_receipt invocation is present");
-    let base = components
-        .iter()
-        .find(|span| span_attribute(span, "wamn.operation").as_deref() == Some(BASE_RECORD_RECEIPT))
-        .copied()
-        .expect("pinned base record_receipt invocation is present");
+    let overlay = components[0];
     assert_invocation_identity(
         overlay,
         trace_id,
@@ -213,48 +203,11 @@ pub(super) fn assert_nested_record_receipt_trace(
         overlay_digest,
         caller_principal_id,
     );
-    assert_invocation_identity(
-        base,
-        trace_id,
-        "",
-        BASE_RECORD_RECEIPT,
-        base_digest,
-        caller_principal_id,
+    assert_eq!(
+        span_attribute(overlay, "wamn.caller_credential_kind").as_deref(),
+        Some(credential_kind),
+        "trace {trace_id} did not preserve the originating credential kind"
     );
-    if participated {
-        let participant = components
-            .iter()
-            .find(|span| {
-                span_attribute(span, "wamn.operation").as_deref()
-                    == Some(OVERLAY_RECEIPT_PARTICIPANT)
-            })
-            .copied()
-            .expect("admitted receipt participant invocation is present");
-        assert_invocation_identity(
-            participant,
-            trace_id,
-            "",
-            OVERLAY_RECEIPT_PARTICIPANT,
-            overlay_digest,
-            caller_principal_id,
-        );
-        assert!(
-            span_descends_from(spans, participant, base),
-            "trace {trace_id} did not parent the participant under the base invocation"
-        );
-    }
-    for invocation in components {
-        assert_eq!(
-            span_attribute(invocation, "wamn.caller_credential_kind").as_deref(),
-            Some(credential_kind),
-            "trace {trace_id} did not preserve the originating credential kind"
-        );
-    }
-    assert!(
-        span_descends_from(spans, base, overlay),
-        "trace {trace_id} did not parent the pinned-base invocation under the overlay invocation"
-    );
-    assert_postgres_descendants(spans, trace_id, base);
     assert_postgres_descendants(spans, trace_id, overlay);
 }
 
@@ -264,8 +217,8 @@ pub(super) fn assert_native_nested_acquisition(
     overlay_digest: &str,
     base_digest: &str,
 ) {
-    // The native workload loads the full release once. Other admitted nodes can
-    // appear in that preload, while this invocation executes exactly three nodes.
+    // The native release loads each application, the base included. The
+    // receipt itself runs once, in the composed overlay.
     let loaded = spans
         .iter()
         .filter(|span| span.name == "wamn.component.pull")
@@ -277,20 +230,14 @@ pub(super) fn assert_native_nested_acquisition(
             "native release never loaded {digest}"
         );
     }
-    let invoked = trace_component_invocations(spans, trace_id);
-    assert_eq!(
-        invoked.len(),
-        3,
-        "native nested call must execute overlay, base, and participant nodes"
-    );
-    let digests = invoked
+    let invoked = trace_component_invocations(spans, trace_id)
         .iter()
         .filter_map(|span| span_attribute(span, "wamn.component_digest"))
-        .collect::<BTreeSet<_>>();
+        .collect::<Vec<_>>();
     assert_eq!(
-        digests,
-        BTreeSet::from([overlay_digest.to_owned(), base_digest.to_owned()]),
-        "native nested call executed the wrong admitted components"
+        invoked,
+        [overlay_digest.to_owned()],
+        "a receipt must execute only the composed overlay"
     );
 }
 

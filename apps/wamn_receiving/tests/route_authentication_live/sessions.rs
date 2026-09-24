@@ -336,8 +336,8 @@ pub(super) async fn assert_nested_session(
     };
     anyhow::ensure!(
         operation_freshness(BASE_RECORD_RECEIPT) == Some(fresh_only)
-            && operation_freshness(OVERLAY_RECORD_RECEIPT) == Some(false),
-        "nested test requires the admitted base freshness and an ordinary overlay"
+            && operation_freshness(OVERLAY_RECORD_RECEIPT) == Some(fresh_only),
+        "nested test requires the admitted base freshness, folded into the overlay entry"
     );
     let digests = released_component_digests(&previous, &inputs.route_host)?;
     let deployed_bytes: Vec<u8> = project
@@ -555,7 +555,7 @@ pub(super) async fn assert_nested_session(
            'receipt_id', command.receipt_id::text, \
            'purchase_order_id', command.purchase_order_id::text, \
            'purchase_order_status', command.purchase_order_status, \
-           'row_version', command.row_version::text), \
+           'row_version', command.row_version), \
            purchase.row_version, purchase.acme_inspection_required, \
            purchase.acme_quality_status \
          FROM receiving.record_receipt_command AS command \
@@ -565,14 +565,14 @@ pub(super) async fn assert_nested_session(
             &[],
         )
         .await?;
-    let current_version: i64 = expected_replay.get(1);
+    let current_version: i32 = expected_replay.get(1);
     let inspection_required: bool = expected_replay.get(2);
     let quality_status: String = expected_replay.get(3);
     let expected_replay: Value = expected_replay.get(0);
     anyhow::ensure!(
         current_version == 3
             && expected_replay["purchase_order_status"] == "complete"
-            && expected_replay["row_version"] == "2"
+            && expected_replay["row_version"] == 2
             && inspection_required
             && quality_status == "pending",
         "nested replay requires the completed PAT journey state"
@@ -646,10 +646,8 @@ pub(super) async fn assert_nested_session(
             &traces.spans(),
             &trace_id,
             &digests[OVERLAY_PACKAGE_ID],
-            &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
             "session",
-            false,
         );
         anyhow::ensure!(
             nested_receipt_state(project.as_ref()).await? == before,
@@ -680,10 +678,8 @@ pub(super) async fn assert_nested_session(
             &traces.spans(),
             &pat_trace,
             &digests[OVERLAY_PACKAGE_ID],
-            &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
             "pat",
-            false,
         );
         anyhow::ensure!(
             nested_receipt_state(project.as_ref()).await? == before,
@@ -864,10 +860,8 @@ pub(super) async fn assert_nested_session(
             &traces.spans(),
             &trace_id,
             &digests[OVERLAY_PACKAGE_ID],
-            &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
             "session",
-            false,
         );
         assert_pat_and_session_stamp_one_actor(
             &engine,
@@ -962,7 +956,7 @@ async fn assert_pat_and_session_stamp_one_actor(
         let body = serde_json::to_vec(&serde_json::json!([{
             "request_id": request_id,
             "id": order,
-            "expected_row_version": (values.len() + 1).to_string(),
+            "expected_row_version": values.len() + 1,
             "change": change,
         }]))?;
         let (_, traceparent) = journey_trace(trace);
@@ -984,8 +978,8 @@ async fn assert_pat_and_session_stamp_one_actor(
     }
     let (session, pat) = (&values[0], &values[1]);
     anyhow::ensure!(
-        session["row_version"] == "2"
-            && pat["row_version"] == "3"
+        session["row_version"] == 2
+            && pat["row_version"] == 3
             && session["updated_by"] == credentials.human_id
             && pat["updated_by"] == credentials.human_id
             && session["created_by"] == FIXTURE_PRINCIPAL

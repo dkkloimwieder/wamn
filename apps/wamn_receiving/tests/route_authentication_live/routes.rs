@@ -936,10 +936,8 @@ async fn receiving_release_journey(
         &spans,
         &cold_nested_trace,
         overlay_digest,
-        base_digest,
         &caller_principal_id,
         "pat",
-        true,
     );
     assert_native_nested_acquisition(&spans, &cold_nested_trace, overlay_digest, base_digest);
     assert_nested_permission_denial_trace(
