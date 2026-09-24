@@ -370,11 +370,30 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
                     .expect("read Receiving manifest"),
             )
             .expect("parse Receiving manifest");
+            // The tool also builds the composition members named for the
+            // application, and it builds the selection in package order.
+            let composition: Value = serde_json::from_slice(
+                &fs::read(root.join("tools/component-composition.json"))
+                    .expect("read the composition manifest"),
+            )
+            .expect("parse the composition manifest");
+            let package_id = manifest["package"]["id"]
+                .as_str()
+                .expect("Receiving package id");
             manifest["components"]
                 .as_object()
                 .expect("Receiving components")
                 .keys()
                 .map(|name| name.replace('_', "-"))
+                .chain(
+                    ["participants", "no_op_participants"]
+                        .into_iter()
+                        .filter_map(|key| composition[key][package_id].as_array())
+                        .flatten()
+                        .map(|member| member.as_str().expect("member name").to_owned()),
+                )
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .collect::<Vec<_>>()
         } else {
             component_members
