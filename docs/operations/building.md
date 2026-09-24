@@ -39,11 +39,14 @@ Cargo combines dependency features within each invocation, which can change arti
 
 After virtualization, the tool composes each overlay whose component declaration names a base operation dependency.
 `wamn-component-composer` joins the overlay component, each base component, and each participant component into one component.
-[`tools/component-composition.json`](../../tools/component-composition.json) names the participant crates of each overlay package.
-A selected overlay also builds those participant crates.
+[`tools/component-composition.json`](../../tools/component-composition.json) names the participant crates of each overlay package under `participants`.
+It names the generated no-op participant crates of each base package under `no_op_participants`.
+A selected application also builds the crates named for it.
 The declarations give each link.
 The overlay imports each base operation that it depends on, and the base supplies that operation.
 The base imports its pre-commit interface, and the participant that the overlay dependency names supplies it.
+If the dependency names no participant, the base's no-op participant fills an optional slot. It stays inside the composition and is not exported.
+Composition refuses a required slot that has no participant.
 The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.
 Each member is embedded with its bytes unchanged.

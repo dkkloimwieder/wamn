@@ -1156,6 +1156,97 @@ pub(super) fn emit_custom_operation_wit(
             artifact_name(local_name)
         ),
         codec.into_bytes(),
+    )?;
+    if operation.pre_commit.is_some() && !operation.pre_commit_required {
+        emit_no_op_participant(files, &package, version, group, local_name)?;
+    }
+    Ok(())
+}
+
+/// The component that plugs an optional pre-commit slot when an overlay names
+/// no participant. It exports the slot and returns its input unchanged.
+fn emit_no_op_participant(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    package: &str,
+    version: &str,
+    group: &str,
+    local_name: &str,
+) -> Result<(), GenerateError> {
+    let group = wit_name(group);
+    let pre_commit = format!("{}-pre-commit", wit_name(local_name));
+    let slot = format!("{package}:{group}/{pre_commit}@{version}");
+    let crate_name = format!("{package}-{group}-{}-no-op", wit_name(local_name));
+    let directory = format!(
+        "generated/{}_{}-no-op",
+        artifact_name(&group),
+        artifact_name(local_name)
+    );
+    let module = |value: &str| value.replace('-', "_");
+    insert_bytes(
+        files,
+        &format!("{directory}/Cargo.toml"),
+        format!(
+            "# @generated; do not edit.\n\n[package]\nname = \"{crate_name}\"\nversion.workspace = true\nedition.workspace = true\ndescription = \"No-op participant for {slot}\"\nlicense = \"Apache-2.0\"\n\n[dependencies]\nwit-bindgen = {{ workspace = true }}\n\n[lib]\ncrate-type = [\"cdylib\"]\nbench = false\n\n[lints]\nworkspace = true\n"
+        )
+        .into_bytes(),
+    )?;
+    insert_bytes(
+        files,
+        &format!("{directory}/src/lib.rs"),
+        format!(
+            r#"// @generated; do not edit.
+#![expect(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen emits Vec::from_raw_parts with equal length and capacity"
+)]
+
+//! The no-op participant of `{slot}`.
+//!
+//! Composition plugs it into the base's optional pre-commit slot when an
+//! overlay names no participant. It returns its input unchanged.
+
+use exports::{package_module}::{group_module}::{slot_module}::{{Guest, {request}}};
+use wamn::node::types::{{NodeContext, NodeError}};
+
+wit_bindgen::generate!({{
+    world: "{package}:{group}-{pre_commit}-no-op/no-op@{version}",
+    inline: r"
+        package {package}:{group}-{pre_commit}-no-op@{version};
+
+        world no-op {{
+          export {slot};
+        }}
+    ",
+    path: [
+        "../../../../crates/execution/router/wit",
+        "../wit/deps/{package}-{group}",
+    ],
+    generate_all,
+    async: true,
+}});
+
+struct Component;
+
+impl Guest for Component {{
+    fn run(
+        _context: NodeContext,
+        input: {request},
+    ) -> impl Future<Output = Result<{request}, NodeError>> {{
+        std::future::ready(Ok(input))
+    }}
+}}
+
+export!(Component);
+"#,
+            package_module = module(package),
+            group_module = module(&group),
+            slot_module = module(&pre_commit),
+            request = format!("{pre_commit}-request")
+                .split('-')
+                .map(|word| word[..1].to_ascii_uppercase() + &word[1..])
+                .collect::<String>(),
+        )
+        .into_bytes(),
     )
 }
 

@@ -29,6 +29,7 @@ fn operation_with_statements(
 ) -> AdmittedComponentOperation {
     AdmittedComponentOperation {
         pre_commit: None,
+        pre_commit_required: false,
         registered_operation: None,
         fresh_only: false,
         committed_result_schema: None,

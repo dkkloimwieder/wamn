@@ -107,6 +107,7 @@ async fn admit_component(
             // These fixture operations register no package operation.
             AdmittedComponentOperation {
                 pre_commit: None,
+                pre_commit_required: false,
                 committed_result_schema: None,
                 fresh_only: false,
                 registered_operation: None,

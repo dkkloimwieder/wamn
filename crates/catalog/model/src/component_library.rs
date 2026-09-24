@@ -134,6 +134,9 @@ pub struct ComponentOperationDeclaration {
     /// Base-owned typed pre-commit interface imported by this operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_commit: Option<String>,
+    /// Whether a caller of this operation must select a participant.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pre_commit_required: bool,
     /// Explicit application permission identity. Palette operations carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -278,6 +281,9 @@ pub struct AdmittedComponentOperation {
     /// Base-owned typed pre-commit interface imported by this operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_commit: Option<String>,
+    /// Whether a caller of this operation must select a participant.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pre_commit_required: bool,
     /// Explicit application permission identity. Never inferred from the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -453,7 +459,12 @@ pub fn normalize_component_fact(
             operation.registered_operation.as_deref(),
             committed_result_schema.as_ref(),
         )?;
-        validate_pre_commit(&declaration.scope, &export, operation.pre_commit.as_deref())?;
+        validate_pre_commit(
+            &declaration.scope,
+            &export,
+            operation.pre_commit.as_deref(),
+            operation.pre_commit_required,
+        )?;
         let dependencies = normalize_operation_dependencies(operation.dependencies)?;
         let input_ports = normalize_ports(
             operation.input_ports,
@@ -470,6 +481,7 @@ pub fn normalize_component_fact(
             export,
             AdmittedComponentOperation {
                 pre_commit: operation.pre_commit,
+                pre_commit_required: operation.pre_commit_required,
                 committed_result_schema,
                 registered_operation: operation.registered_operation,
                 fresh_only: operation.fresh_only,
@@ -558,7 +570,12 @@ pub fn verify_stored_effect_projection(
             operation.registered_operation.as_deref(),
             operation.committed_result_schema.as_ref(),
         )?;
-        validate_pre_commit(&component.scope, export, operation.pre_commit.as_deref())?;
+        validate_pre_commit(
+            &component.scope,
+            export,
+            operation.pre_commit.as_deref(),
+            operation.pre_commit_required,
+        )?;
         let dependencies = normalize_operation_dependencies(operation.dependencies.clone())?;
         if dependencies != operation.dependencies {
             return Err(ComponentFactError::new(
@@ -756,7 +773,14 @@ fn validate_pre_commit(
     scope: &ComponentPackageScope,
     export: &str,
     pre_commit: Option<&str>,
+    pre_commit_required: bool,
 ) -> Result<(), ComponentFactError> {
+    if pre_commit_required && pre_commit.is_none() {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::InvalidOperationDependency,
+            "a required pre-commit needs a pre-commit interface",
+        ));
+    }
     if let Some(pre_commit) = pre_commit {
         validate_canonical_operation_for_package(
             pre_commit,
@@ -1222,6 +1246,7 @@ mod tests {
                 "map".to_string(),
                 ComponentOperationDeclaration {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
@@ -1690,6 +1715,7 @@ mod tests {
                 "map".to_string(),
                 AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,

@@ -299,6 +299,9 @@ fn emit_custom_operation_contracts(
             "pre_commit".to_owned(),
             json!(format!("{prefix}-pre-commit@{version}")),
         );
+        if operation.pre_commit_required {
+            operation_contract.insert("pre_commit_required".to_owned(), json!(true));
+        }
     }
     if let Some(connection) = &operation.connection {
         operation_contract.insert("connection".to_owned(), json!(connection));

@@ -504,6 +504,7 @@ mod tests {
                 "call".to_owned(),
                 wamn_catalog::AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,

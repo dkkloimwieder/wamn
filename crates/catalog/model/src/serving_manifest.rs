@@ -294,6 +294,16 @@ fn fold_call_graph<'a>(
             ),
         })?;
         fold_call_graph(base, &dependency.operation, resolve, path, folded)?;
+        if dependency.participant.is_none()
+            && base
+                .operation(&dependency.operation)
+                .is_some_and(|called| called.pre_commit_required)
+        {
+            return invalid(format!(
+                "operation {:?} needs a pre-commit participant; the overlay declares none",
+                dependency.operation
+            ));
+        }
         if let Some(participant) = &dependency.participant {
             if folded.participant.replace(participant.clone()).is_some() {
                 return invalid(format!(
@@ -1275,6 +1285,7 @@ mod tests {
     ) -> crate::AdmittedComponentOperation {
         crate::AdmittedComponentOperation {
             pre_commit: None,
+            pre_commit_required: false,
             registered_operation: Some(registered.into()),
             fresh_only: false,
             committed_result_schema: None,
@@ -1385,6 +1396,43 @@ mod tests {
         let error = ServingComponent::project(&overlay, &cyclic)
             .expect_err("a call graph cycle was folded");
         assert!(error.to_string().contains("calls itself"));
+    }
+
+    #[test]
+    fn publish_refuses_a_required_pre_commit_without_a_participant() {
+        const OVERLAY: &str = "overlay:receiving/record@3.0.0";
+        const BASE: &str = "base:receiving/record@1.0.0";
+        let mut base_operation = admitted_operation(BASE, None, Vec::new());
+        base_operation.pre_commit = Some("base:receiving/record-pre-commit@1.0.0".into());
+        let mut base = admitted("base", "1.0.0", COMPONENT_A, vec![(BASE, base_operation)]);
+        let dependency = ComponentOperationDependency {
+            participant: None,
+            package: "base".into(),
+            version: "1.0.0".into(),
+            digest: COMPONENT_A.into(),
+            operation: BASE.into(),
+        };
+        let overlay = admitted(
+            "overlay",
+            "3.0.0",
+            COMPONENT_B,
+            vec![(OVERLAY, admitted_operation(OVERLAY, None, vec![dependency]))],
+        );
+
+        let optional = base.clone();
+        let resolve = |_: &ComponentOperationDependency| Some(&optional);
+        let projected =
+            ServingComponent::project(&overlay, &resolve).expect("an optional slot folds");
+        assert!(projected.operations[OVERLAY].participant.is_none());
+
+        base.operations.get_mut(BASE).unwrap().pre_commit_required = true;
+        let resolve = |_: &ComponentOperationDependency| Some(&base);
+        let error = ServingComponent::project(&overlay, &resolve)
+            .expect_err("a required slot without a participant was published");
+        assert_eq!(
+            error.to_string(),
+            format!("operation {BASE:?} needs a pre-commit participant; the overlay declares none")
+        );
     }
 
     #[test]

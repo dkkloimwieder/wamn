@@ -117,9 +117,11 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
-Run the prior-commit fixture admission and exact forwarding assertions:
+Run the prior-commit fixture admission and exact forwarding assertions.
+The tests compose the fixture with the built Receiving base and its no-op participant.
 
 ```bash
+tools/build-components app apps/wamn_receiving
 cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p prior-commit
 cargo build --locked --offline -p wamn-component-virtualizer
@@ -127,6 +129,7 @@ mkdir -p target/virtualized/std-empty-environment
 target/debug/wamn-component-virtualizer \
   --input apps/target/wasm32-wasip2/debug/prior_commit.wasm \
   --output target/virtualized/std-empty-environment/prior_commit.wasm
+WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
 WAMN_PRIOR_COMMIT_COMPONENT="$PWD/target/virtualized/std-empty-environment/prior_commit.wasm" \
   cargo test --locked --offline -p wamn-receiving-tests --lib counter_parent_ -- --ignored
 ```

@@ -151,6 +151,7 @@ async fn provision_project(project: &Client, project_url: &str) {
             "wamn-inventory:panel/get@1.0.0".to_owned(),
             AdmittedComponentOperation {
                 pre_commit: None,
+                pre_commit_required: false,
                 committed_result_schema: None,
                 fresh_only: false,
                 registered_operation: Some("wamn-inventory:panel/get@1.0.0".to_owned()),

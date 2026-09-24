@@ -6200,6 +6200,7 @@ dependencies = [
  "wamn-client",
  "wamn-client-terminal",
  "wamn-client-tui",
+ "wamn-component-composer",
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",

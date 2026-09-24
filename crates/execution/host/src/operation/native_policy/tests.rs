@@ -489,6 +489,7 @@ fn fact(
                 fresh_only: false,
                 committed_result_schema: None,
                 pre_commit: None,
+                pre_commit_required: false,
                 dependencies,
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),

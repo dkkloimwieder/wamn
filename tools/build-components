@@ -119,10 +119,11 @@ readonly WAMN_PROFILE
   wamn_fail 65 "cannot read $WAMN_VIRTUALIZATION_MANIFEST"
 }
 jq -e '
-  (keys | sort) == ["participants", "tool"]
+  (keys | sort) == ["no_op_participants", "participants", "tool"]
   and (.tool | keys | sort) == ["manifest", "package"]
-  and (.participants | type == "object")
-  and ([.participants[] | select(type != "array" or any(.[]; type != "string"))] | length == 0)
+  and ([.participants, .no_op_participants] | all(type == "object"))
+  and ([.participants[], .no_op_participants[]
+        | select(type != "array" or any(.[]; type != "string"))] | length == 0)
 ' "$WAMN_COMPOSITION_MANIFEST" >/dev/null 2>&1 || {
   wamn_fail 65 "cannot read a valid $WAMN_COMPOSITION_MANIFEST"
 }
@@ -166,13 +167,16 @@ WAMN_PACKAGE_COMPONENTS="$(
 readonly WAMN_PACKAGE_COMPONENTS
 
 # Participant components are not package components. A selected application
-# builds the participants that tools/component-composition.json names for it,
-# so its composition has every member.
+# builds the participants and the generated no-op participants that
+# tools/component-composition.json names for it, so its composition has every
+# member.
 declare WAMN_COMPOSITION_MEMBERS
 WAMN_COMPOSITION_MEMBERS="$(
   for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
     jq -r --slurpfile composition "$WAMN_COMPOSITION_MANIFEST" \
-      '$composition[0].participants[.package.id? // ""] // [] | .[]' "$application" || {
+      '(.package.id? // "") as $package
+       | $composition[0] | (.participants[$package] // []) + (.no_op_participants[$package] // [])
+       | .[]' "$application" || {
       wamn_fail 65 "cannot read the composition members of $application"
     }
   done | sort -u | jq -Rn '[inputs | select(length > 0)]'
@@ -595,6 +599,13 @@ wamn_compose() {
         wamn_fail 65 "compose $package_id: the artifact plan has no output for $base_component"
       }
       arguments+=(--base-declaration "$base_declaration" --base "$base_output")
+      while IFS= read -r participant; do
+        participant_output="$(wamn_artifact_output "$artifact_plan" "$participant")" || {
+          wamn_fail 65 "compose $package_id: the artifact plan has no output for $participant"
+        }
+        arguments+=(--no-op-participant "$participant_output")
+      done < <(jq -r --arg package "$base_package" \
+        '.no_op_participants[$package] // [] | .[]' "$WAMN_COMPOSITION_MANIFEST")
     done < <(jq -c '.base_dependencies[] | {package, version}' "$application")
 
     while IFS= read -r participant; do

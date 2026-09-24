@@ -412,6 +412,7 @@ mod tests {
                     "run".to_owned(),
                     ComponentOperationDeclaration {
                         pre_commit: None,
+                        pre_commit_required: false,
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,

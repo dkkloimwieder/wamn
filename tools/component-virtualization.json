@@ -19,6 +19,12 @@
       "output_file": "client_acme_receiving_participant.wasm"
     },
     {
+      "package": "wamn-receiving-receiving-record-receipt-no-op",
+      "workspace_manifest": "apps/Cargo.toml",
+      "raw_file": "wamn_receiving_receiving_record_receipt_no_op.wasm",
+      "output_file": "wamn_receiving_receiving_record_receipt_no_op.wasm"
+    },
+    {
       "package": "prior-commit",
       "workspace_manifest": "apps/Cargo.toml",
       "raw_file": "prior_commit.wasm",

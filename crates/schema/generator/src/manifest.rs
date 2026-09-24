@@ -53,6 +53,11 @@ pub struct CustomOperationDeclaration {
     /// Base-owned typed input passed through before the command runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_commit: Option<CustomOperationInputDeclaration>,
+    /// Whether an overlay that calls this command must name a participant.
+    /// Publish refuses an overlay that names none. An optional slot, the
+    /// default, is plugged at build by the generated no-op participant.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pre_commit_required: bool,
     /// Package-local execution-only operation selected while composing this command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub participant: Option<String>,
@@ -918,6 +923,11 @@ fn validate_custom_operation(
             ));
         }
         validate_custom_operation_input(operation_name, pre_commit)?;
+    } else if operation.pre_commit_required {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("command {operation_name} pre_commit_required requires a pre_commit"),
+        ));
     }
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to

@@ -174,6 +174,10 @@ The overlay build composes the overlay, its pinned base, and the participant int
 The generator types the participant's interface with the base's pre-commit request record and declares no request type of its own.
 The participant also exports the base's pre-commit interface, so composition plugs it into the base's import.
 The release folds the base operation and the participant into the overlay entry's grant, so the host requires the original caller to hold every one of those permissions.
+The base declares each pre-commit slot required or optional with `pre_commit_required`. The default is optional, and Receiving's `record_receipt` slot is optional.
+If a required slot has no participant, publish refuses: "operation X needs a pre-commit participant; the overlay declares none".
+For each optional slot, the generator emits a no-op participant crate in the base's `generated` tree. It exports the slot and returns its input unchanged.
+If an overlay names no participant, composition plugs the no-op participant into the optional slot. The release selects no participant, so the base does not call the slot.
 The generated contracts carry ordinary typed values. Application code owns the transaction sequence and conditional business rules.
 
 `wamn:postgres/statements` provides an execution-only `transaction-view` resource with call-scoped access.

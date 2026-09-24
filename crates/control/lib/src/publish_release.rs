@@ -2456,6 +2456,7 @@ mod tests {
                 operation.to_owned(),
                 AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: registered_operation.map(str::to_owned),
@@ -2687,6 +2688,7 @@ mod tests {
                 operation.clone(),
                 AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: declared.fresh_only,
                     registered_operation: declared.registered_operation,

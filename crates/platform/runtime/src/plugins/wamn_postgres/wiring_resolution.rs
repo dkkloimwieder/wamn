@@ -1095,6 +1095,7 @@ mod tests {
                     operation.to_owned(),
                     ComponentOperationDeclaration {
                         pre_commit: None,
+                        pre_commit_required: false,
                         committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,
@@ -1333,6 +1334,7 @@ mod tests {
                 "map".to_owned(),
                 AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,

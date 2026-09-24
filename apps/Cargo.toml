@@ -13,6 +13,7 @@ members = [
     "platform_fixture/component",
     "platform_fixture_overlay/component",
     "wamn_receiving/component",
+    "wamn_receiving/generated/receiving_record_receipt-no-op",
     "wamn_wms/component",
     "platform/ingress/http-route",
     "platform/events/materializer",

@@ -214,6 +214,8 @@ struct GeneratedOperationContract {
     #[serde(default)]
     pre_commit: Option<String>,
     #[serde(default)]
+    pre_commit_required: bool,
+    #[serde(default)]
     dependency: Option<serde_json::Value>,
     operation: String,
     #[serde(default)]
@@ -692,6 +694,7 @@ fn load_component_statement_facts(
                 .filter_map(|dependency| dependency.participant.as_deref())
                 .collect::<Vec<_>>();
             if declared.pre_commit != contract.pre_commit
+                || declared.pre_commit_required != contract.pre_commit_required
                 || declared_participants != expected_participant.into_iter().collect::<Vec<_>>()
             {
                 return Err(ComponentProjectionError::new(
@@ -2036,6 +2039,7 @@ mod tests {
                 "source-fixture:item/get@1.0.0".to_owned(),
                 AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: Some("source-fixture:item/get@1.0.0".to_owned()),
@@ -2073,6 +2077,7 @@ mod tests {
                         export,
                         AdmittedComponentOperation {
                             pre_commit: operation.pre_commit,
+                            pre_commit_required: false,
                             committed_result_schema: operation.committed_result_schema.map(
                                 |schema| wamn_catalog::ComponentSchema {
                                     schema_digest: wamn_execution_contract::canonical_json_sha256(
@@ -2317,6 +2322,7 @@ mod tests {
                 operation,
                 AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
@@ -2368,6 +2374,7 @@ mod tests {
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
                     pre_commit: None,
+                    pre_commit_required: false,
                     committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: registered.map(str::to_owned),
@@ -3228,6 +3235,7 @@ mod tests {
                         operation.to_owned(),
                         ComponentOperationDeclaration {
                             pre_commit: None,
+                            pre_commit_required: false,
                             committed_result_schema: None,
                             fresh_only: false,
                             registered_operation: None,

@@ -1291,6 +1291,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-receiving-receiving-record-receipt-no-op"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "wamn-record-history"
 version = "0.1.0"
 

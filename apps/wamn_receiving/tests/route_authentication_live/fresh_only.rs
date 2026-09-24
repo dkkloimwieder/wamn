@@ -1,4 +1,9 @@
-//! A real nested refusal after one independently committed guest SQL effect.
+//! A parent composed with the released fresh-only base carries the base's grant.
+//!
+//! Publish folds the base's permission and fresh_only into the parent's entry,
+//! so a caller without the base permission is refused at activation, before the
+//! parent's own SQL runs. With the permission, one invocation runs the parent's
+//! SQL and the embedded base.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -169,6 +174,29 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             fixture_path.display()
         )
     })?;
+    // An application is one component: compose the fixture with the exact
+    // released base, which admission requires embedded under its digest.
+    let base_path = test
+        .inputs
+        .component_directory
+        .join(format!("{}.wasm", base_package.component));
+    let base_bytes = std::fs::read(&base_path)
+        .with_context(|| format!("read built base {}", base_path.display()))?;
+    anyhow::ensure!(
+        wamn_engine::component_admission::component_digest(&base_bytes) == base_digest,
+        "the built Receiving base is not the released base {base_digest}"
+    );
+    let bytes = wamn_component_composer::compose(
+        &declaration,
+        bytes,
+        vec![wamn_component_composer::Base {
+            declaration: source.clone(),
+            bytes: base_bytes,
+        }],
+        Vec::new(),
+        &[built_no_op(&test.inputs.component_directory)?],
+    )
+    .context("compose the prior-commit fixture with the released base")?;
     let parent_digest = wamn_engine::component_admission::component_digest(&bytes);
     let component_path = root.join("parent.wasm");
     std::fs::write(&component_path, bytes)?;
@@ -317,14 +345,15 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                     && component
                         .operations
                         .get(OPERATION)
-                        .is_some_and(|operation| !operation.fresh_only
-                            && operation.registered_operation.is_none()))
+                        .is_some_and(|operation| operation.fresh_only
+                            && operation.registered_operation.is_none()
+                            && operation.permissions.contains(BASE_RECORD_RECEIPT)))
             && release
                 .manifest()
                 .components
                 .iter()
                 .any(|component| component == base),
-        "prior-commit release changed its parent or actual fresh-only dependency"
+        "prior-commit release did not fold the base grant into its parent"
     );
     anyhow::ensure!(
         release_snapshots(test.project).await? == snapshots,
@@ -411,10 +440,10 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             refusal?;
         }
         anyhow::ensure!(
-            counter(&test, &counter_read).await? == 1,
-            "late session refusal rolled back or repeated the earlier committed effect"
+            counter(&test, &counter_read).await? == 0,
+            "a caller without the folded base permission ran the parent's SQL"
         );
-        assert_counter_trace(&test, &trace, &parent_digest, base_digest, "session", false)?;
+        assert_counter_trace(&test, &trace, &parent_digest, "session", false)?;
         for row in removed {
             let role: String = row.get(0);
             test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ($1,$2,$3)", &[&TENANT,&role,&BASE_RECORD_RECEIPT]).await?;
@@ -460,17 +489,17 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             );
         }
         anyhow::ensure!(
-            counter(&test, &counter_read).await? == 2,
-            "explicit retry must add exactly one further committed effect"
+            counter(&test, &counter_read).await? == 1,
+            "explicit retry must add exactly one committed effect"
         );
-        assert_counter_trace(&test, &trace, &parent_digest, base_digest, if client.is_some() { "session" } else { "pat" }, true)?;
+        assert_counter_trace(&test, &trace, &parent_digest, if client.is_some() { "session" } else { "pat" }, true)?;
         Ok::<_, anyhow::Error>(())
     }
     .await;
     identity_task.abort();
     result?;
     println!(
-        "FRESH_ONLY_PRIOR_COMMIT result=pass session_counter=1 pat_counter=2 fixture_release=4"
+        "FRESH_ONLY_PRIOR_COMMIT result=pass session_counter=0 pat_counter=1 fixture_release=4"
     );
     Ok(())
 }
@@ -599,21 +628,21 @@ fn assert_counter_trace(
     test: &PriorCommitTest<'_>,
     trace: &str,
     parent_digest: &str,
-    base_digest: &str,
     credential: &str,
-    reached_base: bool,
+    ran: bool,
 ) -> anyhow::Result<()> {
     let spans = test.traces.spans();
+    // The base is embedded in the parent, so the call graph is one invocation.
     let invoked = trace_component_invocations(&spans, trace);
     anyhow::ensure!(
-        invoked.len() == if reached_base { 2 } else { 1 },
-        "counter wiring repeated a component or dispatched a refused child"
+        invoked.len() == 1,
+        "the composed counter parent must be exactly one invocation"
     );
-    let parent = invoked
-        .iter()
-        .copied()
-        .find(|span| span_attribute(span, "wamn.operation").as_deref() == Some(OPERATION))
-        .context("counter parent invocation missing")?;
+    let parent = invoked[0];
+    anyhow::ensure!(
+        span_attribute(parent, "wamn.operation").as_deref() == Some(OPERATION),
+        "counter parent invocation missing"
+    );
     assert_invocation_identity(
         parent,
         trace,
@@ -622,36 +651,20 @@ fn assert_counter_trace(
         parent_digest,
         test.human_id,
     );
-    assert_postgres_descendants(&spans, trace, parent);
-    for invocation in &invoked {
+    anyhow::ensure!(
+        span_attribute(parent, "wamn.caller_credential_kind").as_deref() == Some(credential)
+            && span_attribute(parent, "wamn.tenant").as_deref() == Some(TENANT),
+        "counter wiring changed the original credential kind or tenant"
+    );
+    if ran {
+        assert_postgres_descendants(&spans, trace, parent);
+    } else {
         anyhow::ensure!(
-            span_attribute(invocation, "wamn.caller_credential_kind").as_deref()
-                == Some(credential)
-                && span_attribute(invocation, "wamn.tenant").as_deref() == Some(TENANT),
-            "counter wiring changed the original credential kind or tenant"
+            !spans.iter().any(|span| span.name == "wamn.postgres"
+                && span.span_context.trace_id().to_string() == trace
+                && span_descends_from(&spans, span, parent)),
+            "a refused activation reached PostgreSQL"
         );
-    }
-    if reached_base {
-        let base = invoked
-            .iter()
-            .copied()
-            .find(|span| {
-                span_attribute(span, "wamn.operation").as_deref() == Some(BASE_RECORD_RECEIPT)
-            })
-            .context("explicit PAT did not enter the actual base")?;
-        assert_invocation_identity(
-            base,
-            trace,
-            WIRING,
-            BASE_RECORD_RECEIPT,
-            base_digest,
-            test.human_id,
-        );
-        anyhow::ensure!(
-            span_descends_from(&spans, base, parent),
-            "base invocation lost parent ancestry"
-        );
-        assert_postgres_descendants(&spans, trace, base);
     }
     Ok(())
 }
@@ -834,12 +847,37 @@ fn parent_component() -> anyhow::Result<Vec<u8>> {
     })
 }
 
+/// The built application components.
+fn application_components() -> anyhow::Result<std::path::PathBuf> {
+    std::env::var_os("WAMN_APPLICATION_COMPONENTS")
+        .map(Into::into)
+        .context("WAMN_APPLICATION_COMPONENTS must name the built application components")
+}
+
+/// The built Receiving base, which the parent embeds.
+fn built_base() -> anyhow::Result<Vec<u8>> {
+    let path = application_components()?.join("receiving.wasm");
+    std::fs::read(&path).with_context(|| format!("read built base {}", path.display()))
+}
+
+/// The base's generated no-op participant. The parent names no participant, so
+/// composition plugs it into the base's optional record_receipt slot.
+fn built_no_op(directory: &std::path::Path) -> anyhow::Result<Vec<u8>> {
+    let path = directory.join("wamn_receiving_receiving_record_receipt_no_op.wasm");
+    std::fs::read(&path).with_context(|| format!("read built no-op participant {}", path.display()))
+}
+
 #[test]
-#[ignore = "requires: WAMN_PRIOR_COMMIT_COMPONENT"]
+#[ignore = "requires: WAMN_PRIOR_COMMIT_COMPONENT, WAMN_APPLICATION_COMPONENTS"]
 fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_PRIOR_COMMIT_COMPONENT"]);
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_PRIOR_COMMIT_COMPONENT",
+        "WAMN_APPLICATION_COMPONENTS",
+    ]);
+    let base = built_base()?;
+    let base_digest = wamn_engine::component_admission::component_digest(&base);
     let manifest = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
-        &fixture_manifest(&format!("sha256:{}", "a".repeat(64))),
+        &fixture_manifest(&base_digest),
     )?)?;
     let operations = wamn_schema_generator::validate_operation_vocabulary(&manifest)?;
     anyhow::ensure!(
@@ -847,18 +885,40 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
         "fixture must declare exactly the generated counter read it exercises"
     );
     let engine = wamn_engine::engine::build_engine(&[])?;
-    let declaration: ComponentDeclaration = serde_json::from_value(json!({
+    let declaration = json!({
         "scope": {"tenant-id": "fixture", "package-id": PACKAGE, "package-version": VERSION},
         "component": WIRING, "interface-version": "0.1.0", "connections": [],
         "operations": {(OPERATION): {"dependencies": [{"package": BASE_PACKAGE_ID,
-            "version": BASE_PACKAGE_VERSION, "digest": format!("sha256:{}", "a".repeat(64)),
+            "version": BASE_PACKAGE_VERSION, "digest": base_digest,
             "operation": BASE_RECORD_RECEIPT}],
             "input-ports": [{"name": "input", "schema": {"type": "array"}}],
             "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}}
-    }))?;
+    });
+    let base_declaration: Value = serde_json::from_slice(&std::fs::read(
+        journey_publication_root(
+            *JOURNEY_PACKAGES
+                .iter()
+                .find(|package| package.id == BASE_PACKAGE_ID)
+                .context("the journey must declare the actual base package")?,
+            None,
+        )
+        .join("components/receiving.json.in"),
+    )?)?;
+    // Composition type-checks the parent's import against the base's export.
+    let composed = wamn_component_composer::compose(
+        &declaration,
+        parent_component()?,
+        vec![wamn_component_composer::Base {
+            declaration: base_declaration,
+            bytes: base,
+        }],
+        Vec::new(),
+        &[built_no_op(&application_components()?)?],
+    )?;
+    let declaration: ComponentDeclaration = serde_json::from_value(declaration)?;
     let admitted = wamn_engine::component_admission::validate_component_admission(
         &engine,
-        &parent_component()?,
+        &composed,
         wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages: ["wamn:node".to_owned(), "wamn:postgres".to_owned()].into(),
@@ -1282,7 +1342,7 @@ mod execution_tests {
                 assert_eq!(
                     result,
                     Ok(Emission {
-                        payload: r#"[{"request_id":"abi-only","value":{"purchase_order_id":"00000000-0000-0000-0000-000000000301","purchase_order_status":"received","receipt_id":"00000000-0000-0000-0000-000000000601","row_version":"2"}}]"#.to_owned(),
+                        payload: r#"[{"request_id":"abi-only","value":{"purchase_order_id":"00000000-0000-0000-0000-000000000301","purchase_order_status":"received","receipt_id":"00000000-0000-0000-0000-000000000601","row_version":2}}]"#.to_owned(),
                         port: None,
                     })
                 );

@@ -276,3 +276,68 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
     // it follows the union of what every operation reads.
     assert_eq!(relation["lock_update_field"], "code");
 }
+
+#[test]
+fn an_optional_pre_commit_slot_generates_its_no_op_participant() {
+    let mut manifest = super::platform_claim::manifest();
+    manifest["custom_operations"]["widget.archive"]["pre_commit"] = json!({"fields": [
+        {"path": "widget_id", "type": "uuid", "nullable": false}
+    ]});
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+    let source = |path: &str| {
+        std::str::from_utf8(package.file(path).expect(path).bytes())
+            .unwrap()
+            .to_owned()
+    };
+    let cargo = source("generated/widget_archive-no-op/Cargo.toml");
+    assert!(
+        cargo.contains("name = \"platform-fixture-widget-archive-no-op\""),
+        "{cargo}"
+    );
+    let library = source("generated/widget_archive-no-op/src/lib.rs");
+    for expected in [
+        "export platform-fixture:widget/archive-pre-commit@1.0.0;",
+        "\"../wit/deps/platform-fixture-widget\"",
+        "input: ArchivePreCommitRequest,",
+        "std::future::ready(Ok(input))",
+    ] {
+        assert!(library.contains(expected), "{expected}\n{library}");
+    }
+    assert!(
+        artifact(
+            &package,
+            "generated/contracts/widget/archive.operation.json"
+        )
+        .get("pre_commit_required")
+        .is_none()
+    );
+
+    manifest["custom_operations"]["widget.archive"]["pre_commit_required"] = json!(true);
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+    assert!(
+        package
+            .file("generated/widget_archive-no-op/src/lib.rs")
+            .is_none(),
+        "a required slot has no default participant"
+    );
+    assert_eq!(
+        artifact(
+            &package,
+            "generated/contracts/widget/archive.operation.json"
+        )["pre_commit_required"],
+        true
+    );
+
+    manifest["custom_operations"]["widget.archive"]
+        .as_object_mut()
+        .unwrap()
+        .remove("pre_commit");
+    let error = wamn_schema_generator::validate_operation_vocabulary(
+        &wamn_schema_generator::PackageManifest::from_slice(
+            &serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap(),
+    )
+    .expect_err("a required slot without a pre_commit was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+}
