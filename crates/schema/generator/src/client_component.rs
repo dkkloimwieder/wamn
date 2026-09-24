@@ -676,9 +676,23 @@ fn emit_table(
     .expect("write");
     source.push_str("\n  const read = async (cursor: string | null) => {\n");
     source.push_str("    setPage(startRead(page()));\n");
+    // A sort names a field and a direction together, so a read sends neither
+    // until the operator chose both. The controls keep each choice.
+    let sent_controls =
+        match paging.map(|paging| (paging.sort_field_input, paging.sort_direction_input)) {
+            Some((Some(field), Some(direction))) => {
+                runtime.insert("completePair");
+                format!(
+                    "completePair(controls(), {}, {})",
+                    member_literal(field),
+                    member_literal(direction)
+                )
+            }
+            _ => "controls()".to_owned(),
+        };
     writeln!(
         source,
-        "    const request = {{\n      ...controls(),\n      ...props.fixed,\n      requestId: newRequestId(),\n    }} as {stem}Request;"
+        "    const request = {{\n      ...{sent_controls},\n      ...props.fixed,\n      requestId: newRequestId(),\n    }} as {stem}Request;"
     )
     .expect("write");
     if let Some(path) = cursor_input {

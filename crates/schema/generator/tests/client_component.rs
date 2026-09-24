@@ -90,6 +90,12 @@ fn a_page_table_renders_every_control_the_plan_names() {
         "an emptied control sends no member, never an empty list (wamn-oya5)"
     );
     assert!(
+        query.contains(
+            "      ...completePair(controls(), [\"sort\", \"field\"], [\"sort\", \"direction\"]),\n"
+        ),
+        "a read sends the sort only when both its field and its direction are set (wamn-2ut3)"
+    );
+    assert!(
         widget.contains(concat!(
             "          <ChoiceField\n",
             "            label=\"field\"\n",

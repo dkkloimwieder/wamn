@@ -57,6 +57,20 @@ export function writeControl<Draft>(draft: Draft, path: MemberPath, value: JsonV
   return empty ? pruneMember(draft, path) : writeMember(draft, path, value);
 }
 
+/**
+ * One draft that carries two members only when both are set.
+ *
+ * A sort names a field and a direction, and the release refuses one without
+ * the other. The page keeps each choice, and a read sends neither until the
+ * operator chose both.
+ */
+export function completePair<Draft>(draft: Draft, first: MemberPath, second: MemberPath): Draft {
+  if (readMember(draft, first) !== undefined && readMember(draft, second) !== undefined) {
+    return draft;
+  }
+  return pruneMember(pruneMember(draft, first), second);
+}
+
 /** One draft with that member absent, and every parent it leaves empty. */
 function pruneMember<Draft>(draft: Draft, path: MemberPath): Draft {
   const [name, ...rest] = path;

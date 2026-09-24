@@ -104,6 +104,38 @@ describe("the generated table for a page", () => {
     expect(sent[1]?.items[0] as { [key: string]: JsonValue }).not.toHaveProperty("filter");
   });
 
+  it("sends a sort only once both its field and its direction are chosen (wamn-2ut3)", async () => {
+    const { transport, sent } = stub([page(["a"], null)]);
+    render(() => <WidgetQueryTable transport={transport} />);
+    const pick = async (label: string, name: string) => {
+      const trigger = screen.getByRole("button", { name: label });
+      await waitFor(() => {
+        if (trigger.getAttribute("aria-expanded") !== "true") {
+          fireEvent.pointerDown(trigger, { pointerType: "mouse", button: 0 });
+          fireEvent.pointerUp(trigger, { pointerType: "mouse", button: 0 });
+          fireEvent.click(trigger);
+          throw new Error(`the choice ${label} did not open`);
+        }
+      });
+      const option = await waitFor(() => screen.getByRole("option", { name }));
+      fireEvent.pointerDown(option, { pointerType: "mouse", button: 0 });
+      fireEvent.pointerUp(option, { pointerType: "mouse", button: 0 });
+      fireEvent.click(option);
+    };
+
+    // A direction with no field is not a sort the release accepts.
+    await pick("direction", "ascending");
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.items[0] as { [key: string]: JsonValue }).not.toHaveProperty("sort");
+
+    await pick("field", "created at");
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect((sent[1]?.items[0] as { [key: string]: JsonValue })["sort"]).toEqual({
+      field: "created_at",
+      direction: "ascending",
+    });
+  });
+
   it("states an outcome that is not a completion in place of the empty message", async () => {
     const { transport } = stub([
       { status: "refused", code: "permission_denied", detail: null },

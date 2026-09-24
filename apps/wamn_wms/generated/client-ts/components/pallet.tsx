@@ -11,6 +11,7 @@ import {
   appendPage,
   cellText,
   checkedMember,
+  completePair,
   emptyPage,
   failedRead,
   firstPage,
@@ -385,7 +386,7 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
   const read = async (cursor: string | null) => {
     setPage(startRead(page()));
     const request = {
-      ...controls(),
+      ...completePair(controls(), ["sort", "field"], ["sort", "direction"]),
       ...props.fixed,
       requestId: newRequestId(),
     } as PalletQueryRequest;

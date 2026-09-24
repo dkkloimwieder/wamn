@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ABSENT_CELL, cellText } from "../src/cell.js";
-import { clearMember, readMember, writeControl, writeMember } from "../src/draft.js";
+import { clearMember, completePair, readMember, writeControl, writeMember } from "../src/draft.js";
 import { canAdd, canRemove } from "../src/group.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
 import { checkedMember, refusalMarks, refusedMember } from "../src/transport.js";
@@ -74,6 +74,18 @@ describe("a draft member", () => {
     expect(writeControl(one, ["filter", "code"], [])).toEqual({});
     expect(writeControl({ limit: 5 }, ["limit"], "")).toEqual({});
     expect(writeControl({}, ["filter", "code"], [])).toEqual({});
+  });
+
+  it("sends a sort only when both its field and its direction are set", () => {
+    const field = ["sort", "field"];
+    const direction = ["sort", "direction"];
+    const both = { sort: { field: "created_at", direction: "ascending" }, limit: 5 };
+    expect(completePair(both, field, direction)).toBe(both);
+    expect(completePair({ sort: { direction: "ascending" }, limit: 5 }, field, direction)).toEqual({
+      limit: 5,
+    });
+    expect(completePair({ sort: { field: "created_at" } }, field, direction)).toEqual({});
+    expect(completePair({}, field, direction)).toEqual({});
   });
 });
 
