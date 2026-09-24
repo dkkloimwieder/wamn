@@ -190,6 +190,10 @@ fn package_owned_inputs_declare_the_exact_shipped_route_closure() {
             attachment.registered_operation.as_deref(),
             Some(operation.token)
         );
+        assert_eq!(
+            attachment.auth_policy,
+            serde_json::json!({"modes": ["pat", "session"]})
+        );
         assert_eq!(attachment.definition["route"]["method"], "POST");
         assert_eq!(attachment.definition["route"]["path"], operation.route);
         assert_eq!(

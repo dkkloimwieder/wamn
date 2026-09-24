@@ -40,7 +40,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:pallet/get@1.0.0"
   },
@@ -141,7 +141,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:pallet/query@1.0.0"
   },
@@ -215,7 +215,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:inventory/move@1.0.0"
   },
@@ -307,7 +307,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:inventory/adjust@1.0.0"
   },
@@ -381,7 +381,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:inventory/merge@1.0.0"
   },
@@ -478,7 +478,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:inventory/split@1.0.0"
   },
@@ -518,7 +518,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:inventory/aggregate@1.0.0"
   },
@@ -563,7 +563,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:inventory-movement/get@1.0.0"
   },
@@ -612,7 +612,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:inventory-movement/query@1.0.0"
   },
@@ -662,7 +662,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:location/create@1.0.0"
   },
@@ -707,7 +707,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:location/get@1.0.0"
   },
@@ -768,7 +768,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:location/query@1.0.0"
   },
@@ -831,7 +831,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:location/update@1.0.0"
   },
@@ -895,7 +895,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:pallet/create@1.0.0"
   },
@@ -940,7 +940,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:pallet-quantity/get@1.0.0"
   },
@@ -989,7 +989,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:pallet-quantity/query@1.0.0"
   },
@@ -1039,7 +1039,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:product/create@1.0.0"
   },
@@ -1084,7 +1084,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:product/get@1.0.0"
   },
@@ -1145,7 +1145,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:product/query@1.0.0"
   },
@@ -1208,7 +1208,7 @@
       }
     },
     "auth-policy": {
-      "modes": ["pat"]
+      "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-wms:product/update@1.0.0"
   }
