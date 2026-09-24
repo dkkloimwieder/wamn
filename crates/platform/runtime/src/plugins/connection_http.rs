@@ -1270,8 +1270,9 @@ mod tests {
                         pre_commit: None,
                         fresh_only: false,
                         committed_result_schema: None,
+                        permissions: snapshot.registered_operation.iter().cloned().collect(),
                         registered_operation: snapshot.registered_operation,
-                        dependencies: Vec::new(),
+                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),
@@ -1375,83 +1376,22 @@ mod tests {
     }
 
     #[test]
-    fn released_nested_effects_require_the_exact_operation_dependency_path() {
+    fn release_membership_alone_is_not_an_entry_grant() {
         let mut manifest = manifest();
         let mut invocation = invocation();
         let mut snapshot = snapshot();
-        let mut root = manifest.components.pop_first().expect("root component");
-        let mut child = root.clone();
-        child.package_id = "package_b".to_string();
-        child.component = "child".to_string();
-        child.digest = ArtifactHash::parse(digest('c')).expect("child digest");
-        let mut grandchild = child.clone();
-        grandchild.package_id = "package_c".to_string();
-        grandchild.component = "grandchild".to_string();
-        grandchild.digest = ArtifactHash::parse(digest('d')).expect("grandchild digest");
-        let dependency =
-            |component: &ServingComponent| wamn_catalog::ComponentOperationDependency {
-                participant: None,
-                package: component.package_id.clone(),
-                version: "1.0.0".to_string(),
-                digest: component.digest.to_string(),
-                operation: invocation.operation.clone(),
-            };
-        root.operations
-            .get_mut(&invocation.operation)
-            .expect("root operation")
-            .dependencies = vec![dependency(&child)];
-        child
-            .operations
-            .get_mut(&invocation.operation)
-            .expect("child operation")
-            .dependencies = vec![dependency(&grandchild)];
-        manifest.release.packages.extend([
-            PackageCoordinate::new("package_b", "1.0.0").expect("child package"),
-            PackageCoordinate::new("package_c", "1.0.0").expect("grandchild package"),
-            PackageCoordinate::new("wiring_owner", "1.0.0").expect("wiring package"),
-        ]);
-        let mut wiring = manifest.wirings.pop_first().expect("wiring");
-        wiring.package_id = "wiring_owner".to_string();
-        manifest.wirings.insert(wiring);
-        position(&mut invocation).package_id = "wiring_owner".to_string();
-        invocation.package_id.clone_from(&grandchild.package_id);
-        invocation.component.clone_from(&grandchild.component);
-        invocation.component_digest = grandchild.digest.to_string();
-        snapshot.component = Some(grandchild.component.clone());
-        manifest
-            .components
-            .extend([root.clone(), child, grandchild.clone()]);
         authorize_release_closure(&manifest, &invocation, &snapshot)
-            .expect("two declared hops retain the distinct wiring owner and origin");
+            .expect("the released entry is authorized");
 
-        for field in ["package", "version", "digest", "operation"] {
-            let mut changed = manifest.clone();
-            let mut changed_root = changed.components.take(&root).expect("root");
-            let dependency = &mut changed_root
-                .operations
-                .get_mut(&invocation.origin.operation)
-                .expect("root operation")
-                .dependencies[0];
-            match field {
-                "package" => dependency.package = "foreign".to_string(),
-                "version" => dependency.version = "9.0.0".to_string(),
-                "digest" => dependency.digest = digest('e'),
-                "operation" => dependency.operation = "undeclared".to_string(),
-                _ => unreachable!("fixed dependency field list"),
-            }
-            changed.components.insert(changed_root);
-            assert!(
-                matches!(
-                    authorize_release_closure(&changed, &invocation, &snapshot),
-                    Err(ConnectionError::AttestationInvalid)
-                ),
-                "a different dependency {field} cannot authorize the executor"
-            );
-        }
-
-        let mut unrelated = grandchild;
+        let mut unrelated = manifest.components.first().expect("root").clone();
+        unrelated.package_id = "package_b".to_string();
         unrelated.component = "unrelated".to_string();
         unrelated.digest = ArtifactHash::parse(digest('e')).expect("unrelated digest");
+        manifest
+            .release
+            .packages
+            .insert(PackageCoordinate::new("package_b", "1.0.0").expect("unrelated package"));
+        invocation.package_id.clone_from(&unrelated.package_id);
         invocation.component.clone_from(&unrelated.component);
         invocation.component_digest = unrelated.digest.to_string();
         snapshot.component = Some(unrelated.component.clone());
@@ -1461,7 +1401,7 @@ mod tests {
                 authorize_release_closure(&manifest, &invocation, &snapshot),
                 Err(ConnectionError::AttestationInvalid)
             ),
-            "release membership alone is not a dependency grant"
+            "release membership alone is not an entry grant"
         );
     }
 

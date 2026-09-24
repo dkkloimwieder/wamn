@@ -723,24 +723,18 @@ pub(super) fn released_component_digests(
         .iter()
         .find(|component| component.package_id == OVERLAY_PACKAGE_ID)
         .context("released manifest omitted the overlay component")?;
-    let dependency = ComponentOperationDependency {
-        package: BASE_PACKAGE_ID.to_owned(),
-        version: BASE_PACKAGE_VERSION.to_owned(),
-        digest: digests
-            .get(BASE_PACKAGE_ID)
-            .context("released manifest omitted the base component digest")?
-            .clone(),
-        operation: BASE_RECORD_RECEIPT.to_owned(),
-        participant: Some(
-            "client-acme-receiving:receiving/record-receipt-participant@3.0.0".to_owned(),
-        ),
-    };
+    // Publish folds the base operation and its participant into the overlay
+    // entry, so the entry grant carries both.
     anyhow::ensure!(
         overlay
             .operations
             .get(OVERLAY_RECORD_RECEIPT)
-            .is_some_and(|operation| operation.dependencies == [dependency]),
-        "released overlay record_receipt omitted its exact pinned dependency fact"
+            .is_some_and(
+                |operation| operation.permissions.contains(BASE_RECORD_RECEIPT)
+                    && operation.participant.as_deref()
+                        == Some("client-acme-receiving:receiving/record-receipt-participant@3.0.0")
+            ),
+        "released overlay record_receipt omitted its folded base grant or participant"
     );
     let expected_attachment_ids = JOURNEY_ATTACHMENTS
         .iter()

@@ -181,7 +181,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"tenant-id":TENANT,"effective-release-id":1,"environment":"test","packages":[{"package-id":"automation","package-version":"1.0.0"}]},
         "components":[{"package-id":"automation","component":"echo","interface-version":"0.1.0","digest":admitted.component_digest,
-          "operations":{(OPERATION):{"registered-operation":OPERATION,"fresh-only":false,"dependencies":[],"statements":{}}}}],
+          "operations":{(OPERATION):{"registered-operation":OPERATION,"permissions":[OPERATION],"fresh-only":false,"statements":{}}}}],
         "routes":[],"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}],"attachments":{},"registrations":{}
     }))?;
     let canonical = manifest.canonical_bytes();

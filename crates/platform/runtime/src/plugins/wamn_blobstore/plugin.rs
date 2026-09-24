@@ -685,7 +685,8 @@ mod tests {
                     fresh_only: false,
                     committed_result_schema: None,
                     registered_operation: snapshot.registered_operation.clone(),
-                    dependencies: Vec::new(),
+                    permissions: snapshot.registered_operation.iter().cloned().collect(),
+                    participant: None,
                     statements: BTreeMap::new(),
                 },
             )]),
@@ -793,56 +794,6 @@ mod tests {
         assert_eq!(
             authorize_closure(&released(), Some(&manifest), None, &snapshot),
             Ok(())
-        );
-    }
-
-    #[test]
-    fn a_nested_blobstore_effect_requires_its_roots_dependency_grant() {
-        let world = frozen_world();
-        let mut snapshot = matching_snapshot(frozen_binding(&world));
-        let mut manifest = carrying_manifest(&snapshot);
-        let mut invocation = released();
-        let mut root = manifest.components.pop_first().expect("root component");
-        let mut child = root.clone();
-        child.package_id = "package_b".to_string();
-        child.component = "child-archiver".to_string();
-        child.digest =
-            ArtifactHash::parse(format!("sha256:{}", "c".repeat(64))).expect("child digest");
-        root.operations
-            .get_mut(&invocation.operation)
-            .expect("root operation")
-            .dependencies
-            .push(wamn_catalog::ComponentOperationDependency {
-                participant: None,
-                package: child.package_id.clone(),
-                version: "1.0.0".to_string(),
-                digest: child.digest.to_string(),
-                operation: invocation.operation.clone(),
-            });
-        invocation.package_id.clone_from(&child.package_id);
-        invocation.component.clone_from(&child.component);
-        invocation.component_digest = child.digest.to_string();
-        snapshot.component = Some(child.component.clone());
-        manifest
-            .release
-            .packages
-            .insert(PackageCoordinate::new("package_b", "1.0.0").expect("child package"));
-        manifest.components.extend([root.clone(), child]);
-        assert_eq!(
-            authorize_closure(&invocation, Some(&manifest), None, &snapshot),
-            Ok(())
-        );
-
-        manifest.components.remove(&root);
-        root.operations
-            .get_mut(&invocation.origin.operation)
-            .expect("root operation")
-            .dependencies
-            .clear();
-        manifest.components.insert(root);
-        assert_eq!(
-            authorize_closure(&invocation, Some(&manifest), None, &snapshot),
-            Err("the release closure does not carry this component and wiring"),
         );
     }
 

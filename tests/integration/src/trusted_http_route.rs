@@ -328,7 +328,8 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
                     committed_result_schema: None,
                     registered_operation: operation.registered_operation.clone(),
                     fresh_only: operation.fresh_only,
-                    dependencies: operation.dependencies.clone(),
+                    permissions: operation.registered_operation.iter().cloned().collect(),
+                    participant: None,
                     statements: operation.statements.clone(),
                 },
             )

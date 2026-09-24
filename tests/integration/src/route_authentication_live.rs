@@ -212,7 +212,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)),
             "operations": {
-                (OPERATION): {"registered-operation": OPERATION}
+                (OPERATION): {"registered-operation": OPERATION, "permissions": [OPERATION]}
             }
         }],
         "routes": [],

@@ -41,7 +41,7 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::Client;
 use tracing_subscriber::layer::SubscriberExt;
-use wamn_catalog::{AttachmentKind, ComponentOperationDependency, PackageCoordinate};
+use wamn_catalog::{AttachmentKind, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::dev::watch::GitSource;

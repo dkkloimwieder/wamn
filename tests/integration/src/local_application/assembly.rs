@@ -475,38 +475,22 @@ fn serving_manifest(
         .iter()
         .map(|(id, c)| json!({"package-id":id,"package-version":c.scope.package_version}))
         .collect::<Vec<_>>();
+    // Publish folds each export's call graph, so each fact projects with the
+    // facts it depends on.
+    let resolve = |dependency: &wamn_catalog::ComponentOperationDependency| {
+        components.iter().map(|(_, fact)| fact).find(|fact| {
+            fact.scope.package_id == dependency.package
+                && fact.component_digest == dependency.digest
+        })
+    };
     let components = components
         .iter()
-        .map(|(id, component)| {
-            let operations = component
-                .operations
-                .iter()
-                .map(|(name, operation)| {
-                    let committed_result_schema = operation
-                        .committed_result_schema
-                        .as_ref()
-                        .map(|schema| {
-                            String::from_utf8(
-                                wamn_execution_contract::canonical_json_bytes(&schema.schema),
-                            )
-                            .expect("canonical JSON is UTF-8")
-                        });
-                    (
-                        name.clone(),
-                        json!({
-                            "pre-commit": operation.pre_commit,
-                            "registered-operation": operation.registered_operation,
-                            "fresh-only": operation.fresh_only,
-                            "committed-result-schema": committed_result_schema,
-                            "dependencies": operation.dependencies,
-                            "statements": operation.statements,
-                        }),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            json!({"package-id":id,"component":component.component,"interface-version":component.interface_version,"digest":component.component_digest,"operations":operations})
+        .map(|(_, component)| {
+            Ok(serde_json::to_value(
+                wamn_catalog::ServingComponent::project(component, &resolve)?,
+            )?)
         })
-        .collect::<Vec<_>>();
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let wirings=wirings.iter().map(|(id,w)|json!({"package-id":id,"wiring-id":w.wiring_id,"wiring-version":w.version,"graph-hash":w.wiring_hash().as_str()})).collect::<Vec<_>>();
     Ok(serde_json::from_value(
         json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"routes":routes,"wirings":wirings,"attachments":attachments,"registrations":{}}),

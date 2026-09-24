@@ -231,20 +231,31 @@ pub fn validate_component_admission(
         >(&component_type.instance_type())
         .map_err(anyhow::Error::from)
         };
+    let embedded = embedded_components(component_bytes).map_err(|source| {
+        ComponentAdmissionError::new(
+            ComponentAdmissionErrorKind::InvalidComponentBytes,
+            &component_name,
+            source,
+        )
+    })?;
     let declared_exports: BTreeSet<_> = request.declaration.operations.keys().cloned().collect();
     let byte_exports: BTreeSet<_> = component_type
         .exports(raw)
         .map(|(name, _)| name.to_owned())
         .collect();
-    if declared_exports != byte_exports {
-        let missing: Vec<_> = declared_exports
-            .difference(&byte_exports)
-            .cloned()
-            .collect();
-        let extra: Vec<_> = byte_exports
-            .difference(&declared_exports)
-            .cloned()
-            .collect();
+    let missing: Vec<_> = declared_exports
+        .difference(&byte_exports)
+        .cloned()
+        .collect();
+    // A composed component re-exports the interfaces of its embedded members,
+    // because the overlay's exports name their types. The host routes only to
+    // declared operations, so an export of an embedded member is inert.
+    let extra: Vec<_> = byte_exports
+        .difference(&declared_exports)
+        .filter(|export| !embedded.exports.contains(*export))
+        .cloned()
+        .collect();
+    if !missing.is_empty() || !extra.is_empty() {
         return Err(ComponentAdmissionError::new(
             ComponentAdmissionErrorKind::OperationExportMismatch,
             &component_name,
@@ -256,7 +267,7 @@ pub fn validate_component_admission(
     for export in &declared_exports {
         let item = component_type
             .get_export(raw, export)
-            .expect("equal declaration and byte export sets contain every operation");
+            .expect("the byte exports contain every declared operation");
         if let Err(error) = validate_handler_signature(export, item.ty, false) {
             return Err(operation_signature_mismatch(&component_name, export, error));
         }
@@ -269,19 +280,12 @@ pub fn validate_component_admission(
     // declared dependency is not an import. Its base must be embedded in these
     // bytes, unchanged, under the digest the declaration names. Publish then
     // folds the call graph from the admitted facts of that exact base.
-    let embedded = embedded_component_digests(component_bytes).map_err(|source| {
-        ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::InvalidComponentBytes,
-            &component_name,
-            source,
-        )
-    })?;
     let missing_bases = request
         .declaration
         .operations
         .values()
         .flat_map(|operation| &operation.dependencies)
-        .filter(|dependency| !embedded.contains(&dependency.digest))
+        .filter(|dependency| !embedded.digests.contains(&dependency.digest))
         .map(|dependency| format!("{}@{}", dependency.operation, dependency.digest))
         .collect::<BTreeSet<_>>();
     if !missing_bases.is_empty() {
@@ -504,8 +508,16 @@ fn derive_effects(
 /// A composed component defines each member as a nested component section. The
 /// section holds the member's exact bytes, so its digest is the member's
 /// admitted digest.
-fn embedded_component_digests(component_bytes: &[u8]) -> anyhow::Result<BTreeSet<String>> {
-    let mut digests = BTreeSet::new();
+/// The components nested in a composed component: the digest of each one and
+/// the names that each one exports.
+#[derive(Debug, Default)]
+struct EmbeddedComponents {
+    digests: BTreeSet<String>,
+    exports: BTreeSet<String>,
+}
+
+fn embedded_components(component_bytes: &[u8]) -> anyhow::Result<EmbeddedComponents> {
+    let mut embedded = EmbeddedComponents::default();
     for payload in wasmparser::Parser::new(0).parse_all(component_bytes) {
         if let wasmparser::Payload::ComponentSection {
             unchecked_range, ..
@@ -514,10 +526,31 @@ fn embedded_component_digests(component_bytes: &[u8]) -> anyhow::Result<BTreeSet
             let member = component_bytes
                 .get(unchecked_range)
                 .ok_or_else(|| anyhow::anyhow!("a nested component section is out of range"))?;
-            digests.insert(component_digest(member));
+            embedded.digests.insert(component_digest(member));
+            embedded.exports.extend(top_level_exports(member)?);
         }
     }
-    Ok(digests)
+    Ok(embedded)
+}
+
+/// The export names of one component, without those of its nested members.
+fn top_level_exports(component_bytes: &[u8]) -> anyhow::Result<Vec<String>> {
+    let mut exports = Vec::new();
+    let mut depth = 0_usize;
+    for payload in wasmparser::Parser::new(0).parse_all(component_bytes) {
+        match payload? {
+            wasmparser::Payload::ModuleSection { .. }
+            | wasmparser::Payload::ComponentSection { .. } => depth += 1,
+            wasmparser::Payload::End(_) => depth = depth.saturating_sub(1),
+            wasmparser::Payload::ComponentExportSection(section) if depth == 0 => {
+                for export in section {
+                    exports.push(export?.name.name.to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(exports)
 }
 
 /// SHA-256 identity of exact component bytes.
@@ -685,6 +718,17 @@ mod tests {
             .expect("fixture core module is accepted")
             .validate(true)
             .encode()
+    }
+
+    fn request_with(dependencies: Vec<ComponentOperationDependency>) -> ComponentAdmissionRequest {
+        let mut request = request();
+        request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = dependencies;
+        request
     }
 
     fn request() -> ComponentAdmissionRequest {
@@ -1016,6 +1060,20 @@ mod tests {
             [embedded_dependency(&base)]
         );
         assert!(component.effects.is_empty());
+
+        // A composed component re-exports its base. That export is admitted
+        // only while the base that exports it is embedded.
+        let reexporting =
+            component_bytes_with_exports("", &format!("export {DEPENDENCY_OPERATION};"));
+        let request = request_with(vec![embedded_dependency(&base)]);
+        validate_component_admission(&engine, &composed(&reexporting, &base), request.clone())
+            .expect("an export of an embedded base admits");
+        let error = validate_component_admission(&engine, &reexporting, request)
+            .expect_err("an export of no embedded member refuses");
+        assert_eq!(
+            error.kind(),
+            ComponentAdmissionErrorKind::OperationExportMismatch
+        );
     }
 
     // The engine parses a second handler export only with this feature enabled.

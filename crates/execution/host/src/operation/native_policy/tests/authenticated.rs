@@ -235,7 +235,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             "packages": [{"package-id": "root", "package-version": "1.0.0"}]},
         "components": [{"package-id": "root", "component": "node", "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
-                ROOT: {"registered-operation": ROOT}
+                ROOT: {"registered-operation": ROOT, "permissions": [ROOT]}
             }}],
         "routes": [],
         "wirings": [{"package-id": "root", "wiring-id": "trusted-wiring", "wiring-version": 1,

@@ -1,17 +1,12 @@
 //! Public native dispatch binding checkpoint for wamn-0ct2.2.
 //! The scalar fixtures isolate host binding from the application wire contract.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use anyhow::Context as _;
-use sha2::{Digest as _, Sha256};
 use tokio::sync::oneshot;
-use wamn_catalog::{
-    ArtifactHash, ComponentOperationDependency, EffectiveReleaseId, PackageCoordinate,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease,
-};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
@@ -235,132 +230,8 @@ async fn host_export_binding_keeps_the_nested_policy_shim() {
         .expect("unbind test workload");
 }
 
-fn exact_child_manifest() -> ServingManifest {
-    let children = [("child", child_wat(91))];
-    let mut components = BTreeSet::new();
-    let mut selected_digest = None;
-    for (name, source) in [("root", ROOT_WAT.to_owned())].into_iter().chain(children) {
-        let bytes = wat::parse_str(&source).expect("valid component fixture");
-        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
-        println!("fixture {name}: {digest}");
-        if name == "child" {
-            selected_digest = Some(digest.clone());
-        }
-        let (package, operation) = if name == "root" {
-            ("root", ROOT)
-        } else {
-            ("child", CHILD)
-        };
-        components.insert(ServingComponent {
-            package_id: package.into(),
-            component: name.into(),
-            interface_version: "1.0.0".into(),
-            digest: ArtifactHash::parse(digest).expect("fixture content digest"),
-            operations: BTreeMap::from([(
-                operation.into(),
-                ServingComponentOperation {
-                    pre_commit: None,
-                    registered_operation: Some(operation.into()),
-                    fresh_only: false,
-                    committed_result_schema: None,
-                    dependencies: Vec::new(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-        });
-    }
-    let mut root = components
-        .iter()
-        .find(|component| component.package_id == "root")
-        .expect("root component")
-        .clone();
-    assert!(components.remove(&root));
-    root.operations
-        .get_mut(ROOT)
-        .expect("root operation")
-        .dependencies = vec![ComponentOperationDependency {
-        participant: None,
-        package: "child".into(),
-        version: "1.0.0".into(),
-        digest: selected_digest.expect("selected child digest"),
-        operation: CHILD.into(),
-    }];
-    components.insert(root);
-    ServingManifest::new(
-        ServingRelease {
-            tenant_id: "native-binding-test".into(),
-            effective_release_id: EffectiveReleaseId::new(1).expect("nonzero release"),
-            environment: "test".into(),
-            packages: BTreeSet::from([
-                PackageCoordinate::new("root", "1.0.0").expect("root package"),
-                PackageCoordinate::new("child", "1.0.0").expect("child package"),
-            ]),
-        },
-        components,
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-    )
-    .expect("WAMN admits one exact provider for each imported operation interface")
-}
-
 #[tokio::test]
-async fn admission_refuses_ambiguous_imported_providers_before_native_resolution() {
-    let manifest = exact_child_manifest();
-    let (roundtrip, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
-        .expect("the production manifest parser admits the unique exact component");
-    assert_eq!(roundtrip.components.len(), 2);
-    let root = roundtrip
-        .components
-        .iter()
-        .find(|component| component.package_id == "root")
-        .expect("root component");
-    let selected = &root.operations[ROOT].dependencies[0].digest;
-    assert_eq!(
-        roundtrip
-            .components
-            .iter()
-            .filter(|component| component.digest.as_str() == selected
-                && component.operations.contains_key(CHILD))
-            .count(),
-        1
-    );
-    let mut other = roundtrip
-        .components
-        .iter()
-        .find(|component| component.digest.as_str() == selected)
-        .expect("the exact child component remains present")
-        .clone();
-    other.component = "other-child".into();
-    let bytes = wat::parse_str(child_wat(92)).expect("valid alternate component fixture");
-    other.digest = ArtifactHash::parse(format!("sha256:{}", hex::encode(Sha256::digest(&bytes))))
-        .expect("alternate content digest");
-    let mut ambiguous = roundtrip.clone();
-    assert!(ambiguous.components.insert(other.clone()));
-    let refusal = ServingManifest::from_canonical_bytes(&ambiguous.canonical_bytes())
-        .expect_err("an exact dependency digest does not waive imported-interface uniqueness");
-    assert!(
-        refusal
-            .to_string()
-            .contains("ambiguous component providers")
-    );
-
-    // A different artifact cannot replace the dependency's exact provenance,
-    // even when that replacement remains the only provider of the interface.
-    let mut missing = roundtrip.clone();
-    missing
-        .components
-        .retain(|component| component.digest.as_str() != selected);
-    assert!(missing.components.insert(other));
-    let refusal = ServingManifest::from_canonical_bytes(&missing.canonical_bytes())
-        .expect_err("the alternate export cannot replace the exact pinned component");
-    assert!(
-        refusal
-            .to_string()
-            .contains("resolves to 0 exact component facts")
-    );
-
+async fn native_resolution_refuses_ambiguous_imported_providers() {
     let (plugin, result) = resolve(true).await;
     assert_eq!(plugin.root_binds.load(Ordering::SeqCst), 1);
     let error = result.expect_err("native resolution rejects two child exporters");

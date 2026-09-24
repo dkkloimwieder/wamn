@@ -537,10 +537,9 @@ mod tests {
     use serde_json::json;
     use wamn_authoring_model::{GateRefusal, GateResult, ValidatedDraftRef};
     use wamn_catalog::{
-        ArtifactHash, AttachmentKind, ComponentOperationDependency, DefinitionHash,
-        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
-        ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease,
-        ServingWiring,
+        ArtifactHash, AttachmentKind, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
+        SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
+        ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring,
     };
     use wamn_runtime::plugins::wamn_jetstream::{
         RouterTapFormatVersion, RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind,
@@ -675,10 +674,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("token=widget/get"), "{text}");
-        assert!(
-            text.contains(r#""package":"inventory","version":"2.0.0""#),
-            "{text}"
-        );
+        assert!(text.contains(r#""inventory:item/get@2.0.0""#), "{text}");
         assert!(text.contains("id=widget-get-http"), "{text}");
         assert!(text.contains("id=widget-get-studio"), "{text}");
         assert!(
@@ -926,13 +922,11 @@ mod tests {
             committed_result_schema: None,
             fresh_only: false,
             registered_operation: Some("platform-fixture:widget/get@1.0.0".to_owned()),
-            dependencies: vec![ComponentOperationDependency {
-                participant: None,
-                package: "inventory".to_owned(),
-                version: "2.0.0".to_owned(),
-                digest: DIGEST.to_owned(),
-                operation: "inventory:item/get@2.0.0".to_owned(),
-            }],
+            permissions: BTreeSet::from([
+                "platform-fixture:widget/get@1.0.0".to_owned(),
+                "inventory:item/get@2.0.0".to_owned(),
+            ]),
+            participant: None,
             statements: BTreeMap::new(),
         };
         let component = ServingComponent {

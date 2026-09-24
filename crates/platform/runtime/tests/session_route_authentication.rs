@@ -179,7 +179,8 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
             "packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "session_test", "component": "purchase", "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
-                READ: {"registered-operation": READ}, WRITE: {"registered-operation": WRITE}
+                READ: {"registered-operation": READ, "permissions": [READ]},
+                WRITE: {"registered-operation": WRITE, "permissions": [WRITE]}
             }}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "kind": "get"},

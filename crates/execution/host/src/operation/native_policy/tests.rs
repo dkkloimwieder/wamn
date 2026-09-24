@@ -696,7 +696,12 @@ impl Fixture {
                                     fresh_only: operation.fresh_only,
                                     committed_result_schema: None,
                                     pre_commit: operation.pre_commit.clone(),
-                                    dependencies: operation.dependencies.clone(),
+                                    permissions: operation
+                                        .registered_operation
+                                        .iter()
+                                        .cloned()
+                                        .collect(),
+                                    participant: None,
                                     statements: operation.statements.clone(),
                                 },
                             )
