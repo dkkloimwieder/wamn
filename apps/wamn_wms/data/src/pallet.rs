@@ -97,6 +97,119 @@ pub async fn get(connection: &mut Connection, id: &str) -> Result<PalletRow, Acc
         .ok_or_else(|| AccessError::missing(AccessErrorKind::NotFound, "id", &id.0))
 }
 
+/// The members of one pallet creation, as the request carries them.
+#[derive(Debug, Default)]
+pub struct CreateCommand<'a> {
+    pub idempotency_key: &'a str,
+    pub pallet_code: Option<&'a str>,
+    pub location_id: Option<&'a str>,
+    pub status: Option<&'a str>,
+}
+
+/// Create one pallet under the identity its claim row mints.
+///
+/// A retry of the same key returns the row the first attempt wrote, and the
+/// same key under a different command refuses.
+///
+/// # Errors
+///
+/// [`AccessError`] carrying the literal the operation contract declares.
+pub async fn create(
+    connection: &mut Connection,
+    command: &CreateCommand<'_>,
+) -> Result<PalletRow, AccessError> {
+    let pallet_code = scalar::text("pallet_code", command.pallet_code)?;
+    let location_id = scalar::uuid(
+        "location_id",
+        scalar::text("location_id", command.location_id)?,
+    )?;
+    let status = scalar::text("status", command.status)?;
+    if !STATUSES.contains(&status) {
+        return Err(AccessError::field(AccessErrorKind::InvalidInput, "status"));
+    }
+    let canonical = wamn_execution_contract::canonical_json_bytes(&json!({
+        "pallet_code": pallet_code,
+        "location_id": location_id.0,
+        "status": status,
+    }));
+    let key = command.idempotency_key;
+    let transaction = connection.begin().await.map_err(|e| refuse(&e))?;
+    let mut claim = sql::begin_claim(transaction);
+    let replay = sql::create_replay(&mut claim, key.to_owned())
+        .await
+        .map_err(|e| refuse(&e))?;
+    if let Some(replay) = replay {
+        return replay_row(replay, &canonical);
+    }
+    let claimed = sql::create_claim(&mut claim, key.to_owned(), canonical.clone())
+        .await
+        .map_err(|e| refuse(&e))?;
+    let Some(claimed) = claimed else {
+        // Another caller took the key between the replay read and this insert.
+        // Its row is committed, so the replay read now answers.
+        let replay = sql::create_replay(&mut claim, key.to_owned())
+            .await
+            .map_err(|e| refuse(&e))?
+            .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, json!({})))?;
+        return replay_row(replay, &canonical);
+    };
+    let finalized = sql::create(
+        claim,
+        claimed.pallet_id,
+        pallet_code.to_owned(),
+        location_id,
+        status.to_owned(),
+    )
+    .await
+    .map_err(|e| refuse(&e))?;
+    let created = &finalized.row;
+    let row = PalletRow {
+        created_at: created.created_at.clone(),
+        created_by: created.created_by.clone(),
+        id: created.id.clone(),
+        location_id: created.location_id.clone(),
+        pallet_code: created.pallet_code.clone(),
+        row_version: created.row_version,
+        status: created.status.clone(),
+        updated_at: created.updated_at.clone(),
+        updated_by: created.updated_by.clone(),
+    };
+    finalized.commit().await.map_err(|e| refuse(&e))?;
+    Ok(row)
+}
+
+fn refuse(error: &wamn_postgres_statements::StatementError) -> AccessError {
+    error::from_write(
+        error,
+        sql::CREATE_UNIQUE_CONSTRAINTS,
+        sql::CREATE_FOREIGN_KEY_CONSTRAINTS,
+        sql::CREATE_CHECK_CONSTRAINTS,
+    )
+}
+
+fn replay_row(
+    replay: sql::PalletCreateReplayRow,
+    canonical: &[u8],
+) -> Result<PalletRow, AccessError> {
+    if replay.canonical_command != canonical {
+        return Err(AccessError::field(
+            AccessErrorKind::IdempotencyConflict,
+            "idempotency_key",
+        ));
+    }
+    Ok(PalletRow {
+        created_at: replay.created_at,
+        created_by: replay.created_by,
+        id: replay.id,
+        location_id: replay.location_id,
+        pallet_code: replay.pallet_code,
+        row_version: replay.row_version,
+        status: replay.status,
+        updated_at: replay.updated_at,
+        updated_by: replay.updated_by,
+    })
+}
+
 /// The cursor's bindings, typed by the sort field it was minted under.
 #[derive(Debug)]
 enum Cursor {

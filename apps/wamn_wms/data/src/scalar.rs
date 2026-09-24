@@ -21,6 +21,13 @@ pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
         .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
 }
 
+/// A required text value. An absent, null or blank value refuses on its field.
+pub(crate) fn text<'a>(field: &str, value: Option<&'a str>) -> Result<&'a str, AccessError> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
+}
+
 pub(crate) fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|parsed| TimestampTz(parsed.to_utc().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()))

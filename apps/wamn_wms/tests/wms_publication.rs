@@ -34,7 +34,7 @@ struct Operation {
 // table, the declaration, the wirings and attachments.json widen together --
 // wamn-362o.10 grew the guest from one operation to seven and widened all
 // four in one commit.
-const OPERATIONS: [Operation; 7] = [
+const OPERATIONS: [Operation; 20] = [
     Operation {
         token: "wamn-wms:pallet/get@1.0.0",
         attachment: "pallet-get-http",
@@ -79,6 +79,84 @@ const OPERATIONS: [Operation; 7] = [
         token: "wamn-wms:inventory/aggregate@1.0.0",
         attachment: "inventory-aggregate-http",
         route: "/inventory/aggregate",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:inventory-movement/get@1.0.0",
+        attachment: "inventory-movement-get-http",
+        route: "/inventory_movement/get",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:inventory-movement/query@1.0.0",
+        attachment: "inventory-movement-query-http",
+        route: "/inventory_movement/query",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:location/create@1.0.0",
+        attachment: "location-create-http",
+        route: "/location/create",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:location/get@1.0.0",
+        attachment: "location-get-http",
+        route: "/location/get",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:location/query@1.0.0",
+        attachment: "location-query-http",
+        route: "/location/query",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:location/update@1.0.0",
+        attachment: "location-update-http",
+        route: "/location/update",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:pallet/create@1.0.0",
+        attachment: "pallet-create-http",
+        route: "/pallet/create",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:pallet-quantity/get@1.0.0",
+        attachment: "pallet-quantity-get-http",
+        route: "/pallet_quantity/get",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:pallet-quantity/query@1.0.0",
+        attachment: "pallet-quantity-query-http",
+        route: "/pallet_quantity/query",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:product/create@1.0.0",
+        attachment: "product-create-http",
+        route: "/product/create",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:product/get@1.0.0",
+        attachment: "product-get-http",
+        route: "/product/get",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:product/query@1.0.0",
+        attachment: "product-query-http",
+        route: "/product/query",
+        wiring: None,
+    },
+    Operation {
+        token: "wamn-wms:product/update@1.0.0",
+        attachment: "product-update-http",
+        route: "/product/update",
         wiring: None,
     },
 ];

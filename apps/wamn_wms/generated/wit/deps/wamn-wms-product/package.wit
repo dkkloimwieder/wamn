@@ -1,0 +1,235 @@
+package wamn-wms:product@1.0.0;
+
+interface get {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record get-request {
+    id: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant get-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record get-item {
+    request-id: string,
+    input: result<get-request, invalid-input-detail>,
+  }
+
+  record get-row {
+    created-at: string,
+    id: string,
+    product-code: string,
+    row-version: s32,
+  }
+
+  record get-result {
+    value: get-row,
+  }
+
+  record get-outcome {
+    request-id: string,
+    outcome: result<get-result, get-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<get-item>) -> result<list<get-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface query {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record query-request {
+    product-code: option<list<string>>,
+    cursor: option<string>,
+    limit: option<s64>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<s64>,
+    maximum: option<s64>,
+    observed: option<s64>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant query-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record query-item {
+    request-id: string,
+    input: result<query-request, invalid-input-detail>,
+  }
+
+  record query-row {
+    created-at: string,
+    id: string,
+    product-code: string,
+    row-version: s32,
+  }
+
+  record query-result {
+    value: list<query-row>,
+    next-cursor: option<string>,
+  }
+
+  record query-outcome {
+    request-id: string,
+    outcome: result<query-result, query-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<query-item>) -> result<list<query-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface create {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record create-request {
+    idempotency-key: string,
+    product-code: option<option<string>>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record unique-violation-detail {
+    constraint: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant create-error {
+    invalid-input(invalid-input-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    unique-violation(unique-violation-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record create-item {
+    request-id: string,
+    input: result<create-request, invalid-input-detail>,
+  }
+
+  record create-row {
+    created-at: string,
+    id: string,
+    product-code: string,
+    row-version: s32,
+  }
+
+  record create-result {
+    value: create-row,
+  }
+
+  record create-outcome {
+    request-id: string,
+    outcome: result<create-result, create-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<create-item>) -> result<list<create-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface update {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record update-change {
+    product-code: option<option<string>>,
+  }
+
+  record update-request {
+    id: string,
+    expected-row-version: s32,
+    change: update-change,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: s32,
+    observed-row-version: s32,
+  }
+
+  record unique-violation-detail {
+    constraint: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant update-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    concurrency-conflict(concurrency-conflict-detail),
+    unique-violation(unique-violation-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record update-item {
+    request-id: string,
+    input: result<update-request, invalid-input-detail>,
+  }
+
+  record update-result {
+    created-at: string,
+    id: string,
+    product-code: string,
+    row-version: s32,
+  }
+
+  record update-outcome {
+    request-id: string,
+    outcome: result<update-result, update-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<update-item>) -> result<list<update-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

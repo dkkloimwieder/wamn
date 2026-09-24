@@ -1,6 +1,6 @@
 use wamn_wms_data_access::{AccessError, AccessErrorKind, pallet};
 
-fn detail(error: &AccessError, key: &str) -> Option<String> {
+pub(crate) fn detail(error: &AccessError, key: &str) -> Option<String> {
     let value = error.detail().get(key)?;
     value
         .as_str()
@@ -27,6 +27,47 @@ mod get {
             .await
             .map(|row| contract::GetResult {
                 value: codec::row!(row, contract::GetRow),
+            })
+            .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+    }
+    codec::export_operation!(
+        crate::Component,
+        contract,
+        crate::wamn::node::types,
+        wamn_postgres_statements::Connection::new(),
+        handle,
+        codec
+    );
+}
+
+mod create {
+    use super::{detail, pallet};
+    use crate::exports::wamn_wms::pallet::create as contract;
+    mod codec {
+        use super::contract;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wit/pallet_create_codec.rs"
+        ));
+    }
+
+    async fn handle(
+        connection: &mut wamn_postgres_statements::Connection,
+        request: contract::CreateRequest,
+    ) -> Result<contract::CreateResult, contract::CreateError> {
+        let pallet_code = request.pallet_code.flatten();
+        let location_id = request.location_id.flatten();
+        let status = request.status.flatten();
+        let command = pallet::CreateCommand {
+            idempotency_key: &request.idempotency_key,
+            pallet_code: pallet_code.as_deref(),
+            location_id: location_id.as_deref(),
+            status: status.as_deref(),
+        };
+        pallet::create(connection, &command)
+            .await
+            .map(|row| contract::CreateResult {
+                value: codec::row!(row, contract::CreateRow),
             })
             .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
     }

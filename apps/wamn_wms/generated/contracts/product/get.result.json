@@ -1,0 +1,1 @@
+{"class":"one","fields":[{"path":"created_at","type":"timestamptz","nullable":false,"values":[]},{"path":"id","type":"uuid","nullable":false,"values":[]},{"path":"product_code","type":"text","nullable":false,"values":[]},{"path":"row_version","type":"int32","nullable":false,"revision":true,"values":[]}]}

@@ -44,6 +44,13 @@ Its default order uses `created_at` with an `id` tie-breaker and an opaque curso
 `updated_at` changes only when a command changes the pallet row.
 Sorting across the quantity join is outside its declared query.
 
+Each other model has a generated `get` and a generated `query` that pages by `created_at`.
+The `location` and `product` queries filter on their code.
+`location` and `product` also have a generated `create` and `update`, and `pallet` has a generated `create`.
+Each create takes its identity from its own claim table, so a retry of one key returns the first row.
+Each update binds `row_version`, which is an `int4` on these two models.
+`inventory_movement` has no write, because it is a log that the commands write.
+
 `inventory.aggregate` returns a bounded projection grouped by status, product, and location.
 It is a current SQL read rather than an event-maintained rollup.
 The [projection implementation](data/src/inventory_aggregate.rs) owns its result.

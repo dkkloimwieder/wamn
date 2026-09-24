@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.pallet_id,\n    model.product_id,\n    model.quantity,\n    model.status\nFROM pallet_quantity AS model\nWHERE model.id = $1::uuid;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "pallet_quantity",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet_quantity",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "pallet_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet_quantity",
+            "name": "pallet_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pallet_quantity",
+            "name": "product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "pallet_quantity",
+            "name": "quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pallet_quantity",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0ecca43ac6e7a244cc0fbb15f58eed6e1bb31116d97dacb7c2cec0767f54c24d"
+}

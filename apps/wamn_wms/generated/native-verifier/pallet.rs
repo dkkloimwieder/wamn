@@ -13,6 +13,28 @@ pub struct PalletRow {
     pub updated_by: uuid::Uuid,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+pub struct PalletCreateClaimRow {
+    pub pallet_id: uuid::Uuid,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct PalletCreateReplayRow {
+    pub canonical_command: Vec<u8>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: uuid::Uuid,
+    pub id: uuid::Uuid,
+    pub location_id: uuid::Uuid,
+    pub pallet_code: String,
+    pub row_version: i64,
+    pub status: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_by: uuid::Uuid,
+}
+
+pub(crate) const CREATE_0_SQL: &str = include_str!("../sql/pallet/create_claim.sql");
+pub(crate) const CREATE_1_SQL: &str = include_str!("../sql/pallet/create_replay.sql");
+pub(crate) const CREATE_2_SQL: &str = include_str!("../sql/pallet/create.sql");
 pub(crate) const GET_SQL: &str = include_str!("../sql/pallet/get.sql");
 pub(crate) const QUERY_0_SQL: &str =
     include_str!("../../query/open_pallet_by_pallet_code_ascending.sql");
@@ -202,4 +224,25 @@ pub(crate) fn query_created_at_descending_cursor_id_bind_fixture() -> Option<uui
 }
 pub(crate) fn query_created_at_descending_limit_bind_fixture() -> i64 {
     0_i64
+}
+pub(crate) fn create_claim_idempotency_key_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn create_claim_canonical_command_bind_fixture() -> Vec<u8> {
+    Vec::new()
+}
+pub(crate) fn create_replay_idempotency_key_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn create_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn create_pallet_code_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn create_location_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn create_status_bind_fixture() -> String {
+    String::new()
 }

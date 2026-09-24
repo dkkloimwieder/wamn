@@ -122,3 +122,79 @@ interface query {
   run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
 
+interface create {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record create-request {
+    idempotency-key: string,
+    pallet-code: option<option<string>>,
+    location-id: option<option<string>>,
+    status: option<option<string>>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record unique-violation-detail {
+    constraint: string,
+  }
+
+  record foreign-key-violation-detail {
+    constraint: string,
+  }
+
+  record check-violation-detail {
+    constraint: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant create-error {
+    invalid-input(invalid-input-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    unique-violation(unique-violation-detail),
+    foreign-key-violation(foreign-key-violation-detail),
+    check-violation(check-violation-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record create-item {
+    request-id: string,
+    input: result<create-request, invalid-input-detail>,
+  }
+
+  record create-row {
+    created-at: string,
+    created-by: string,
+    id: string,
+    location-id: string,
+    pallet-code: string,
+    row-version: s64,
+    status: string,
+    updated-at: string,
+    updated-by: string,
+  }
+
+  record create-result {
+    value: create-row,
+  }
+
+  record create-outcome {
+    request-id: string,
+    outcome: result<create-result, create-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<create-item>) -> result<list<create-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+

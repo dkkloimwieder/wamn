@@ -521,5 +521,695 @@
       "modes": ["pat"]
     },
     "registered-operation": "wamn-wms:inventory/aggregate@1.0.0"
+  },
+  "inventory-movement-get-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:inventory-movement/get@1.0.0",
+    "definition-hash": "sha256:41b477c63ddd476652e68316e0d8bc3e47ee6e6112cae508e8679567383ce7b5",
+    "definition": {
+      "id": "inventory-movement-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/inventory_movement/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:inventory-movement/get@1.0.0"
+  },
+  "inventory-movement-query-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:inventory-movement/query@1.0.0",
+    "definition-hash": "sha256:ffa86ddd474b113d592dece117c03ea2cb94748f0dcf2e21084d913028344281",
+    "definition": {
+      "id": "inventory-movement-query-http",
+      "kind": "http",
+      "route": {
+        "path": "/inventory_movement/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:inventory-movement/query@1.0.0"
+  },
+  "location-create-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:location/create@1.0.0",
+    "definition-hash": "sha256:897ab38e1ca2e7d48233e6d52f2180aba86473ca942a290469f894303e5c43bf",
+    "definition": {
+      "id": "location-create-http",
+      "kind": "http",
+      "route": {
+        "path": "/location/create",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "idempotency_key",
+            "location_code"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idempotency_key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "location_code": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:location/create@1.0.0"
+  },
+  "location-get-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:location/get@1.0.0",
+    "definition-hash": "sha256:3831d703d717d334120dad837ca1fa369670549ddf8801934e32ebdcfcf73a48",
+    "definition": {
+      "id": "location-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/location/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:location/get@1.0.0"
+  },
+  "location-query-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:location/query@1.0.0",
+    "definition-hash": "sha256:95a8a95aae63de97954b92793809a140cbfb91dd02cf5e8a97be36426f39fa1a",
+    "definition": {
+      "id": "location-query-http",
+      "kind": "http",
+      "route": {
+        "path": "/location/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "filter": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "location_code": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:location/query@1.0.0"
+  },
+  "location-update-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:location/update@1.0.0",
+    "definition-hash": "sha256:29439e760aea4fd916c26fb61d882efd1013e184aa5e94a77650eaa12762bc22",
+    "definition": {
+      "id": "location-update-http",
+      "kind": "http",
+      "route": {
+        "path": "/location/update",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id",
+            "expected_row_version",
+            "change"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "expected_row_version": {
+              "type": "integer"
+            },
+            "change": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "location_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-wamn-explicit-null": "invalid_input"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:location/update@1.0.0"
+  },
+  "pallet-create-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:pallet/create@1.0.0",
+    "definition-hash": "sha256:6f1871c082704b08044b2a1e5b29a203a5a33365d859aaded688bf505c48a8fb",
+    "definition": {
+      "id": "pallet-create-http",
+      "kind": "http",
+      "route": {
+        "path": "/pallet/create",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "idempotency_key",
+            "pallet_code",
+            "location_id",
+            "status"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idempotency_key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pallet_code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "location_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "available",
+                "held",
+                "consumed"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:pallet/create@1.0.0"
+  },
+  "pallet-quantity-get-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:pallet-quantity/get@1.0.0",
+    "definition-hash": "sha256:cd1133a10a53fcee2214c16a1ed66ba98eacd01751e1b830660a2d2a9ad94007",
+    "definition": {
+      "id": "pallet-quantity-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/pallet_quantity/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:pallet-quantity/get@1.0.0"
+  },
+  "pallet-quantity-query-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:pallet-quantity/query@1.0.0",
+    "definition-hash": "sha256:9972ee6e14d953c0aa820d84a2871a07727dacf38fa383ef7d780cb2fdd9989d",
+    "definition": {
+      "id": "pallet-quantity-query-http",
+      "kind": "http",
+      "route": {
+        "path": "/pallet_quantity/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:pallet-quantity/query@1.0.0"
+  },
+  "product-create-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:product/create@1.0.0",
+    "definition-hash": "sha256:ea83390cd258d5ebda7fbe1b4ef73d05cc0b1030b68c8a231fe98032ccb8af52",
+    "definition": {
+      "id": "product-create-http",
+      "kind": "http",
+      "route": {
+        "path": "/product/create",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "idempotency_key",
+            "product_code"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idempotency_key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "product_code": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:product/create@1.0.0"
+  },
+  "product-get-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:product/get@1.0.0",
+    "definition-hash": "sha256:c3d60a988d078ef994bba520922f5c480f3f7789922cedf65340f12f69a11240",
+    "definition": {
+      "id": "product-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/product/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:product/get@1.0.0"
+  },
+  "product-query-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:product/query@1.0.0",
+    "definition-hash": "sha256:28941c7f55ca7af3f61654b09cde3e002701066b53a3a307a4483e55d624fd91",
+    "definition": {
+      "id": "product-query-http",
+      "kind": "http",
+      "route": {
+        "path": "/product/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "filter": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "product_code": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:product/query@1.0.0"
+  },
+  "product-update-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "component": "wms",
+    "operation": "wamn-wms:product/update@1.0.0",
+    "definition-hash": "sha256:2a288c049eaa9a1726ca6003ce4f32bab314061a864af4065ff4a54043f63e13",
+    "definition": {
+      "id": "product-update-http",
+      "kind": "http",
+      "route": {
+        "path": "/product/update",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id",
+            "expected_row_version",
+            "change"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "expected_row_version": {
+              "type": "integer"
+            },
+            "change": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "product_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-wamn-explicit-null": "invalid_input"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-wms:product/update@1.0.0"
   }
 }

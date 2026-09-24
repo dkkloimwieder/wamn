@@ -2,6 +2,99 @@
 
 use wamn_client_tui::{screen, submission};
 
+pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
+    model: "pallet",
+    name: "create",
+    operation: "wamn-wms:pallet/create@1.0.0",
+    kind: "create",
+    input: crate::pallet::PALLET_CREATE_INPUT_SCHEMA,
+    input_schema: Some(
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_code\":{\"minLength\":1,\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"}},\"required\":[\"request_id\",\"idempotency_key\",\"pallet_code\",\"location_id\",\"status\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+    ),
+    response: submission::ResponseContract {
+        schema: Some("{\"type\":\"array\"}"),
+        partial_schema: None,
+        fields: crate::pallet::PALLET_CREATE_RESULT_SCHEMA,
+        result_class: Some("one"),
+        errors: &[
+            submission::ErrorCase {
+                literal: "check_violation",
+                required: &["constraint"],
+                sources: &["check_violation"],
+            },
+            submission::ErrorCase {
+                literal: "foreign_key_violation",
+                required: &["constraint"],
+                sources: &["foreign_key_violation"],
+            },
+            submission::ErrorCase {
+                literal: "idempotency_conflict",
+                required: &["field"],
+                sources: &["changed_canonical_command"],
+            },
+            submission::ErrorCase {
+                literal: "internal_error",
+                required: &[],
+                sources: &["query_error", "row_limit_exceeded"],
+            },
+            submission::ErrorCase {
+                literal: "invalid_input",
+                required: &["field"],
+                sources: &[],
+            },
+            submission::ErrorCase {
+                literal: "permission_denied",
+                required: &["operation"],
+                sources: &["permission_denied"],
+            },
+            submission::ErrorCase {
+                literal: "retry",
+                required: &[],
+                sources: &["connection_unavailable", "serialization_failure"],
+            },
+            submission::ErrorCase {
+                literal: "timeout",
+                required: &[],
+                sources: &["statement_timeout"],
+            },
+            submission::ErrorCase {
+                literal: "unique_violation",
+                required: &["constraint"],
+                sources: &["unique_violation"],
+            },
+        ],
+        kind: "create",
+        transaction: Some("explicit_per_input"),
+        direct: true,
+        replay: submission::Replay::Claim,
+    },
+    route: Some(crate::pallet::create_route),
+    fresh_only: false,
+    record: Some(screen::RecordLink {
+        relation: "wms.pallet",
+        key_field: "id",
+        key_input: None,
+    }),
+    revision: None,
+    revision_inputs: &[],
+    requires_composition: false,
+    supplied: &[
+        screen::SuppliedField {
+            path: "idempotency_key",
+            kind: screen::SuppliedKind::IdempotencyKey,
+        },
+        screen::SuppliedField {
+            path: "request_id",
+            kind: screen::SuppliedKind::RequestId,
+        },
+    ],
+};
+
+#[must_use]
+pub fn create(binding: submission::SessionBinding) -> screen::Screen {
+    screen::Screen::new(&CREATE_SPEC, binding)
+}
+
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "pallet",
     name: "get",

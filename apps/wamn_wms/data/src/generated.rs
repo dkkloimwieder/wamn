@@ -70,11 +70,64 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `pallet` projection and statement digests.
+    /// Generated `inventory_movement` projection and statement digests.
+    pub(crate) mod inventory_movement {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wamn/inventory_movement.rs"
+        ));
+    }
+
+    /// Generated `location` projection, claim and update accessors.
+    ///
+    /// A claim carries `select_participant` for a nested operation. No
+    /// operation nests inside `location.create`, so that accessor stays unused.
+    #[expect(
+        dead_code,
+        reason = "the generated claim offers participation this create does not use"
+    )]
+    pub(crate) mod location {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wamn/location.rs"
+        ));
+    }
+
+    /// Generated `pallet` projection, claim accessors and statement digests.
+    ///
+    /// A claim carries `select_participant` for a nested operation. No
+    /// operation nests inside `pallet.create`, so that accessor stays unused.
+    #[expect(
+        dead_code,
+        reason = "the generated claim offers participation this create does not use"
+    )]
     pub(crate) mod pallet {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../generated/wamn/pallet.rs"
+        ));
+    }
+
+    /// Generated `pallet_quantity` projection and statement digests.
+    pub(crate) mod pallet_quantity {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wamn/pallet_quantity.rs"
+        ));
+    }
+
+    /// Generated `product` projection, claim and update accessors.
+    ///
+    /// A claim carries `select_participant` for a nested operation. No
+    /// operation nests inside `product.create`, so that accessor stays unused.
+    #[expect(
+        dead_code,
+        reason = "the generated claim offers participation this create does not use"
+    )]
+    pub(crate) mod product {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wamn/product.rs"
         ));
     }
 }

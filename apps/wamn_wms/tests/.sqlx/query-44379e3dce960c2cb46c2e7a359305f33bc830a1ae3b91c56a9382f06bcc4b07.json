@@ -1,0 +1,81 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH target AS MATERIALIZED (\n    SELECT id, row_version\n    FROM location\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE location AS model\n    SET\n        location_code = CASE WHEN $3::boolean THEN $4::text ELSE model.location_code END,\n        row_version = CASE\n            WHEN ($3::boolean AND $4::text::text IS DISTINCT FROM model.location_code::text)\n            THEN model.row_version + 1\n            ELSE model.row_version\n        END\n    FROM target\n    WHERE model.id = target.id\n      AND target.row_version = $2::int4\n    RETURNING\n    model.created_at,\n    model.id,\n    model.location_code,\n    model.row_version\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    (SELECT target.row_version FROM target) AS observed_row_version,\n    updated.created_at,\n    updated.id,\n    updated.location_code,\n    updated.row_version\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "observed_row_version",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "location",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "location",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "location_code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "location",
+            "name": "location_code"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "location",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "44379e3dce960c2cb46c2e7a359305f33bc830a1ae3b91c56a9382f06bcc4b07"
+}

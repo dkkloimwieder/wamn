@@ -24,6 +24,12 @@ pub enum AccessErrorKind {
     ConcurrencyConflict,
     /// A second delivery under one key carried a DIFFERENT command body.
     IdempotencyConflict,
+    /// A generated write broke a unique constraint its contract names.
+    UniqueViolation,
+    /// A generated write named a row that does not exist.
+    ForeignKeyViolation,
+    /// A generated write broke a check constraint its contract names.
+    CheckViolation,
     /// Transient; the caller may send the same command again.
     Retry,
     /// The statement exceeded its time budget.
@@ -47,6 +53,9 @@ impl AccessErrorKind {
             Self::InsufficientQuantity => "insufficient_quantity",
             Self::ConcurrencyConflict => "concurrency_conflict",
             Self::IdempotencyConflict => "idempotency_conflict",
+            Self::UniqueViolation => "unique_violation",
+            Self::ForeignKeyViolation => "foreign_key_violation",
+            Self::CheckViolation => "check_violation",
             Self::Retry => "retry",
             Self::Timeout => "timeout",
             Self::PermissionDenied => "permission_denied",
@@ -155,6 +164,33 @@ pub fn from_statement(error: &StatementError) -> AccessError {
         _ => AccessErrorKind::InternalError,
     };
     AccessError::new(kind, serde_json::json!({}))
+}
+
+/// The translation for a generated write, which may also name a constraint.
+///
+/// A violation of a constraint that the contract lists carries its name. Any
+/// other violation falls to [`from_statement`] and so to `internal_error`.
+#[must_use]
+pub(crate) fn from_write(
+    error: &StatementError,
+    unique: &[&str],
+    foreign_key: &[&str],
+    check: &[&str],
+) -> AccessError {
+    let (kind, listed) = match error.kind() {
+        StatementErrorKind::UniqueViolation => (AccessErrorKind::UniqueViolation, unique),
+        StatementErrorKind::ForeignKeyViolation => {
+            (AccessErrorKind::ForeignKeyViolation, foreign_key)
+        }
+        StatementErrorKind::CheckViolation => (AccessErrorKind::CheckViolation, check),
+        _ => return from_statement(error),
+    };
+    match error.constraint() {
+        Some(constraint) if listed.contains(&constraint) => {
+            AccessError::new(kind, serde_json::json!({ "constraint": constraint }))
+        }
+        _ => from_statement(error),
+    }
 }
 
 #[cfg(test)]

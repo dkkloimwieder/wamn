@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.product_code,\n    model.row_version\nFROM product AS model\nWHERE\n    ($1::jsonb IS NULL OR model.product_code IN (\n        SELECT filter.value::text\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n    ))\n    AND\n    ($2::timestamptz IS NULL OR model.created_at > $2::timestamptz\n        OR (model.created_at = $2::timestamptz AND model.id > $3::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $4::int8;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "product_code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "product_code"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Timestamptz",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "041738b4ceef42dfb0b4d1c3c9a0eef2dc130c57ecd54040019fa7a15d51d884"
+}

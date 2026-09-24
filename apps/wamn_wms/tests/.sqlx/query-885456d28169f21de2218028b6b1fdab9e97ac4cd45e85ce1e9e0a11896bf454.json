@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO location_command (idempotency_key, canonical_command)\nVALUES ($1::text, $2::bytea)\nON CONFLICT ON CONSTRAINT location_command_idempotency_key_pkey DO NOTHING\nRETURNING\n    location_id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "location_command",
+            "name": "location_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "885456d28169f21de2218028b6b1fdab9e97ac4cd45e85ce1e9e0a11896bf454"
+}

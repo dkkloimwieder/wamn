@@ -62,6 +62,358 @@ pub const PALLET_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
+/// Input for `wamn-wms:pallet/create@1.0.0`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PalletCreateRequest {
+    /// `text`
+    pub idempotency_key: String,
+    /// `uuid`
+    pub location_id: uuid::Uuid,
+    /// `text`
+    pub pallet_code: String,
+    /// `string`
+    pub request_id: String,
+    /// `text`
+    pub status: String,
+}
+
+/// Result of `wamn-wms:pallet/create@1.0.0`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PalletCreateResult {
+    /// `timestamptz`
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub created_by: uuid::Uuid,
+    /// `uuid`
+    pub id: uuid::Uuid,
+    /// `uuid`
+    pub location_id: uuid::Uuid,
+    /// `text`
+    pub pallet_code: String,
+    /// `int64`
+    pub row_version: i64,
+    /// `text`
+    pub status: String,
+    /// `timestamptz`
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub updated_by: uuid::Uuid,
+}
+
+/// Input descriptors for `wamn-wms:pallet/create@1.0.0`.
+pub const PALLET_CREATE_INPUT: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        path: "idempotency_key",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "location_id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "pallet_code",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "request_id",
+        type_name: "string",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "status",
+        type_name: "text",
+        nullable: false,
+        values: &["available", "consumed", "held"],
+    },
+];
+
+/// Result descriptors for `wamn-wms:pallet/create@1.0.0`.
+pub const PALLET_CREATE_RESULT: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        path: "created_at",
+        type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "location_id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "pallet_code",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "row_version",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "status",
+        type_name: "text",
+        nullable: false,
+        values: &["available", "consumed", "held"],
+    },
+    FieldDescriptor {
+        path: "updated_at",
+        type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "updated_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+];
+
+pub const PALLET_CREATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "idempotency_key",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "location_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_code",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "string",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+];
+
+pub const PALLET_CREATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "location_id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pallet_code",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "row_version",
+            type_name: "int64",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "status",
+            type_name: "text",
+            nullable: false,
+            values: &["available", "consumed", "held"],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "updated_by",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+];
+
+pub const PALLET_CREATE_KIND: &str = "create";
+pub const PALLET_CREATE_REQUIRES_COMPOSITION: bool = false;
+pub const PALLET_CREATE_REPLAY: Option<&str> = Some("claim");
+pub const PALLET_CREATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const PALLET_CREATE_RESULT_OPAQUE: bool = false;
+/// The grant a caller presents to invoke `wamn-wms:pallet/create@1.0.0`.
+pub const PALLET_CREATE_GRANT: &str = "wamn-wms:pallet/create@1.0.0";
+
+/// Typed refusals `wamn-wms:pallet/create@1.0.0` declares.
+pub const PALLET_CREATE_ERRORS: &[&str] = &[
+    "check_violation",
+    "foreign_key_violation",
+    "idempotency_conflict",
+    "internal_error",
+    "invalid_input",
+    "permission_denied",
+    "retry",
+    "timeout",
+    "unique_violation",
+];
+
+/// Where the release publishes `wamn-wms:pallet/create@1.0.0`.
+///
+/// Method and template only — the host and base URL are the client's
+/// deployment config, not this release's facts.
+#[must_use]
+pub fn create_route() -> RouteMetadata {
+    RouteMetadata {
+        method: "POST".to_owned(),
+        template: "/pallet/create".to_owned(),
+    }
+}
+
+/// Invoke `wamn-wms:pallet/create@1.0.0` through a bound client.
+///
+/// # Errors
+///
+/// [`ClientError`] for a transport failure, a refusal, or a response that
+/// does not match the operation's envelope.
+pub async fn create(
+    client: &WamnClient,
+    items: &[serde_json::Value],
+) -> Result<Vec<wamn_client::ItemOutcome>, ClientError> {
+    client
+        .invoke(&create_route(), &std::collections::BTreeMap::new(), items)
+        .await
+}
+
 /// Input for `wamn-wms:pallet/get@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PalletGetRequest {

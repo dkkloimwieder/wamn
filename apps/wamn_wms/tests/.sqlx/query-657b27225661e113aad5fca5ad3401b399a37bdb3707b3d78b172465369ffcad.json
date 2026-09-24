@@ -1,0 +1,81 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH target AS MATERIALIZED (\n    SELECT id, row_version\n    FROM product\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE product AS model\n    SET\n        product_code = CASE WHEN $3::boolean THEN $4::text ELSE model.product_code END,\n        row_version = CASE\n            WHEN ($3::boolean AND $4::text::text IS DISTINCT FROM model.product_code::text)\n            THEN model.row_version + 1\n            ELSE model.row_version\n        END\n    FROM target\n    WHERE model.id = target.id\n      AND target.row_version = $2::int4\n    RETURNING\n    model.created_at,\n    model.id,\n    model.product_code,\n    model.row_version\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    (SELECT target.row_version FROM target) AS observed_row_version,\n    updated.created_at,\n    updated.id,\n    updated.product_code,\n    updated.row_version\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "observed_row_version",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "product_code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "product_code"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "product",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "657b27225661e113aad5fca5ad3401b399a37bdb3707b3d78b172465369ffcad"
+}
