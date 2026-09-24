@@ -6,6 +6,5 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Identity](identity.md): External login providers within the existing identity authority.
 - [Human identity and login](identity-plan.md): Incremental password login, later account lifecycle, and PAT-free sensitive operations with planning at each epic start.
 - [Operator UI](operator-ui.md): Deferred client and screen capabilities.
-- [Test oracles](test-oracles.md): Delete or rewrite the tests that compare source or DDL text to a string.
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
 - [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.
