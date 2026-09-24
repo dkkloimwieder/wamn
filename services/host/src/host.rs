@@ -31,9 +31,9 @@ use wamn_engine::engine::{
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
-    DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, ROUTER_DELIVERY_ID,
-    RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV,
-    WiringCacheCapacity,
+    DEFAULT_QUEUE_LEASE_TTL_MS, OperationHost, OperationScope, QueueService, QueueServiceConfig,
+    ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
+    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
 use wamn_platform_identity::route_caller_subject;
 use wamn_runtime::component_artifact_source::{
@@ -823,7 +823,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
-    let router_driver = match release.as_ref() {
+    let operations = match release.as_ref() {
         Some(release) => {
             let source: Arc<dyn ArtifactSource> =
                 if let Some(directory) = args.local_application.as_ref() {
@@ -860,7 +860,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .iter()
                 .map(|value| value.parse())
                 .collect::<Result<Vec<_>, _>>()?;
-            Some(Arc::new(RouterDriver::new(
+            Some(Arc::new(OperationHost::new(
                 Arc::clone(&engine),
                 Arc::clone(&postgres),
                 Arc::clone(&http_transport),
@@ -869,21 +869,28 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 allowed_hosts.into(),
                 Arc::clone(release),
                 source,
-                RouterDriverConfig {
+                OperationScope {
+                    project: args.project.clone(),
+                    schema: args.schema.clone(),
+                    owner_prefix: router_owner.clone(),
                     warm_reuse: wamn_engine::warm_reuse::WarmReuse::new(
                         &args.trusted_warm_component_digest,
                         args.component_pool_size,
                         args.component_reclaim_window_seconds,
                     )?,
-                    owner_prefix: router_owner.clone(),
-                    project: args.project.clone(),
-                    schema: args.schema.clone(),
-                    cache_capacity: args.wiring_cache_capacity,
                 },
             )?))
         }
         None => None,
     };
+    let router_driver = operations.as_ref().map(|operations| {
+        Arc::new(RouterDriver::new(
+            Arc::clone(operations),
+            RouterDriverConfig {
+                cache_capacity: args.wiring_cache_capacity,
+            },
+        ))
+    });
     // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
     // every digest this release serves and populates the driver's digest-keyed
     // component cache; without it the FIRST request pays a full pull and compile
@@ -893,8 +900,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // there and nowhere else, so the host that actually serves HTTP routes never
     // preloaded anything. Readiness is gated on the same call, so a host that
     // reports ready has the entries rather than a promise of them.
-    if let Some(driver) = router_driver.as_ref() {
-        let readiness = wamn_execution_host::RouterReadinessProbe::new(Arc::clone(driver));
+    if let Some(operations) = operations.as_ref() {
+        let readiness = wamn_execution_host::RouterReadinessProbe::new(
+            Arc::clone(operations),
+            router_driver.clone(),
+        );
         let snapshot = readiness.refresh().await;
         anyhow::ensure!(
             matches!(
@@ -986,11 +996,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(flow_http),
     ];
 
-    if let (Some(driver), Some(release)) = (&router_driver, &release) {
+    if let Some(operations) = &operations {
         plugins.push(Arc::new(
             RouterDeliveryBridge::new(
-                Arc::clone(driver),
-                Arc::clone(release),
+                Arc::clone(operations),
+                router_driver.clone(),
                 Arc::clone(&jetstream),
                 &args.project,
             )?

@@ -20,6 +20,7 @@ use wamn_catalog::{
     AdmittedComponent, ArtifactHash, ComponentSqlField, ComponentSqlValueType,
     ServingComponentOperation,
 };
+use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -283,9 +284,10 @@ pub(crate) fn invocation_span(
 
 /// The process capabilities that one released application runs on.
 ///
-/// The router driver and the route path share one host, so both call into the
+/// The process builds one host. The route path calls it directly, and the
+/// router driver runs each wiring node on the same host, so both call into the
 /// same loaded application.
-pub(crate) struct OperationHost {
+pub struct OperationHost {
     engine: Arc<Engine>,
     pub(crate) postgres: Arc<WamnPostgres>,
     /// Shared by every driver in this process, independently of fresh stores.
@@ -304,12 +306,24 @@ pub(crate) struct OperationHost {
     components: tokio::sync::OnceCell<Arc<[AdmittedComponent]>>,
 }
 
+impl fmt::Debug for OperationHost {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OperationHost")
+            .field("project", &self.project)
+            .field("schema", &self.schema)
+            .field("owner_prefix", &self.owner_prefix)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The process-owned facts of an [`OperationHost`], outside its capabilities.
-pub(crate) struct OperationScope {
-    pub(crate) project: String,
-    pub(crate) schema: Option<String>,
-    pub(crate) owner_prefix: String,
-    pub(crate) warm_reuse: WarmReuse,
+#[derive(Debug, Clone)]
+pub struct OperationScope {
+    pub project: String,
+    pub schema: Option<String>,
+    pub owner_prefix: String,
+    pub warm_reuse: WarmReuse,
 }
 
 impl OperationHost {
@@ -318,7 +332,8 @@ impl OperationHost {
         clippy::too_many_arguments,
         reason = "each host-owned capability is an independent production dependency"
     )]
-    pub(crate) fn new(
+    /// Every host in the same process must receive the same HTTP transport.
+    pub fn new(
         engine: Arc<Engine>,
         postgres: Arc<WamnPostgres>,
         http_transport: Arc<HttpTransport>,
@@ -328,8 +343,13 @@ impl OperationHost {
         release: Arc<LoadedRelease>,
         source: Arc<dyn ArtifactSource>,
         scope: OperationScope,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            valid_runner(&scope.owner_prefix),
+            "invalid router owner {:?}: 1-128 chars of [A-Za-z0-9_-] required",
+            scope.owner_prefix
+        );
+        Ok(Self {
             engine,
             postgres,
             http_transport,
@@ -344,7 +364,7 @@ impl OperationHost {
             warm_reuse: scope.warm_reuse,
             native: tokio::sync::OnceCell::new(),
             components: tokio::sync::OnceCell::new(),
-        }
+        })
     }
 
     /// The identity of the carried release, bound on every released call.

@@ -621,8 +621,8 @@ mod tests {
         let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()));
         let bridge = Arc::new(
             RouterDeliveryBridge::new(
-                Arc::clone(&route.driver),
-                Arc::clone(&route.release),
+                route.driver.operations(),
+                Some(Arc::clone(&route.driver)),
                 jetstream,
                 PROJECT,
             )

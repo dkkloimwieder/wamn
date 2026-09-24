@@ -352,8 +352,8 @@ mod tests {
                 .map_err(|error| anyhow::anyhow!("activate test event streams: {error:?}"))?;
             let bridge = Arc::new(
                 RouterDeliveryBridge::new(
-                    Arc::clone(&route.driver),
-                    Arc::clone(&route.release),
+                    route.driver.operations(),
+                    Some(Arc::clone(&route.driver)),
                     Arc::clone(&jetstream),
                     PROJECT,
                 )

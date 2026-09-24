@@ -64,9 +64,18 @@ struct ComponentPolicy {
 }
 
 /// The facts of one native call that only this policy reads.
-pub(crate) struct NativeFacts {
+pub struct NativeFacts {
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,
+}
+
+impl std::fmt::Debug for NativeFacts {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeFacts")
+            .field("caller_attached", &self.caller.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl NativeFacts {
@@ -81,7 +90,7 @@ impl NativeFacts {
 
 /// Immutable component policy and the authority of calls that are still active.
 #[derive(Debug, Clone)]
-pub(crate) struct NativePolicy {
+pub struct NativePolicy {
     resources: Arc<NativePolicyResources>,
     components: Arc<BTreeMap<String, Arc<ComponentPolicy>>>,
     bindings: Arc<RwLock<BTreeMap<String, Arc<ComponentPolicy>>>>,
@@ -338,7 +347,7 @@ impl InvocationPolicy for NativePolicy {
 
 /// Revoke host registries when a call returns, traps, fails to bind, or is cancelled.
 #[derive(Debug)]
-pub(crate) struct NativeAuthorityGuard {
+pub struct NativeAuthorityGuard {
     policy: NativePolicy,
     scope: String,
 }

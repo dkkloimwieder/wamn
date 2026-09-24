@@ -1,6 +1,6 @@
-//! Guest delivery into the single production router driver.
+//! Guest delivery. A route calls its one operation on the operation host, and
+//! a wiring target goes to the wiring layer through `WiringDelivery`.
 
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -8,29 +8,28 @@ use std::sync::Arc;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentTarget, ServingManifest, parse_attachment_auth_policy,
+    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, ServingManifest,
+    parse_attachment_auth_policy,
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
-use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 pub use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
-use wamn_runtime::plugins::wamn_jetstream::{
-    DerivedPublishRequest, RouterTapPhase, RouterTapPreview, WamnJetstream,
-};
+use wamn_runtime::plugins::wamn_jetstream::{RouterTapPhase, RouterTapPreview, WamnJetstream};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::Accessor;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use crate::RouterDriver;
 use crate::operation::{
     OperationHost, OperationRefusal, OperationRefusalKind, authorize_registered_operation,
 };
 use crate::route::{RouteCall, invoke_route};
-use crate::router_response::{InterruptedResponse, PartialEvidence};
-use crate::{RouterDriver, RouterDriverRequest};
 use wamn_engine::operation::node_types;
+
+mod wiring;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -46,8 +45,7 @@ mod bindings {
 
 use bindings::wamn::router_delivery::delivery::{
     self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryReport, DeliveryRequest,
-    EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureKind as WireFailureKind,
-    ParentCausation, PartialCompletion, PermissionDenial, Source,
+    FailureKind as WireFailureKind, ParentCausation, PermissionDenial, Source,
 };
 
 /// Host-plugin identity for the one guest-to-router bridge.
@@ -78,9 +76,54 @@ const PERMISSION_DENIED: &str = "permission-denied";
 const FRESH_CREDENTIAL_REQUIRED: &str = "fresh-credential-required";
 const EXECUTION_FAILED: &str = "execution-failed";
 
+/// The wiring arm of the bridge. A route never reaches it.
+///
+/// The router driver implements it. `wamn-xs9a.4` moves the driver and its
+/// implementation into the workflow layer.
+#[async_trait::async_trait]
+pub(crate) trait WiringDelivery: Send + Sync {
+    /// Resolve and check every wiring that a synchronous attachment targets.
+    async fn preload(&self) -> anyhow::Result<WiringPreload>;
+
+    /// Deliver to one wiring target, and settle it through the bridge.
+    async fn deliver(
+        &self,
+        bridge: &RouterDeliveryBridge,
+        call: WiringCall<'_>,
+    ) -> Result<DeliveryOutcome, DeliveryError>;
+}
+
+/// The synchronous wirings one readiness evaluation resolved.
+pub(crate) struct WiringPreload {
+    pub(crate) wirings: usize,
+    /// The release components the wirings name, or `None` when no
+    /// synchronous attachment targets a wiring.
+    pub(crate) components: Option<Arc<[AdmittedComponent]>>,
+}
+
+/// One delivery that the bridge resolved to a wiring target.
+pub(crate) struct WiringCall<'a> {
+    source: SourceRef<'a>,
+    delivery_id: String,
+    package_id: &'a str,
+    target: &'a AttachmentTarget,
+    wiring_id: &'a str,
+    wiring_version: u32,
+    caller_attached: bool,
+    payload: serde_json::Value,
+    caller: Option<AuthenticatedCaller>,
+    traceparent: Option<String>,
+    tracestate: Option<String>,
+    causation: Causation,
+    attributes: &'a [KeyValue],
+    deadline_adjustments: &'a mut Vec<crate::DeadlineAdjustment>,
+}
+
 /// The one bridge shared by attachment and registration ingress.
 pub struct RouterDeliveryBridge {
-    driver: Arc<RouterDriver>,
+    /// `None` on a host with no wiring layer. Such a host refuses a wiring
+    /// target.
+    wirings: Option<Arc<dyn WiringDelivery>>,
     /// The route path calls this host directly and never enters the driver.
     operations: Arc<OperationHost>,
     release: Arc<LoadedRelease>,
@@ -89,13 +132,15 @@ pub struct RouterDeliveryBridge {
 }
 
 impl RouterDeliveryBridge {
-    /// Bind the bridge to the process's existing driver and loaded manifest.
+    /// Bind the bridge to the process's operation host, its loaded manifest,
+    /// and the router driver that serves wiring targets, if any.
     pub fn new(
-        driver: Arc<RouterDriver>,
-        release: Arc<LoadedRelease>,
+        operations: Arc<OperationHost>,
+        driver: Option<Arc<RouterDriver>>,
         jetstream: Arc<WamnJetstream>,
         project: &str,
     ) -> anyhow::Result<Self> {
+        let release = Arc::clone(&operations.release);
         jetstream.bind_derived_scope(
             ROUTER_DELIVERY_ID,
             &release.manifest().release.tenant_id,
@@ -103,8 +148,8 @@ impl RouterDeliveryBridge {
             &release.manifest().release.environment,
         )?;
         Ok(Self {
-            operations: driver.operations(),
-            driver,
+            operations,
+            wirings: driver.map(|driver| driver as Arc<dyn WiringDelivery>),
             release,
             jetstream,
             metrics: None,
@@ -264,58 +309,33 @@ impl RouterDeliveryBridge {
             }
         };
 
-        let release = &self.release.manifest().release;
-        let request = RouterDriverRequest {
-            tenant_id: release.tenant_id.clone(),
-            package_id: target.package_id.clone(),
-            environment: release.environment.clone(),
-            wiring_id: wiring_id.clone(),
-            wiring_version,
-            delivery_id: delivery_id.clone(),
-            payload,
-            caller_attached: target.caller_attached,
-            caller,
-            traceparent,
-            tracestate,
-        };
-        let result = self
-            .driver
-            .execute_with_causation(request, causation.clone(), source.platform())
-            .await;
-        *deadline_adjustments = match &result {
-            Ok(delivery) => delivery.deadline_adjustments.clone(),
-            Err(error) => error
-                .downcast_ref::<crate::DeadlineAdjustments>()
-                .map(|adjustments| adjustments.0.clone())
-                .unwrap_or_default(),
-        };
-        match result {
-            Ok(delivery) => {
-                self.record(&attributes, DeliveryClass::Delivered);
-                let (outcome, result) = settled_preview(&delivery.outcome);
-                self.tap(
-                    source,
-                    &delivery_id,
-                    &target.target,
-                    RouterTapPhase::Settled(outcome),
-                    &result,
-                )
+        let Some(wirings) = &self.wirings else {
+            let error = anyhow::anyhow!("no wiring layer serves wiring {wiring_id:?}");
+            return self
+                .refuse(source, &delivery_id, &target.target, &attributes, &error)
                 .await;
-                self.publish_emit(
-                    &target.package_id,
-                    &wiring_id,
+        };
+        wirings
+            .deliver(
+                self,
+                WiringCall {
+                    source,
+                    delivery_id,
+                    package_id: &target.package_id,
+                    target: &target.target,
+                    wiring_id: &wiring_id,
                     wiring_version,
-                    &delivery.outcome,
+                    caller_attached: target.caller_attached,
+                    payload,
+                    caller,
+                    traceparent,
+                    tracestate,
                     causation,
-                )
-                .await?;
-                lower_with_evidence(delivery.outcome, delivery.partial)
-            }
-            Err(error) => {
-                self.refuse(source, &delivery_id, &target.target, &attributes, &error)
-                    .await
-            }
-        }
+                    attributes: &attributes,
+                    deadline_adjustments,
+                },
+            )
+            .await
     }
 
     /// Settle a delivery that the route path or the driver refused, or that
@@ -329,26 +349,6 @@ impl RouterDeliveryBridge {
         error: &anyhow::Error,
     ) -> Result<DeliveryOutcome, DeliveryError> {
         match error {
-            error if error.downcast_ref::<InterruptedResponse>().is_some() => {
-                let interrupted = error
-                    .downcast_ref::<InterruptedResponse>()
-                    .expect("guarded partial response");
-                let failure = interrupted
-                    .source
-                    .downcast_ref::<OperationRefusal>()
-                    .map_or(DeliveryError::ExecutionFailed, lower_operation_refusal);
-                self.record(attributes, DeliveryClass::ExecutionFailed);
-                self.tap(
-                    source,
-                    delivery_id,
-                    target,
-                    RouterTapPhase::Settled(EXECUTION_FAILED),
-                    &serde_json::Value::Null,
-                )
-                .await;
-                tracing::warn!(error = %format_args!("{:#}", interrupted.source), "router delivery failed after a declared committed result");
-                partial_outcome(&interrupted.evidence, FailedOutcome::Error(failure))
-            }
             error if error.downcast_ref::<OperationRefusal>().is_some() => {
                 let denial = error
                     .downcast_ref::<OperationRefusal>()
@@ -430,52 +430,6 @@ impl RouterDeliveryBridge {
             )
             .await;
     }
-
-    /// The wiring position this bridge resolved before the walk names the
-    /// publication on its effect span, and the node comes from the verdict the
-    /// walk recorded. A route never emits.
-    async fn publish_emit(
-        &self,
-        package_id: &str,
-        wiring_id: &str,
-        wiring_version: u32,
-        outcome: &Outcome,
-        causation: Causation,
-    ) -> Result<(), DeliveryError> {
-        let Some(Verdict::Emit {
-            event,
-            dedup_id,
-            entity,
-            operation,
-            node_id,
-        }) = outcome.verdict.as_ref()
-        else {
-            return Ok(());
-        };
-        self.jetstream
-            .publish_derived(DerivedPublishRequest {
-                component_id: ROUTER_DELIVERY_ID.to_owned(),
-                package_id: package_id.to_owned(),
-                wiring_id: wiring_id.to_owned(),
-                wiring_version,
-                node_id: node_id.clone(),
-                entity: entity.clone(),
-                operation: *operation,
-                payload: event.clone(),
-                dedup_id: dedup_id.clone(),
-                causation,
-            })
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                tracing::warn!(
-                    error = %error,
-                    error_kind = ?error.kind(),
-                    "derived-event publication did not receive a server ACK"
-                );
-                DeliveryError::ExecutionFailed
-            })
-    }
 }
 
 /// Only successful result values supply actor IDs. Refusals and input do not.
@@ -542,7 +496,8 @@ impl fmt::Debug for RouterDeliveryBridge {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RouterDeliveryBridge")
-            .field("driver", &self.driver)
+            .field("operations", &self.operations)
+            .field("wiring_layer", &self.wirings.is_some())
             .field("release", &self.release.release())
             .finish_non_exhaustive()
     }
@@ -891,153 +846,6 @@ fn settle_route(
     })
 }
 
-/// How one settled delivery reads in the live view: the outcome label, and the
-/// result the caller was given.
-///
-/// This mirrors [`lower_outcome`] arm for arm, INCLUDING its two order-sensitive
-/// rulings — a running walk is a failure whatever verdict it carries, and a
-/// first verdict stands over a later frontier failure. A live view that
-/// disagreed with what the caller actually received would be worse than none,
-/// because it would be believed.
-///
-/// The verdict payloads are BORROWED. The plugin copies only if it will publish,
-/// so a host with no data-plane NATS pays nothing for a preview it drops.
-fn settled_preview(outcome: &Outcome) -> (&'static str, Cow<'_, serde_json::Value>) {
-    if matches!(outcome.status, WalkStatus::Running) {
-        return (EXECUTION_FAILED, Cow::Owned(serde_json::Value::Null));
-    }
-    match outcome.verdict.as_ref() {
-        Some(Verdict::Respond { payload, .. }) => ("respond", Cow::Borrowed(payload)),
-        Some(Verdict::Emit { event, .. }) => ("emit", Cow::Borrowed(event)),
-        Some(Verdict::Discard) => ("discard", Cow::Owned(serde_json::Value::Null)),
-        None => match outcome.status {
-            WalkStatus::Cancelled => ("cancelled", Cow::Owned(serde_json::Value::Null)),
-            WalkStatus::Failed => (
-                "failed",
-                Cow::Owned(match outcome.failure.as_ref() {
-                    // The kind is deliberately absent: it has no wire spelling
-                    // of its own, and a `Debug` rendering on a subject a console
-                    // parses would drift the moment the enum is edited.
-                    Some(failure) => serde_json::json!({
-                        "code": failure.detail.code,
-                        "message": failure.detail.message,
-                    }),
-                    None => serde_json::Value::Null,
-                }),
-            ),
-            // A completed walk with no verdict never settled anything, and
-            // `lower_outcome` refuses both of these the same way.
-            WalkStatus::Completed | WalkStatus::Running => {
-                (EXECUTION_FAILED, Cow::Owned(serde_json::Value::Null))
-            }
-        },
-    }
-}
-
-fn lower_with_evidence(
-    outcome: Outcome,
-    evidence: Option<PartialEvidence>,
-) -> Result<DeliveryOutcome, DeliveryError> {
-    let lowered = lower_outcome(outcome);
-    match (lowered, evidence) {
-        (Ok(DeliveryOutcome::Failed(failure)), Some(evidence)) => {
-            partial_outcome(&evidence, FailedOutcome::Failed(failure))
-        }
-        (Ok(DeliveryOutcome::Cancelled), Some(evidence)) => {
-            partial_outcome(&evidence, FailedOutcome::Cancelled)
-        }
-        (Err(error), Some(evidence)) => partial_outcome(&evidence, FailedOutcome::Error(error)),
-        (outcome, _) => outcome,
-    }
-}
-
-fn partial_outcome(
-    evidence: &PartialEvidence,
-    failed_outcome: FailedOutcome,
-) -> Result<DeliveryOutcome, DeliveryError> {
-    let committed_result = serde_json::to_string(&evidence.committed_result)
-        .map_err(|_| DeliveryError::ExecutionFailed)?;
-    let effect_outcome = evidence.effect_outcome.map(|outcome| match outcome {
-        wamn_execution_contract::EffectOutcome::RefusedBeforeDispatch => {
-            WireEffectOutcome::RefusedBeforeDispatch
-        }
-        wamn_execution_contract::EffectOutcome::Responded => WireEffectOutcome::Responded,
-        wamn_execution_contract::EffectOutcome::Timeout => WireEffectOutcome::Timeout,
-        wamn_execution_contract::EffectOutcome::Cancelled => WireEffectOutcome::Cancelled,
-        wamn_execution_contract::EffectOutcome::EffectUncertain => {
-            WireEffectOutcome::EffectUncertain
-        }
-        wamn_execution_contract::EffectOutcome::ResponseLost => WireEffectOutcome::ResponseLost,
-    });
-    Ok(DeliveryOutcome::PartiallyCompleted(PartialCompletion {
-        committed_result,
-        failed_outcome,
-        effect_outcome,
-    }))
-}
-
-fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
-    if matches!(outcome.status, WalkStatus::Running) {
-        return Err(DeliveryError::ExecutionFailed);
-    }
-    if let Some(verdict) = outcome.verdict {
-        // A terminal may settle the delivery before the rest of the frontier
-        // drains. If later work fails (including SecondVerdict), the router's
-        // explicit invariant is that the first verdict stands. Preserve that
-        // caller truth and keep the later failure observable host-side.
-        if let Some(failure) = outcome.failure {
-            tracing::warn!(
-                failure_kind = ?failure.kind,
-                failure_code = failure.detail.code.as_deref(),
-                failure_message = %failure.detail.message,
-                "router delivery failed after its terminal verdict; first verdict stands"
-            );
-        }
-        return lower_verdict(verdict);
-    }
-    match outcome.status {
-        WalkStatus::Failed => outcome
-            .failure
-            .map(|failure| {
-                DeliveryOutcome::Failed(DeliveryFailure {
-                    kind: lower_failure_kind(failure.kind),
-                    code: failure.detail.code,
-                    message: failure.detail.message,
-                })
-            })
-            .ok_or(DeliveryError::ExecutionFailed),
-        WalkStatus::Cancelled => Ok(DeliveryOutcome::Cancelled),
-        WalkStatus::Completed | WalkStatus::Running => Err(DeliveryError::ExecutionFailed),
-    }
-}
-
-fn lower_verdict(verdict: Verdict) -> Result<DeliveryOutcome, DeliveryError> {
-    match verdict {
-        Verdict::Respond { payload, .. } => serde_json::to_string(&payload)
-            .map(DeliveryOutcome::Respond)
-            .map_err(|_| DeliveryError::ExecutionFailed),
-        Verdict::Emit {
-            event, dedup_id, ..
-        } => serde_json::to_string(&event)
-            .map(|event| DeliveryOutcome::Emit(Emission { event, dedup_id }))
-            .map_err(|_| DeliveryError::ExecutionFailed),
-        Verdict::Discard => Ok(DeliveryOutcome::Discard),
-    }
-}
-
-fn lower_failure_kind(kind: FailureKind) -> WireFailureKind {
-    match kind {
-        FailureKind::Terminal => WireFailureKind::Terminal,
-        FailureKind::RetryExhausted => WireFailureKind::RetryExhausted,
-        FailureKind::InvalidInput => WireFailureKind::InvalidInput,
-        FailureKind::HopLimit => WireFailureKind::HopLimit,
-        FailureKind::UnreleasedCaller => WireFailureKind::UnreleasedCaller,
-        FailureKind::MissingDedupId => WireFailureKind::MissingDedupId,
-        FailureKind::RespondWithoutCaller => WireFailureKind::RespondWithoutCaller,
-        FailureKind::SecondVerdict => WireFailureKind::SecondVerdict,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1059,8 +867,9 @@ mod tests {
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
-    use wamn_router::{ErrorDetail, Failure};
+    use wamn_router::{ErrorDetail, Failure, FailureKind, Outcome, Verdict, WalkStatus};
 
+    use super::wiring::{lower_outcome, settled_preview};
     use super::*;
 
     const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":3,"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"routes":[],"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
@@ -1683,8 +1492,14 @@ mod tests {
 
 #[cfg(test)]
 mod partial_tests {
+    use super::bindings::wamn::router_delivery::delivery::{
+        EffectOutcome as WireEffectOutcome, FailedOutcome,
+    };
+    use super::wiring::lower_with_evidence;
     use super::*;
+    use crate::router_response::PartialEvidence;
     use serde_json::json;
+    use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 
     fn evidence() -> PartialEvidence {
         PartialEvidence {

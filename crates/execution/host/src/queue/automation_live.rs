@@ -27,7 +27,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
-use crate::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use crate::{OperationHost, OperationScope, RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wamn_project_state::PlatformComponent;
 
 #[path = "automation_live/shutdown.rs"]
@@ -277,22 +277,26 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     )?;
     let logging = Arc::new(logging);
     let driver = Arc::new(RouterDriver::new(
-        Arc::clone(&engine),
-        Arc::clone(&postgres),
-        Arc::new(HttpTransport::new()?),
-        Arc::new(WamnCredentials::empty()),
-        Arc::clone(&logging),
-        Arc::from([]),
-        Arc::clone(&release),
-        Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
+        Arc::new(OperationHost::new(
+            Arc::clone(&engine),
+            Arc::clone(&postgres),
+            Arc::new(HttpTransport::new()?),
+            Arc::new(WamnCredentials::empty()),
+            Arc::clone(&logging),
+            Arc::from([]),
+            Arc::clone(&release),
+            Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
+            OperationScope {
+                project: "default".to_owned(),
+                schema: Some("application_data".to_owned()),
+                owner_prefix: "automation-live".to_owned(),
+                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+            },
+        )?),
         RouterDriverConfig {
-            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-            owner_prefix: "automation-live".to_owned(),
-            project: "default".to_owned(),
-            schema: Some("application_data".to_owned()),
             cache_capacity: WiringCacheCapacity::default(),
         },
-    )?);
+    ));
     let scope = QueueScope {
         tenant_id: TENANT.to_owned(),
         project: "default".to_owned(),

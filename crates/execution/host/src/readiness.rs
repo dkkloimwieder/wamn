@@ -1,12 +1,102 @@
 //! Probe-owned readiness for the synchronous release closure.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tokio::sync::Mutex as AsyncMutex;
+use wamn_catalog::{AttachmentKind, AttachmentTarget, ServingManifest};
 
 use crate::RouterDriver;
-use crate::router_driver::PreparedReleaseReadiness;
+use crate::operation::OperationHost;
+use crate::router_delivery::WiringDelivery;
+
+/// The synchronous release closure made resident by one readiness evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PreparedReleaseReadiness {
+    pub(crate) synchronous_wirings: usize,
+    pub(crate) synchronous_routes: usize,
+    pub(crate) component_digests: usize,
+}
+
+/// Prepare the released components required by synchronous attachments.
+/// Native readiness initializes each exact component without invoking its handler.
+async fn prepare_synchronous_release(
+    operations: &OperationHost,
+    wirings: Option<&dyn WiringDelivery>,
+) -> anyhow::Result<PreparedReleaseReadiness> {
+    let prepare_started = Instant::now();
+    let manifest = operations.release.manifest();
+    let routes = synchronous_route_count(manifest);
+    let (synchronous_wirings, mut components) = match wirings {
+        Some(wirings) => {
+            let preload = wirings.preload().await?;
+            (preload.wirings, preload.components)
+        }
+        None => (0, None),
+    };
+    // A route reads the same release component list with no wiring.
+    if components.is_none() && routes > 0 {
+        components = Some(operations.release_components().await?);
+    }
+    let Some(components) = components else {
+        return Ok(PreparedReleaseReadiness {
+            synchronous_wirings: 0,
+            synchronous_routes: 0,
+            component_digests: 0,
+        });
+    };
+    let digests: Vec<_> = components
+        .iter()
+        .map(|component| component.component_digest.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let bindings_ready = operations
+        .postgres
+        .release_component_bindings_ready(
+            &operations.project,
+            &manifest.release.tenant_id,
+            manifest.release.effective_release_id.get(),
+            &manifest.release.environment,
+            &digests,
+        )
+        .await?;
+    anyhow::ensure!(bindings_ready, "release-component-requirement-unbound");
+    operations.prepare_released(&components).await?;
+    tracing::info!(
+        target: "wamn::router",
+        synchronous_wirings,
+        synchronous_routes = routes,
+        component_digests = digests.len(),
+        elapsed_ms = %prepare_started.elapsed().as_millis(),
+        "synchronous release preload completed"
+    );
+    Ok(PreparedReleaseReadiness {
+        synchronous_wirings,
+        synchronous_routes: routes,
+        component_digests: digests.len(),
+    })
+}
+
+pub(crate) fn synchronous_route_count(manifest: &ServingManifest) -> usize {
+    manifest
+        .attachments
+        .values()
+        .filter(|attachment| {
+            synchronous_request_kind(attachment.kind)
+                && matches!(attachment.target, AttachmentTarget::Route { .. })
+        })
+        .count()
+}
+
+pub(crate) fn synchronous_request_kind(kind: AttachmentKind) -> bool {
+    matches!(
+        kind,
+        AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
+    )
+}
 
 /// Stable redacted probe refusal for any store, registry, integrity or capacity failure.
 pub const RELEASE_READINESS_CHECK_FAILED: &str = "release-readiness-check-failed";
@@ -108,7 +198,7 @@ impl ReadinessState {
     }
 }
 
-/// The readiness owner for one production router driver.
+/// The readiness owner for one released application and its wirings.
 ///
 /// Probe transport is intentionally outside this type. A transport observes
 /// [`snapshot`](Self::snapshot), calls [`refresh`](Self::refresh) while false,
@@ -116,15 +206,20 @@ impl ReadinessState {
 /// generation. Concurrent refreshes collapse onto one evaluation, and a Ready
 /// observation is a process-memory hit with no PostgreSQL or registry call.
 pub struct RouterReadinessProbe {
-    driver: Arc<RouterDriver>,
+    operations: Arc<OperationHost>,
+    /// `None` on a host with no wiring layer.
+    wirings: Option<Arc<dyn WiringDelivery>>,
     evaluation: AsyncMutex<()>,
     state: Mutex<ReadinessState>,
 }
 
 impl RouterReadinessProbe {
-    pub fn new(driver: Arc<RouterDriver>) -> Self {
+    /// Gate readiness on the release components, and on the synchronous
+    /// wirings of the router driver, if any.
+    pub fn new(operations: Arc<OperationHost>, driver: Option<Arc<RouterDriver>>) -> Self {
         Self {
-            driver,
+            operations,
+            wirings: driver.map(|driver| driver as Arc<dyn WiringDelivery>),
             evaluation: AsyncMutex::new(()),
             state: Mutex::new(ReadinessState::new()),
         }
@@ -153,7 +248,7 @@ impl RouterReadinessProbe {
             generation
         };
 
-        let prepared = self.driver.prepare_synchronous_release().await;
+        let prepared = prepare_synchronous_release(&self.operations, self.wirings.as_deref()).await;
         let mut state = self.state.lock().expect("router readiness lock poisoned");
         match prepared {
             Ok(prepared) => state.finish(generation, Ok(prepared)),

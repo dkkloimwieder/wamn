@@ -56,7 +56,8 @@ use wamn_engine::engine::{
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
-    RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
+    OperationHost, OperationScope, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
+    WiringCacheCapacity,
 };
 use wamn_gate_harness::journey::{BaseCandidate, JourneyDocument, MaterializerPhase};
 use wamn_platform_identity::{

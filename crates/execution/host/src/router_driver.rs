@@ -8,19 +8,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::operation::{
-    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationScope,
+    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
     authorize_registered_operation, bounded_node_deadline_ms, component_invocation,
     invocation_span, node_trace_context, remote_trace_context, validate_component_in_release,
 };
+use crate::readiness::synchronous_request_kind;
+use crate::router_delivery::WiringPreload;
 use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
 use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::{
-    AdmittedComponent, AttachmentKind, AttachmentTarget, DefinitionHash, ServingManifest,
-    ServingWiring,
+    AdmittedComponent, AttachmentTarget, DefinitionHash, ServingManifest, ServingWiring,
 };
-use wamn_control_registry::identifiers::valid_runner;
-use wamn_engine::artifact_source::{ArtifactSource, ComponentArtifactFetchErrorKind};
+use wamn_engine::artifact_source::ComponentArtifactFetchErrorKind;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{
     NativeApplication, OperationCall, OperationClosure, invoke_operation, node_types,
@@ -33,18 +33,13 @@ use wamn_router::{
     RateLimitDetail, Step, VersionKey, WiringCache, WiringCacheSnapshot,
 };
 use wamn_runtime::plugins::EffectEvidence;
-use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
 use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
-use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    CandidateBindingWorld, CandidateWiringResolution, ResolvedActiveWiring, WamnPostgres,
+    CandidateBindingWorld, CandidateWiringResolution, ResolvedActiveWiring,
 };
-use wash_runtime::engine::Engine;
-use wash_runtime::host::allowed_hosts::AllowedHost;
 
 /// Shared CLI/environment key for the only wiring cache in a serving process.
 pub const WIRING_CACHE_CAPACITY_ENV: &str = "WAMN_WIRING_CACHE_CAPACITY";
@@ -103,13 +98,10 @@ impl fmt::Display for InvalidWiringCacheCapacity {
 
 impl std::error::Error for InvalidWiringCacheCapacity {}
 
-/// Process-owned construction facts shared by the host and executor leaves.
+/// Process-owned construction facts of the driver. The operation host holds
+/// the project, schema, owner, and warm reuse facts.
 #[derive(Debug, Clone)]
 pub struct RouterDriverConfig {
-    pub warm_reuse: wamn_engine::warm_reuse::WarmReuse,
-    pub owner_prefix: String,
-    pub project: String,
-    pub schema: Option<String>,
     pub cache_capacity: WiringCacheCapacity,
 }
 
@@ -296,14 +288,6 @@ pub struct RouterDriverSnapshot {
     pub wiring_cache: WiringCacheSnapshot,
 }
 
-/// The synchronous release closure made resident by one readiness evaluation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PreparedReleaseReadiness {
-    pub(crate) synchronous_wirings: usize,
-    pub(crate) synchronous_routes: usize,
-    pub(crate) component_digests: usize,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct CatalogFacts {
     effective_release_id: u32,
@@ -358,57 +342,22 @@ impl fmt::Debug for RouterDriver {
 }
 
 impl RouterDriver {
-    /// Bind one release to the process-owned capabilities.
-    /// Every driver in the same process must receive the same HTTP transport.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "each host-owned capability is an independent production dependency"
-    )]
-    pub fn new(
-        engine: Arc<Engine>,
-        postgres: Arc<WamnPostgres>,
-        http_transport: Arc<HttpTransport>,
-        credentials: Arc<WamnCredentials>,
-        logging: Arc<WamnLogging>,
-        allowed_hosts: Arc<[AllowedHost]>,
-        release: Arc<LoadedRelease>,
-        source: Arc<dyn ArtifactSource>,
-        config: RouterDriverConfig,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            valid_runner(&config.owner_prefix),
-            "invalid router owner {:?}: 1-128 chars of [A-Za-z0-9_-] required",
-            config.owner_prefix
-        );
+    /// Run wiring nodes on the process's one operation host. The route path
+    /// calls the same host, so a route and a wiring share one loaded
+    /// application.
+    pub fn new(operations: Arc<OperationHost>, config: RouterDriverConfig) -> Self {
         let cache = Arc::new(WiringCache::new(config.cache_capacity.get()));
-        let operations = Arc::new(OperationHost::new(
-            engine,
-            postgres,
-            http_transport,
-            credentials,
-            logging,
-            allowed_hosts,
-            Arc::clone(&release),
-            source,
-            OperationScope {
-                project: config.project.clone(),
-                schema: config.schema.clone(),
-                owner_prefix: config.owner_prefix.clone(),
-                warm_reuse: config.warm_reuse.clone(),
-            },
-        ));
-        Ok(Self {
+        Self {
+            release: Arc::clone(&operations.release),
             operations,
-            release,
             config,
             cache,
             started: Instant::now(),
-        })
+        }
     }
 
-    /// The operation host this driver runs its nodes on. The route path calls
-    /// the same host, so a route and a wiring share one loaded application.
-    pub(crate) fn operations(&self) -> Arc<OperationHost> {
+    /// The operation host this driver runs its nodes on.
+    pub fn operations(&self) -> Arc<OperationHost> {
         Arc::clone(&self.operations)
     }
 
@@ -418,15 +367,11 @@ impl RouterDriver {
         }
     }
 
-    /// Prepare the released components required by synchronous attachments.
-    /// Native readiness initializes each exact component without invoking its handler.
-    pub(crate) async fn prepare_synchronous_release(
-        &self,
-    ) -> anyhow::Result<PreparedReleaseReadiness> {
-        let prepare_started = Instant::now();
+    /// Resolve and check every wiring that a synchronous attachment targets.
+    /// The components come back for the release readiness to prepare.
+    pub(crate) async fn preload_synchronous_wirings(&self) -> anyhow::Result<WiringPreload> {
         let manifest = self.release.manifest();
         let targets = synchronous_wiring_targets(manifest);
-        let routes = synchronous_route_count(manifest);
         anyhow::ensure!(
             targets.len() <= self.config.cache_capacity.get().get(),
             "release-wiring-preload-exceeds-cache-capacity"
@@ -455,48 +400,9 @@ impl RouterDriver {
             }
             components = Some(Arc::clone(&active.facts.components));
         }
-        // A route reads the same release component list with no wiring.
-        if components.is_none() && routes > 0 {
-            components = Some(self.operations.release_components().await?);
-        }
-        let Some(components) = components else {
-            return Ok(PreparedReleaseReadiness {
-                synchronous_wirings: 0,
-                synchronous_routes: 0,
-                component_digests: 0,
-            });
-        };
-        let digests: Vec<_> = components
-            .iter()
-            .map(|component| component.component_digest.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let bindings_ready = self
-            .operations
-            .postgres
-            .release_component_bindings_ready(
-                &self.config.project,
-                &manifest.release.tenant_id,
-                manifest.release.effective_release_id.get(),
-                &manifest.release.environment,
-                &digests,
-            )
-            .await?;
-        anyhow::ensure!(bindings_ready, "release-component-requirement-unbound");
-        self.operations.prepare_released(&components).await?;
-        tracing::info!(
-            target: "wamn::router",
-            synchronous_wirings = targets.len(),
-            synchronous_routes = routes,
-            component_digests = digests.len(),
-            elapsed_ms = %prepare_started.elapsed().as_millis(),
-            "synchronous release preload completed"
-        );
-        Ok(PreparedReleaseReadiness {
-            synchronous_wirings: targets.len(),
-            synchronous_routes: routes,
-            component_digests: digests.len(),
+        Ok(WiringPreload {
+            wirings: targets.len(),
+            components,
         })
     }
 
@@ -694,7 +600,7 @@ impl RouterDriver {
                             }
                             let span = component_invocation_span(
                                 &request,
-                                &self.config.project,
+                                &self.operations.project,
                                 active.version,
                                 &component.component_digest,
                                 &call,
@@ -769,7 +675,7 @@ impl RouterDriver {
             .operations
             .postgres
             .resolve_candidate_wiring(
-                &self.config.project,
+                &self.operations.project,
                 &target.tenant_id,
                 &target.package_id,
                 &target.environment,
@@ -870,7 +776,7 @@ impl RouterDriver {
             .operations
             .postgres
             .resolve_release_wiring(
-                &self.config.project,
+                &self.operations.project,
                 &request.tenant_id,
                 &request.package_id,
                 &request.environment,
@@ -1127,24 +1033,6 @@ fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, S
         .collect()
 }
 
-fn synchronous_route_count(manifest: &ServingManifest) -> usize {
-    manifest
-        .attachments
-        .values()
-        .filter(|attachment| {
-            synchronous_request_kind(attachment.kind)
-                && matches!(attachment.target, AttachmentTarget::Route { .. })
-        })
-        .count()
-}
-
-fn synchronous_request_kind(kind: AttachmentKind) -> bool {
-    matches!(
-        kind,
-        AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
-    )
-}
-
 fn lower_node_outcome(
     outcome: Result<node_types::Emission, node_types::NodeError>,
 ) -> anyhow::Result<NodeOutcome> {
@@ -1202,6 +1090,8 @@ mod tests {
     };
 
     use super::*;
+    use crate::readiness::synchronous_route_count;
+    use wamn_catalog::AttachmentKind;
 
     const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
     const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";

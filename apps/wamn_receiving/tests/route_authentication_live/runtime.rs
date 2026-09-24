@@ -351,22 +351,26 @@ pub(super) async fn build_journey_runtime(
         .context("build the cached Receiving router engine")?,
     );
     let driver = Arc::new(RouterDriver::new(
-        Arc::clone(&engine),
-        Arc::clone(&postgres),
-        Arc::new(wamn_runtime::plugins::connection_http::transport::HttpTransport::new()?),
-        Arc::new(WamnCredentials::empty()),
-        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
-        Arc::from(Vec::<AllowedHost>::new()),
-        Arc::clone(&release),
-        Arc::new(source),
+        Arc::new(OperationHost::new(
+            Arc::clone(&engine),
+            Arc::clone(&postgres),
+            Arc::new(wamn_runtime::plugins::connection_http::transport::HttpTransport::new()?),
+            Arc::new(WamnCredentials::empty()),
+            Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
+            Arc::from(Vec::<AllowedHost>::new()),
+            Arc::clone(&release),
+            Arc::new(source),
+            OperationScope {
+                project: PROJECT.to_owned(),
+                schema: Some("receiving".to_owned()),
+                owner_prefix: "receiving-route-live".to_owned(),
+                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+            },
+        )?),
         RouterDriverConfig {
-            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-            owner_prefix: "receiving-route-live".to_owned(),
-            project: PROJECT.to_owned(),
-            schema: Some("receiving".to_owned()),
             cache_capacity: WiringCacheCapacity::default(),
         },
-    )?);
+    ));
     let jetstream = Arc::new(
         WamnJetstream::new(WamnJetstreamConfig {
             nats_url: None,
@@ -375,8 +379,8 @@ pub(super) async fn build_journey_runtime(
         .with_release(Some(Arc::clone(&release))),
     );
     let bridge = Arc::new(RouterDeliveryBridge::new(
-        driver,
-        Arc::clone(&release),
+        driver.operations(),
+        Some(driver),
         jetstream,
         PROJECT,
     )?);

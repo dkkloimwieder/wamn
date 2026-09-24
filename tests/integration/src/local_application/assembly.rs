@@ -22,8 +22,8 @@ use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
-    RouterDeliveryBridge, RouterDriver, RouterDriverConfig, RouterReadinessProbe,
-    RouterReadinessStatus, WiringCacheCapacity,
+    OperationHost, OperationScope, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
+    RouterReadinessProbe, RouterReadinessStatus, WiringCacheCapacity,
 };
 use wamn_platform_identity::{
     assign_project_role, create_service, issue_pat, route_caller_subject,
@@ -296,23 +296,27 @@ pub(super) async fn assemble(
         ),
     )));
     let driver = Arc::new(RouterDriver::new(
-        Arc::clone(&engine),
-        Arc::clone(&postgres),
-        Arc::new(HttpTransport::new()?),
-        Arc::new(WamnCredentials::empty()),
-        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
-        Arc::from([]),
-        Arc::clone(&release),
-        Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
+        Arc::new(OperationHost::new(
+            Arc::clone(&engine),
+            Arc::clone(&postgres),
+            Arc::new(HttpTransport::new()?),
+            Arc::new(WamnCredentials::empty()),
+            Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
+            Arc::from([]),
+            Arc::clone(&release),
+            Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
+            OperationScope {
+                project: input.project.to_owned(),
+                schema: Some(input.schema.to_owned()),
+                owner_prefix: "local-application".into(),
+                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+            },
+        )?),
         RouterDriverConfig {
-            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-            owner_prefix: "local-application".into(),
-            project: input.project.to_owned(),
-            schema: Some(input.schema.to_owned()),
             cache_capacity: WiringCacheCapacity::default(),
         },
-    )?);
-    let readiness = RouterReadinessProbe::new(Arc::clone(&driver))
+    ));
+    let readiness = RouterReadinessProbe::new(driver.operations(), Some(Arc::clone(&driver)))
         .refresh()
         .await;
     anyhow::ensure!(
@@ -327,8 +331,8 @@ pub(super) async fn assemble(
         .with_release(Some(Arc::clone(&release))),
     );
     let bridge = Arc::new(RouterDeliveryBridge::new(
-        driver,
-        Arc::clone(&release),
+        driver.operations(),
+        Some(driver),
         jetstream,
         input.project,
     )?);

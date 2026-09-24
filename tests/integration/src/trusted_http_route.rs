@@ -46,7 +46,9 @@ use wamn_engine::component_artifact::{
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_execution_host::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use wamn_execution_host::{
+    OperationHost, OperationScope, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
+};
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -213,30 +215,34 @@ async fn build_with_credentials(
     )
     .context("build the component puller registry client")?;
 
-    let driver = Arc::new(
-        RouterDriver::new(
-            engine,
-            postgres,
-            Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
-            Arc::new(credentials),
-            Arc::new(
-                WamnLogging::new(&WamnLoggingConfig::default()).context("build wamn:logging")?,
-            ),
-            // The upstream is a loopback origin the test owns; the cluster
-            // ceiling is Kubernetes' job, not this fixture's.
-            Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
-            Arc::clone(&release),
-            Arc::new(source),
-            RouterDriverConfig {
-                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-                owner_prefix: "trusted-http-route".to_owned(),
-                project: PROJECT.to_owned(),
-                schema: None,
-                cache_capacity: WiringCacheCapacity::default(),
-            },
-        )
-        .context("build the router driver")?,
-    );
+    let driver = Arc::new(RouterDriver::new(
+        Arc::new(
+            OperationHost::new(
+                engine,
+                postgres,
+                Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
+                Arc::new(credentials),
+                Arc::new(
+                    WamnLogging::new(&WamnLoggingConfig::default())
+                        .context("build wamn:logging")?,
+                ), // The upstream is a loopback origin the test owns; the cluster
+                // ceiling is Kubernetes' job, not this fixture's.
+                Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
+                Arc::clone(&release),
+                Arc::new(source),
+                OperationScope {
+                    project: PROJECT.to_owned(),
+                    schema: None,
+                    owner_prefix: "trusted-http-route".to_owned(),
+                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+                },
+            )
+            .context("build the router driver")?,
+        ),
+        RouterDriverConfig {
+            cache_capacity: WiringCacheCapacity::default(),
+        },
+    ));
 
     Ok(TrustedHttpRoute {
         driver,

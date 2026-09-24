@@ -14,6 +14,7 @@ mod router_response;
 /// given.
 pub use wamn_router::Verdict;
 
+pub use operation::{OperationHost, OperationScope};
 pub use queue::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig};
 pub use readiness::{
     RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,
