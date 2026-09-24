@@ -13,7 +13,8 @@
 //! The enqueue path stays in `wamn-control`, because it reads the release
 //! snapshot that publish writes there.
 //!
-//! The plan is `docs/plan/workflow-crate.md`. The walk is the crate `wamn-router`, at
+//! `docs/architecture/overview.md` places this crate among the runtime owners.
+//! The walk is the crate `wamn-router`, at
 //! `crates/execution/workflow/router`. This crate is its only consumer.
 //!
 //! Every node calls `invoke_operation`. This crate owns no invocation path of

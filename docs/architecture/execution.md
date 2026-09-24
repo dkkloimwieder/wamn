@@ -102,7 +102,7 @@ The [engine operation module](../../crates/platform/engine/src/operation.rs) run
 It owns the deadline, workload loading, and invocation state.
 It reaches the host through two traits: `ApplicationHost` gives the loaded application, and `InvocationPolicy` grants and revokes the authority of each call.
 The [host operation module](../../crates/execution/host/src/operation.rs) implements both traits and owns authority.
-The [driver](../../crates/execution/workflow/src/router_driver.rs) walks a wiring graph and calls the operation module for each node.
+The [driver](../../crates/execution/workflow/src/router_driver.rs) in `wamn-workflow` walks a wiring graph and calls the operation module for each node.
 The [route path](../../crates/execution/host/src/route.rs) calls it once for a route target and never enters the driver.
 A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
 The caller decides whether to send a new request.
@@ -112,11 +112,11 @@ Admission checks the context, node errors, and every nested value.
 It refuses store-owned resources at these boundaries.
 A composed call inside an application uses the typed entrypoint.
 JSON adapters serve HTTP and dynamic routing.
-The pure router owns deterministic graph decisions.
+The pure router, `wamn-router`, owns deterministic graph decisions.
 After initialization, the host records caller, SQL, claims, causation, and effect authority in an invocation scope.
 Native callbacks restore the trace context from that scope.
 Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
-The host owns durable queue claims and settlement through the `RunStore` trait of `wamn-run-state`.
+The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue claims and settlement through the `RunStore` trait of `wamn-run-state`.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases; replicas need no wake service or process-local handoff.

@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 wamn-execution-host = { workspace = true }
-# The walk, the wiring delivery, and the queue (docs/plan/workflow-crate.md).
+# The walk, the wiring delivery, and the queue (docs/architecture/overview.md).
 wamn-workflow = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
