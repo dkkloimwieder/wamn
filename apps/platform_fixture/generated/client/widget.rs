@@ -235,8 +235,8 @@ pub async fn archive(
 /// Input for `platform-fixture:widget/create@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetCreateRequest {
-    /// `text`, omittable
-    pub code: Option<String>,
+    /// `text`
+    pub code: String,
     /// `text`
     pub idempotency_key: String,
     /// `uuid`, omittable
@@ -269,8 +269,8 @@ pub const WIDGET_CREATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "code",
         type_name: "text",
-        nullable: true,
-        values: &[],
+        nullable: false,
+        values: &["priority", "standard"],
     },
     FieldDescriptor {
         path: "idempotency_key",
@@ -344,9 +344,9 @@ pub const WIDGET_CREATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
             path: "code",
             type_name: "text",
             nullable: false,
-            values: &[],
+            values: &["priority", "standard"],
         },
-        required: false,
+        required: true,
         minimum: None,
         maximum: None,
         children: &[],
@@ -1166,7 +1166,7 @@ pub const WIDGET_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "filter.code[]",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["priority", "standard"],
     },
     FieldDescriptor {
         path: "limit",
@@ -1184,13 +1184,13 @@ pub const WIDGET_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "sort.direction",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["ascending", "descending"],
     },
     FieldDescriptor {
         path: "sort.field",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["created_at"],
     },
 ];
 
@@ -1272,7 +1272,7 @@ pub const WIDGET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
                     path: "filter.code[]",
                     type_name: "text",
                     nullable: false,
-                    values: &[],
+                    values: &["priority", "standard"],
                 },
                 required: true,
                 minimum: None,
@@ -1321,7 +1321,7 @@ pub const WIDGET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
                     path: "sort.direction",
                     type_name: "text",
                     nullable: false,
-                    values: &[],
+                    values: &["ascending", "descending"],
                 },
                 required: true,
                 minimum: None,
@@ -1333,7 +1333,7 @@ pub const WIDGET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
                     path: "sort.field",
                     type_name: "text",
                     nullable: false,
-                    values: &[],
+                    values: &["created_at"],
                 },
                 required: true,
                 minimum: None,
@@ -1774,8 +1774,8 @@ pub async fn record_batch(
 /// Input for `platform-fixture:widget/update@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetUpdateRequest {
-    /// `object`, omittable
-    pub change: Option<WidgetUpdateRequestChange>,
+    /// `object`
+    pub change: WidgetUpdateRequestChange,
     /// `int64`
     pub expected_edit_version: i64,
     /// `uuid`
@@ -1817,7 +1817,7 @@ pub const WIDGET_UPDATE_INPUT: &[FieldDescriptor] = &[
         path: "change.code",
         type_name: "text",
         nullable: true,
-        values: &[],
+        values: &["priority", "standard"],
     },
     FieldDescriptor {
         path: "change.maker_id",
@@ -1899,7 +1899,7 @@ pub const WIDGET_UPDATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
             nullable: false,
             values: &[],
         },
-        required: false,
+        required: true,
         minimum: None,
         maximum: None,
         children: &[
@@ -1908,7 +1908,7 @@ pub const WIDGET_UPDATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
                     path: "change.code",
                     type_name: "text",
                     nullable: false,
-                    values: &[],
+                    values: &["priority", "standard"],
                 },
                 required: false,
                 minimum: None,

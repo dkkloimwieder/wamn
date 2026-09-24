@@ -76,7 +76,9 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     operation: "platform-fixture:widget/create@1.0.0",
     kind: "create",
     input: crate::widget::WIDGET_CREATE_INPUT_SCHEMA,
-    input_schema: None,
+    input_schema: Some(
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"enum\":[\"priority\",\"standard\",null],\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"maker_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"note\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"request_id\",\"code\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+    ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
@@ -167,7 +169,9 @@ pub static DELETE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     operation: "platform-fixture:widget/delete@1.0.0",
     kind: "delete",
     input: crate::widget::WIDGET_DELETE_INPUT_SCHEMA,
-    input_schema: None,
+    input_schema: Some(
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"expected_edit_version\",\"id\",\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+    ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
@@ -249,7 +253,9 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     operation: "platform-fixture:widget/get@1.0.0",
     kind: "get",
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
-    input_schema: None,
+    input_schema: Some(
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\",\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+    ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,
@@ -381,7 +387,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "query",
     input: crate::widget::WIDGET_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"properties\":{\"cursor\":{\"type\":\"string\"},\"filter\":{\"properties\":{\"code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"type\":\"integer\"},\"request_id\":{\"type\":\"string\"},\"sort\":{\"properties\":{\"direction\":{\"type\":\"string\"},\"field\":{\"type\":\"string\"}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"items\":{\"enum\":[\"priority\",\"standard\"],\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -528,7 +534,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "update",
     input: crate::widget::WIDGET_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"properties\":{\"change\":{\"properties\":{\"code\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"maker_id\":{\"format\":\"uuid\",\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"note\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"}},\"type\":\"object\"},\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"format\":\"uuid\",\"type\":\"string\"},\"request_id\":{\"type\":\"string\"}},\"required\":[\"id\",\"expected_edit_version\",\"request_id\"],\"type\":\"object\"},\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"change\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"enum\":[\"priority\",\"standard\",null],\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"maker_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"note\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"}},\"type\":\"object\"},\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"expected_edit_version\",\"id\",\"request_id\",\"change\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),

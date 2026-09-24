@@ -848,10 +848,16 @@ fn emit_operation_contracts(
         &format!("{root}.operation.json"),
         &Value::Object(operation_contract),
     )?;
+    let input = input_contract(manifest, model, table, action, operation);
+    insert_json(files, &format!("{root}.input.json"), &input)?;
     insert_json(
         files,
-        &format!("{root}.input.json"),
-        &input_contract(manifest, model, table, action, operation),
+        &format!(
+            "{}{model_name}/{}.json",
+            crate::route_schema::GENERATED_ROUTES,
+            action.as_str()
+        ),
+        &super::routes::route_input_schema(&input),
     )?;
     insert_json(
         files,
@@ -1004,11 +1010,23 @@ fn input_contract(
         .iter()
         .map(|field| {
             let column = column(table, field).expect("validation resolved writable fields");
+            // A create that omits a NOT NULL column with no default cannot
+            // take a default, so the omission is refused, not defaulted.
+            let omitted = if action == CrudAction::Update {
+                "unchanged"
+            } else if !column.nullable()
+                && column.default().is_none()
+                && column.generation().is_none()
+            {
+                "invalid_input"
+            } else {
+                "postgres_default"
+            };
             let mut declared = json!({
                 "field": field,
                 "path": if action == CrudAction::Update { format!("change.{field}") } else { field.clone() },
                 "type": column.column_type().as_str(),
-                "omitted": if action == CrudAction::Update { "unchanged" } else { "postgres_default" },
+                "omitted": omitted,
                 "explicit_null": if column.nullable() { "accepted" } else { "invalid_input" },
             });
             // A control the operator fills reads the column's own text, at the
@@ -1020,9 +1038,13 @@ fn input_contract(
             if let Some((referenced, _)) = column_reference(manifest, table, field) {
                 members.insert("references".to_owned(), json!({"model": referenced}));
             }
-            // A create that accepts fewer values than the model declares
-            // states them, so a client offers only those.
-            if let Some(values) = operation.values.get(field) {
+            // A field states the values it accepts: the model's, or the fewer
+            // a create declares, so a client and the route offer only those.
+            if let Some(values) = operation
+                .values
+                .get(field)
+                .or_else(|| model.enum_fields.get(field))
+            {
                 members.insert("values".to_owned(), json!(values));
             }
             declared
@@ -1055,10 +1077,11 @@ fn input_contract(
                         "binding": "json_array",
                         "type": column.column_type().as_str(),
                     });
-                    declared
-                        .as_object_mut()
-                        .expect("a filter object")
-                        .extend(model_text_members(model, &filter.field));
+                    let members = declared.as_object_mut().expect("a filter object");
+                    members.extend(model_text_members(model, &filter.field));
+                    if let Some(values) = model.enum_fields.get(&filter.field) {
+                        members.insert("values".to_owned(), json!(values));
+                    }
                     declared
                 }).collect::<Vec<_>>(),
                 "sort": operation.sort.as_ref().map(|sort| json!({

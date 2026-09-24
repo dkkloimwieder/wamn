@@ -69,11 +69,11 @@ fn code_omission_stays_absent_while_explicit_null_is_refused() {
             ..scalar("change", "object", true, false)
         },
     ];
-    let attachments: Value = serde_json::from_str(include_str!(
-        "../../../../apps/platform_fixture/publication/attachments.json"
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../../apps/platform_fixture/generated/routes/widget/update.json"
     ))
-    .expect("parse the fixture publication");
-    let schema = &attachments["widget-update-http"]["definition"]["input-schema"];
+    .expect("parse the fixture route schema");
+    let schema = &schema;
     let mut item = json!({"request_id":"r1", "id":"00000000-0000-0000-0000-000000000001",
         "expected_edit_version": 4, "change": {}});
     assert_eq!(build_request(FIELDS, &item, Some(schema)).expect("omit code without clearing it").body(),

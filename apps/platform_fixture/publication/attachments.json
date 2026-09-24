@@ -28,7 +28,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/create@1.0.0",
-    "definition-hash": "sha256:d4c7bc7bb7dc12d5c049f34da5ff84ac388625f1ee65a44fb3d83c9806e06db4",
+    "definition-hash": "sha256:1538fdcbfb8cdc0ab8a97b0f584e707aaf663b9b3d8180ff2b02c65fbcf8ef12",
     "definition": {
       "id": "widget-create-http",
       "kind": "http",
@@ -38,7 +38,8 @@
       },
       "raw-body-bytes": {
         "maximum": 1048576
-      }
+      },
+      "input-schema": {"$ref": "generated/routes/widget/create.json"}
     },
     "auth-policy": {
       "modes": [
@@ -52,7 +53,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/delete@1.0.0",
-    "definition-hash": "sha256:5e3a1dc63d6ad8a54a4a87aa1665ccdf9d08c8381eabd33512e18b0256efdc9e",
+    "definition-hash": "sha256:55dfdc7a31419ea2e12f90c787f459c6d4c4d6bef29a7396852cd83fd182d020",
     "definition": {
       "id": "widget-delete-http",
       "kind": "http",
@@ -62,7 +63,8 @@
       },
       "raw-body-bytes": {
         "maximum": 1048576
-      }
+      },
+      "input-schema": {"$ref": "generated/routes/widget/delete.json"}
     },
     "auth-policy": {
       "modes": [
@@ -76,7 +78,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/get@1.0.0",
-    "definition-hash": "sha256:d9cc06b8e94d8a3496be89d62e34d66350cb0e491a3b9f78dcfec9a603539e96",
+    "definition-hash": "sha256:2624f2a6210cc21d47eb8f3dcd8bc51e647325cce352a88c73267763f61ec540",
     "definition": {
       "id": "widget-get-http",
       "kind": "http",
@@ -86,7 +88,8 @@
       },
       "raw-body-bytes": {
         "maximum": 1048576
-      }
+      },
+      "input-schema": {"$ref": "generated/routes/widget/get.json"}
     },
     "auth-policy": {
       "modes": [
@@ -148,7 +151,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget-maker/query@1.0.0",
-    "definition-hash": "sha256:b6ba21454a9dd52f72d137345c41c080e5acebcbed71db1166cd8abf69720ee9",
+    "definition-hash": "sha256:0431702a7ca19fb6620d0ea16caacfb66b63022ff59af51568276aa975c58d8f",
     "definition": {
       "id": "widget-maker-query-http",
       "kind": "http",
@@ -159,52 +162,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "properties": {
-            "request_id": {
-              "type": "string"
-            },
-            "cursor": {
-              "type": "string"
-            },
-            "limit": {
-              "type": "integer"
-            },
-            "filter": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              }
-            },
-            "sort": {
-              "type": "object",
-              "required": [
-                "field",
-                "direction"
-              ],
-              "properties": {
-                "field": {
-                  "type": "string"
-                },
-                "direction": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/widget_maker/query.json"}
     },
     "auth-policy": {
       "modes": [
@@ -218,7 +176,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/query@1.0.0",
-    "definition-hash": "sha256:616edd0d41811f9c1abb0f606ec35ae13e9bb5f2830556b29369abb7d6823034",
+    "definition-hash": "sha256:a7ff1f7911fadec5b24b197f269e2c19ed13e793deb9cd63f2402111c70d859e",
     "definition": {
       "id": "widget-query-http",
       "kind": "http",
@@ -229,52 +187,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "properties": {
-            "request_id": {
-              "type": "string"
-            },
-            "cursor": {
-              "type": "string"
-            },
-            "limit": {
-              "type": "integer"
-            },
-            "filter": {
-              "type": "object",
-              "properties": {
-                "code": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              }
-            },
-            "sort": {
-              "type": "object",
-              "required": [
-                "field",
-                "direction"
-              ],
-              "properties": {
-                "field": {
-                  "type": "string"
-                },
-                "direction": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/widget/query.json"}
     },
     "auth-policy": {
       "modes": [
@@ -399,7 +312,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget-tag/update@1.0.0",
-    "definition-hash": "sha256:7d49b71f6434a1ff47390b3cb6b3ff4b490bd85b88b25f277537bd4dc36d7d1f",
+    "definition-hash": "sha256:91f63caf7068f30812d74b0ee0f9a3c927f5916854254e5f1a7b5e7b93189159",
     "definition": {
       "id": "widget-tag-update-http",
       "kind": "http",
@@ -410,41 +323,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": [
-            "id",
-            "expected_edit_version",
-            "request_id"
-          ],
-          "properties": {
-            "id": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "expected_edit_version": {
-              "type": "string"
-            },
-            "request_id": {
-              "type": "string"
-            },
-            "change": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "x-wamn-explicit-null": "invalid_input"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/widget_tag/update.json"}
     },
     "auth-policy": {
       "modes": [
@@ -458,7 +337,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/update@1.0.0",
-    "definition-hash": "sha256:decf73aced923996389fc797bcea597c1a3662a324438141bb3249db03925ee1",
+    "definition-hash": "sha256:5ede4c53187f5e352ab851915feb8798951fcd553e2972a3070f6eb6e029af67",
     "definition": {
       "id": "widget-update-http",
       "kind": "http",
@@ -469,56 +348,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": [
-            "id",
-            "expected_edit_version",
-            "request_id"
-          ],
-          "properties": {
-            "id": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "expected_edit_version": {
-              "type": "string"
-            },
-            "request_id": {
-              "type": "string"
-            },
-            "change": {
-              "type": "object",
-              "properties": {
-                "maker_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "uuid",
-                  "x-wamn-explicit-null": "accepted"
-                },
-                "note": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "x-wamn-explicit-null": "accepted"
-                },
-                "code": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "x-wamn-explicit-null": "invalid_input"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/widget/update.json"}
     },
     "auth-policy": {
       "modes": [

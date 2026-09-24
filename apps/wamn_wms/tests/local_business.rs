@@ -1,7 +1,6 @@
 //! WMS business operations over real local components and PostgreSQL.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -27,7 +26,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         .context("the WMS test crate has an application parent")?
         .to_owned();
     let mut attachments: BTreeMap<String, ServingAttachment> =
-        serde_json::from_slice(&fs::read(app.join("publication/attachments.json"))?)?;
+        wamn_schema_generator::route_schema::read_package_attachments(&app)?;
     // Business assertions use the authored direct move. Deployed tests retain
     // the composed label/blob boundary and its partial-completion assertions.
     attachments

@@ -175,11 +175,11 @@ async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blo
         credentials.clone(),
         transport.clone(),
     );
-    let attachments: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../apps/platform_fixture/publication/attachments.json"
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../apps/platform_fixture/generated/routes/widget/update.json"
     ))
     .expect("read the fixture serving schema");
-    let schema = &attachments["widget-update-http"]["definition"]["input-schema"];
+    let schema = &schema;
     let fields = widget::WIDGET_UPDATE_INPUT_SCHEMA;
     let route = widget::update_route();
     let mut item = json!({"request_id":"code-absent", "id":"00000000-0000-0000-0000-000000000001",

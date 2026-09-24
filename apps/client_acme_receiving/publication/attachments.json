@@ -4,26 +4,13 @@
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:purchase-order/get@3.0.0",
-    "definition-hash": "sha256:155964d242ac6a831e67a57af5a0e9a6d7a48184c886f29ec2589f563ebda715",
+    "definition-hash": "sha256:2a75af7cc0ba73c17f55ad059cab69e27b5bc2798300ef8518a3d94532cee9a1",
     "definition": {
       "id": "client-acme-receiving-purchase-order-get-http",
       "kind": "http",
       "route": {"path": "/acme/purchase_order/get", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": ["request_id", "id"],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {"type": "string", "minLength": 1},
-            "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/purchase_order/get.json"}
     },
     "auth-policy": {"modes": ["pat", "session"]},
     "registered-operation": "client-acme-receiving:purchase-order/get@3.0.0"
@@ -33,42 +20,13 @@
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:purchase-order/update@3.0.0",
-    "definition-hash": "sha256:31873edf342f882f478de97c38a651a75ad9a1b42bc86816ad536f8ccdfee97a",
+    "definition-hash": "sha256:a5d41193293902003caf8a0c769e3ec880da0cd5164db9f57094072e69b6b897",
     "definition": {
       "id": "client-acme-receiving-purchase-order-update-http",
       "kind": "http",
       "route": {"path": "/acme/purchase_order/update", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": ["request_id", "id", "expected_row_version", "change"],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {"type": "string", "minLength": 1},
-            "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-            "expected_row_version": {"type": "integer"},
-            "change": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "acme_inspection_required": {
-                  "type": ["boolean", "null"],
-                  "x-wamn-explicit-null": "invalid_input"
-                },
-                "acme_quality_status": {
-                  "type": ["string", "null"],
-                  "enum": ["not_required", "pending", "approved", null],
-                  "x-wamn-explicit-null": "invalid_input"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/purchase_order/update.json"}
     },
     "auth-policy": {"modes": ["pat", "session"]},
     "registered-operation": "client-acme-receiving:purchase-order/update@3.0.0"

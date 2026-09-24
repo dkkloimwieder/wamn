@@ -13,6 +13,11 @@ use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
 use crate::manifest::OperationErrorDetailKey;
 
+/// How many items one generated CRUD call carries. The codec refuses any
+/// other count, and the route input schema states the same bounds.
+pub(super) const CRUD_ITEMS_MINIMUM: u32 = 1;
+pub(super) const CRUD_ITEMS_MAXIMUM: u32 = 100;
+
 /// Emit typed boundaries for every declared model operation.
 pub(super) fn emit_model_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
@@ -330,7 +335,7 @@ fn emit_update_codec(
     fields: &[ContractFieldDeclaration],
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
-    let mut source = codec_prelude("UpdateItem", 1, 100);
+    let mut source = codec_prelude("UpdateItem", CRUD_ITEMS_MINIMUM, CRUD_ITEMS_MAXIMUM);
     let revision = operation
         .revision_field
         .as_deref()
@@ -431,7 +436,11 @@ fn emit_crud_codec(
         return emit_update_codec(table, operation, fields, details);
     }
     let type_name = rust_type_identifier(action.as_str());
-    let mut source = codec_prelude(&format!("{type_name}Item"), 1, 100);
+    let mut source = codec_prelude(
+        &format!("{type_name}Item"),
+        CRUD_ITEMS_MINIMUM,
+        CRUD_ITEMS_MAXIMUM,
+    );
     source.push_str(&emit_crud_json_codec(
         action, table, operation, fields, details,
     ));

@@ -274,6 +274,17 @@ pub(crate) fn catalog() -> CatalogIr {
 
 /// The fixture catalog, with more columns on the second model.
 pub(crate) fn catalog_with(maker_columns: Vec<Column>) -> CatalogIr {
+    catalog_of(true, maker_columns)
+}
+
+/// The fixture catalog with `widget.note` NOT NULL: a schema change that
+/// moves the generated contracts and edits no manifest.
+#[allow(dead_code, reason = "not every test module changes the widget table")]
+pub(crate) fn catalog_with_required_note() -> CatalogIr {
+    catalog_of(false, Vec::new())
+}
+
+fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>) -> CatalogIr {
     let widget = Table::new(
         "inventory",
         "widget",
@@ -286,7 +297,7 @@ pub(crate) fn catalog_with(maker_columns: Vec<Column>) -> CatalogIr {
                 None,
             ),
             Column::new("code", ColumnType::Text, false, None, None),
-            Column::new("note", ColumnType::Text, true, None, None),
+            Column::new("note", ColumnType::Text, note_nullable, None, None),
             // The one column that names another model's record. A selector
             // for it is derived from this foreign key alone.
             Column::new("maker_id", ColumnType::Uuid, true, None, None),

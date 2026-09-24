@@ -11,20 +11,7 @@
       "registered-operation": "client-acme-receiving:purchase-order/get@3.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id", "id"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/purchase_order/get.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
@@ -33,36 +20,7 @@
       "registered-operation": "client-acme-receiving:purchase-order/update@3.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id", "id", "expected_row_version", "change"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-              "expected_row_version": {"type": "integer"},
-              "change": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "acme_inspection_required": {
-                    "type": ["boolean", "null"],
-                    "x-wamn-explicit-null": "invalid_input"
-                  },
-                  "acme_quality_status": {
-                    "type": ["string", "null"],
-                    "enum": ["not_required", "pending", "approved", null],
-                    "x-wamn-explicit-null": "invalid_input"
-                  }
-                }
-              }
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/purchase_order/update.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []

@@ -469,7 +469,7 @@ pub async fn mint_local(
         .checked_add(1)
         .context("local release identity exhausted")?
         .max(args.effective_release_id);
-    let authored = read_package_attachments(&args.attachments)?;
+    let authored = read_package_attachments(&args.attachments, &args.package_manifests)?;
     let attachments = resolve_route_host_overlay(&authored, args.route_host.as_deref())?;
     let (package_manifests, _, route_kinds) = read_package_manifests(&args.package_manifests)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
@@ -667,7 +667,8 @@ async fn mint_candidate(
         !args.verified_publisher_principal.is_empty(),
         "verified-publisher-principal must not be empty"
     );
-    let authored_attachments = read_package_attachments(&args.attachments)?;
+    let authored_attachments =
+        read_package_attachments(&args.attachments, &args.package_manifests)?;
     let attachments =
         resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
     let (package_manifests, package_manifest_hashes, route_kinds) =

@@ -1,0 +1,1 @@
+{"items":{"additionalProperties":false,"properties":{"idempotency_key":{"minLength":1,"type":"string"},"product_code":{"minLength":1,"type":["string","null"],"x-wamn-explicit-null":"invalid_input"},"request_id":{"minLength":1,"type":"string"}},"required":["idempotency_key","request_id","product_code"],"type":"object"},"maxItems":100,"minItems":1,"type":"array"}

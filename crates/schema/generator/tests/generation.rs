@@ -947,7 +947,8 @@ fn ordered_filters_and_query_variants_remain_structural_and_finite() {
         input["filters"],
         json!([
             {"field": "stock_id", "binding": "json_array", "type": "uuid"},
-            {"field": "status", "binding": "json_array", "type": "text"}
+            {"field": "status", "binding": "json_array", "type": "text",
+                "values": ["open", "complete", "cancelled"]}
         ])
     );
 
@@ -1316,7 +1317,8 @@ fn typed_crud_contracts_follow_a_second_model_declaration() {
             .find(|field| field["field"] == name)
             .unwrap_or_else(|| panic!("create contract omitted {name}"))
     };
-    assert_eq!(field("sku")["omitted"], "postgres_default");
+    // NOT NULL with no default: an omitted sku cannot take a default.
+    assert_eq!(field("sku")["omitted"], "invalid_input");
     assert_eq!(field("sku")["explicit_null"], "invalid_input");
     assert_eq!(field("note")["omitted"], "postgres_default");
     assert_eq!(field("note")["explicit_null"], "accepted");

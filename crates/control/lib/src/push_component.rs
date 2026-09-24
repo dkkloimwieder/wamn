@@ -409,7 +409,20 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
     let declaration_bytes = std::fs::read(&args.declaration)
         .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
-    let declaration: ComponentDeclaration = serde_json::from_slice(&declaration_bytes)
+    let mut document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
+        .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
+    // An input port can name its package's generated route schema instead of
+    // copying it, so the reference resolves against the package it belongs to.
+    wamn_schema_generator::route_schema::resolve_declaration(&mut document, &mut |reference| {
+        wamn_schema_generator::route_schema::read_from_package(&args.package, reference)
+    })
+    .with_context(|| {
+        format!(
+            "resolve the input ports of component declaration {}",
+            args.declaration.display()
+        )
+    })?;
+    let declaration: ComponentDeclaration = serde_json::from_value(document)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
 
     let engine = wamn_engine::build_engine(&[]).context("build component admission engine")?;

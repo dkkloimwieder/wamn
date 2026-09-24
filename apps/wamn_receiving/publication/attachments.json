@@ -4,7 +4,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:purchase-order/get@1.0.0",
-    "definition-hash": "sha256:aa3411356694d4a6a224d42ca6b34bc9f28cfd88f5a07aa53fd61bb87f2bbba1",
+    "definition-hash": "sha256:e1f334c03f4ce032787259a51b0db04f3b9e0a41ca619384f5f0a651d7e711f1",
     "definition": {
       "id": "purchase-order-get-http",
       "kind": "http",
@@ -15,29 +15,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/purchase_order/get.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -49,7 +27,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:purchase-order/query@1.0.0",
-    "definition-hash": "sha256:e55a70b5615b4d78d8f872b4cff64174a3832c6ff9413ce027eeaf8b4bcf1779",
+    "definition-hash": "sha256:abb663ca9c585ce5bb17584276bbff16f5f2b5aa1dd0ae47ad7b7f7ae0190a89",
     "definition": {
       "id": "purchase-order-query-http",
       "kind": "http",
@@ -60,84 +38,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "filter": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "supplier_id": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "status": {
-                  "type": "array",
-                  "items": {
-                    "enum": [
-                      "open",
-                      "complete",
-                      "cancelled"
-                    ]
-                  }
-                },
-                "purchase_order_number": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              }
-            },
-            "sort": {
-              "type": "object",
-              "required": [
-                "field",
-                "direction"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "field": {
-                  "enum": [
-                    "purchase_order_number",
-                    "status",
-                    "created_at"
-                  ]
-                },
-                "direction": {
-                  "enum": [
-                    "ascending",
-                    "descending"
-                  ]
-                }
-              }
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/purchase_order/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -149,7 +50,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:purchase-order/update@1.0.0",
-    "definition-hash": "sha256:7ee1527b4a23237d2528d6ae18edde62f2b0baf84a877605f147c10cd9e0f61d",
+    "definition-hash": "sha256:bd2d33f04911277fe31926ca2d790dca1ed00198036355fdf991c3334038b59a",
     "definition": {
       "id": "purchase-order-update-http",
       "kind": "http",
@@ -160,47 +61,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id",
-            "expected_row_version",
-            "change"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            },
-            "expected_row_version": {
-              "type": "integer"
-            },
-            "change": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "supplier_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "x-wamn-explicit-null": "invalid_input"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/purchase_order/update.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -212,7 +73,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receipt/get@1.0.0",
-    "definition-hash": "sha256:a557410fb61431e9e00560f9946434935c844e1175a12276a9dc291969b6358c",
+    "definition-hash": "sha256:a7696b9816a9563ce914acb5ff01fd6788b94aed930f6ff603e7744b36080989",
     "definition": {
       "id": "receipt-get-http",
       "kind": "http",
@@ -223,29 +84,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/receipt/get.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -257,7 +96,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receipt/query@1.0.0",
-    "definition-hash": "sha256:055e672e20cbfd29b74a2285f3d05e4d547637bc5d61aa99ff6109c2fea6de2b",
+    "definition-hash": "sha256:aadbaf165264b221a4fce01f59cbc3b889aacd80ec6cd6a3209c53c157425245",
     "definition": {
       "id": "receipt-query-http",
       "kind": "http",
@@ -268,33 +107,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/receipt/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -537,7 +350,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:supplier/query@1.0.0",
-    "definition-hash": "sha256:83f671382b41291da302af172c490e7f7b45ac8067409cb55888f37aebadb747",
+    "definition-hash": "sha256:9f22642b029a2bb495d5e05f69c54c0c87a47e8f5666f6349e60b3a9d94857e8",
     "definition": {
       "id": "supplier-query-http",
       "kind": "http",
@@ -548,33 +361,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/supplier/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -586,7 +373,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:supplier/create@1.0.0",
-    "definition-hash": "sha256:3dd2b1706fda6a9603c3ac223727d1aff4ae9aeab2e0e5c269ac20c694af7289",
+    "definition-hash": "sha256:be304627441907c3b99b34e3116c08f395d513b6956250936a594f3d17648a8a",
     "definition": {
       "id": "supplier-create-http",
       "kind": "http",
@@ -597,34 +384,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "idempotency_key",
-            "name"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "idempotency_key": {
-              "type": "string",
-              "minLength": 1
-            },
-            "name": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/supplier/create.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]

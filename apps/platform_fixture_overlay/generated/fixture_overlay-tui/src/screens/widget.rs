@@ -8,7 +8,9 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     operation: "platform-fixture-overlay:widget/get@1.0.0",
     kind: "get",
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
-    input_schema: None,
+    input_schema: Some(
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\",\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+    ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
         partial_schema: None,

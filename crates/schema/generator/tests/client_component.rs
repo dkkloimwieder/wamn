@@ -343,7 +343,7 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
 
     assert!(widget.contains(concat!(
         "const CREATE_INPUT = z.object({\n",
-        "  code: z.string().optional(),\n",
+        "  code: z.enum([\"priority\", \"standard\"]),\n",
         "  makerId: z.string().regex(UUID_TEXT, \"expected a UUID\").nullable().optional(),\n",
         "  note: z.string().nullable().optional(),\n",
         "});\n",
@@ -385,7 +385,7 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "const UPDATE_INPUT = z.object({\n",
         "  change: z\n",
         "    .object({\n",
-        "      code: z.string().optional(),\n",
+        "      code: z.enum([\"priority\", \"standard\"]).optional(),\n",
     )));
     assert!(widget.contains("<form.Field name={`change.code`}>"));
     let update = widget
@@ -628,7 +628,7 @@ fn a_bound_key_is_a_prop_and_never_a_control() {
             "const UPDATE_INPUT = z.object({\n",
             "  change: z\n",
             "    .object({\n",
-            "      code: z.string().optional(),\n",
+            "      code: z.enum([\"priority\", \"standard\"]).optional(),\n",
             "      makerId: z.string().regex(UUID_TEXT, \"expected a UUID\").nullable().optional(),\n",
             "      note: z.string().nullable().optional(),\n",
             "    })\n",
@@ -726,7 +726,7 @@ fn initial_values_reach_a_nested_member_and_name_no_group() {
         widget.contains(concat!(
             "export interface WidgetUpdateFormInitial {\n",
             "  change?: {\n",
-            "    code?: string;\n",
+            "    code?: \"priority\" | \"standard\";\n",
             "    makerId?: Uuid | null;\n",
             "    note?: string | null;\n",
             "  };\n",
@@ -947,7 +947,7 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     assert!(
         create.contains(concat!(
             "            <TextField\n",
-            "              label=\"Widget code\"\n",
+            "              label=\"Operator note\"\n",
             "              type=\"text\"\n",
         )),
         "an input that names no record stays a text control"
@@ -1216,7 +1216,7 @@ fn a_create_offers_only_the_values_it_declares() {
         .and_then(|before| before.rsplit("const CREATE_INPUT").next())
         .expect("the create form states its input schema");
     assert!(
-        create.contains("  code: z.enum([\"standard\"]).optional(),\n"),
+        create.contains("  code: z.enum([\"standard\"]),\n"),
         "the create checks the one value it accepts: {create}"
     );
     assert!(create.contains("  code?: \"standard\";\n"));

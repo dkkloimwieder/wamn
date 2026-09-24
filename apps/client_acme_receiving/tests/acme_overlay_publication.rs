@@ -107,8 +107,9 @@ fn wiring(name: &str) -> WiringDocument {
 #[test]
 fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
     let declaration = declaration();
+    // Resolved, as the rendered declaration is: both state the served schema.
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
-        serde_json::from_value(read_json(&publication_root().join("attachments.json")))
+        wamn_schema_generator::route_schema::read_package_attachments(&package_root())
             .expect("the attachment map has the serving wire shape");
     assert_eq!(attachments.len(), DIRECT_OPERATIONS.len());
     assert_eq!(declaration.scope.tenant_id, TENANT);

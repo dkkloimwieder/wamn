@@ -555,7 +555,16 @@ impl ClientContractIr {
         contracts: &Path,
         attachments: &Path,
     ) -> Result<Self, ClientIrError> {
-        Self::project(package, contracts, &route_index(attachments)?)
+        // The document sits at `publication/attachments.json`, and the
+        // generated schemas it names resolve against the package root above it.
+        let root = attachments
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or_else(|| Path::new(""));
+        let routes = route_index(attachments, &mut |reference| {
+            crate::route_schema::read_from_package(root, reference)
+        })?;
+        Self::project(package, contracts, &routes)
     }
 
     /// Project a package with no published routes.
@@ -693,12 +702,18 @@ impl ClientContractIr {
 /// carries every operation's types and descriptors and no invoke function,
 /// which is what [`ClientContractIr::from_contract_directory`] already means.
 ///
+/// `read` returns the generated route schema a reference names.
+///
 /// # Errors
 ///
-/// [`ClientIrError`] when the file exists and is not a serving attachment map.
-pub fn published_routes(attachments: &Path) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
+/// [`ClientIrError`] when the file exists and is not a serving attachment map,
+/// or a schema it names cannot be read.
+pub fn published_routes(
+    attachments: &Path,
+    read: &mut dyn FnMut(&str) -> Result<Value, crate::route_schema::RouteSchemaError>,
+) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
     if attachments.exists() {
-        route_index(attachments)
+        route_index(attachments, read)
     } else {
         Ok(BTreeMap::new())
     }
@@ -725,8 +740,11 @@ pub fn published_routes(attachments: &Path) -> Result<BTreeMap<String, RouteIr>,
 /// second normalization authority, which is worse than either. So an
 /// un-normalized route REFUSES by name, and the author is told to write the
 /// form publication would produce. Fail-closed, one authority, no cycle.
-fn route_index(attachments: &Path) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    let published: BTreeMap<String, wamn_catalog::ServingAttachment> =
+fn route_index(
+    attachments: &Path,
+    read: &mut dyn FnMut(&str) -> Result<Value, crate::route_schema::RouteSchemaError>,
+) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
+    let mut published: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(read_json(attachments)?).map_err(|error| {
             ClientIrError::new(
                 ClientIrErrorKind::MalformedContract,
@@ -736,6 +754,15 @@ fn route_index(attachments: &Path) -> Result<BTreeMap<String, RouteIr>, ClientIr
                 ),
             )
         })?;
+    crate::route_schema::resolve_attachments(&mut published, read).map_err(|error| {
+        let cause = std::error::Error::source(&error)
+            .map(|source| format!(": {source}"))
+            .unwrap_or_default();
+        ClientIrError::new(
+            ClientIrErrorKind::UnreadableProjection,
+            format!("{}: {error}{cause}", attachments.display()),
+        )
+    })?;
 
     let mut index: BTreeMap<String, RouteIr> = BTreeMap::new();
     for (id, attachment) in published {

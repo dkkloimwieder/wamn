@@ -73,7 +73,7 @@ async fn command_histories() -> anyhow::Result<()> {
     let receiving = repository.join("apps/wamn_receiving");
     let acme = repository.join("apps/client_acme_receiving");
     let mut attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-        serde_json::from_slice(&fs::read(receiving.join("publication/attachments.json"))?)?;
+        wamn_schema_generator::route_schema::read_package_attachments(&receiving)?;
     attachments.retain(|_, attachment| {
         matches!(
             route_operation(attachment),
@@ -87,7 +87,7 @@ async fn command_histories() -> anyhow::Result<()> {
         )
     });
     let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-        serde_json::from_slice(&fs::read(acme.join("publication/attachments.json"))?)?;
+        wamn_schema_generator::route_schema::read_package_attachments(&acme)?;
     for (name, attachment) in overlay_attachments {
         if matches!(
             route_operation(&attachment),

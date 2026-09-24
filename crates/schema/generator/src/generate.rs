@@ -1,4 +1,5 @@
 mod contracts;
+mod routes;
 mod rust;
 mod validation;
 mod wit;

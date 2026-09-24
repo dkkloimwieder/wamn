@@ -11,20 +11,7 @@
       "registered-operation": "platform-fixture:widget/get@1.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id", "id"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/widget/get.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
@@ -33,37 +20,7 @@
       "registered-operation": "platform-fixture:widget/query@1.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "filter": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "code": {"type": "array", "items": {"type": "string"}}
-                }
-              },
-              "sort": {
-                "type": "object",
-                "required": ["field", "direction"],
-                "additionalProperties": false,
-                "properties": {
-                  "field": {"enum": ["created_at"]},
-                  "direction": {"enum": ["ascending", "descending"]}
-                }
-              },
-              "cursor": {"type": "string", "minLength": 1},
-              "limit": {"type": "integer", "minimum": 1, "maximum": 100}
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/widget/query.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
@@ -72,23 +29,7 @@
       "registered-operation": "platform-fixture:widget/create@1.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id", "idempotency_key"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "idempotency_key": {"type": "string", "minLength": 1},
-              "code": {"type": "string", "enum": ["priority", "standard"]},
-              "maker_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-              "note": {"type": ["string", "null"]}
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/widget/create.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
@@ -97,41 +38,7 @@
       "registered-operation": "platform-fixture:widget/update@1.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id", "id", "expected_edit_version", "change"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-              "expected_edit_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
-              "change": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "code": {
-                    "type": ["string", "null"],
-                    "enum": ["priority", "standard", null],
-                    "x-wamn-explicit-null": "invalid_input"
-                  },
-                  "maker_id": {
-                    "type": ["string", "null"],
-                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                    "x-wamn-explicit-null": "accepted"
-                  },
-                  "note": {
-                    "type": ["string", "null"],
-                    "x-wamn-explicit-null": "accepted"
-                  }
-                }
-              }
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/widget/update.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
@@ -140,21 +47,7 @@
       "registered-operation": "platform-fixture:widget/delete@1.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id", "id", "expected_edit_version"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-              "expected_edit_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"}
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/widget/delete.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
@@ -257,37 +150,7 @@
       "registered-operation": "platform-fixture:widget-maker/query@1.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "filter": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "name": {"type": "array", "items": {"type": "string"}}
-                }
-              },
-              "sort": {
-                "type": "object",
-                "required": ["field", "direction"],
-                "additionalProperties": false,
-                "properties": {
-                  "field": {"enum": ["created_at"]},
-                  "direction": {"enum": ["ascending", "descending"]}
-                }
-              },
-              "cursor": {"type": "string", "minLength": 1},
-              "limit": {"type": "integer", "minimum": 1, "maximum": 100}
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/widget_maker/query.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
@@ -317,31 +180,7 @@
       "registered-operation": "platform-fixture:widget-tag/update@1.0.0",
       "input-ports": [{
         "name": "input",
-        "schema": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "items": {
-            "type": "object",
-            "required": ["request_id", "id", "expected_edit_version", "change"],
-            "additionalProperties": false,
-            "properties": {
-              "request_id": {"type": "string", "minLength": 1},
-              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-              "expected_edit_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
-              "change": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "label": {
-                    "type": ["string", "null"],
-                    "x-wamn-explicit-null": "invalid_input"
-                  }
-                }
-              }
-            }
-          }
-        }
+        "schema": {"$ref": "generated/routes/widget_tag/update.json"}
       }],
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []

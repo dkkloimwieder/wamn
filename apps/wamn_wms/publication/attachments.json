@@ -4,7 +4,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet/get@1.0.0",
-    "definition-hash": "sha256:570982058b020e74d6611b335936c9afcc84c7721557a2758936edc4a35984b1",
+    "definition-hash": "sha256:e917d9f977f54131a1b6fa255dc2aaed93792e6e04aaf05c4295f22f154f99ec",
     "definition": {
       "id": "pallet-get-http",
       "kind": "http",
@@ -15,29 +15,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/pallet/get.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -49,7 +27,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet/query@1.0.0",
-    "definition-hash": "sha256:64d3d2b566b79b0661128d54ecc7472de52f445f7cf16032cb988966faa70e0e",
+    "definition-hash": "sha256:371247417d486ca870516f9c80a5733c7b81d35b6ab714752bb6d2a5618c2e95",
     "definition": {
       "id": "pallet-query-http",
       "kind": "http",
@@ -60,85 +38,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "filter": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "status": {
-                  "type": "array",
-                  "items": {
-                    "enum": [
-                      "available",
-                      "held",
-                      "consumed"
-                    ]
-                  }
-                },
-                "location_id": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "pallet_code": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              }
-            },
-            "sort": {
-              "type": "object",
-              "required": [
-                "field",
-                "direction"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "field": {
-                  "enum": [
-                    "pallet_code",
-                    "location_id",
-                    "updated_at",
-                    "created_at"
-                  ]
-                },
-                "direction": {
-                  "enum": [
-                    "ascending",
-                    "descending"
-                  ]
-                }
-              }
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/pallet/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -523,7 +423,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory-movement/get@1.0.0",
-    "definition-hash": "sha256:41b477c63ddd476652e68316e0d8bc3e47ee6e6112cae508e8679567383ce7b5",
+    "definition-hash": "sha256:04feb5353cb8b4074e0e38013d57a0fa875c71911a8644c5b1b42759259f616b",
     "definition": {
       "id": "inventory-movement-get-http",
       "kind": "http",
@@ -534,29 +434,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/inventory_movement/get.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -568,7 +446,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory-movement/query@1.0.0",
-    "definition-hash": "sha256:ffa86ddd474b113d592dece117c03ea2cb94748f0dcf2e21084d913028344281",
+    "definition-hash": "sha256:8016a66d6847aec1445b899c48661c4c76eb8a11e76efb5c27cb4acf82d76a9c",
     "definition": {
       "id": "inventory-movement-query-http",
       "kind": "http",
@@ -579,33 +457,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/inventory_movement/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -617,7 +469,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/create@1.0.0",
-    "definition-hash": "sha256:897ab38e1ca2e7d48233e6d52f2180aba86473ca942a290469f894303e5c43bf",
+    "definition-hash": "sha256:881f849efee56f0df907b9344118382ffab0c47d7f2eba1fe2b2171185bb916a",
     "definition": {
       "id": "location-create-http",
       "kind": "http",
@@ -628,34 +480,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "idempotency_key",
-            "location_code"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "idempotency_key": {
-              "type": "string",
-              "minLength": 1
-            },
-            "location_code": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/location/create.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -667,7 +492,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/get@1.0.0",
-    "definition-hash": "sha256:3831d703d717d334120dad837ca1fa369670549ddf8801934e32ebdcfcf73a48",
+    "definition-hash": "sha256:0572ec868568fb1adfff7079f88b59b64ca3c1dbeef781a1bb446df6097db0fd",
     "definition": {
       "id": "location-get-http",
       "kind": "http",
@@ -678,29 +503,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/location/get.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -712,7 +515,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/query@1.0.0",
-    "definition-hash": "sha256:95a8a95aae63de97954b92793809a140cbfb91dd02cf5e8a97be36426f39fa1a",
+    "definition-hash": "sha256:7e6492336e5721b66c7339aac582c574314f4ee53ff128915f1e0d979d8f4135",
     "definition": {
       "id": "location-query-http",
       "kind": "http",
@@ -723,45 +526,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "filter": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "location_code": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              }
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/location/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -773,7 +538,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/update@1.0.0",
-    "definition-hash": "sha256:29439e760aea4fd916c26fb61d882efd1013e184aa5e94a77650eaa12762bc22",
+    "definition-hash": "sha256:0182ad6c60f31be046b024893eee812b886cf624a9105f4ebaff290ebaaca414",
     "definition": {
       "id": "location-update-http",
       "kind": "http",
@@ -784,47 +549,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id",
-            "expected_row_version",
-            "change"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            },
-            "expected_row_version": {
-              "type": "integer"
-            },
-            "change": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "location_code": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "x-wamn-explicit-null": "invalid_input"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/location/update.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -836,7 +561,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet/create@1.0.0",
-    "definition-hash": "sha256:94c501945bfbc911240735386116fb953db338130990f99b13bb66d1049f41ff",
+    "definition-hash": "sha256:96371b03808898b85afb3fbda1a1649772c6f1fe74d55b7dd8152deb45b260f5",
     "definition": {
       "id": "pallet-create-http",
       "kind": "http",
@@ -847,47 +572,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "idempotency_key",
-            "pallet_code",
-            "location_id",
-            "status"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "idempotency_key": {
-              "type": "string",
-              "minLength": 1
-            },
-            "pallet_code": {
-              "type": "string",
-              "minLength": 1
-            },
-            "location_id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            },
-            "status": {
-              "type": "string",
-              "enum": [
-                "available",
-                "held"
-              ]
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/pallet/create.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -899,7 +584,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet-quantity/get@1.0.0",
-    "definition-hash": "sha256:cd1133a10a53fcee2214c16a1ed66ba98eacd01751e1b830660a2d2a9ad94007",
+    "definition-hash": "sha256:b802d4863b2e4293a8fe1d8558168b826fb615342a12039157a17aaa5fa44d05",
     "definition": {
       "id": "pallet-quantity-get-http",
       "kind": "http",
@@ -910,29 +595,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/pallet_quantity/get.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -944,7 +607,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet-quantity/query@1.0.0",
-    "definition-hash": "sha256:9972ee6e14d953c0aa820d84a2871a07727dacf38fa383ef7d780cb2fdd9989d",
+    "definition-hash": "sha256:08b62bd10a2d534b8786e5382681920a11d681565936f6e18612491840b66225",
     "definition": {
       "id": "pallet-quantity-query-http",
       "kind": "http",
@@ -955,33 +618,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/pallet_quantity/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -993,7 +630,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/create@1.0.0",
-    "definition-hash": "sha256:ea83390cd258d5ebda7fbe1b4ef73d05cc0b1030b68c8a231fe98032ccb8af52",
+    "definition-hash": "sha256:93f79e6ff115e9b46c33aed91600898ff041866f955c61ebcc6556a0cc8cfcf4",
     "definition": {
       "id": "product-create-http",
       "kind": "http",
@@ -1004,34 +641,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "idempotency_key",
-            "product_code"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "idempotency_key": {
-              "type": "string",
-              "minLength": 1
-            },
-            "product_code": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/product/create.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -1043,7 +653,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/get@1.0.0",
-    "definition-hash": "sha256:c3d60a988d078ef994bba520922f5c480f3f7789922cedf65340f12f69a11240",
+    "definition-hash": "sha256:2a50327ae9dd16239d323530814db3ea4522594d17a57f167be89b303cea95f1",
     "definition": {
       "id": "product-get-http",
       "kind": "http",
@@ -1054,29 +664,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/product/get.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -1088,7 +676,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/query@1.0.0",
-    "definition-hash": "sha256:28941c7f55ca7af3f61654b09cde3e002701066b53a3a307a4483e55d624fd91",
+    "definition-hash": "sha256:3b2616bcd4d929dd1dac10e556d14ab860811fedf7fe098f9cb8ee546b0c9fcd",
     "definition": {
       "id": "product-query-http",
       "kind": "http",
@@ -1099,45 +687,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "filter": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "product_code": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              }
-            },
-            "cursor": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/product/query.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]
@@ -1149,7 +699,7 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/update@1.0.0",
-    "definition-hash": "sha256:2a288c049eaa9a1726ca6003ce4f32bab314061a864af4065ff4a54043f63e13",
+    "definition-hash": "sha256:dffeda5324f30dcbe8c2ceba51213f507646a180d6ddfb2a1cafcdbde3458928",
     "definition": {
       "id": "product-update-http",
       "kind": "http",
@@ -1160,47 +710,7 @@
       "raw-body-bytes": {
         "maximum": 1048576
       },
-      "input-schema": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "required": [
-            "request_id",
-            "id",
-            "expected_row_version",
-            "change"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            },
-            "expected_row_version": {
-              "type": "integer"
-            },
-            "change": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "product_code": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "x-wamn-explicit-null": "invalid_input"
-                }
-              }
-            }
-          }
-        }
-      }
+      "input-schema": {"$ref": "generated/routes/product/update.json"}
     },
     "auth-policy": {
       "modes": ["pat", "session"]

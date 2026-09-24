@@ -33,7 +33,9 @@ describe("a populated input", () => {
 
   it("sends the key of the row the operator picked", async () => {
     const { transport, sent } = stub();
-    render(() => <WidgetCreateForm transport={transport} />);
+    // The widget code is required, so it starts filled and the maker is the
+    // one value the operator picks.
+    render(() => <WidgetCreateForm transport={transport} initial={{ code: "standard" }} />);
     await choose("maker id", "Northwind");
     fireEvent.submit(screen.getByRole("button", { name: "submit" }).closest("form")!);
 

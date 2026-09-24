@@ -1304,3 +1304,65 @@ fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
     assert!(message.contains("widget.record_batch"), "{message}");
     assert!(message.contains("line bound"), "{message}");
 }
+
+/// A generated route schema follows its contract, and the attachment that
+/// names it does not change (wamn-4omo).
+///
+/// The two catalogs differ in one column: `widget.note` becomes NOT NULL with
+/// no default, so a create can no longer omit it or send null. The manifest
+/// and the fixture's `publication/attachments.json` are the same bytes for
+/// both, and the served route schema and definition hash move anyway.
+#[test]
+fn a_contract_change_moves_the_route_schema_the_attachment_names() {
+    const ROUTE: &str = "generated/routes/widget/create.json";
+    let published = || -> std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> {
+        let path = wamn_fixture_package::package_root().join("publication/attachments.json");
+        serde_json::from_slice(&std::fs::read(path).expect("read the fixture attachments"))
+            .expect("the fixture attachments decode")
+    };
+    let served = |package: &wamn_schema_generator::GeneratedPackage| {
+        let mut attachments = published();
+        wamn_schema_generator::route_schema::resolve_attachments(&mut attachments, &mut |path| {
+            wamn_schema_generator::route_schema::parse(
+                path,
+                package
+                    .file(path)
+                    .expect("generation wrote the named schema")
+                    .bytes(),
+            )
+        })
+        .expect("the fixture attachments resolve");
+        attachments
+            .remove("widget-create-http")
+            .expect("the fixture serves widget create")
+    };
+    assert_eq!(
+        published()["widget-create-http"].definition["input-schema"],
+        json!({"$ref": ROUTE}),
+        "the attachment names the generated schema and copies none of it"
+    );
+
+    let optional = fixture::generate_fixture();
+    let required =
+        fixture::generate_with(&fixture::catalog_with_required_note(), &fixture::manifest());
+    let (before, after) = (served(&optional), served(&required));
+    assert_eq!(
+        before.definition["input-schema"],
+        artifact(&optional, ROUTE)
+    );
+    assert_eq!(after.definition["input-schema"], artifact(&required, ROUTE));
+
+    let note = |attachment: &wamn_catalog::ServingAttachment| {
+        let items = &attachment.definition["input-schema"]["items"];
+        (
+            items["required"]
+                .as_array()
+                .expect("a create requires its keys")
+                .contains(&json!("note")),
+            items["properties"]["note"]["x-wamn-explicit-null"].clone(),
+        )
+    };
+    assert_eq!(note(&before), (false, json!("accepted")));
+    assert_eq!(note(&after), (true, json!("invalid_input")));
+    assert_ne!(before.definition_hash, after.definition_hash);
+}

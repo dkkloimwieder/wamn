@@ -94,6 +94,11 @@ Conflicting content refuses, and exact retries retain their original facts.
 
 Publication mints one route for each attachment that targets a route.
 The route carries the contract kind of its operation, which publication reads from the generated `operation.json` of the package.
+Generation derives the route input schema of each generated CRUD operation from its input contract, and writes it to `generated/routes/<model>/<action>.json`.
+The route `input-schema` in `publication/attachments.json` and the operation input port in the component declaration name that file, and hold no copy.
+Each one writes `{"$ref": "generated/routes/<model>/<action>.json"}`.
+Publication, component admission and the client generator resolve the name against the package root, so a contract change moves the served schema and its definition hash.
+An authored operation keeps the input schema that its author writes.
 Promotion reads no package directory, so it copies the routes and registrations of the source release.
 Publication refuses a wiring with no edges, because a graph with no edges is a route.
 The one exception is a wiring that a registration names, because a registration still delivers to a wiring.

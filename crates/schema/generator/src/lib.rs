@@ -32,6 +32,7 @@ mod error;
 mod generate;
 mod manifest;
 mod materialize;
+pub mod route_schema;
 mod rustfmt;
 mod sql;
 mod sql_lex;

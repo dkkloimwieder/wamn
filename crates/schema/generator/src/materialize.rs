@@ -345,8 +345,18 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
                 .map(|relative| (relative.to_owned(), file.bytes().to_vec()))
         })
         .collect::<BTreeMap<_, _>>();
-    let routes = published_routes(&package_root.join("publication/attachments.json"))
-        .context("read the release's published routes")?;
+    // A route names its generated input schema, which this run produced and
+    // has not written yet, so the reference resolves against these bytes.
+    let routes = published_routes(
+        &package_root.join("publication/attachments.json"),
+        &mut |reference| {
+            let file = package
+                .file(reference)
+                .ok_or_else(|| crate::route_schema::RouteSchemaError::unknown(reference))?;
+            crate::route_schema::parse(reference, file.bytes())
+        },
+    )
+    .context("read the release's published routes")?;
     let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
         .context("project the client-contract IR")?;
     let mut files = emit_rust_client(&ir).context("emit the Rust client bindings")?;

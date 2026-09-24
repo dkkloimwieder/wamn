@@ -221,13 +221,13 @@ pub const WIDGET_MAKER_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "sort.direction",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["ascending", "descending"],
     },
     FieldDescriptor {
         path: "sort.field",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["created_at"],
     },
 ];
 
@@ -340,7 +340,7 @@ pub const WIDGET_MAKER_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchem
                     path: "sort.direction",
                     type_name: "text",
                     nullable: false,
-                    values: &[],
+                    values: &["ascending", "descending"],
                 },
                 required: true,
                 minimum: None,
@@ -352,7 +352,7 @@ pub const WIDGET_MAKER_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchem
                     path: "sort.field",
                     type_name: "text",
                     nullable: false,
-                    values: &[],
+                    values: &["created_at"],
                 },
                 required: true,
                 minimum: None,

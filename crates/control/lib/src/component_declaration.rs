@@ -234,6 +234,22 @@ pub fn render_declaration_document(
             }
         }
     }
+    // An input port can name its package's generated route schema instead of
+    // copying it (wamn-4omo). The template sits at
+    // `publication/components/<component>.json.in` under its package root.
+    let package_root = template
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new(""));
+    wamn_schema_generator::route_schema::resolve_declaration(&mut document, &mut |reference| {
+        wamn_schema_generator::route_schema::read_from_package(package_root, reference)
+    })
+    .map_err(|error| {
+        invalid(format!(
+            "names an input port schema it cannot read: {error}"
+        ))
+    })?;
     Ok(document)
 }
 

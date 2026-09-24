@@ -29,8 +29,8 @@ pub const WIDGET_TAG_FIELDS: &[FieldDescriptor] = &[
 /// Input for `platform-fixture:widget-tag/update@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetTagUpdateRequest {
-    /// `object`, omittable
-    pub change: Option<WidgetTagUpdateRequestChange>,
+    /// `object`
+    pub change: WidgetTagUpdateRequestChange,
     /// `int64`
     pub expected_edit_version: i64,
     /// `uuid`
@@ -114,7 +114,7 @@ pub const WIDGET_TAG_UPDATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema
             nullable: false,
             values: &[],
         },
-        required: false,
+        required: true,
         minimum: None,
         maximum: None,
         children: &[wamn_client::descriptor::FieldSchema {

@@ -5,7 +5,83 @@ use super::{
     ServingAttachment, canonical_http_route_template, normalize_http_route,
 };
 
+/// Read the package attachment documents, with every generated input schema
+/// they name resolved against the package that owns the attachment.
+///
+/// A document can be a copy outside its package, so a reference resolves
+/// against the root of the `wamn.json` the release presents for the
+/// attachment's package, never against the document's own directory.
 pub(super) fn read_package_attachments(
+    paths: &[PathBuf],
+    package_manifests: &[PathBuf],
+) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+    let mut attachments = read_authored_attachments(paths)?;
+    resolve_generated_input_schemas(&mut attachments, package_manifests)?;
+    Ok(attachments)
+}
+
+fn resolve_generated_input_schemas(
+    attachments: &mut BTreeMap<String, ServingAttachment>,
+    package_manifests: &[PathBuf],
+) -> Result<(), MintManifestError> {
+    let named = |attachment: &ServingAttachment| {
+        wamn_schema_generator::route_schema::names_generated_schema(attachment)
+    };
+    if !attachments.values().any(named) {
+        return Ok(());
+    }
+    let mut roots = BTreeMap::new();
+    for path in package_manifests {
+        let bytes = std::fs::read(path).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::PackageManifest,
+                format!("read package manifest {}", path.display()),
+                error,
+            )
+        })?;
+        let manifest =
+            wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::PackageManifest,
+                    format!("parse package manifest {}", path.display()),
+                    error,
+                )
+            })?;
+        let root = path.parent().unwrap_or_else(|| std::path::Path::new(""));
+        roots.insert(manifest.package.id, root.to_owned());
+    }
+    for (attachment_id, attachment) in attachments {
+        if !named(attachment) {
+            continue;
+        }
+        let root = roots.get(&attachment.package_id).ok_or_else(|| {
+            MintManifestError::new(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} names a generated input schema of package {:?}, and the release presents no wamn.json for it",
+                    attachment.package_id
+                ),
+            )
+        })?;
+        wamn_schema_generator::route_schema::resolve_attachment(
+            attachment_id,
+            attachment,
+            &mut |reference| {
+                wamn_schema_generator::route_schema::read_from_package(root, reference)
+            },
+        )
+        .map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!("attachment {attachment_id:?} input schema"),
+                error,
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn read_authored_attachments(
     paths: &[PathBuf],
 ) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
     if paths.is_empty() {

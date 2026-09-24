@@ -403,8 +403,11 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     // Both packages name widget-get-http. The overlay's replaces the base's, so
     // the release carries a route to each package's component.
     let read = |input: &PackageInput| {
-        read_package_attachments(&[input.root.join("publication/attachments.json")])
-            .expect("read the package attachment document")
+        read_package_attachments(
+            &[input.root.join("publication/attachments.json")],
+            &manifest_paths,
+        )
+        .expect("read the package attachment document")
     };
     let mut authored_attachments = read(&inputs[0]);
     authored_attachments.extend(read(&inputs[1]));

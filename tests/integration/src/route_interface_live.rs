@@ -98,7 +98,7 @@ fn attachments(
     app: &std::path::Path,
 ) -> anyhow::Result<(BTreeMap<String, ServingAttachment>, Vec<WiringDocument>)> {
     let routes: BTreeMap<String, ServingAttachment> =
-        serde_json::from_slice(&std::fs::read(app.join("publication/attachments.json"))?)?;
+        wamn_schema_generator::route_schema::read_package_attachments(app)?;
     let declaration: Value = serde_json::from_slice(&std::fs::read(
         app.join("publication/components/fixture.json.in"),
     )?)?;

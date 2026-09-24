@@ -203,10 +203,8 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 .and_then(Value::as_str)
                 .unwrap_or("opaque")
                 .to_owned(),
-            writable
-                .get("required")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            // An input that the operation refuses when omitted is required.
+            writable.get("omitted").and_then(Value::as_str) == Some("invalid_input"),
             writable.get("explicit_null").and_then(Value::as_str) == Some("accepted"),
         );
         declared.values = values(writable.get("values"));
