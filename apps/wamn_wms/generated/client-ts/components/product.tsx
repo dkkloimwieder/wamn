@@ -438,8 +438,8 @@ export interface ProductUpdateFormProps {
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: ProductUpdateFormInitial;
-  /** The record this command changes. The form reads it, and sends the
-   * revision it read, because `wamn-wms:product/get@1.0.0` states that binding. */
+  /** The record this command changes. The form reads it when it opens, and
+   * sends the revision it read, because `wamn-wms:product/get@1.0.0` states that binding. */
   readonly key: ProductGetDetailInput;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<ProductUpdateResult>) => void;
@@ -457,6 +457,13 @@ export const ProductUpdateFormLabel = "update";
 export function ProductUpdateForm(props: ProductUpdateFormProps) {
   const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
     null,
+  );
+  // The record this command changes, read when the form opens and again
+  // when its key changes. The form sends the revision of this read, so a
+  // change another writer makes after it refuses as a conflict.
+  const [record, { refetch: readAgain }] = createResource(
+    () => props.key,
+    (key: ProductGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),
   );
 
   const form = createForm(() => ({
@@ -476,19 +483,20 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
       }
       let item = { ...value } as ProductUpdateRequest;
       item = writeMember(item, ["requestId"], newRequestId());
-      // The revision comes from the record this command changes, read
-      // now, because a stale revision is what the conflict outcome names.
-      const record = await get(props.transport, [
-        { ...props.key, requestId: newRequestId() },
-      ]);
-      if (record.status !== "completed") {
-        setRefusal({ code: record.status, member: null });
+      // The revision is the one the form read when it opened, never one read
+      // now, because a change made since then is what the conflict outcome names.
+      const read = record();
+      if (read?.status !== "completed") {
+        setRefusal({ code: read?.status ?? "the record is not read yet", member: null });
         return;
       }
-      item = writeMember(item, ["id"], readMember(record.value, ["id"]) ?? null);
-      item = writeMember(item, ["expectedRowVersion"], readMember(record.value, ["rowVersion"]) ?? null);
+      item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
+      item = writeMember(item, ["expectedRowVersion"], readMember(read.value, ["rowVersion"]) ?? null);
       const outcome = await update(props.transport, [item]);
       props.onSubmitted?.(outcome);
+      if (outcome.status === "completed") {
+        void readAgain();
+      }
       announceOutcome(outcome, ProductUpdateFormLabel);
       setRefusal(
         outcome.status === "refused"

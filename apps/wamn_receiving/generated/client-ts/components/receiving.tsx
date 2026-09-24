@@ -473,27 +473,27 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     },
   }));
   const formValues = useStore(form.store, (state) => state.values);
-  const [locationListOptions, setLocationListOptions] = createSignal<PageState<LocationListRow>>(emptyPage<LocationListRow>());
-  const readLocationListOptions = async (cursor: string | null) => {
+  const [valueLineLocationIdOptions, setValueLineLocationIdOptions] = createSignal<PageState<LocationListRow>>(emptyPage<LocationListRow>());
+  const readValueLineLocationIdOptions = async (cursor: string | null) => {
     const request = { requestId: newRequestId() } as LocationListRequest;
     const outcome = await locationList(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
     }
     const rows = outcome.value.rows as LocationListRow[];
-    setLocationListOptions(
+    setValueLineLocationIdOptions(
       cursor === null
         ? firstPage(rows, null)
-        : appendPage(locationListOptions(), rows, null),
+        : appendPage(valueLineLocationIdOptions(), rows, null),
     );
   };
-  void readLocationListOptions(null);
-  const [receivingLoadReceiptScreenOptions, setReceivingLoadReceiptScreenOptions] = createSignal<PageState<ReceivingLoadReceiptScreenRow>>(emptyPage<ReceivingLoadReceiptScreenRow>());
-  const [receivingLoadReceiptScreenNarrowed, setReceivingLoadReceiptScreenNarrowed] = createSignal<string | null>(null);
-  const readReceivingLoadReceiptScreenOptions = async (cursor: string | null) => {
-    const narrowed = receivingLoadReceiptScreenNarrowed();
+  void readValueLineLocationIdOptions(null);
+  const [valueLinePurchaseOrderLineIdOptions, setValueLinePurchaseOrderLineIdOptions] = createSignal<PageState<ReceivingLoadReceiptScreenRow>>(emptyPage<ReceivingLoadReceiptScreenRow>());
+  const [valueLinePurchaseOrderLineIdNarrowed, setValueLinePurchaseOrderLineIdNarrowed] = createSignal<string | null>(null);
+  const readValueLinePurchaseOrderLineIdOptions = async (cursor: string | null) => {
+    const narrowed = valueLinePurchaseOrderLineIdNarrowed();
     if (narrowed === null || narrowed === "") {
-      setReceivingLoadReceiptScreenOptions(emptyPage<ReceivingLoadReceiptScreenRow>());
+      setValueLinePurchaseOrderLineIdOptions(emptyPage<ReceivingLoadReceiptScreenRow>());
       return;
     }
     const request = { requestId: newRequestId(), purchaseOrderId: narrowed } as ReceivingLoadReceiptScreenRequest;
@@ -502,23 +502,23 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       return;
     }
     const rows = outcome.value.rows as ReceivingLoadReceiptScreenRow[];
-    setReceivingLoadReceiptScreenOptions(
+    setValueLinePurchaseOrderLineIdOptions(
       cursor === null
         ? firstPage(rows, null)
-        : appendPage(receivingLoadReceiptScreenOptions(), rows, null),
+        : appendPage(valueLinePurchaseOrderLineIdOptions(), rows, null),
     );
   };
   createEffect(() => {
     formValues();
-    setReceivingLoadReceiptScreenNarrowed((form.getFieldValue(`value.purchaseOrderId`) as string | null) ?? null);
-    void readReceivingLoadReceiptScreenOptions(null);
+    setValueLinePurchaseOrderLineIdNarrowed((form.getFieldValue(`value.purchaseOrderId`) as string | null) ?? null);
+    void readValueLinePurchaseOrderLineIdOptions(null);
   });
-  const [purchaseOrderQueryOptions, setPurchaseOrderQueryOptions] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
-  const [purchaseOrderQuerySearch, setPurchaseOrderQuerySearch] = createSignal("");
-  const readPurchaseOrderQueryOptions = async (cursor: string | null) => {
+  const [valuePurchaseOrderIdOptions, setValuePurchaseOrderIdOptions] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
+  const [valuePurchaseOrderIdSearch, setValuePurchaseOrderIdSearch] = createSignal("");
+  const readValuePurchaseOrderIdOptions = async (cursor: string | null) => {
     let request = { requestId: newRequestId() } as PurchaseOrderQueryRequest;
-    if (purchaseOrderQuerySearch() !== "") {
-      request = writeMember(request, ["filter", "purchaseOrderNumber"], [purchaseOrderQuerySearch()]) as PurchaseOrderQueryRequest;
+    if (valuePurchaseOrderIdSearch() !== "") {
+      request = writeMember(request, ["filter", "purchaseOrderNumber"], [valuePurchaseOrderIdSearch()]) as PurchaseOrderQueryRequest;
     }
     if (cursor !== null) {
       request = writeMember(request, ["cursor"], cursor) as PurchaseOrderQueryRequest;
@@ -528,13 +528,13 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       return;
     }
     const rows = outcome.value.item as PurchaseOrderQueryRow[];
-    setPurchaseOrderQueryOptions(
+    setValuePurchaseOrderIdOptions(
       cursor === null
         ? firstPage(rows, outcome.value.nextCursor)
-        : appendPage(purchaseOrderQueryOptions(), rows, outcome.value.nextCursor),
+        : appendPage(valuePurchaseOrderIdOptions(), rows, outcome.value.nextCursor),
     );
   };
-  void readPurchaseOrderQueryOptions(null);
+  void readValuePurchaseOrderIdOptions(null);
 
   return (
     <form
@@ -558,7 +558,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                       {(field) => (
                         <RecordSelect
                           label="Location"
-                          options={locationListOptions().rows}
+                          options={valueLineLocationIdOptions().rows}
                           optionValue={(row) => String(row.id)}
                           optionLabel={(row) => String(row.locationCode)}
                           value={field().state.value == null ? null : String(field().state.value)}
@@ -571,7 +571,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                       {(field) => (
                         <RecordSelect
                           label="Order line"
-                          options={receivingLoadReceiptScreenOptions().rows}
+                          options={valueLinePurchaseOrderLineIdOptions().rows}
                           optionValue={(row) => String(row.lineId)}
                           optionLabel={(row) => String(row.itemNumber)}
                           value={field().state.value == null ? null : String(field().state.value)}
@@ -618,17 +618,17 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
           {(field) => (
             <RecordSelect
               label="Purchase order"
-              options={purchaseOrderQueryOptions().rows}
+              options={valuePurchaseOrderIdOptions().rows}
               optionValue={(row) => String(row.id)}
               optionLabel={(row) => String(row.purchaseOrderNumber)}
               value={field().state.value == null ? null : String(field().state.value)}
               onChange={(value) => field().handleChange(value ?? "")}
               onSearch={(text) => {
-                setPurchaseOrderQuerySearch(text);
-                void readPurchaseOrderQueryOptions(null);
+                setValuePurchaseOrderIdSearch(text);
+                void readValuePurchaseOrderIdOptions(null);
               }}
-              hasNextPage={hasNextPage(purchaseOrderQueryOptions())}
-              onNextPage={() => void readPurchaseOrderQueryOptions(purchaseOrderQueryOptions().cursor)}
+              hasNextPage={hasNextPage(valuePurchaseOrderIdOptions())}
+              onNextPage={() => void readValuePurchaseOrderIdOptions(valuePurchaseOrderIdOptions().cursor)}
               error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.code ?? "refused") : null}
             />
           )}

@@ -475,30 +475,42 @@ fn a_repeated_control_states_its_declared_path_and_its_index() {
     );
 }
 
-/// A command that sends a revision reads the record first, because a stale
-/// revision is what the conflict outcome names.
+/// A command sends the revision of the record the form read when it opened,
+/// never one read at submit, because a change another writer makes in between
+/// is what the conflict outcome names (wamn-yzy7).
 #[test]
-fn a_revision_bound_form_reads_the_record_before_it_sends() {
+fn a_revision_bound_form_sends_the_revision_it_read_when_it_opened() {
     let files = emit(&release());
     let widget = widget(&files);
     let form = widget
         .split("export function WidgetUpdateForm")
         .nth(1)
         .expect("the update form exists");
+    let submit = form
+        .split("onSubmit: async")
+        .nth(1)
+        .expect("the form submits")
+        .split("\n  }));")
+        .next()
+        .expect("the submission ends");
     assert!(
         widget.contains("  readonly key: WidgetGetDetailInput;"),
         "the form takes the record it changes"
     );
     assert!(
-        form.contains("const record = await get(props.transport, [\n        { ...props.key, requestId: newRequestId() },\n      ]);"),
-        "it reads that record first"
+        form.contains("  const [record, { refetch: readAgain }] = createResource(\n    () => props.key,\n    (key: WidgetGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),\n  );"),
+        "it reads that record when it opens"
     );
     assert!(
-        form.contains("item = writeMember(item, [\"expectedEditVersion\"], readMember(record.value, [\"editVersion\"]) ?? null);"),
-        "it sends the revision it read"
+        !submit.contains("get(props.transport"),
+        "the submission reads nothing: {submit}"
     );
     assert!(
-        form.contains("if (record.status !== \"completed\") {"),
+        submit.contains("item = writeMember(item, [\"expectedEditVersion\"], readMember(read.value, [\"editVersion\"]) ?? null);"),
+        "it sends the revision it read when it opened"
+    );
+    assert!(
+        submit.contains("if (read?.status !== \"completed\") {"),
         "a read that establishes nothing stops the submission"
     );
     let props = widget
@@ -595,7 +607,7 @@ fn a_bound_key_is_a_prop_and_never_a_control() {
     );
     assert!(
         update.contains(
-            "item = writeMember(item, [\"id\"], readMember(record.value, [\"id\"]) ?? null);"
+            "item = writeMember(item, [\"id\"], readMember(read.value, [\"id\"]) ?? null);"
         ),
         "the submission writes the key from the record it read"
     );

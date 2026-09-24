@@ -438,7 +438,9 @@ A detail reads one record and shows its fields.
 A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.
 It writes the reserved inputs from the runtime at submit time.
 A delete asks for a confirmation first.
-A command whose plan binds a revision reads the record first and sends the revision it read.
+A form whose plan binds a revision reads the record when it opens and sends the revision of that read.
+It reads nothing at submit, so a change that another writer makes in between refuses as a conflict.
+A delete whose plan binds a revision reads the record when the operator confirms.
 An operation whose shape has no role gets no component, and the emitted index names it with the reason.
 A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
 Components state no route and no navigation: a row link is a callback, and the application decides what to open.

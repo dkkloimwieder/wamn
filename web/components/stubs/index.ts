@@ -183,3 +183,50 @@ export function prefillStub(): Transport {
     },
   };
 }
+
+/**
+ * One transport that holds one widget and its revision, as a server does.
+ *
+ * A read answers the current revision. An update with that revision completes
+ * and moves it, and an update with any other refuses as a conflict. `write`
+ * is a second writer that moves the revision behind the form's back.
+ */
+export function updateStub(): { transport: Transport; sent: WireRequest[]; write: () => void } {
+  const sent: WireRequest[] = [];
+  let version = 7;
+  const row = (): JsonValue => ({
+    id: WIDGET,
+    code: "standard",
+    note: null,
+    edit_version: String(version),
+    created_at: "2026-09-21T12:00:00.000000Z",
+  });
+  return {
+    sent,
+    write: () => {
+      version += 1;
+    },
+    transport: {
+      invoke: (request: WireRequest) => {
+        sent.push(request);
+        if (request.operation.includes("/get@")) {
+          return Promise.resolve({ status: "completed", value: row() });
+        }
+        if (request.operation.includes("widget-maker")) {
+          return Promise.resolve({ status: "completed", value: { item: [], nextCursor: null } });
+        }
+        const item = request.items[0] as { [key: string]: JsonValue };
+        const expected = item["expected_edit_version"];
+        if (expected !== String(version)) {
+          return Promise.resolve({
+            status: "refused",
+            code: "concurrency_conflict",
+            detail: { expected: expected ?? null, observed: String(version) },
+          });
+        }
+        version += 1;
+        return Promise.resolve({ status: "completed", value: row() });
+      },
+    },
+  };
+}

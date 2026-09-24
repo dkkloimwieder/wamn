@@ -234,6 +234,9 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                     solid.insert("createEffect");
                     narrowed = true;
                 }
+                if screen.revision.is_some() {
+                    solid.insert("createResource");
+                }
                 emit_form(
                     &mut body,
                     screen,
@@ -1238,7 +1241,7 @@ fn emit_form(
             .unwrap_or_else(|| format!("{read}Request"));
         writeln!(
             source,
-            "  /** The record this command changes. The form reads it, and sends the\n   * revision it read, because `{}` states that binding. */",
+            "  /** The record this command changes. The form reads it when it opens, and\n   * sends the revision it read, because `{}` states that binding. */",
             binding.read_operation
         )
         .expect("write");
@@ -1289,6 +1292,30 @@ fn emit_form(
     source.push_str(
         "  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(\n    null,\n  );\n",
     );
+    if let Some(binding) = screen.revision {
+        let read = crate::client_ts::function_name(local_name(binding.read_operation)).map_err(
+            |error| {
+                ClientComponentError::new(
+                    ClientComponentErrorKind::UnwrittenRole,
+                    error.to_string(),
+                )
+            },
+        )?;
+        let read_stem = crate::client_ts::operation_stem(binding.read_operation);
+        let key = records
+            .get(binding.read_operation)
+            .cloned()
+            .unwrap_or_else(|| format!("{read_stem}Request"));
+        bindings.insert(read.clone());
+        bindings.insert(format!("type {read_stem}Request"));
+        runtime.insert("readMember");
+        source.push_str("  // The record this command changes, read when the form opens and again\n  // when its key changes. The form sends the revision of this read, so a\n  // change another writer makes after it refuses as a conflict.\n");
+        writeln!(
+            source,
+            "  const [record, {{ refetch: readAgain }}] = createResource(\n    () => props.key,\n    (key: {key}) => {read}(props.transport, [{{ ...key, requestId: newRequestId() }}]),\n  );"
+        )
+        .expect("write");
+    }
     source.push_str("\n  const form = createForm(() => ({\n");
     // The form holds the whole request, including the repeated group it owns.
     // The caller states the operator inputs alone, which `initial` names.
@@ -1325,39 +1352,20 @@ fn emit_form(
         .expect("write");
     }
     if let Some(binding) = screen.revision {
-        let read = crate::client_ts::function_name(local_name(binding.read_operation)).map_err(
-            |error| {
-                ClientComponentError::new(
-                    ClientComponentErrorKind::UnwrittenRole,
-                    error.to_string(),
-                )
-            },
-        )?;
-        bindings.insert(read.clone());
-        bindings.insert(format!(
-            "type {}Request",
-            crate::client_ts::operation_stem(binding.read_operation)
-        ));
-        runtime.insert("readMember");
-        source.push_str("      // The revision comes from the record this command changes, read\n      // now, because a stale revision is what the conflict outcome names.\n");
-        writeln!(
-            source,
-            "      const record = await {read}(props.transport, [\n        {{ ...props.key, requestId: newRequestId() }},\n      ]);"
-        )
-        .expect("write");
+        source.push_str("      // The revision is the one the form read when it opened, never one read\n      // now, because a change made since then is what the conflict outcome names.\n");
         source.push_str(
-            "      if (record.status !== \"completed\") {\n        setRefusal({ code: record.status, member: null });\n        return;\n      }\n",
+            "      const read = record();\n      if (read?.status !== \"completed\") {\n        setRefusal({ code: read?.status ?? \"the record is not read yet\", member: null });\n        return;\n      }\n",
         );
         writeln!(
             source,
-            "      item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            "      item = writeMember(item, {}, readMember(read.value, {}) ?? null);",
             member_literal(binding.command_key_input),
             member_literal(binding.key_field)
         )
         .expect("write");
         writeln!(
             source,
-            "      item = writeMember(item, {}, readMember(record.value, {}) ?? null);",
+            "      item = writeMember(item, {}, readMember(read.value, {}) ?? null);",
             member_literal(binding.command_revision_input),
             member_literal(binding.revision_field)
         )
@@ -1379,6 +1387,12 @@ fn emit_form(
     )
     .expect("write");
     source.push_str("      props.onSubmitted?.(outcome);\n");
+    if screen.revision.is_some() {
+        // Its own write moved the revision, so the next submission needs it.
+        source.push_str(
+            "      if (outcome.status === \"completed\") {\n        void readAgain();\n      }\n",
+        );
+    }
     // Every outcome of a submission is announced. A refusal that names a
     // member still marks that member in place.
     writeln!(source, "      announceOutcome(outcome, {stem}FormLabel);").expect("write");
