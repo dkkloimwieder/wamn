@@ -30,11 +30,15 @@
       "table": "location",
       "owner": "wamn_wms",
       "server_owned_fields": [
-        "id"
+        "id",
+        "row_version",
+        "created_at"
       ],
       "enum_fields": {},
       "audit_log": {
-        "columns": [],
+        "columns": [
+          "created_at"
+        ],
         "retention": "none"
       },
       "operations": {}
@@ -165,11 +169,14 @@
       "table": "pallet_quantity",
       "owner": "wamn_wms",
       "server_owned_fields": [
-        "id"
+        "id",
+        "created_at"
       ],
       "enum_fields": {},
       "audit_log": {
-        "columns": [],
+        "columns": [
+          "created_at"
+        ],
         "retention": "none"
       },
       "operations": {}
@@ -179,11 +186,15 @@
       "table": "product",
       "owner": "wamn_wms",
       "server_owned_fields": [
-        "id"
+        "id",
+        "row_version",
+        "created_at"
       ],
       "enum_fields": {},
       "audit_log": {
-        "columns": [],
+        "columns": [
+          "created_at"
+        ],
         "retention": "none"
       },
       "operations": {}
@@ -208,6 +219,21 @@
     "inventory_split_command": {
       "schema": "wms",
       "table": "inventory_split_command",
+      "cdc": "excluded"
+    },
+    "location_command": {
+      "schema": "wms",
+      "table": "location_command",
+      "cdc": "excluded"
+    },
+    "product_command": {
+      "schema": "wms",
+      "table": "product_command",
+      "cdc": "excluded"
+    },
+    "pallet_command": {
+      "schema": "wms",
+      "table": "pallet_command",
       "cdc": "excluded"
     }
   },
