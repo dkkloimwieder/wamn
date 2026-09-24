@@ -320,9 +320,9 @@ mod tests {
             "the loaded release retains the exact component closure"
         );
         assert_eq!(
-            loaded_release.manifest().wirings,
-            expected.wirings,
-            "the loaded release retains the exact wiring closure"
+            loaded_release.manifest().workflow,
+            expected.workflow,
+            "the loaded release retains the exact workflow section"
         );
     }
 

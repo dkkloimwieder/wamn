@@ -334,9 +334,9 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             && release.release().effective_release_id == 4
             && release.manifest().release.packages.len() == 2
             && release.manifest().components.len() == 2
-            && release.manifest().wirings.len() == 1
-            && release.manifest().attachments.len() == 1
-            && release.manifest().registrations.is_empty()
+            && release.manifest().workflow.wirings.len() == 1
+            && release.manifest().every_attachment().count() == 1
+            && release.manifest().workflow.registrations.is_empty()
             && release
                 .manifest()
                 .components

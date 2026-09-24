@@ -500,8 +500,9 @@ fn serving_manifest(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let wirings=wirings.iter().map(|(id,w)|json!({"package-id":id,"wiring-id":w.wiring_id,"wiring-version":w.version,"graph-hash":w.wiring_hash().as_str()})).collect::<Vec<_>>();
+    let (attachments, workflow_attachments) = ServingAttachment::split(attachments.clone());
     Ok(serde_json::from_value(
-        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"routes":routes,"wirings":wirings,"attachments":attachments,"registrations":{}}),
+        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"routes":routes,"attachments":attachments,"workflow":{"wirings":wirings,"attachments":workflow_attachments}}),
     )?)
 }
 

@@ -523,9 +523,8 @@ mod tests {
             },
             components: BTreeSet::new(),
             routes: BTreeSet::new(),
-            wirings: BTreeSet::new(),
             attachments: BTreeMap::new(),
-            registrations: BTreeMap::new(),
+            workflow: wamn_catalog::WorkflowSection::default(),
         }
     }
 
@@ -695,7 +694,7 @@ mod tests {
             .entry
             .wiring()
             .expect("the fixture invocation enters through a wiring");
-        manifest.wirings = BTreeSet::from([ServingWiring {
+        manifest.workflow.wirings = BTreeSet::from([ServingWiring {
             package_id: position.package_id.clone(),
             wiring_id: position.wiring_id.clone(),
             wiring_version: position.wiring_version,
@@ -817,7 +816,7 @@ mod tests {
         let world = frozen_world();
         let mut snapshot = matching_snapshot(frozen_binding(&world));
         let mut manifest = carrying_manifest(&snapshot);
-        manifest.wirings.clear();
+        manifest.workflow.wirings.clear();
         snapshot.wiring_hash = None;
         let mut route = released();
         route.entry = crate::plugins::connection_http::InvocationEntry::Route;

@@ -12,9 +12,9 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, GenericClient, IsolationLevel, NoTls, Row, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, ComponentPackageScope, PackageCoordinate, ServingManifest,
-    WiringActivationFacts, WiringDocument, activation_facts, validate_wiring_activation,
-    validate_wiring_compatibility,
+    AdmittedComponent, ComponentPackageScope, PackageCoordinate, ServingAttachment,
+    ServingManifest, WiringActivationFacts, WiringDocument, activation_facts,
+    validate_wiring_activation, validate_wiring_compatibility,
 };
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_runtime::component_artifact_source::{
@@ -690,6 +690,7 @@ async fn promote_target(
     let packages = source.manifest.release.packages.clone();
     let wirings = source
         .manifest
+        .workflow
         .wirings
         .iter()
         .map(|wiring| {
@@ -705,6 +706,11 @@ async fn promote_target(
             }
         })
         .collect::<BTreeSet<_>>();
+    let attachments = source
+        .manifest
+        .every_attachment()
+        .map(|(id, attachment)| (id.to_owned(), ServingAttachment::from(attachment)))
+        .collect();
     let minted = mint_promoted_release_manifest(
         &tx,
         &MintReleaseManifest {
@@ -714,16 +720,16 @@ async fn promote_target(
             verified_publisher_principal: &args.principal,
             packages: &packages,
             wirings: &wirings,
-            attachments: &source.manifest.attachments,
+            attachments: &attachments,
             // A promotion carries an already-published release into a real
             // environment, so it always matches the declared dependency digest.
             environment_is_disposable: false,
         },
-        &source.manifest.registrations,
+        &source.manifest.workflow.registrations,
         &source.manifest.routes,
     )
     .await
-    .context("mint target format-1 release snapshot")?;
+    .context("mint target format-3 release snapshot")?;
     let expected = read_expected_environment(&tx, run_schema, &args.tenant).await?;
     verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
     tx.execute(
@@ -733,7 +739,7 @@ async fn promote_target(
     .await
     .context("advance target effective-release head")?;
     let mut activated = 0;
-    for wiring in &minted.manifest.wirings {
+    for wiring in &minted.manifest.workflow.wirings {
         if activate_once(
             &tx,
             args,

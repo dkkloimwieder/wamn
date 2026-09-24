@@ -120,8 +120,7 @@ pub(super) async fn prepare_session_host_fixture(
     anyhow::ensure!(
         release.manifest().attachments == expected_attachments
             && release.manifest().components == previous_release.manifest().components
-            && release.manifest().wirings == previous_release.manifest().wirings
-            && release.manifest().registrations == previous_release.manifest().registrations,
+            && release.manifest().workflow == previous_release.manifest().workflow,
         "session release changed facts beyond the copied attachment policy"
     );
 
@@ -412,8 +411,7 @@ pub(super) async fn assert_nested_session(
             && release.release().effective_release_id == 3
             && release.manifest().attachments == expected
             && release.manifest().components == previous.manifest().components
-            && release.manifest().wirings == previous.manifest().wirings
-            && release.manifest().registrations == previous.manifest().registrations,
+            && release.manifest().workflow == previous.manifest().workflow,
         "caller test changed facts beyond its release ID and selected route policies"
     );
     let after: Vec<u8> = project

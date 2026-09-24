@@ -11,9 +11,7 @@ use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
 use crate::wiring_lowering::{WiringScope, lower_resolved_wiring};
 use anyhow::Context as _;
 use tracing::Instrument as _;
-use wamn_catalog::{
-    AdmittedComponent, AttachmentTarget, DefinitionHash, ServingManifest, ServingWiring,
-};
+use wamn_catalog::{AdmittedComponent, DefinitionHash, ServingManifest, ServingWiring};
 use wamn_engine::artifact_source::ComponentArtifactFetchErrorKind;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{
@@ -921,7 +919,7 @@ impl RouterDriver {
                 .context("active wiring carries a non-canonical definition hash")?,
         };
         anyhow::ensure!(
-            self.release.manifest().wirings.contains(&expected),
+            self.release.manifest().workflow.wirings.contains(&expected),
             "wiring-not-in-carried-release"
         );
         anyhow::ensure!(
@@ -1024,19 +1022,16 @@ impl RouterDriver {
 
 fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, String, u32)> {
     manifest
+        .workflow
         .attachments
         .values()
         .filter(|attachment| synchronous_request_kind(attachment.kind))
-        .filter_map(|attachment| match &attachment.target {
-            AttachmentTarget::Wiring {
-                wiring_id,
-                wiring_version,
-            } => Some((
+        .map(|attachment| {
+            (
                 attachment.package_id.clone(),
-                wiring_id.clone(),
-                *wiring_version,
-            )),
-            AttachmentTarget::Route { .. } => None,
+                attachment.wiring_id.clone(),
+                attachment.wiring_version,
+            )
         })
         .collect()
 }
@@ -1436,6 +1431,34 @@ mod tests {
     /// silently and only erode the win. This is the assertion that hears it.
     #[test]
     fn readiness_closure_contains_only_distinct_request_attachment_targets() {
+        let (attachments, workflow_attachments) = ServingAttachment::split(BTreeMap::from([
+            (
+                "http".to_owned(),
+                attachment(AttachmentKind::Http, "request-wiring"),
+            ),
+            (
+                "internal".to_owned(),
+                attachment(AttachmentKind::Internal, "request-wiring"),
+            ),
+            (
+                "studio".to_owned(),
+                attachment(AttachmentKind::Studio, "studio-wiring"),
+            ),
+            (
+                "cron".to_owned(),
+                attachment(AttachmentKind::Cron, "background-wiring"),
+            ),
+            (
+                "route".to_owned(),
+                ServingAttachment {
+                    target: wamn_catalog::AttachmentTarget::Route {
+                        component: "orders".to_owned(),
+                        operation: "orders:order/get@1.0.0".to_owned(),
+                    },
+                    ..attachment(AttachmentKind::Http, "unused")
+                },
+            ),
+        ]));
         let manifest = ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
@@ -1446,47 +1469,23 @@ mod tests {
             },
             components: BTreeSet::new(),
             routes: BTreeSet::new(),
-            wirings: BTreeSet::new(),
-            attachments: BTreeMap::from([
-                (
-                    "http".to_owned(),
-                    attachment(AttachmentKind::Http, "request-wiring"),
-                ),
-                (
-                    "internal".to_owned(),
-                    attachment(AttachmentKind::Internal, "request-wiring"),
-                ),
-                (
-                    "studio".to_owned(),
-                    attachment(AttachmentKind::Studio, "studio-wiring"),
-                ),
-                (
-                    "cron".to_owned(),
-                    attachment(AttachmentKind::Cron, "background-wiring"),
-                ),
-                (
-                    "route".to_owned(),
-                    ServingAttachment {
-                        target: wamn_catalog::AttachmentTarget::Route {
-                            component: "orders".to_owned(),
-                            operation: "orders:order/get@1.0.0".to_owned(),
-                        },
-                        ..attachment(AttachmentKind::Http, "unused")
+            attachments,
+            workflow: wamn_catalog::WorkflowSection {
+                wirings: BTreeSet::new(),
+                attachments: workflow_attachments,
+                registrations: BTreeMap::from([(
+                    "orders::events".to_owned(),
+                    ServingRegistration {
+                        package_id: "orders".to_owned(),
+                        source_package_id: "orders".to_owned(),
+                        wiring_id: "stream-wiring".to_owned(),
+                        wiring_version: 4,
+                        entity: "order".to_owned(),
+                        ops: BTreeSet::from(["created".to_owned()]),
+                        input: ServingRegistrationInput::Event,
                     },
-                ),
-            ]),
-            registrations: BTreeMap::from([(
-                "orders::events".to_owned(),
-                ServingRegistration {
-                    package_id: "orders".to_owned(),
-                    source_package_id: "orders".to_owned(),
-                    wiring_id: "stream-wiring".to_owned(),
-                    wiring_version: 4,
-                    entity: "order".to_owned(),
-                    ops: BTreeSet::from(["created".to_owned()]),
-                    input: ServingRegistrationInput::Event,
-                },
-            )]),
+                )]),
+            },
         };
 
         assert_eq!(

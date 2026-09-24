@@ -646,9 +646,8 @@ impl Fixture {
             },
             components: BTreeSet::from([served]),
             routes: BTreeSet::new(),
-            wirings: BTreeSet::new(),
             attachments: BTreeMap::new(),
-            registrations: BTreeMap::new(),
+            workflow: wamn_catalog::WorkflowSection::default(),
         };
         let release = Arc::new(
             LoadedRelease::load_canonical_bytes(

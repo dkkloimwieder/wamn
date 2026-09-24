@@ -408,7 +408,7 @@ pub fn validate_local_facts(
             .context("validate local effect projection")?;
     }
     anyhow::ensure!(
-        facts.wirings.len() == manifest.wirings.len(),
+        facts.wirings.len() == manifest.workflow.wirings.len(),
         "local wiring closure is incomplete"
     );
     let mut seen = BTreeSet::new();
@@ -434,6 +434,7 @@ pub fn validate_local_facts(
         );
         anyhow::ensure!(
             manifest
+                .workflow
                 .wirings
                 .iter()
                 .any(|wiring| wiring.package_id == fact.scope.package_id

@@ -240,12 +240,14 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
                 ROOT: {"registered-operation": ROOT, "permissions": [ROOT]}
             }}],
         "routes": [],
-        "wirings": [{"package-id": "root", "wiring-id": "trusted-wiring", "wiring-version": 1,
-            "graph-hash": format!("sha256:{}", "b".repeat(64))}],
-        "attachments": {ATTACHMENT: {"kind": "http", "package-id": "root", "wiring-id": "trusted-wiring",
-            "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
-            "definition": definition, "auth-policy": {"modes": ["session"]}, "registered-operation": ROOT}},
-        "registrations": {}
+        "attachments": {},
+        "workflow": {
+            "wirings": [{"package-id": "root", "wiring-id": "trusted-wiring", "wiring-version": 1,
+                "graph-hash": format!("sha256:{}", "b".repeat(64))}],
+            "attachments": {ATTACHMENT: {"kind": "http", "package-id": "root", "wiring-id": "trusted-wiring",
+                "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+                "definition": definition, "auth-policy": {"modes": ["session"]}, "registered-operation": ROOT}}
+        }
     });
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
@@ -1134,8 +1136,8 @@ async fn pat_caller(
     let reader = connect(reader_url.as_str()).await?;
     let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {"host": "native.example.test", "path": "/native", "method": "POST"}});
     let mut manifest = serde_json::to_value(release.manifest())?;
-    manifest["wirings"] = json!([{"package-id":"root","wiring-id":"trusted-wiring","wiring-version":1,"graph-hash":format!("sha256:{}", "b".repeat(64))}]);
-    manifest["attachments"] = json!({ATTACHMENT: {"kind":"http","package-id":"root","wiring-id":"trusted-wiring","wiring-version":1,"definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),"definition":definition,"auth-policy":{"modes":["pat"]},"registered-operation":ROOT}});
+    manifest["workflow"]["wirings"] = json!([{"package-id":"root","wiring-id":"trusted-wiring","wiring-version":1,"graph-hash":format!("sha256:{}", "b".repeat(64))}]);
+    manifest["workflow"]["attachments"] = json!({ATTACHMENT: {"kind":"http","package-id":"root","wiring-id":"trusted-wiring","wiring-version":1,"definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),"definition":definition,"auth-policy":{"modes":["pat"]},"registered-operation":ROOT}});
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "warm PAT test",

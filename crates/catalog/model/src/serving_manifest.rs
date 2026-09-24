@@ -1,10 +1,12 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
 //! Format 3 closes over exact package membership, component digests, routes,
-//! wiring definitions, the permissions and SQL statements of each export's
-//! call graph, attachments, and registrations. Publish folds each call graph,
-//! because an application's components compose at build into one component. A route calls one component
-//! export; a wiring is a graph the router walks. It contains no flow or
+//! the permissions and SQL statements of each export's call graph, and route
+//! attachments. Publish folds each call graph, because an application's
+//! components compose at build into one component. A route calls one component
+//! export. The workflow section holds the wiring definitions, the attachments
+//! that start a wiring, and the registrations. A wiring is a graph the router
+//! walks. It contains no flow or
 //! execution-plan identity. Producers must source every member from current
 //! catalog records; this model intentionally provides no legacy-plan
 //! conversion. Attachment authentication uses a closed modes list, without a
@@ -394,7 +396,10 @@ pub enum AttachmentTarget {
     },
 }
 
-/// One release attachment targeting a route or an exact wiring version.
+/// One authored attachment targeting a route or an exact wiring version.
+///
+/// Publish reads this type from `publication/attachments.json` and splits it
+/// into a [`RouteAttachment`] or a [`WiringAttachment`] of the manifest.
 ///
 /// On the wire the target is flat: `component` and `operation`, or
 /// `wiring-id` and `wiring-version`, never both.
@@ -498,6 +503,216 @@ impl From<ServingAttachment> for AttachmentWire {
     }
 }
 
+impl ServingAttachment {
+    /// Split authored attachments into route attachments and workflow attachments.
+    pub fn split(
+        authored: BTreeMap<String, Self>,
+    ) -> (
+        BTreeMap<String, RouteAttachment>,
+        BTreeMap<String, WiringAttachment>,
+    ) {
+        let mut routes = BTreeMap::new();
+        let mut wirings = BTreeMap::new();
+        for (id, attachment) in authored {
+            match attachment.target {
+                AttachmentTarget::Route {
+                    component,
+                    operation,
+                } => {
+                    routes.insert(
+                        id,
+                        RouteAttachment {
+                            kind: attachment.kind,
+                            package_id: attachment.package_id,
+                            component,
+                            operation,
+                            definition_hash: attachment.definition_hash,
+                            definition: attachment.definition,
+                            auth_policy: attachment.auth_policy,
+                            registered_operation: attachment.registered_operation,
+                        },
+                    );
+                }
+                AttachmentTarget::Wiring {
+                    wiring_id,
+                    wiring_version,
+                } => {
+                    wirings.insert(
+                        id,
+                        WiringAttachment {
+                            kind: attachment.kind,
+                            package_id: attachment.package_id,
+                            wiring_id,
+                            wiring_version,
+                            definition_hash: attachment.definition_hash,
+                            definition: attachment.definition,
+                            auth_policy: attachment.auth_policy,
+                            registered_operation: attachment.registered_operation,
+                        },
+                    );
+                }
+            }
+        }
+        (routes, wirings)
+    }
+}
+
+impl From<RouteAttachment> for ServingAttachment {
+    fn from(attachment: RouteAttachment) -> Self {
+        Self {
+            kind: attachment.kind,
+            package_id: attachment.package_id,
+            target: AttachmentTarget::Route {
+                component: attachment.component,
+                operation: attachment.operation,
+            },
+            definition_hash: attachment.definition_hash,
+            definition: attachment.definition,
+            auth_policy: attachment.auth_policy,
+            registered_operation: attachment.registered_operation,
+        }
+    }
+}
+
+impl From<WiringAttachment> for ServingAttachment {
+    fn from(attachment: WiringAttachment) -> Self {
+        Self {
+            kind: attachment.kind,
+            package_id: attachment.package_id,
+            target: AttachmentTarget::Wiring {
+                wiring_id: attachment.wiring_id,
+                wiring_version: attachment.wiring_version,
+            },
+            definition_hash: attachment.definition_hash,
+            definition: attachment.definition,
+            auth_policy: attachment.auth_policy,
+            registered_operation: attachment.registered_operation,
+        }
+    }
+}
+
+impl From<AttachmentRef<'_>> for ServingAttachment {
+    fn from(attachment: AttachmentRef<'_>) -> Self {
+        match attachment {
+            AttachmentRef::Route(attachment) => attachment.clone().into(),
+            AttachmentRef::Wiring(attachment) => attachment.clone().into(),
+        }
+    }
+}
+
+/// One release attachment that calls one component export through a route.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RouteAttachment {
+    pub kind: AttachmentKind,
+    pub package_id: String,
+    pub component: String,
+    pub operation: String,
+    pub definition_hash: DefinitionHash,
+    pub definition: Value,
+    pub auth_policy: Value,
+    /// Exact operation authority selected by this attachment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
+}
+
+/// One release attachment that starts an exact wiring version.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct WiringAttachment {
+    pub kind: AttachmentKind,
+    pub package_id: String,
+    pub wiring_id: String,
+    pub wiring_version: u32,
+    pub definition_hash: DefinitionHash,
+    pub definition: Value,
+    pub auth_policy: Value,
+    /// Exact operation authority selected by this attachment. Attachments that
+    /// do not invoke a package operation carry no token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
+}
+
+/// One release attachment, borrowed from the route attachments or from the
+/// workflow section.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AttachmentRef<'a> {
+    Route(&'a RouteAttachment),
+    Wiring(&'a WiringAttachment),
+}
+
+impl<'a> AttachmentRef<'a> {
+    pub fn kind(self) -> AttachmentKind {
+        match self {
+            Self::Route(attachment) => attachment.kind,
+            Self::Wiring(attachment) => attachment.kind,
+        }
+    }
+
+    pub fn package_id(self) -> &'a str {
+        match self {
+            Self::Route(attachment) => &attachment.package_id,
+            Self::Wiring(attachment) => &attachment.package_id,
+        }
+    }
+
+    pub fn definition(self) -> &'a Value {
+        match self {
+            Self::Route(attachment) => &attachment.definition,
+            Self::Wiring(attachment) => &attachment.definition,
+        }
+    }
+
+    pub fn auth_policy(self) -> &'a Value {
+        match self {
+            Self::Route(attachment) => &attachment.auth_policy,
+            Self::Wiring(attachment) => &attachment.auth_policy,
+        }
+    }
+
+    pub fn registered_operation(self) -> Option<&'a str> {
+        match self {
+            Self::Route(attachment) => attachment.registered_operation.as_deref(),
+            Self::Wiring(attachment) => attachment.registered_operation.as_deref(),
+        }
+    }
+
+    /// The route or the wiring that this attachment starts.
+    pub fn target(self) -> AttachmentTarget {
+        match self {
+            Self::Route(attachment) => AttachmentTarget::Route {
+                component: attachment.component.clone(),
+                operation: attachment.operation.clone(),
+            },
+            Self::Wiring(attachment) => AttachmentTarget::Wiring {
+                wiring_id: attachment.wiring_id.clone(),
+                wiring_version: attachment.wiring_version,
+            },
+        }
+    }
+}
+
+/// The workflow facts of one release: what `wamn-workflow` walks and delivers.
+///
+/// A release with no wiring has an empty section, and the manifest omits it.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct WorkflowSection {
+    pub wirings: BTreeSet<ServingWiring>,
+    /// The attachments that start a wiring, Cron included.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attachments: BTreeMap<String, WiringAttachment>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub registrations: BTreeMap<String, ServingRegistration>,
+}
+
+impl WorkflowSection {
+    /// Whether this release has no workflow fact.
+    pub fn is_empty(&self) -> bool {
+        self.wirings.is_empty() && self.attachments.is_empty() && self.registrations.is_empty()
+    }
+}
+
 /// The delivery grain frozen for one release registration.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -537,16 +752,19 @@ pub struct ServingManifest {
     pub release: ServingRelease,
     pub components: BTreeSet<ServingComponent>,
     pub routes: BTreeSet<ServingRoute>,
-    pub wirings: BTreeSet<ServingWiring>,
-    pub attachments: BTreeMap<String, ServingAttachment>,
-    pub registrations: BTreeMap<String, ServingRegistration>,
+    /// The attachments that call a route.
+    pub attachments: BTreeMap<String, RouteAttachment>,
+    #[serde(default, skip_serializing_if = "WorkflowSection::is_empty")]
+    pub workflow: WorkflowSection,
 }
 
 impl ServingManifest {
     /// Build and validate a manifest from authoritative current-record facts.
     ///
-    /// This helper is test-only. The production mint serializes its projected
-    /// facts and admits those exact bytes through [`Self::from_canonical_bytes`].
+    /// The attachments are the authored ones, and this helper splits them the
+    /// way publish does. This helper is test-only. The production mint
+    /// serializes its projected facts and admits those exact bytes through
+    /// [`Self::from_canonical_bytes`].
     #[cfg(feature = "test-util")]
     pub fn new(
         release: ServingRelease,
@@ -556,18 +774,45 @@ impl ServingManifest {
         attachments: BTreeMap<String, ServingAttachment>,
         registrations: BTreeMap<String, ServingRegistration>,
     ) -> Result<Self, CatalogIdentityError> {
+        let (attachments, workflow_attachments) = ServingAttachment::split(attachments);
         let manifest = Self {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release,
             components,
             routes,
-            wirings,
             attachments,
-            registrations,
+            workflow: WorkflowSection {
+                wirings,
+                attachments: workflow_attachments,
+                registrations,
+            },
         };
         manifest.validate()?;
         within_delivery_limit(manifest.canonical_bytes().len())?;
         Ok(manifest)
+    }
+
+    /// One attachment by id, from the route attachments or the workflow section.
+    pub fn attachment(&self, id: &str) -> Option<AttachmentRef<'_>> {
+        self.attachments
+            .get(id)
+            .map(AttachmentRef::Route)
+            .or_else(|| self.workflow.attachments.get(id).map(AttachmentRef::Wiring))
+    }
+
+    /// Every attachment of the release: the route attachments, then the
+    /// workflow section's. An id occurs once across both.
+    pub fn every_attachment(&self) -> impl Iterator<Item = (&str, AttachmentRef<'_>)> {
+        let routes = self
+            .attachments
+            .iter()
+            .map(|(id, attachment)| (id.as_str(), AttachmentRef::Route(attachment)));
+        let wirings = self
+            .workflow
+            .attachments
+            .iter()
+            .map(|(id, attachment)| (id.as_str(), AttachmentRef::Wiring(attachment)));
+        routes.chain(wirings)
     }
 
     /// The RFC 8785 canonical bytes mounted by serving processes.
@@ -772,8 +1017,22 @@ impl ServingManifest {
             }
         }
 
+        for (attachment_id, attachment) in &self.attachments {
+            validate_text(attachment_id, "attachment-id")?;
+            validate_package_member(&package_versions, &attachment.package_id)?;
+            validate_route_target(&routes, attachment_id, attachment)?;
+            validate_attachment(
+                &package_versions,
+                attachment_id,
+                &attachment.package_id,
+                &attachment.definition,
+                &attachment.auth_policy,
+                attachment.registered_operation.as_deref(),
+            )?;
+        }
+
         let mut targets = BTreeSet::new();
-        for wiring in &self.wirings {
+        for wiring in &self.workflow.wirings {
             validate_package_member(&package_versions, &wiring.package_id)?;
             validate_text(&wiring.wiring_id, "wiring-id")?;
             if wiring.wiring_version == 0 {
@@ -790,61 +1049,31 @@ impl ServingManifest {
             }
         }
 
-        for (attachment_id, attachment) in &self.attachments {
+        for (attachment_id, attachment) in &self.workflow.attachments {
             validate_text(attachment_id, "attachment-id")?;
+            if self.attachments.contains_key(attachment_id) {
+                return invalid(format!(
+                    "attachment {attachment_id:?} occurs both as a route attachment and in the workflow section"
+                ));
+            }
             validate_package_member(&package_versions, &attachment.package_id)?;
-            match &attachment.target {
-                AttachmentTarget::Route {
-                    component,
-                    operation,
-                } => {
-                    validate_route_target(
-                        &routes,
-                        attachment_id,
-                        attachment,
-                        component,
-                        operation,
-                    )?;
-                }
-                AttachmentTarget::Wiring {
-                    wiring_id,
-                    wiring_version,
-                } => validate_wiring_target(
-                    &targets,
-                    &attachment.package_id,
-                    wiring_id,
-                    *wiring_version,
-                )?,
-            }
-            if !attachment.definition.is_object() {
-                return invalid("attachment definition must be a JSON object");
-            }
-            let auth_policy =
-                parse_attachment_auth_policy(&attachment.auth_policy).ok_or_else(|| {
-                    CatalogIdentityError::InvalidAttachmentAuthPolicy {
-                        attachment_id: attachment_id.clone(),
-                    }
-                })?;
-            if auth_policy == AttachmentAuthPolicy::None
-                && attachment.registered_operation.is_some()
-            {
-                return Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
-                    attachment_id: attachment_id.clone(),
-                });
-            }
-            if contains_retired_identity(&attachment.definition)
-                || contains_retired_identity(&attachment.auth_policy)
-            {
-                return invalid("attachment configuration carries retired flow or plan identity");
-            }
-            validate_registered_operation(
-                &package_versions,
+            validate_wiring_target(
+                &targets,
                 &attachment.package_id,
+                &attachment.wiring_id,
+                attachment.wiring_version,
+            )?;
+            validate_attachment(
+                &package_versions,
+                attachment_id,
+                &attachment.package_id,
+                &attachment.definition,
+                &attachment.auth_policy,
                 attachment.registered_operation.as_deref(),
             )?;
         }
 
-        for (registration_id, registration) in &self.registrations {
+        for (registration_id, registration) in &self.workflow.registrations {
             validate_package_member(&package_versions, &registration.package_id)?;
             validate_package_member(&package_versions, &registration.source_package_id)?;
             let (owner_package_id, local_registration_id) = registration_id
@@ -896,10 +1125,10 @@ fn validate_format_version(document: &Value) -> Result<(), CatalogIdentityError>
 fn validate_route_target(
     routes: &BTreeSet<(&str, &str, &str)>,
     attachment_id: &str,
-    attachment: &ServingAttachment,
-    component: &str,
-    operation: &str,
+    attachment: &RouteAttachment,
 ) -> Result<(), CatalogIdentityError> {
+    let component = attachment.component.as_str();
+    let operation = attachment.operation.as_str();
     validate_text(component, "component")?;
     validate_text(operation, "operation")?;
     if attachment.kind == AttachmentKind::Cron {
@@ -925,6 +1154,34 @@ fn validate_route_target(
         ));
     }
     Ok(())
+}
+
+/// The checks that every attachment passes, whatever it targets.
+fn validate_attachment(
+    package_versions: &BTreeMap<&str, &str>,
+    attachment_id: &str,
+    package_id: &str,
+    definition: &Value,
+    auth_policy: &Value,
+    registered_operation: Option<&str>,
+) -> Result<(), CatalogIdentityError> {
+    if !definition.is_object() {
+        return invalid("attachment definition must be a JSON object");
+    }
+    let policy = parse_attachment_auth_policy(auth_policy).ok_or_else(|| {
+        CatalogIdentityError::InvalidAttachmentAuthPolicy {
+            attachment_id: attachment_id.to_owned(),
+        }
+    })?;
+    if policy == AttachmentAuthPolicy::None && registered_operation.is_some() {
+        return Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
+            attachment_id: attachment_id.to_owned(),
+        });
+    }
+    if contains_retired_identity(definition) || contains_retired_identity(auth_policy) {
+        return invalid("attachment configuration carries retired flow or plan identity");
+    }
+    validate_registered_operation(package_versions, package_id, registered_operation)
 }
 
 fn validate_wiring_target(
@@ -2047,6 +2304,43 @@ mod tests {
             .expect_err("an inexact route must refuse");
             assert!(error.to_string().contains(refusal), "{error}");
         }
+    }
+
+    #[test]
+    fn an_attachment_id_names_one_attachment_across_the_manifest() {
+        let mut manifest = manifest();
+        let duplicate = manifest.workflow.attachments["orders"].clone();
+        manifest
+            .workflow
+            .attachments
+            .insert("widget-get".into(), duplicate);
+        let error = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
+            .expect_err("one attachment id cannot name a route and a wiring");
+        assert!(error.to_string().contains("occurs both"), "{error}");
+    }
+
+    #[test]
+    fn a_release_with_no_wiring_omits_the_workflow_section() {
+        let manifest = ServingManifest::new(
+            release(),
+            components(),
+            routes(),
+            BTreeSet::new(),
+            BTreeMap::from([("widget-get".to_string(), route_attachment())]),
+            BTreeMap::new(),
+        )
+        .expect("a route-only release is valid");
+        let document = serde_json::to_value(&manifest).expect("manifest serializes");
+        assert!(document.get("workflow").is_none());
+
+        let mut empty = document;
+        empty["workflow"] = serde_json::json!({"wirings": []});
+        assert_eq!(
+            ServingManifest::from_canonical_bytes(&wamn_execution_contract::canonical_json_bytes(
+                &empty
+            )),
+            Err(CatalogIdentityError::NonCanonicalJson)
+        );
     }
 
     #[test]

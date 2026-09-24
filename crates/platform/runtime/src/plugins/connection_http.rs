@@ -617,7 +617,7 @@ pub(crate) fn authorize_release_closure(
                 )
                 .map_err(|_| ConnectionError::AttestationInvalid)?,
             };
-            manifest.wirings.contains(&wiring)
+            manifest.workflow.wirings.contains(&wiring)
         }
     };
     let root = manifest.components.iter().find(|component| {
@@ -1278,15 +1278,17 @@ mod tests {
                 )]),
             }]),
             routes: BTreeSet::new(),
-            wirings: BTreeSet::from([ServingWiring {
-                package_id: position.package_id,
-                wiring_id: position.wiring_id,
-                wiring_version: position.wiring_version,
-                graph_hash: DefinitionHash::parse(snapshot.wiring_hash.expect("wiring hash"))
-                    .expect("fixture definition hash is canonical"),
-            }]),
             attachments: BTreeMap::new(),
-            registrations: BTreeMap::new(),
+            workflow: wamn_catalog::WorkflowSection {
+                wirings: BTreeSet::from([ServingWiring {
+                    package_id: position.package_id,
+                    wiring_id: position.wiring_id,
+                    wiring_version: position.wiring_version,
+                    graph_hash: DefinitionHash::parse(snapshot.wiring_hash.expect("wiring hash"))
+                        .expect("fixture definition hash is canonical"),
+                }]),
+                ..wamn_catalog::WorkflowSection::default()
+            },
         }
     }
 

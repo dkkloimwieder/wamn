@@ -186,14 +186,16 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
             {"package-id": "session_test", "component": "purchase", "operation": READ, "kind": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "kind": "create"}
         ],
-        "wirings": [{"package-id": "session_test", "wiring-id": "purchase", "wiring-version": 1,
-            "graph-hash": format!("sha256:{}", "b".repeat(64))}],
-        "attachments": {ATTACHMENT: {"kind": "http", "package-id": "session_test", "wiring-id": "purchase",
-            "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
-            "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ},
+        "attachments": {
             READ_ROUTE: route_attachment(READ_ROUTE, "/purchase/read", READ, modes),
             WRITE_ROUTE: route_attachment(WRITE_ROUTE, "/purchase/write", WRITE, modes)},
-        "registrations": {}
+        "workflow": {
+            "wirings": [{"package-id": "session_test", "wiring-id": "purchase", "wiring-version": 1,
+                "graph-hash": format!("sha256:{}", "b".repeat(64))}],
+            "attachments": {ATTACHMENT: {"kind": "http", "package-id": "session_test", "wiring-id": "purchase",
+                "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+                "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ}}
+        }
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),

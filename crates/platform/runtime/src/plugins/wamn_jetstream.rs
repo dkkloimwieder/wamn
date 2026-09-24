@@ -1396,6 +1396,7 @@ fn require_registration(
     }
     let qualified_registration_id = format!("{package_id}::{registration_id}");
     let registration = manifest
+        .workflow
         .registrations
         .get(&qualified_registration_id)
         .ok_or_else(|| {

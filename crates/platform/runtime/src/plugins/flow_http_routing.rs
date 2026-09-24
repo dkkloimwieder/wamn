@@ -32,7 +32,7 @@ use tracing::Instrument as _;
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentKind, AttachmentTarget, ServingAttachment, ServingManifest,
+    AttachmentAuthPolicy, AttachmentKind, AttachmentRef, ServingManifest,
     parse_attachment_auth_policy,
 };
 use wamn_platform_identity::{PAT_TOKEN_PREFIX, PreparedIdentityReads, PrincipalKind};
@@ -285,19 +285,19 @@ impl InputSchemaValidators {
         };
         let mut attachment_hashes = HashMap::new();
         let mut validators = HashMap::new();
-        for (attachment_id, attachment) in &release.manifest().attachments {
-            if !carries_http_route(attachment.kind)
+        for (attachment_id, attachment) in release.manifest().every_attachment() {
+            if !carries_http_route(attachment.kind())
                 || route_definition(attachment_id, attachment).is_none()
             {
                 continue;
             }
             let schema = attachment
-                .definition
+                .definition()
                 .get("input-schema")
                 .cloned()
                 .unwrap_or(Value::Bool(true));
             let hash = wamn_execution_contract::canonical_json_sha256(&schema);
-            attachment_hashes.insert(attachment_id.clone(), hash.clone());
+            attachment_hashes.insert(attachment_id.to_owned(), hash.clone());
             validators
                 .entry(hash.clone())
                 .or_insert_with(|| compile_input_schema(&hash, schema));
@@ -667,9 +667,8 @@ impl FlowHttpRouting {
         let loaded_release = self.release.as_ref().ok_or(NoRelease)?;
         Ok(loaded_release
             .manifest()
-            .attachments
-            .get(attachment_id)
-            .is_some_and(|attachment| carries_http_route(attachment.kind)))
+            .attachment(attachment_id)
+            .is_some_and(|attachment| carries_http_route(attachment.kind())))
     }
 
     fn validate_input(&self, attachment_id: &str, payload: &str) -> Result<(), String> {
@@ -687,15 +686,15 @@ impl FlowHttpRouting {
             .ok_or_else(authentication_unavailable)?;
         let manifest = loaded_release.manifest();
         let attachment = manifest
-            .attachments
-            .get(attachment_id)
-            .filter(|attachment| carries_http_route(attachment.kind))
+            .attachment(attachment_id)
+            .filter(|attachment| carries_http_route(attachment.kind()))
             .ok_or_else(authentication_unavailable)?;
-        let policy =
-            parse_attachment_auth_policy(&attachment.auth_policy).ok_or_else(|| AuthRejection {
+        let policy = parse_attachment_auth_policy(attachment.auth_policy()).ok_or_else(|| {
+            AuthRejection {
                 status: UNSUPPORTED_POLICY_STATUS,
                 code: UNSUPPORTED_POLICY_CODE.to_string(),
-            })?;
+            }
+        })?;
         if policy == AttachmentAuthPolicy::None {
             return Ok(None);
         }
@@ -930,9 +929,8 @@ fn route_definitions(
     authority: &str,
 ) -> Vec<RouteDefinition> {
     manifest
-        .attachments
-        .iter()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind))
+        .every_attachment()
+        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .filter_map(|(attachment_id, attachment)| {
             // Decoded before it is matched, so a malformed attachment is reported
             // whenever this pod serves at all rather than only once some request
@@ -940,7 +938,7 @@ fn route_definitions(
             let definition = route_definition(attachment_id, attachment);
             if definition.is_none() {
                 tracing::warn!(
-                    attachment_id = attachment_id.as_str(),
+                    attachment_id,
                     "release attachment carries no serviceable HTTP route"
                 );
             }
@@ -962,9 +960,8 @@ fn carries_http_route(kind: AttachmentKind) -> bool {
 /// neither expands them nor invents aliases from operator-managed Services.
 pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<String> {
     manifest
-        .attachments
-        .iter()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind))
+        .every_attachment()
+        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .filter_map(|(id, attachment)| route_definition(id, attachment))
         .map(|definition| definition.host)
         .filter(|host| !host.is_empty() && host != WILDCARD_HOST)
@@ -978,12 +975,11 @@ pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<Str
 /// host acquire route-authentication credentials it will never use.
 pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
     manifest
-        .attachments
-        .iter()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind))
+        .every_attachment()
+        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .any(|(attachment_id, attachment)| {
             route_definition(attachment_id, attachment).is_some()
-                && parse_attachment_auth_policy(&attachment.auth_policy)
+                && parse_attachment_auth_policy(attachment.auth_policy())
                     .is_some_and(AttachmentAuthPolicy::allows_pat)
         })
 }
@@ -991,12 +987,11 @@ pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
 /// Return whether the release contains an externally selectable session route.
 pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool {
     manifest
-        .attachments
-        .iter()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind))
+        .every_attachment()
+        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .any(|(id, attachment)| {
             route_definition(id, attachment).is_some()
-                && parse_attachment_auth_policy(&attachment.auth_policy)
+                && parse_attachment_auth_policy(attachment.auth_policy())
                     .is_some_and(AttachmentAuthPolicy::allows_session)
         })
 }
@@ -1022,19 +1017,16 @@ fn matches_request(definition: &RouteDefinition, method: &str, authority: &str) 
 /// authoring-side decoder. Keys this host does not serve are ignored rather than
 /// refused: the document's shape is owned by the exposure boundary, and a
 /// producer adding a field must not take a pod's routing offline.
-fn route_definition(
-    attachment_id: &str,
-    attachment: &ServingAttachment,
-) -> Option<RouteDefinition> {
-    let route = attachment.definition.get("route")?;
-    let body_limit = match attachment.definition.get("raw-body-bytes") {
+fn route_definition(attachment_id: &str, attachment: AttachmentRef<'_>) -> Option<RouteDefinition> {
+    let route = attachment.definition().get("route")?;
+    let body_limit = match attachment.definition().get("raw-body-bytes") {
         Some(raw_body_bytes) => {
             let authored = raw_body_bytes.get("maximum")?.as_u64()?;
             u32::try_from(authored).ok()?.into()
         }
         None => ADAPTER_GOVERNED_BYTES,
     };
-    let mappings = match attachment.definition.get("mappings") {
+    let mappings = match attachment.definition().get("mappings") {
         Some(mappings) => mappings
             .as_array()?
             .iter()
@@ -1130,18 +1122,14 @@ fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
 /// Whether an attachment only reads: it targets a route whose operation kind is
 /// one of `OperationKind::READ_KINDS`. A wiring can write, so it never reads
 /// only.
-fn serves_read(manifest: &ServingManifest, attachment: &ServingAttachment) -> bool {
-    let AttachmentTarget::Route {
-        component,
-        operation,
-    } = &attachment.target
-    else {
+fn serves_read(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> bool {
+    let AttachmentRef::Route(attachment) = attachment else {
         return false;
     };
     manifest.routes.iter().any(|route| {
         route.package_id == attachment.package_id
-            && &route.component == component
-            && &route.operation == operation
+            && route.component == attachment.component
+            && route.operation == attachment.operation
             && route.kind.is_read()
     })
 }
@@ -1361,8 +1349,8 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
-        RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingComponentOperation, ServingRelease,
-        ServingWiring,
+        RELEASE_MANIFEST_FILE_NAME, ServingAttachment, ServingComponent, ServingComponentOperation,
+        ServingRelease, ServingWiring,
     };
 
     use super::*;

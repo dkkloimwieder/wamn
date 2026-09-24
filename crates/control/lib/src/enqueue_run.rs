@@ -73,6 +73,7 @@ pub async fn enqueue(
         "automation release scope does not match the request"
     );
     let wiring = manifest
+        .workflow
         .wirings
         .iter()
         .find(|wiring| {

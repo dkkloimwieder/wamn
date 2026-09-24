@@ -517,7 +517,7 @@ async fn activate(
     manifest: &ServingManifest,
     principal: &str,
 ) -> anyhow::Result<()> {
-    for wiring in &manifest.wirings {
+    for wiring in &manifest.workflow.wirings {
         let environment = &manifest.release.environment;
         let current = transaction.query_opt("SELECT confirmed_definition_hash, enabled FROM catalog.wiring_activation WHERE tenant_id = $1 AND package_id = $2 AND environment = $3 AND wiring_id = $4 FOR UPDATE", &[&manifest.release.tenant_id, &wiring.package_id, &environment, &wiring.wiring_id]).await?;
         if current.is_some_and(|row| {
@@ -722,28 +722,27 @@ fn require_released_route(
     );
     ensure!(
         manifest
-            .attachments
-            .values()
+            .every_attachment()
             .any(
-                |attachment| attachment.kind == wamn_catalog::AttachmentKind::Http
+                |(_, attachment)| attachment.kind() == wamn_catalog::AttachmentKind::Http
                     && attachment
-                        .definition
+                        .definition()
                         .pointer("/route/path")
                         .and_then(Value::as_str)
                         == Some(url.path())
                     && attachment
-                        .definition
+                        .definition()
                         .pointer("/route/method")
                         .and_then(Value::as_str)
                         == Some("POST")
                     && attachment
-                        .definition
+                        .definition()
                         .pointer("/route/host")
                         .and_then(Value::as_str)
                         == Some(host)
-                    && wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
+                    && wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy())
                         .is_some_and(wamn_catalog::AttachmentAuthPolicy::allows_pat)
-                    && attachment.registered_operation.is_some()
+                    && attachment.registered_operation().is_some()
             ),
         "the authenticated interaction must target a PAT operation in the selected release"
     );

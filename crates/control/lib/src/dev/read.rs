@@ -338,17 +338,17 @@ impl DevSnapshot {
     }
 
     /// Published routes derived from release attachments.
-    pub fn routes(&self) -> impl Iterator<Item = (&str, &ServingAttachment)> {
+    pub fn routes(&self) -> impl Iterator<Item = (&str, ServingAttachment)> {
         self.release
             .iter()
-            .flat_map(|release| release.manifest.attachments.iter())
+            .flat_map(|release| release.manifest.every_attachment())
             .filter(|(_, attachment)| {
                 matches!(
-                    attachment.kind,
+                    attachment.kind(),
                     AttachmentKind::Http | AttachmentKind::Studio
                 )
             })
-            .map(|(id, attachment)| (id.as_str(), attachment))
+            .map(|(id, attachment)| (id, ServingAttachment::from(attachment)))
     }
 
     /// Recent trace summaries, oldest first.
@@ -835,21 +835,24 @@ mod tests {
             },
             components: BTreeSet::from([component]),
             routes: BTreeSet::new(),
-            wirings: BTreeSet::new(),
-            attachments: BTreeMap::from([
-                ("widget/get".to_owned(), attachment.clone()),
-                (
-                    "widget/studio".to_owned(),
-                    ServingAttachment {
-                        kind: AttachmentKind::Studio,
-                        definition: json!({
-                            "route": {"method": "POST", "path": "/studio"}
-                        }),
-                        ..attachment
-                    },
-                ),
-            ]),
-            registrations: BTreeMap::new(),
+            attachments: BTreeMap::new(),
+            workflow: wamn_catalog::WorkflowSection {
+                attachments: ServingAttachment::split(BTreeMap::from([
+                    ("widget/get".to_owned(), attachment.clone()),
+                    (
+                        "widget/studio".to_owned(),
+                        ServingAttachment {
+                            kind: AttachmentKind::Studio,
+                            definition: json!({
+                                "route": {"method": "POST", "path": "/studio"}
+                            }),
+                            ..attachment
+                        },
+                    ),
+                ]))
+                .1,
+                ..wamn_catalog::WorkflowSection::default()
+            },
         }
     }
 }

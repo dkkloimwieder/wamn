@@ -359,24 +359,26 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
             "operations": operations,
         }],
         "routes": [],
-        "wirings": [{
-            "package-id": PACKAGE,
-            "wiring-id": WIRING_ID,
-            "wiring-version": WIRING_VERSION,
-            "graph-hash": wiring_hash,
-        }],
-        "attachments": {
-            (ATTACHMENT_ID): {
-                "kind": "http",
+        "attachments": {},
+        "workflow": {
+            "wirings": [{
                 "package-id": PACKAGE,
                 "wiring-id": WIRING_ID,
                 "wiring-version": WIRING_VERSION,
-                "definition-hash": attachment_definition_hash,
-                "definition": attachment_definition,
-                "auth-policy": {"modes": ["none"]}
-            }
+                "graph-hash": wiring_hash,
+            }],
+            "attachments": {
+                (ATTACHMENT_ID): {
+                    "kind": "http",
+                    "package-id": PACKAGE,
+                    "wiring-id": WIRING_ID,
+                    "wiring-version": WIRING_VERSION,
+                    "definition-hash": attachment_definition_hash,
+                    "definition": attachment_definition,
+                    "auth-policy": {"modes": ["none"]}
+                }
+            },
         },
-        "registrations": {},
     })
 }
 

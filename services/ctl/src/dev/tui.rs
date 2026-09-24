@@ -341,7 +341,7 @@ fn release_lines(snapshot: &DevSnapshot) -> Vec<String> {
     let mut routes = 0;
     for (id, attachment) in snapshot.routes() {
         routes += 1;
-        lines.push(format!("id={id} facts={}", exact_json(attachment)));
+        lines.push(format!("id={id} facts={}", exact_json(&attachment)));
     }
     if routes == 0 {
         lines.push("none".to_owned());
@@ -539,7 +539,7 @@ mod tests {
     use wamn_catalog::{
         ArtifactHash, AttachmentKind, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
         SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
-        ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring,
+        ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring, WorkflowSection,
     };
     use wamn_runtime::plugins::wamn_jetstream::{
         RouterTapFormatVersion, RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind,
@@ -952,17 +952,21 @@ mod tests {
             },
             components: BTreeSet::from([component]),
             routes: BTreeSet::new(),
-            wirings: BTreeSet::from([ServingWiring {
-                package_id: "platform_fixture".to_owned(),
-                wiring_id: "widget_get".to_owned(),
-                wiring_version: 1,
-                graph_hash: DefinitionHash::parse(DIGEST).expect("valid digest"),
-            }]),
-            attachments: BTreeMap::from([
-                ("widget-get-http".to_owned(), http),
-                ("widget-get-studio".to_owned(), studio),
-            ]),
-            registrations: BTreeMap::new(),
+            attachments: BTreeMap::new(),
+            workflow: WorkflowSection {
+                wirings: BTreeSet::from([ServingWiring {
+                    package_id: "platform_fixture".to_owned(),
+                    wiring_id: "widget_get".to_owned(),
+                    wiring_version: 1,
+                    graph_hash: DefinitionHash::parse(DIGEST).expect("valid digest"),
+                }]),
+                attachments: ServingAttachment::split(BTreeMap::from([
+                    ("widget-get-http".to_owned(), http),
+                    ("widget-get-studio".to_owned(), studio),
+                ]))
+                .1,
+                registrations: BTreeMap::new(),
+            },
         }
     }
 

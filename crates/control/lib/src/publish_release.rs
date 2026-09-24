@@ -17,7 +17,7 @@ use wamn_catalog::{
     ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationKind, PackageCoordinate,
     SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
     ServingRegistration, ServingRelease, ServingRoute, ServingWiring, WiringDocument,
-    validate_resolved_wiring_compatibility,
+    WorkflowSection, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_schema_control::{
@@ -574,6 +574,7 @@ pub async fn mint_local(
     )?;
     let registrations = derive_serving_registrations(&package_manifests, &entry_targets)?;
     refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
+    let (route_attachments, wiring_attachments) = ServingAttachment::split(attachments.clone());
     let manifest = ServingManifest {
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
@@ -584,9 +585,12 @@ pub async fn mint_local(
         },
         components,
         routes,
-        wirings,
-        attachments: attachments.clone(),
-        registrations,
+        attachments: route_attachments,
+        workflow: WorkflowSection {
+            wirings,
+            attachments: wiring_attachments,
+            registrations,
+        },
     };
     let canonical_bytes = manifest.canonical_bytes();
     let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
@@ -1277,6 +1281,8 @@ async fn mint_release_manifest_from_sources(
         derive_serving_registrations(package_manifests, &entry_targets)?
     };
     refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
+    let (route_attachments, wiring_attachments) =
+        ServingAttachment::split(request.attachments.clone());
 
     let release_id = EffectiveReleaseId::new(
         u32::try_from(request.effective_release_id).expect("validate_request checked release id"),
@@ -1292,9 +1298,12 @@ async fn mint_release_manifest_from_sources(
         },
         components,
         routes,
-        wirings,
-        attachments: request.attachments.clone(),
-        registrations,
+        attachments: route_attachments,
+        workflow: WorkflowSection {
+            wirings,
+            attachments: wiring_attachments,
+            registrations,
+        },
     };
     let canonical_bytes = projected.canonical_bytes();
     let (manifest, digest) =
@@ -1302,7 +1311,7 @@ async fn mint_release_manifest_from_sources(
             MintManifestError::with_source(
                 MintManifestErrorKind::Document,
                 format!(
-                    "effective release {} does not project a deliverable format-1 manifest",
+                    "effective release {} does not project a deliverable format-3 manifest",
                     request.effective_release_id
                 ),
                 error,

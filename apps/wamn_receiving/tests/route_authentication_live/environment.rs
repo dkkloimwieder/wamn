@@ -760,11 +760,8 @@ pub(super) fn released_component_digests(
         anyhow::ensure!(
             attachment.kind == AttachmentKind::Http
                 && attachment.package_id == expected.package_id
-                && attachment.target
-                    == wamn_catalog::AttachmentTarget::Route {
-                        component: component.into(),
-                        operation: expected.operation.into(),
-                    }
+                && attachment.component == component
+                && attachment.operation == expected.operation
                 && attachment.registered_operation.as_deref() == Some(expected.operation)
                 && attachment.definition["route"]["method"] == "POST"
                 && attachment.definition["route"]["path"] == expected.path
@@ -776,6 +773,7 @@ pub(super) fn released_component_digests(
     }
     let registration = release
         .manifest()
+        .workflow
         .registrations
         .get("client_acme_receiving::quality.create_inspection")
         .context("released manifest omitted the Acme receipt registration")?;

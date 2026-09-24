@@ -433,7 +433,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     assert_eq!(first.manifest.components.len(), 2);
     // Every attachment is a route: the release has routes and no wiring, and
     // each route carries the kind its generated contract names.
-    assert!(first.manifest.wirings.is_empty());
+    assert!(first.manifest.workflow.wirings.is_empty());
     assert_eq!(first.manifest.routes.len(), attachments.len());
     let kind_of = |operation: &str| {
         first

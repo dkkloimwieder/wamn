@@ -1,4 +1,4 @@
-//! Digest and closed-shape tests for serving-manifest format 2.
+//! Digest and closed-shape tests for serving-manifest format 3.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -292,7 +292,11 @@ fn authentication_modes_are_shared_and_bound_into_canonical_bytes() {
         assert_eq!(parsed.allows_session(), allows_session);
 
         let mut candidate = manifest();
-        let attachment = candidate.attachments.get_mut("orders-http").unwrap();
+        let attachment = candidate
+            .workflow
+            .attachments
+            .get_mut("orders-http")
+            .unwrap();
         attachment.auth_policy = policy.clone();
         if parsed == AttachmentAuthPolicy::None {
             attachment.registered_operation = None;
@@ -300,7 +304,10 @@ fn authentication_modes_are_shared_and_bound_into_canonical_bytes() {
         let bytes = candidate.canonical_bytes();
         let (admitted, digest) = ServingManifest::from_canonical_bytes(&bytes)
             .expect("canonical policy survives the release reader");
-        assert_eq!(admitted.attachments["orders-http"].auth_policy, policy);
+        assert_eq!(
+            admitted.workflow.attachments["orders-http"].auth_policy,
+            policy
+        );
         assert_eq!(admitted.canonical_bytes(), bytes);
         if parsed != AttachmentAuthPolicy::None {
             assert!(authenticated_digests.insert(digest.as_str().to_owned()));
@@ -337,6 +344,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
         assert_eq!(parse_attachment_auth_policy(&policy), None);
         let mut candidate = manifest();
         candidate
+            .workflow
             .attachments
             .get_mut("orders-http")
             .unwrap()
@@ -461,20 +469,21 @@ fn every_manifest_hash_validates_during_deserialization() {
     assert!(component_error.to_string().contains("artifact-hash"));
 
     let mut wiring_document = serde_json::to_value(manifest()).expect("manifest serializes");
-    wiring_document["wirings"][0]["graph-hash"] = json!(invalid);
+    wiring_document["workflow"]["wirings"][0]["graph-hash"] = json!(invalid);
     let wiring_error = serde_json::from_value::<ServingManifest>(wiring_document)
         .expect_err("an invalid wiring definition hash must be refused while decoding");
     assert!(wiring_error.to_string().contains("definition-hash"));
 
     let mut attachment_document = serde_json::to_value(manifest()).expect("manifest serializes");
-    attachment_document["attachments"]["orders-http"]["definition-hash"] = json!(invalid);
+    attachment_document["workflow"]["attachments"]["orders-http"]["definition-hash"] =
+        json!(invalid);
     let attachment_error = serde_json::from_value::<ServingManifest>(attachment_document)
         .expect_err("an invalid attachment definition hash must be refused while decoding");
     assert!(attachment_error.to_string().contains("definition-hash"));
 }
 
 #[test]
-fn all_five_collections_have_canonical_order() {
+fn all_six_collections_have_canonical_order() {
     let baseline = manifest();
     let permuted = ServingManifest::new(
         release(),
@@ -482,12 +491,14 @@ fn all_five_collections_have_canonical_order() {
         routes().into_iter().rev().collect(),
         wirings().into_iter().rev().collect(),
         baseline
-            .attachments
-            .iter()
+            .every_attachment()
+            .collect::<Vec<_>>()
+            .into_iter()
             .rev()
-            .map(|(id, item)| (id.clone(), item.clone()))
+            .map(|(id, item)| (id.to_owned(), ServingAttachment::from(item)))
             .collect(),
         baseline
+            .workflow
             .registrations
             .iter()
             .rev()
@@ -509,11 +520,14 @@ fn every_manifest_field_is_pinned() {
             "attachments",
             "components",
             "format-version",
-            "registrations",
             "release",
             "routes",
-            "wirings"
+            "workflow"
         ]
+    );
+    assert_eq!(
+        sorted_keys(&document["workflow"]),
+        ["attachments", "registrations", "wirings"]
     );
     assert_eq!(
         sorted_keys(&document["routes"][0]),
@@ -543,11 +557,11 @@ fn every_manifest_field_is_pinned() {
         ]
     );
     assert_eq!(
-        sorted_keys(&document["wirings"][0]),
+        sorted_keys(&document["workflow"]["wirings"][0]),
         ["graph-hash", "package-id", "wiring-id", "wiring-version"]
     );
     assert_eq!(
-        sorted_keys(&document["attachments"]["orders-http"]),
+        sorted_keys(&document["workflow"]["attachments"]["orders-http"]),
         [
             "auth-policy",
             "definition",
@@ -560,7 +574,7 @@ fn every_manifest_field_is_pinned() {
         ]
     );
     assert_eq!(
-        sorted_keys(&document["registrations"]["platform_fixture::orders-changed"]),
+        sorted_keys(&document["workflow"]["registrations"]["platform_fixture::orders-changed"]),
         [
             "entity",
             "input",
@@ -584,7 +598,7 @@ fn every_manifest_field_is_pinned() {
     ] {
         assert!(
             !text.contains(retired),
-            "retired key {retired} re-entered format 2"
+            "retired key {retired} re-entered format 3"
         );
     }
 }
@@ -594,6 +608,7 @@ fn each_exact_target_reaches_the_digest() {
     let baseline = manifest();
     let mut retargeted = manifest();
     let registration = retargeted
+        .workflow
         .registrations
         .get_mut("platform_fixture::orders-changed")
         .expect("fixture registration");
@@ -605,6 +620,7 @@ fn each_exact_target_reaches_the_digest() {
 
     let mut regrained = manifest();
     regrained
+        .workflow
         .registrations
         .get_mut("platform_fixture::orders-changed")
         .expect("fixture registration")

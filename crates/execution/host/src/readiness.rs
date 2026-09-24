@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use tokio::sync::Mutex as AsyncMutex;
-use wamn_catalog::{AttachmentKind, AttachmentTarget, ServingManifest};
+use wamn_catalog::{AttachmentKind, ServingManifest};
 
 use crate::operation::OperationHost;
 use crate::router_delivery::WiringDelivery;
@@ -84,10 +84,7 @@ pub fn synchronous_route_count(manifest: &ServingManifest) -> usize {
     manifest
         .attachments
         .values()
-        .filter(|attachment| {
-            synchronous_request_kind(attachment.kind)
-                && matches!(attachment.target, AttachmentTarget::Route { .. })
-        })
+        .filter(|attachment| synchronous_request_kind(attachment.kind))
         .count()
 }
 

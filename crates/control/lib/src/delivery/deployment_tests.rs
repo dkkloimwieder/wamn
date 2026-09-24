@@ -44,7 +44,11 @@ fn acceptance_route_requires_the_selected_pat_operation() {
     let (mut manifest, digest) =
         ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
     assert_eq!(digest.as_str(), vector::DIGEST);
-    let attachment = manifest.attachments.get_mut("orders-http").unwrap();
+    let attachment = manifest
+        .workflow
+        .attachments
+        .get_mut("orders-http")
+        .unwrap();
     attachment.definition["route"] =
         json!({"path":"/orders","method":"POST","host":"fixture.localhost"});
     require_released_route(
@@ -70,6 +74,7 @@ fn acceptance_route_requires_the_selected_pat_operation() {
         .is_err()
     );
     manifest
+        .workflow
         .attachments
         .get_mut("orders-http")
         .unwrap()
@@ -153,13 +158,13 @@ async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> Se
     manifest.release.effective_release_id =
         EffectiveReleaseId::new(u32::try_from(id).unwrap()).unwrap();
     manifest.release.packages = [PackageCoordinate::new("inventory", version).unwrap()].into();
-    let mut wiring = manifest.wirings.iter().next().unwrap().clone();
+    let mut wiring = manifest.workflow.wirings.iter().next().unwrap().clone();
     wiring.package_id = "inventory".to_owned();
     wiring.wiring_id = "orders".to_owned();
     wiring.graph_hash =
         wamn_catalog::DefinitionHash::parse(format!("sha256:{}", hash.to_string().repeat(64)))
             .unwrap();
-    manifest.wirings = [wiring].into();
+    manifest.workflow.wirings = [wiring].into();
     manifest
 }
 

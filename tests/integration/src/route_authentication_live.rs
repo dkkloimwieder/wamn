@@ -216,25 +216,27 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             }
         }],
         "routes": [],
-        "wirings": [{
-            "package-id": FIXTURE_PACKAGE_ID,
-            "wiring-id": "item-get",
-            "wiring-version": 1,
-            "graph-hash": format!("sha256:{}", "b".repeat(64))
-        }],
-        "attachments": {
-            (ATTACHMENT_ID): {
-                "kind": "http",
+        "attachments": {},
+        "workflow": {
+            "wirings": [{
                 "package-id": FIXTURE_PACKAGE_ID,
                 "wiring-id": "item-get",
                 "wiring-version": 1,
-                "definition-hash": definition_hash,
-                "definition": definition,
-                "auth-policy": {"modes": ["pat"]},
-                "registered-operation": OPERATION
+                "graph-hash": format!("sha256:{}", "b".repeat(64))
+            }],
+            "attachments": {
+                (ATTACHMENT_ID): {
+                    "kind": "http",
+                    "package-id": FIXTURE_PACKAGE_ID,
+                    "wiring-id": "item-get",
+                    "wiring-version": 1,
+                    "definition-hash": definition_hash,
+                    "definition": definition,
+                    "auth-policy": {"modes": ["pat"]},
+                    "registered-operation": OPERATION
+                }
             }
-        },
-        "registrations": {}
+        }
     });
     let bytes = wamn_execution_contract::canonical_json_bytes(&manifest);
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
