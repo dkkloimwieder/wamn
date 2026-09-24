@@ -256,19 +256,61 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"pallet_id\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
-        schema: Some(
-            "{\"items\":{\"additionalProperties\":false,\"oneOf\":[{\"not\":{\"required\":[\"error\"]},\"required\":[\"value\"]},{\"not\":{\"required\":[\"value\"]},\"required\":[\"error\"]}],\"properties\":{\"error\":{\"properties\":{\"code\":{\"minLength\":1,\"type\":\"string\"},\"detail\":{\"type\":\"object\"}},\"required\":[\"code\"],\"type\":\"object\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"movement_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_status\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"row_version\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"},\"stored\":{\"additionalProperties\":false,\"properties\":{\"container\":{\"type\":\"string\"},\"key\":{\"type\":\"string\"}},\"required\":[\"container\",\"key\"],\"type\":\"object\"},\"zpl\":{\"type\":\"string\"}},\"required\":[\"movement_id\",\"pallet_id\",\"location_id\",\"pallet_status\",\"row_version\",\"zpl\",\"stored\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
-        ),
-        partial_schema: Some(
-            "{\"additionalProperties\":false,\"properties\":{\"committed_result\":{\"$id\":\"urn:wamn:committed-result\",\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"movement_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_status\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"row_version\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"}},\"required\":[\"movement_id\",\"pallet_id\",\"location_id\",\"pallet_status\",\"row_version\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"},\"failed_outcome\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"minLength\":1,\"type\":\"string\"},\"effect_outcome\":{\"enum\":[\"refused-before-dispatch\",\"responded\",\"timeout\",\"cancelled\",\"effect-uncertain\",\"response-lost\"]},\"message\":{\"type\":\"string\"},\"operation\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}},\"required\":[\"committed_result\",\"failed_outcome\"],\"type\":\"object\"}",
-        ),
+        schema: Some("{\"type\":\"array\"}"),
+        partial_schema: None,
         fields: crate::inventory::INVENTORY_MOVE_RESULT_SCHEMA,
         result_class: Some("one"),
-        errors: &[],
+        errors: &[
+            submission::ErrorCase {
+                literal: "concurrency_conflict",
+                required: &["expected_row_version", "observed_row_version"],
+                sources: &["transaction_invariant"],
+            },
+            submission::ErrorCase {
+                literal: "idempotency_conflict",
+                required: &["field"],
+                sources: &["same_key_different_canonical_command"],
+            },
+            submission::ErrorCase {
+                literal: "internal_error",
+                required: &[],
+                sources: &["query_error", "row_limit_exceeded", "undeclared_constraint"],
+            },
+            submission::ErrorCase {
+                literal: "invalid_input",
+                required: &["field"],
+                sources: &["envelope_count", "malformed_input"],
+            },
+            submission::ErrorCase {
+                literal: "location_not_found",
+                required: &["field", "id"],
+                sources: &["transaction_invariant"],
+            },
+            submission::ErrorCase {
+                literal: "pallet_not_found",
+                required: &["field", "id"],
+                sources: &["transaction_invariant"],
+            },
+            submission::ErrorCase {
+                literal: "permission_denied",
+                required: &["operation"],
+                sources: &["permission_denied"],
+            },
+            submission::ErrorCase {
+                literal: "retry",
+                required: &[],
+                sources: &["connection_unavailable", "serialization_failure"],
+            },
+            submission::ErrorCase {
+                literal: "timeout",
+                required: &[],
+                sources: &["statement_timeout"],
+            },
+        ],
         kind: "command",
         transaction: Some("explicit_per_input"),
-        direct: false,
-        replay: submission::Replay::Unknown,
+        direct: true,
+        replay: submission::Replay::Claim,
     },
     route: Some(crate::inventory::move_route),
     fresh_only: false,

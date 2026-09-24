@@ -1002,20 +1002,8 @@ pub struct InventoryMoveResult {
     pub pallet_id: uuid::Uuid,
     /// `text`
     pub pallet_status: String,
-    /// `text`
-    pub row_version: String,
-    /// `object`
-    pub stored: InventoryMoveResultStored,
-    /// `text`
-    pub zpl: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct InventoryMoveResultStored {
-    /// `text`
-    pub container: String,
-    /// `text`
-    pub key: String,
+    /// `int64`
+    pub row_version: i64,
 }
 
 /// Input descriptors for `wamn-wms:inventory/move@1.0.0`.
@@ -1086,25 +1074,7 @@ pub const INVENTORY_MOVE_RESULT: &[FieldDescriptor] = &[
     },
     FieldDescriptor {
         path: "row_version",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "stored.container",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "stored.key",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "zpl",
-        type_name: "text",
+        type_name: "int64",
         nullable: false,
         values: &[],
     },
@@ -1250,56 +1220,7 @@ pub const INVENTORY_MOVE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "row_version",
-            type_name: "text",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "stored",
-            type_name: "object",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[
-            wamn_client::descriptor::FieldSchema {
-                field: FieldDescriptor {
-                    path: "stored.container",
-                    type_name: "text",
-                    nullable: false,
-                    values: &[],
-                },
-                required: true,
-                minimum: None,
-                maximum: None,
-                children: &[],
-            },
-            wamn_client::descriptor::FieldSchema {
-                field: FieldDescriptor {
-                    path: "stored.key",
-                    type_name: "text",
-                    nullable: false,
-                    values: &[],
-                },
-                required: true,
-                minimum: None,
-                maximum: None,
-                children: &[],
-            },
-        ],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "zpl",
-            type_name: "text",
+            type_name: "int64",
             nullable: false,
             values: &[],
         },
@@ -1312,10 +1233,8 @@ pub const INVENTORY_MOVE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
 
 pub const INVENTORY_MOVE_KIND: &str = "command";
 pub const INVENTORY_MOVE_REQUIRES_COMPOSITION: bool = true;
-pub const INVENTORY_MOVE_REPLAY: Option<&str> = None;
-pub const INVENTORY_MOVE_RESPONSE_CONTRACT: Option<&str> = Some(
-    "{\"items\":{\"additionalProperties\":false,\"oneOf\":[{\"not\":{\"required\":[\"error\"]},\"required\":[\"value\"]},{\"not\":{\"required\":[\"value\"]},\"required\":[\"error\"]}],\"properties\":{\"error\":{\"properties\":{\"code\":{\"minLength\":1,\"type\":\"string\"},\"detail\":{\"type\":\"object\"}},\"required\":[\"code\"],\"type\":\"object\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"movement_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_status\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"row_version\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"},\"stored\":{\"additionalProperties\":false,\"properties\":{\"container\":{\"type\":\"string\"},\"key\":{\"type\":\"string\"}},\"required\":[\"container\",\"key\"],\"type\":\"object\"},\"zpl\":{\"type\":\"string\"}},\"required\":[\"movement_id\",\"pallet_id\",\"location_id\",\"pallet_status\",\"row_version\",\"zpl\",\"stored\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
-);
+pub const INVENTORY_MOVE_REPLAY: Option<&str> = Some("claim");
+pub const INVENTORY_MOVE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const INVENTORY_MOVE_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `wamn-wms:inventory/move@1.0.0`.
 pub const INVENTORY_MOVE_GRANT: &str = "wamn-wms:inventory/move@1.0.0";

@@ -356,19 +356,8 @@ export interface InventoryMoveResult {
   readonly palletId: Uuid;
   /** `text` */
   readonly palletStatus: "available" | "consumed" | "held";
-  /** `text` */
-  readonly rowVersion: string;
-  /** `object` */
-  readonly stored: InventoryMoveResultStored;
-  /** `text` */
-  readonly zpl: string;
-}
-
-export interface InventoryMoveResultStored {
-  /** `text` */
-  readonly container: string;
-  /** `text` */
-  readonly key: string;
+  /** `int64` */
+  readonly rowVersion: Int64;
 }
 
 /** What `wamn-wms:inventory/move@1.0.0` calls its result members. */
@@ -378,14 +367,6 @@ export const INVENTORY_MOVE_RESULT_FIELDS: FieldMap = {
   "pallet_id": "palletId",
   "pallet_status": "palletStatus",
   "row_version": "rowVersion",
-  "stored": {
-    member: "stored",
-    fields: {
-      "container": "container",
-      "key": "key",
-    },
-  },
-  "zpl": "zpl",
 };
 
 /**
@@ -401,11 +382,20 @@ export const INVENTORY_MOVE_ROUTE: OperationRoute = {
   freshOnly: false,
   contract: {
     resultClass: "one",
-    partialSchema: "{\"additionalProperties\":false,\"properties\":{\"committed_result\":{\"$id\":\"urn:wamn:committed-result\",\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"movement_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"pallet_status\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"row_version\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"}},\"required\":[\"movement_id\",\"pallet_id\",\"location_id\",\"pallet_status\",\"row_version\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"},\"failed_outcome\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"minLength\":1,\"type\":\"string\"},\"effect_outcome\":{\"enum\":[\"refused-before-dispatch\",\"responded\",\"timeout\",\"cancelled\",\"effect-uncertain\",\"response-lost\"]},\"message\":{\"type\":\"string\"},\"operation\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}},\"required\":[\"committed_result\",\"failed_outcome\"],\"type\":\"object\"}",
+    partialSchema: null,
     errors: [
+      { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: ["transaction_invariant"] },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["same_key_different_canonical_command"] },
+      { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"] },
+      { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"] },
+      { literal: "location_not_found", required: ["field", "id"], sources: ["transaction_invariant"] },
+      { literal: "pallet_not_found", required: ["field", "id"], sources: ["transaction_invariant"] },
+      { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"] },
+      { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"] },
+      { literal: "timeout", required: [], sources: ["statement_timeout"] },
     ],
-    replay: null,
-    direct: false,
+    replay: "claim",
+    direct: true,
     kind: "command",
     transaction: "explicit_per_input",
   },

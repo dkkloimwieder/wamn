@@ -29,7 +29,7 @@ replacement = b'let revision = serde_json::json!((row["row_version"].as_str().un
 assert original.count(needle) == 1, 'mutate only the read-to-command revision binding'
 mutated = original.replace(needle, replacement)
 command = ['cargo', 'test', '--locked', '--offline', '-p', 'wamn-wms-tests', '--example', 'wms_move',
-           'tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key', '--', '--exact', '--include-ignored']
+           'tests::the_bound_move_sends_exact_bytes_and_displays_the_movement', '--', '--exact', '--include-ignored']
 env = os.environ.copy()
 env.pop('CARGO_TARGET_DIR', None)
 env['RUSTC_WRAPPER'] = ''
@@ -49,7 +49,7 @@ with (evidence / 'restored.log').open('w') as log:
     result['restored_exit_code'] = subprocess.run(command, cwd=tree, env=env, stdout=log,
                                                  stderr=subprocess.STDOUT).returncode
 mutant_log = (evidence / 'mutant.log').read_text()
-result['named_test_failed'] = 'test tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key ... FAILED' in mutant_log
+result['named_test_failed'] = 'test tests::the_bound_move_sends_exact_bytes_and_displays_the_movement ... FAILED' in mutant_log
 result['compiled_mutant'] = 'Finished `test` profile' in mutant_log and 'error: could not compile' not in mutant_log
 wire = {}
 for label in ['left', 'right']:

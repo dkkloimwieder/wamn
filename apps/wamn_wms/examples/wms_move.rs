@@ -132,7 +132,6 @@ mod tests {
 
     const PALLET_ID: &str = "33333333-0000-0000-0000-000000000002";
     const DESTINATION: &str = "33333333-0000-0000-0000-000000000003";
-    const LABEL_KEY: &str = "labels/move-9.zpl";
     const ACTOR: &str = "33333333-0000-0000-0000-000000000004";
 
     fn binding() -> SessionBinding {
@@ -239,15 +238,12 @@ mod tests {
     impl Transport for RecordingTransport {
         async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
             self.0.lock().unwrap().push(request);
-            let mut value = movement();
-            value["zpl"] = json!("^XA^XZ");
-            value["stored"] = json!({"container": "labels", "key": LABEL_KEY});
-            response(200, &json!([{"request_id": "move", "value": value}]))
+            response(200, &json!([{"request_id": "move", "value": movement()}]))
         }
     }
 
     #[tokio::test]
-    async fn the_bound_move_sends_exact_bytes_and_displays_the_label_key() {
+    async fn the_bound_move_sends_exact_bytes_and_displays_the_movement() {
         let mut app = ready();
         for pointer in ["/value/pallet_id", "/value/expected_row_version"] {
             assert!(
@@ -283,7 +279,7 @@ mod tests {
             app.generated.screen(MOVE).submission().state(),
             State::Succeeded { .. }
         ));
-        assert!(render(&app).contains(LABEL_KEY));
+        assert!(render(&app).contains("33333333-0000-0000-0000-000000000009"));
         assert_spent(&mut app);
     }
 
@@ -338,60 +334,5 @@ mod tests {
                     .is_err()
             );
         }
-    }
-
-    #[test]
-    fn the_declared_partial_response_preserves_the_commit_and_spends_the_move() {
-        let mut app = ready();
-        let request = app
-            .prepare(send(MOVE, false), Some(&intent("move")))
-            .unwrap();
-        let failed = json!({"code": "write_failed", "operation": "label-store", "effect_outcome": "responded"});
-        let body = json!({
-            "committed_result": [{"request_id": "move", "value": movement()}],
-            "failed_outcome": failed
-        });
-        app.resolve(MOVE, request.attempt, response(500, &body));
-        assert_eq!(
-            app.generated.screen(MOVE).submission().state(),
-            &State::PartiallyCompleted {
-                committed_result: movement(),
-                failed_outcome: failed
-            }
-        );
-        let shown = render(&app);
-        assert!(shown.contains("committed work remains"));
-        assert!(shown.contains("write_failed"));
-        assert!(shown.contains("33333333-0000-0000-0000-000000000009"));
-        assert_spent(&mut app);
-    }
-
-    #[test]
-    fn missing_commit_evidence_keeps_the_move_uncertain_without_replay() {
-        let mut app = ready();
-        let request = app
-            .prepare(send(MOVE, false), Some(&intent("move")))
-            .unwrap();
-        app.resolve(
-            MOVE,
-            request.attempt,
-            response(
-                500,
-                &json!({
-                    "failed_outcome": {"code": "write_failed"}
-                }),
-            ),
-        );
-        assert!(matches!(
-            app.generated.screen(MOVE).submission().state(),
-            State::Uncertain { .. }
-        ));
-        assert!(render(&app).contains("Outcome unknown"));
-        assert!(app.prepare(send(MOVE, true), None).is_err());
-        assert!(
-            app.prepare(send(MOVE, false), Some(&intent("again")))
-                .is_err()
-        );
-        assert!(matches!(app.next_action(), Action::None));
     }
 }

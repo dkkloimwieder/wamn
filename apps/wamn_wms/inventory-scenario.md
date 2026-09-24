@@ -1,6 +1,6 @@
 # WMS inventory scenario
 
-WMS moves stock and produces a label through a composed operation.
+WMS moves stock between pallets and locations.
 It owns its [manifest](wamn.json), [migrations](migrations/), command SQL, guest, and application assertions.
 WMS owns its `wms.location` and `wms.product` tables.
 It does not share Receiving's physical tables.
@@ -55,26 +55,22 @@ Each update binds `row_version`, which is an `int4` on these two models.
 It is a current SQL read rather than an event-maintained rollup.
 The [projection implementation](data/src/inventory_aggregate.rs) owns its result.
 
-The [published wiring](publication/wirings/inventory_move_and_label.json) composes these operations:
+`/inventory/move` is a route to `inventory.move`, like every other operation.
+The [label wiring](publication/wirings/inventory_move_and_label.json) stays in the tree, but no attachment names it:
 
 ```text
 inventory.move → label-render → blob-put
 ```
 
-The move commits stock changes before label rendering and storage.
-The label template comes from the wiring's declared `template_id` parameter.
-The object key derives from the original movement identity.
-Repeating safe storage under that key overwrites the same object rather than creating another label.
-
-A label failure does not undo an already committed movement.
-The client displays partial completion only when the served response contains the committed result and failed outcome.
-Without that evidence, the outcome remains unknown.
-The whole composed route does not inherit the inner command's safe-replay guarantee.
+Publish registers a wiring on an event only when an event handler is its entry node, and this wiring enters at the move command.
+Epic 2 (wamn-xs9a) decides how the label step runs on the move event, and wamn-g4kj holds that input.
+Until then, no route renders or stores a label.
 
 ## Application observations
 
 The [cluster cases](tests/cluster.rs) exercise released routes, contention, replay, and label output.
 Separate cases exercise committed work after label failure, terminal output, browser output, and host restart.
+The label cases still expect the label on the move response, and wamn-g4kj updates them.
 The [terminal example](examples/wms_move.rs) uses generated screens and the common client submission layer.
 These owners replace the original proposal's earlier restriction against a WMS operator interface.
 
