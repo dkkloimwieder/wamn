@@ -223,8 +223,9 @@ mod tests {
 
     use wash_runtime::engine::ctx::{Ctx, SharedCtx};
     use wash_runtime::engine::guest_memory::install_memory_limiter;
+    use wash_runtime::host::HostRef;
     use wash_runtime::host::allowed_hosts::AllowedHost;
-    use wash_runtime::host::http::NullServer;
+    use wash_runtime::host::http::{HostHandler, NullServer};
     use wash_runtime::observability::{MeterKind, Meters};
     use wash_runtime::plugin::PluginBindings;
     use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
@@ -496,6 +497,7 @@ interface tcp-create-socket {
     /// Run the socket guest as a workload component on `engine`, through the
     /// same store template a served component gets, and return its probe code.
     async fn probe_unlisted_connect(engine: &Engine) -> u32 {
+        let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
         let workload = engine
             .initialize_workload(
                 "socket-policy-test",
@@ -517,7 +519,7 @@ interface tcp-create-socket {
             .resolve(
                 None,
                 &PluginBindings::new(),
-                Arc::new(NullServer::default()),
+                &HostRef::from_handler(&egress),
                 &Meters::new(MeterKind::Off),
             )
             .await

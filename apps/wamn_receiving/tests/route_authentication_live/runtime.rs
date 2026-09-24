@@ -517,7 +517,7 @@ pub(super) async fn invoke_journey_request<B>(
 ) -> anyhow::Result<hyper::Response<Bytes>>
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
-    B::Error: Into<ErrorCode>,
+    B::Error: Into<wasmtime_wasi_http::Error>,
 {
     let invocation = wamn_integration_tests::local_application::invoke_request(
         engine, flow_http, routing, bridge, request,

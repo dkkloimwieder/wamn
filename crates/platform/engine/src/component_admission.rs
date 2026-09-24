@@ -396,6 +396,7 @@ fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
             false
         }
         Type::List(list) => owned_operation_value(&list.ty()),
+        Type::FixedLengthList(list) => owned_operation_value(&list.ty()),
         Type::Map(map) => owned_operation_value(&map.key()) && owned_operation_value(&map.value()),
         Type::Record(record) => record
             .fields()
@@ -1007,6 +1008,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Wasmtime 48 adds fixed-length lists. The production engine leaves the
+    /// proposal off and refuses such a component as invalid bytes, so this
+    /// judges the type from an engine that turns it on.
+    #[test]
+    fn a_fixed_length_list_of_resources_is_not_an_owned_value() {
+        let mut resolve = Resolve::new();
+        let package = resolve
+            .push_str(
+                "fixed.wit",
+                r"
+                package platform-fixture:fixed@1.0.0;
+                interface batch {
+                    resource handle;
+                    record item { quantity: string }
+                    owned: func(input: list<item, 2>);
+                    handles: func(input: list<own<handle>, 2>);
+                }
+                world fixture { export batch; }
+            ",
+            )
+            .unwrap();
+        let world = resolve.select_world(&[package], Some("fixture")).unwrap();
+        let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+        embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+        let bytes = ComponentEncoder::default()
+            .module(&module)
+            .unwrap()
+            .validate(true)
+            .encode()
+            .unwrap();
+        let mut config = wash_runtime::wasmtime::Config::new();
+        config.wasm_component_model_fixed_length_lists(true);
+        let engine = wash_runtime::wasmtime::Engine::new(&config).unwrap();
+        let component = Component::new(&engine, &bytes).unwrap();
+        let ComponentItem::ComponentInstance(batch) = component
+            .component_type()
+            .get_export(&engine, "platform-fixture:fixed/batch@1.0.0")
+            .expect("the batch interface is exported")
+            .ty
+        else {
+            panic!("the batch export is not an interface instance");
+        };
+        let input = |name| {
+            let ComponentItem::ComponentFunc(func) = batch
+                .get_export(&engine, name)
+                .expect("function is exported")
+                .ty
+            else {
+                panic!("{name} is not a component function");
+            };
+            func.params().next().expect("one input").1
+        };
+        let owned = input("owned");
+        assert!(matches!(
+            owned,
+            wash_runtime::wasmtime::component::Type::FixedLengthList(_)
+        ));
+        assert!(owned_operation_value(&owned));
+        assert!(!owned_operation_value(&input("handles")));
     }
 
     // No test builds the refused shape -- an async lift of the sync-typed

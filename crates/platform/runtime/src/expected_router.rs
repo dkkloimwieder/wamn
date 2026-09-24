@@ -10,10 +10,8 @@ use std::collections::HashSet;
 
 use wash_runtime::engine::workload::ResolvedWorkload;
 use wash_runtime::host::allowed_hosts::AllowedHost;
-use wash_runtime::host::http::{DynamicRouter, RouteError, Router};
-use wash_runtime::host::http_p3::P3Body;
-use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
-use wasmtime_wasi_http::p2::types::OutgoingRequestConfig;
+use wash_runtime::host::http::{DynamicRouter, IngressRoute, RouteError, Router};
+use wasmtime_wasi_http::{RequestOptions, WasiBody};
 
 use crate::plugins::flow_http_routing::expected_http_hostnames;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -67,33 +65,22 @@ impl Router for ExpectedHostRouter {
     async fn on_service_http_resolved(
         &self,
         workload_id: &str,
-        hostnames: &[String],
+        routes: &[IngressRoute],
     ) -> anyhow::Result<()> {
         self.inner
-            .on_service_http_resolved(workload_id, hostnames)
+            .on_service_http_resolved(workload_id, routes)
             .await
     }
 
     fn allow_outgoing_request(
         &self,
         workload_id: &str,
-        request: &hyper::Request<HyperOutgoingBody>,
-        config: &OutgoingRequestConfig,
+        request: &hyper::Request<WasiBody>,
+        options: Option<RequestOptions>,
         allowed_hosts: &[AllowedHost],
     ) -> anyhow::Result<()> {
         self.inner
-            .allow_outgoing_request(workload_id, request, config, allowed_hosts)
-    }
-
-    fn allow_outgoing_request_p3(
-        &self,
-        workload_id: &str,
-        request: &hyper::Request<P3Body>,
-        options: Option<wasmtime_wasi_http::p3::RequestOptions>,
-        allowed_hosts: &[AllowedHost],
-    ) -> anyhow::Result<()> {
-        self.inner
-            .allow_outgoing_request_p3(workload_id, request, options, allowed_hosts)
+            .allow_outgoing_request(workload_id, request, options, allowed_hosts)
     }
 
     fn route_incoming_request(
@@ -109,6 +96,14 @@ impl Router for ExpectedHostRouter {
             }
             result => result,
         }
+    }
+
+    fn route_local_egress(
+        &self,
+        uri: &hyper::Uri,
+        can_serve: &mut dyn FnMut(&str) -> bool,
+    ) -> Option<String> {
+        self.inner.route_local_egress(uri, can_serve)
     }
 }
 
@@ -231,7 +226,7 @@ mod tests {
                     .send(Ok(hyper::Response::builder()
                         .status(status)
                         .header("x-application-response", "preserved")
-                        .body(HyperOutgoingBody::default())
+                        .body(WasiBody::default())
                         .unwrap()))
                     .expect("native ingress receives the application response");
             }
@@ -257,7 +252,7 @@ mod tests {
         assert_eq!(dispatched.load(Ordering::SeqCst), 0);
 
         ingress
-            .on_service_http_resolved("service", &[HOST.into()], sender.clone())
+            .on_service_http_resolved("service", &[IngressRoute::ingress(HOST)], sender.clone())
             .await
             .expect("bind the native service handler");
         assert_eq!(request(&ingress, Some(HOST), "/").await.0, 204);
@@ -280,7 +275,11 @@ mod tests {
             "a routing refusal never dispatches"
         );
         ingress
-            .on_service_http_resolved("replacement", &[HOST.into()], sender.clone())
+            .on_service_http_resolved(
+                "replacement",
+                &[IngressRoute::ingress(HOST)],
+                sender.clone(),
+            )
             .await
             .expect("bind a replacement service");
         assert_eq!(request(&ingress, Some(HOST), "/").await.0, 204);
@@ -312,7 +311,7 @@ mod tests {
         let router =
             expected_host_router(Some(&loaded_release), tokio::sync::watch::channel(false).1);
         router
-            .on_service_http_resolved("missing-handle", &[HOST.into()])
+            .on_service_http_resolved("missing-handle", &[IngressRoute::ingress(HOST)])
             .await
             .expect("register a route before its native handle exists");
         let ingress = Ingress::new(router, "127.0.0.1:0".parse().unwrap())
@@ -343,21 +342,16 @@ mod tests {
     }
 
     #[test]
-    fn both_outgoing_http_versions_keep_native_host_policy() {
+    fn outgoing_http_keeps_native_host_policy() {
         let router = expected_host_router(None, tokio::sync::watch::channel(false).1);
-        let p2 = hyper::Request::builder()
+        let request = hyper::Request::builder()
             .uri("https://allowed.example.test/path")
-            .body(HyperOutgoingBody::default())
+            .body(WasiBody::default())
             .unwrap();
-        let p3 = hyper::Request::builder()
-            .uri("https://allowed.example.test/path")
-            .body(P3Body::default())
-            .unwrap();
-        let config = OutgoingRequestConfig {
-            use_tls: true,
-            connect_timeout: Duration::from_secs(1),
-            first_byte_timeout: Duration::from_secs(1),
-            between_bytes_timeout: Duration::from_secs(1),
+        let options = RequestOptions {
+            connect_timeout: Some(Duration::from_secs(1)),
+            first_byte_timeout: Some(Duration::from_secs(1)),
+            between_bytes_timeout: Some(Duration::from_secs(1)),
         };
         for (policy, allowed) in [
             (Vec::new(), false),
@@ -374,18 +368,14 @@ mod tests {
                 true,
             ),
         ] {
-            assert_eq!(
-                router
-                    .allow_outgoing_request("service", &p2, &config, &policy)
-                    .is_ok(),
-                allowed
-            );
-            assert_eq!(
-                router
-                    .allow_outgoing_request_p3("service", &p3, None, &policy)
-                    .is_ok(),
-                allowed
-            );
+            for options in [None, Some(options)] {
+                assert_eq!(
+                    router
+                        .allow_outgoing_request("service", &request, options, &policy)
+                        .is_ok(),
+                    allowed
+                );
+            }
         }
     }
 }

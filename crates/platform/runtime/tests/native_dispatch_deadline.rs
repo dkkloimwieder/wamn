@@ -13,7 +13,8 @@ use wamn_engine::engine::{build_engine_with_host_memory, host_memory_budgets};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
-use wash_runtime::host::http::NullServer;
+use wash_runtime::host::HostRef;
+use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::PluginBindings;
 use wash_runtime::types::{Component, Workload};
@@ -211,11 +212,12 @@ async fn target(engine: &Engine, components: Vec<Component>) -> DispatchTarget {
             },
         )
         .expect("initialize the public native workload");
+    let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let workload = unresolved
         .resolve(
             None,
             &PluginBindings::new(),
-            Arc::new(NullServer::default()),
+            &HostRef::from_handler(&egress),
             &Meters::new(MeterKind::Off),
         )
         .await

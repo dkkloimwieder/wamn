@@ -12,7 +12,8 @@ use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::workload::ResolvedWorkload;
-use wash_runtime::host::http::NullServer;
+use wash_runtime::host::HostRef;
+use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::Meters;
 use wash_runtime::plugin::{HostPlugin, PluginBindings};
 use wash_runtime::types::{Component, LocalResources, Workload};
@@ -43,10 +44,21 @@ pub struct NativeWorkloadSpec {
 }
 
 /// A native workload and its admitted facts, keyed by native component identity.
-#[derive(Debug)]
 pub struct NativeWorkload {
     pub resolved: ResolvedWorkload,
     pub facts_by_component_id: BTreeMap<String, AdmittedComponent>,
+    // The workload's stores hold this handler weakly, so the application keeps
+    // it alive. `NullServer` refuses every outgoing request.
+    _egress: Arc<dyn HostHandler>,
+}
+
+impl std::fmt::Debug for NativeWorkload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeWorkload")
+            .field("resolved", &self.resolved)
+            .field("facts_by_component_id", &self.facts_by_component_id)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One release or candidate lifetime, retained by every native call it owns.
@@ -183,11 +195,12 @@ pub(super) async fn load_native_workload(
             .await
             .context("join native application workload initialization")?
             .context("initialize native application workload")?;
+    let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let resolved = unresolved
         .resolve(
             Some(plugins),
             plugin_bindings,
-            Arc::new(NullServer::default()),
+            &HostRef::from_handler(&egress),
             meters,
         )
         .await
@@ -225,5 +238,6 @@ pub(super) async fn load_native_workload(
     Ok(NativeWorkload {
         resolved,
         facts_by_component_id,
+        _egress: egress,
     })
 }

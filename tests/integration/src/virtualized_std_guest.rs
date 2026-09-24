@@ -98,6 +98,9 @@ mod tests {
             Type::Char => "char".to_owned(),
             Type::String => "string".to_owned(),
             Type::List(list) => format!("list<{}>", type_shape(&list.ty())),
+            Type::FixedLengthList(list) => {
+                format!("list<{}, {}>", type_shape(&list.ty()), list.len())
+            }
             Type::Map(map) => format!(
                 "map<{},{}>",
                 type_shape(&map.key()),
@@ -461,7 +464,7 @@ mod tests {
             .header("content-type", "application/json")
             .body(body)
             .context("build the test request")?;
-        let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
+        let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
         // Keep the fresh store driving P3 streams until the response body is collected.
         let response = store
             .run_concurrent(async |accessor| {
@@ -472,21 +475,25 @@ mod tests {
                         .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
                         .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
                     let (finish_tx, finish_rx) =
-                        tokio::sync::oneshot::channel::<Result<(), ErrorCode>>();
+                        tokio::sync::oneshot::channel::<Result<(), wasmtime_wasi_http::Error>>();
                     let response = accessor
                         .with(|store| {
                             response.into_http(store, async move {
                                 finish_rx
                                     .await
-                                    .unwrap_or(Err(ErrorCode::ConnectionTerminated))
+                                    .unwrap_or(Err(wasmtime_wasi_http::Error::ConnectionTerminated))
                             })
                         })
                         .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
                     let (parts, body) = response.into_parts();
                     let body = body.collect().await;
-                    let _ = finish_tx.send(body.as_ref().map(|_| ()).map_err(Clone::clone));
+                    let (body, finish) = match body {
+                        Ok(body) => (Ok(body), Ok(())),
+                        Err(error) => (Err(format!("{error:?}")), Err(error)),
+                    };
+                    let _ = finish_tx.send(finish);
                     let body = body.map_err(|error| {
-                        anyhow::anyhow!("collect flow-http response: {error:?}")
+                        anyhow::anyhow!("collect flow-http response: {error}")
                     })?;
                     Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
                 };

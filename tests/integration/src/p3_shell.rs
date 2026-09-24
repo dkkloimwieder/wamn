@@ -224,7 +224,7 @@ async fn invoke_checked<B>(
 ) -> anyhow::Result<hyper::Response<Bytes>>
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
-    B::Error: Into<ErrorCode>,
+    B::Error: Into<wasmtime_wasi_http::Error>,
 {
     let LocalInvocation {
         response,

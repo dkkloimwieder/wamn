@@ -33,7 +33,8 @@ use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
-use wash_runtime::host::http::NullServer;
+use wash_runtime::host::HostRef;
+use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
 use wash_runtime::types::{Component, LocalResources, Workload};
@@ -1228,6 +1229,7 @@ async fn assert_postgres_bind_warns() {
     )));
     let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
         HashMap::from([(WAMN_POSTGRES_ID, Arc::clone(&wash) as Arc<dyn HostPlugin>)]);
+    let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let resolved = wamn_engine::build_engine(&[])
         .expect("production engine")
         .initialize_workload(
@@ -1254,7 +1256,7 @@ async fn assert_postgres_bind_warns() {
         .resolve(
             Some(&plugins),
             &PluginBindings::new(),
-            Arc::new(NullServer::default()),
+            &HostRef::from_handler(&egress),
             &Meters::new(MeterKind::Off),
         )
         .await

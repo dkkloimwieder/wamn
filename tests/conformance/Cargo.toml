@@ -41,8 +41,8 @@ wamn-execution-host = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 wasi-virt = { workspace = true }
-wat = "=1.252.0"
-wit-parser = "=0.252.0"
+wat = "=1.254.0"
+wit-parser = "=0.254.0"
 
 [lints]
 workspace = true

@@ -62,7 +62,7 @@ proptest.workspace = true
 wamn-client = { workspace = true }
 wamn-receiving-tui = { workspace = true }
 wamn-schema-introspection = { workspace = true }
-wat = "=1.252.0"
+wat = "=1.254.0"
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 

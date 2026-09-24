@@ -91,14 +91,14 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 ratatui-core = { version = "0.1.2", default-features = false, features = ["std"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29", default-features = false, features = ["event-stream", "events"] }
-# Direct upstream v2.9.0, with zero patches. Source identity and evidence
+# Direct upstream v2.10.0, with zero patches. Source identity and evidence
 # are recorded in docs/architecture/native-alignment.md.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # No `oci` here, because wamn-engine must not link it. A crate that uses the
 # OCI registry source turns `oci` on in its own manifest.
-# wamn and wash-runtime resolve one crates.io Wasmtime 47.0.x family from the
-# shared 47.0.4 requirement; enforce that source identity in conformance.
-wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "68ebece9c537f8bb4b5c9999f274ec68d60f35a9", default-features = false }
+# wamn and wash-runtime resolve one crates.io Wasmtime 48.0.x family from the
+# shared 48.0.2 requirement; enforce that source identity in conformance.
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "f9b37fc3ab52db32378f88b116a24a763b4484db", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
 # parallel-compilation is a wasmtime DEFAULT that default-features=false drops.
 # Without it Cranelift compiles every component on one core: receiving took
@@ -107,9 +107,9 @@ wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "68ebece9
 # (wamn-0h0g.17.22). It adds rayon and
 # nothing else. default-features stays false: that is the shared-wasmtime-family
 # constraint above, and naming one feature does not weaken it.
-wasmtime = { version = "47.0.4", default-features = false, features = ["cache", "parallel-compilation"] }
-wasmtime-wasi = "47.0.4"
-wasmtime-wasi-http = "47.0.4"
+wasmtime = { version = "48.0.2", default-features = false, features = ["cache", "parallel-compilation"] }
+wasmtime-wasi = "48.0.2"
+wasmtime-wasi-http = "48.0.2"
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
 # wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
 # commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork

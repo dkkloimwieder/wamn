@@ -8,7 +8,8 @@ use wamn_catalog::ManifestDigest;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
-use wash_runtime::host::http::NullServer;
+use wash_runtime::host::HostRef;
+use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
 use wash_runtime::types::{Component as WorkloadComponent, Workload};
@@ -545,11 +546,12 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
         (WAMN_POSTGRES_ID, postgres.clone() as Arc<dyn HostPlugin>),
         (DISPATCH_ID, dispatch as Arc<dyn HostPlugin>),
     ]);
+    let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let workload = workload
         .resolve(
             Some(&plugins),
             &PluginBindings::new(),
-            Arc::new(NullServer::default()),
+            &HostRef::from_handler(&egress),
             &Meters::new(MeterKind::Off),
         )
         .await
