@@ -92,6 +92,7 @@ Sequence, each its own epic, one at a time:
 1. Extract `invoke_operation`. Route layer calls it. Run-state attaches by operation kind. Publish emits no one-node wiring. Receiving runs with zero wirings.
    Built by Beads `wamn-7icx`. Two wirings remain for epic 2: the WMS graph `inventory_move_and_label` and the Acme registration entry `quality_create_inspection`.
 2. Move the router and walk glue into a workflow crate. Cloud host links it. `Cron` and queued delivery leave the base manifest with it.
+   Scoped in [workflow crate](workflow-crate.md), Beads `wamn-xs9a`, waiting for the owner review.
 3. Split `wamn-runtime` into engine and cloud plugins. Run-state becomes its own crate with a storage trait.
    Built by Beads `wamn-3lw7`. `wamn-engine` holds the host and `invoke_operation`, `wamn-runtime` keeps the plugin set, and `wamn-run-state` holds `RunStore` and `IntentStore`. Route intent logging is `wamn-an24`.
 4. Edge: engine + `invoke_operation` + SQLite run-state + edge plugins. First target: read a serial scale, store, forward.
