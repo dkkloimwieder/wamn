@@ -29,7 +29,7 @@ use crate::{
 };
 
 const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
-const TOOLCHAIN_ID: &str = "rust-1.98.0";
+const TOOLCHAIN_ID: &str = "rust-1.98.1";
 
 /// Whether materialization writes generated artifacts or checks committed bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

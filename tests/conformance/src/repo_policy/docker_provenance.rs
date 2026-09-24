@@ -153,8 +153,8 @@ fn embedded_components_come_from_the_locked_builder(
     for required in [
         "FROM component-toolchain AS component-builder",
         "COPY apps /build/apps",
-        "rustup target add --toolchain 1.98.0 wasm32-wasip2",
-        "cargo +1.98.0 build --locked --release --target wasm32-wasip2",
+        "rustup target add --toolchain 1.98.1 wasm32-wasip2",
+        "cargo +1.98.1 build --locked --release --target wasm32-wasip2",
     ] {
         problems.require(dockerfile.contains(required), || {
             format!("Dockerfile lost the locked component build line `{required}`")

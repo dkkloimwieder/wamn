@@ -95,8 +95,8 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 
 # ---- locked component outputs shared by every embedding image --------------
 FROM toolchain AS component-toolchain
-RUN rustup target add --toolchain 1.98.0 wasm32-wasip2 \
- && rustup toolchain install 1.98.0 --profile minimal --target wasm32-wasip2
+RUN rustup target add --toolchain 1.98.1 wasm32-wasip2 \
+ && rustup toolchain install 1.98.1 --profile minimal --target wasm32-wasip2
 COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
@@ -107,15 +107,15 @@ FROM component-toolchain AS component-builder
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked \
-    cargo +1.98.0 build --locked --release --target wasm32-wasip2 \
+    cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p http-route \
- && cargo +1.98.0 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p materializer \
- && cargo +1.98.0 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p busyloop \
- && cargo +1.98.0 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p connection-http-standard \
- && cargo +1.98.0 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p sockprobe \
  && install -d /component-output \
  && for artifact in \

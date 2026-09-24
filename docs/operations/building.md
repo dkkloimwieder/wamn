@@ -1,7 +1,7 @@
 # Building
 
 Run commands from the repository root with the pinned toolchain and committed lock files.
-The native toolchain is Rust 1.98.0 with Clippy, rustfmt, and `wasm32-wasip2`.
+The native toolchain is Rust 1.98.1 with Clippy, rustfmt, and `wasm32-wasip2`.
 Native builds require system compiler tools and `protoc`.
 The guest workspaces are `apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml`.
 [Components](../architecture/components.md) defines artifact and interface boundaries.
