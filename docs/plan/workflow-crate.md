@@ -2,7 +2,7 @@
 
 Sep 23, 2026. Epic 2 in [routes, workflows, and the router](routes-router.md), section 7. Beads epic: `wamn-xs9a`.
 
-This page is a scope for owner review. No code starts before the owner accepts it. Section 8 lists the open questions.
+The owner accepted this scope on 2026-09-23. Section 8 records the rulings.
 
 ## 1. Goal
 
@@ -25,7 +25,7 @@ A layer depends only on the layers below it. The order below is measured from th
 5. `wamn-workflow`: the walk, the driver, wiring delivery, the queue, enqueue.
 6. `services/host`, `services/ctl`, and `wamn-control`: they link what they call.
 
-The brief put the workflow crate below the host. Section 4 explains why this scope puts it above `wamn-execution-host` and below `services/host`. Section 8 asks the owner.
+The brief put the workflow crate below the host. Section 4 explains why it sits above `wamn-execution-host` and below `services/host`, and owner ruling 1 accepts that.
 
 ### The dependency test
 
@@ -58,9 +58,9 @@ The generator writes no serving manifest. Publish mints it. So `apps/*/generated
 
 The node ABI WIT is at `crates/execution/router/wit/package.wit`. The engine, the generator test, `push_component.rs`, the conformance tests, and 14 component crates name that path. This epic does not move it (section 4).
 
-Only cluster tests run the two remaining wirings end to end. `apps/wamn_wms/tests/cluster.rs` runs `inventory_move_and_label`, and `apps/wamn_receiving/tests/postcommit.rs` runs the `quality_create_inspection` registration. The WMS local test `local_business.rs` loads no wiring. Section 6 lists the tests that this epic can run without a cluster. Section 8 asks the owner.
+Only cluster tests run the two remaining wirings end to end. `apps/wamn_wms/tests/cluster.rs` runs `inventory_move_and_label`, and `apps/wamn_receiving/tests/postcommit.rs` runs the `quality_create_inspection` registration. The WMS local test `local_business.rs` loads no wiring. Section 6 lists the tests that this epic can run without a cluster. Owner ruling 4 decides the proof.
 
-The engine test `crates/platform/engine/src/release_manifest.rs:234-324` builds a manifest with a wiring and asserts `manifest().wirings`. The format 3 change breaks that test. Section 8 asks the owner.
+The engine test `crates/platform/engine/src/release_manifest.rs:234-324` builds a manifest with a wiring and asserts `manifest().wirings`. The format 3 change breaks that test. Owner ruling 3 allows the edit.
 
 ## 4. Decisions
 
@@ -82,7 +82,7 @@ Options:
 1. Below `wamn-execution-host`, as the brief says. The driver needs the ten host items from section 3. So a seam trait in the workflow crate carries them, and `OperationHost` implements it. The trace, span, and deadline helpers either go on the trait or move to the engine, and the engine is outside this epic.
 2. Above `wamn-execution-host` and below `services/host`. The ten items become `pub` in the host crate, and the driver moves with only import changes. The bridge in the host crate takes a small trait, `WiringDelivery`, for the wiring arm. The workflow crate implements it, and `services/host` connects the two.
 
-Pick: option 2. It moves code without a new seam over ten items. It also makes the route boundary testable: `cargo tree -p wamn-execution-host` shows no workflow crate. The owner decides (section 8, question 1).
+Pick: option 2. It moves code without a new seam over ten items. It also makes the route boundary testable: `cargo tree -p wamn-execution-host` shows no workflow crate. Owner ruling 1 accepts it.
 
 ### Manifest shape
 
@@ -98,7 +98,7 @@ The hash consequence of option 1: the release keeps one digest, the RFC 8785 sha
 
 Option 2 fails because the runtime plugins read registrations and wiring attachments. The runtime must not link the workflow crate, so every such reader needs injected facts, and the manifest decode cannot check the section. Option 3 needs a second snapshot row, a second OCI artifact, a second ConfigMap, and a promote change, with no gain.
 
-The brief says the workflow crate owns the section. Under option 1, the workflow crate owns every behavior of the section: lowering, walk, delivery, queue. `wamn-catalog` owns its types and its structural checks, because every manifest decode runs them. Section 8, question 2 asks the owner.
+The brief says the workflow crate owns the section. Under option 1, the workflow crate owns every behavior of the section: lowering, walk, delivery, queue. `wamn-catalog` owns its types and its structural checks, because every manifest decode runs them. Owner ruling 2 accepts it.
 
 The top-level manifest types change as follows:
 
@@ -168,7 +168,7 @@ The full workspace sweep runs once, in the last issue, with `--no-fail-fast`. It
 
 Seven issues, in order. Each depends on the one before it.
 
-1. `wamn-xs9a.1` Create `wamn-workflow`, empty, with the dependency test. `services/host` adds the dependency. The test asserts the four facts in section 2. Before issue 4, `wamn-runtime` and `wamn-execution-host` still link `wamn-router`, so those two assertions start as `#[ignore = "turns on in wamn-xs9a.4"]`, and issue 4 turns them on.
+1. `wamn-xs9a.1` Create `wamn-workflow`, empty, with the dependency test. `services/host` adds the dependency. The test asserts the four facts in section 2. Until issue 3, `wamn-runtime` links `wamn-router`, and until issue 4, `wamn-execution-host` does. So those two assertions start ignored, and issues 3 and 4 turn them on.
 2. `wamn-xs9a.2` Separate the route path from `RouterDriver`, in place in `wamn-execution-host`, before any move. `OperationHost` gets its own constructor. The bridge takes `Arc<OperationHost>` and an optional `WiringDelivery`. Route readiness no longer goes through the wiring preload. `refuse()` names no wiring type. The route and bridge tests pass unchanged.
 3. `wamn-xs9a.3` The runtime drops `wamn-router`. `wiring_lowering.rs` and its test, the lowering half of `wiring_resolution.rs`, the router mapping in `production_claim.rs`, and `port_constant_agreement.rs` move to `wamn-workflow`. For now, the workflow crate depends on `wamn-router`.
 4. `wamn-xs9a.4` Move the driver, the wiring delivery, the response, and the queue into `wamn-workflow`. The ten host items become `pub`. `wamn-execution-host` drops `wamn-router`. `services/host` builds the driver and hands it to the bridge. `enqueue_run.rs` moves from `wamn-control`. The two ignored dependency assertions turn on.
@@ -178,9 +178,11 @@ Seven issues, in order. Each depends on the one before it.
 
 Root `Cargo.toml` is shared with Epic 13 (`wamn-i0iy.2`). Whichever epic merges second rebases. The conflict is one line.
 
-## 8. Open questions for the owner
+## 8. Owner rulings
 
-1. May `wamn-workflow` sit above `wamn-execution-host` and below `services/host` (section 4)? The brief put it below the host. The pick avoids a seam over ten host items and makes the route boundary a `cargo tree` check.
-2. May the section types live in `wamn-catalog`, with every behavior in `wamn-workflow` (section 4)? The runtime plugins read registrations, and the runtime must not link the workflow crate.
-3. Issue 6 breaks one engine test, `crates/platform/engine/src/release_manifest.rs:234-324`, which builds a manifest with a wiring. May issue 6 edit that test? It is not a file that Epic 13 changes.
-4. Only cluster tests run the two wirings end to end. Is the closeout proof the tests in section 6, or do you want one WMS and one Receiving cluster run?
+The owner answered the four open questions on 2026-09-23.
+
+1. `wamn-workflow` sits above `wamn-execution-host` and below `services/host`. The route path is in the host crate. The workflow crate calls it, never the reverse. The third dependency fact makes this rule checkable.
+2. The section types live in `wamn-catalog`, and the behavior lives in `wamn-workflow`. A plugin that reads registrations as data reads the manifest, not the workflow. The catalog types carry no router type. The lowering to `wamn_router::Wiring` stays in the workflow crate.
+3. Issue 6 edits the engine test `release_manifest.rs:234-324`. The test asserts a field that the format removes, so the edit belongs to the format change, not to Epic 13.
+4. The tests of section 6 are enough for each issue. One cluster run of the WMS graph and one of the Acme registration are required before the merge, and the closeout records them. If no cluster is up, the epic stops at "ready to merge" and waits.
