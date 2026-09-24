@@ -60,6 +60,10 @@ pub(super) async fn preflight(lifecycle: &Path, cluster: &str, image: &str) -> a
 
 /// Write the build context for the debug host image.
 ///
+/// The copied binary keeps the mode of the build, and tools/delivery-owned
+/// builds under umask 077. The chart runs the host as uid 65532, so the image
+/// sets the mode that lets that user execute it.
+///
 /// The context carries no source-head label. Its content is the image's
 /// identity, so a commit that produces the same binary must produce the same
 /// context and reuse the same image. The run's own commit is written by the
@@ -73,7 +77,7 @@ pub(super) fn prepare_image(target: &Path, work: &Path) -> anyhow::Result<()> {
         directory.join("Dockerfile"),
         "FROM debian:trixie-slim\n\
          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \\\n          && rm -rf /var/lib/apt/lists/*\n\
-         COPY wamn-host /usr/local/bin/wamn-host\n\
+         COPY --chmod=0755 wamn-host /usr/local/bin/wamn-host\n\
          ENV HOME=/tmp\n\
          ENTRYPOINT [\"/usr/local/bin/wamn-host\"]\n",
     )?;
