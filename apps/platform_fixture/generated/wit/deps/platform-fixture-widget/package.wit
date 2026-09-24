@@ -433,6 +433,7 @@ interface record-batch {
   }
 
   record record-batch-request {
+    expected-edit-version: s64,
     idempotency-key: string,
     line: list<record-batch-line>,
     maker-id: option<string>,

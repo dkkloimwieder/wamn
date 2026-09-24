@@ -1474,6 +1474,8 @@ pub struct WidgetRecordBatchRequest {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetRecordBatchRequestValue {
+    /// `int64`
+    pub expected_edit_version: i64,
     /// `text`
     pub idempotency_key: String,
     /// `array`
@@ -1504,6 +1506,12 @@ pub const WIDGET_RECORD_BATCH_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
         type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "value.expected_edit_version",
+        type_name: "int64",
         nullable: false,
         values: &[],
     },
@@ -1571,6 +1579,18 @@ pub const WIDGET_RECORD_BATCH_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSche
         minimum: None,
         maximum: None,
         children: &[
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "value.expected_edit_version",
+                    type_name: "int64",
+                    nullable: false,
+                    values: &[],
+                },
+                required: true,
+                minimum: None,
+                maximum: None,
+                children: &[],
+            },
             wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
                     path: "value.idempotency_key",
@@ -1663,7 +1683,7 @@ pub const WIDGET_RECORD_BATCH_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSch
     }];
 
 pub const WIDGET_RECORD_BATCH_KIND: &str = "command";
-pub const WIDGET_RECORD_BATCH_REQUIRES_COMPOSITION: bool = false;
+pub const WIDGET_RECORD_BATCH_REQUIRES_COMPOSITION: bool = true;
 pub const WIDGET_RECORD_BATCH_REPLAY: Option<&str> = Some("claim");
 pub const WIDGET_RECORD_BATCH_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_RECORD_BATCH_RESULT_OPAQUE: bool = false;

@@ -288,7 +288,7 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/record-batch@1.0.0",
-    "definition-hash": "sha256:7d98afdd3f46ccdae8bbd55a4cf7dcfedcb5982e3cd19162aabb9573f2946f6b",
+    "definition-hash": "sha256:ce5abc8534f392d64691f48a44da537b5250fd39571e189f84242079176faad5",
     "definition": {
       "id": "widget-record-batch-http",
       "kind": "http",
@@ -319,6 +319,7 @@
               "type": "object",
               "required": [
                 "idempotency_key",
+                "expected_edit_version",
                 "line"
               ],
               "additionalProperties": false,
@@ -339,6 +340,9 @@
                     "null"
                   ],
                   "format": "uuid"
+                },
+                "expected_edit_version": {
+                  "type": "string"
                 },
                 "line": {
                   "type": "array",

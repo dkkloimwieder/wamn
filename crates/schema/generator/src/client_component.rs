@@ -381,6 +381,14 @@ fn member_path(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// The prop that carries one revision input no read supplies.
+///
+/// A nested revision such as `value.expected_row_version` is one prop,
+/// `valueExpectedRowVersion`, because a prop name holds no dot.
+fn revision_prop(path: &str) -> String {
+    crate::client_ts::to_camel(&path.replace('.', "_"))
+}
+
 /// The repeated ancestor of one input path, when the contract declares one.
 ///
 /// A contract marks a repeated member with `[]`, and every member below it
@@ -1240,13 +1248,16 @@ fn emit_form(
             source.push_str(
                 "  /** The revision this command sends. The release binds no read that supplies it. */\n",
             );
-            writeln!(
+            write!(
                 source,
-                "  readonly {}: {stem}Request[{:?}];",
-                crate::client_ts::to_camel(revision),
-                crate::client_ts::to_camel(revision)
+                "  readonly {}: {stem}Request",
+                revision_prop(revision)
             )
             .expect("write");
+            for name in member_path(revision) {
+                write!(source, "[{name:?}]").expect("write");
+            }
+            source.push_str(";\n");
         }
     }
     source.push_str("  /** Called with the outcome of every submission. */\n");
@@ -1357,7 +1368,7 @@ fn emit_form(
                 source,
                 "      item = writeMember(item, {}, props.{});",
                 member_literal(revision),
-                crate::client_ts::to_camel(revision)
+                revision_prop(revision)
             )
             .expect("write");
         }

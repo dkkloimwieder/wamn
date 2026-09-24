@@ -172,12 +172,13 @@ pub(crate) fn client_release() -> ClientContractIr {
                                 "request_id": {"type": "string", "minLength": 1},
                                 "value": {
                                     "type": "object",
-                                    "required": ["idempotency_key", "line"],
+                                    "required": ["idempotency_key", "expected_edit_version", "line"],
                                     "additionalProperties": false,
                                     "properties": {
                                         "idempotency_key": {"type": "string", "minLength": 1},
                                         "note": {"type": ["string", "null"]},
                                         "maker_id": {"type": ["string", "null"], "format": "uuid"},
+                                        "expected_edit_version": {"type": "string"},
                                         "line": {
                                             "type": "array",
                                             "minItems": 1,

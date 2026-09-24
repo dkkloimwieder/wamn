@@ -22,6 +22,7 @@ struct JsonRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRoot {
+    expected_edit_version: JsonInt64,
     idempotency_key: String,
     line: Vec<JsonLine>,
     maker_id: Option<String>,
@@ -34,6 +35,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::RecordBatchItem>, Code
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::RecordBatchRequest {
+                    expected_edit_version: request.value.expected_edit_version.0,
                     idempotency_key: request.value.idempotency_key,
                     line: request
                         .value

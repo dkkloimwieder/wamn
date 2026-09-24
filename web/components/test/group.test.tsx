@@ -18,7 +18,7 @@ afterEach(cleanup);
 describe("a repeated group", () => {
   it("stops adding at the declared maximum", async () => {
     const { transport } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} />);
+    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
     const add = screen.getByRole("button", { name: "add" });
     for (let element = 0; element < 10; element += 1) {
       fireEvent.click(add);
@@ -28,7 +28,7 @@ describe("a repeated group", () => {
 
   it("reads no line until the maker that narrows the line list is chosen", async () => {
     const { transport, sent } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} />);
+    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
     fireEvent.click(screen.getByRole("button", { name: "add" }));
     await waitFor(() =>
       expect(sent.some((request) => request.operation.includes("widget-maker"))).toBe(true),
@@ -45,13 +45,13 @@ describe("a repeated group", () => {
 
   it("reads the label its line bound declares", () => {
     const { transport } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} />);
+    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
     expect(screen.getByText("Batch lines")).toBeDefined();
   });
 
   it("refuses a value whose spelling the release would refuse", async () => {
     const { transport, sent } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} />);
+    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
     fireEvent.click(screen.getByRole("button", { name: "add" }));
     // Every other control is filled, so the quantity is the only value left
     // for the schema to refuse. Each one is chosen from its own list, and the

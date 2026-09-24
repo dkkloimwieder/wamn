@@ -448,7 +448,7 @@ pub static RECORD_BATCH_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::widget::WIDGET_RECORD_BATCH_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"line\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"string\"},\"widget_id\":{\"format\":\"uuid\",\"type\":\"string\"}},\"required\":[\"widget_id\",\"amount\"],\"type\":\"object\"},\"maxItems\":10,\"minItems\":1,\"type\":\"array\"},\"maker_id\":{\"format\":\"uuid\",\"type\":[\"string\",\"null\"]},\"note\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"idempotency_key\",\"line\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_edit_version\":{\"type\":\"string\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"line\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"string\"},\"widget_id\":{\"format\":\"uuid\",\"type\":\"string\"}},\"required\":[\"widget_id\",\"amount\"],\"type\":\"object\"},\"maxItems\":10,\"minItems\":1,\"type\":\"array\"},\"maker_id\":{\"format\":\"uuid\",\"type\":[\"string\",\"null\"]},\"note\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"idempotency_key\",\"expected_edit_version\",\"line\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -502,8 +502,8 @@ pub static RECORD_BATCH_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     fresh_only: false,
     record: None,
     revision: None,
-    revision_inputs: &[],
-    requires_composition: false,
+    revision_inputs: &["value.expected_edit_version"],
+    requires_composition: true,
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
