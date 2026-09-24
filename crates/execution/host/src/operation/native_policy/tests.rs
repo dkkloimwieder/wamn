@@ -1,5 +1,5 @@
 //! Native mechanism tests use the real node ABI and a test-only observation import.
-//! Authenticated nested cases use the explicitly armed local PostgreSQL test below.
+//! Authenticated call-graph cases use the explicitly armed local PostgreSQL test below.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::process::Command;
@@ -11,10 +11,10 @@ use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
 use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, ComponentOperationDependency,
+    AdmittedComponent, AdmittedComponentOperation, ComponentOperationDependency,
     ComponentPackageScope, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
     EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingRelease,
+    ServingManifest, ServingRelease,
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -43,10 +43,11 @@ use super::super::native_call::{NativeInvocation, invoke_native, prepare_native}
 use super::super::native_workload::{
     NativeApplication, NativeComponent, NativeWorkload, NativeWorkloadSpec, load_native_application,
 };
-use super::super::{NodeAcquisition, OperationRefusal, OperationRefusalKind, node_types};
+use super::super::{NodeAcquisition, OperationRefusal, OperationRefusalKind};
 use super::{
     NATIVE_POLICY_ID, NativeFacts, NativePolicy, NativePolicyResources, new_native_policy,
 };
+use wamn_engine::operation::node_types;
 
 #[path = "tests/authenticated.rs"]
 mod authenticated;
@@ -56,7 +57,11 @@ mod trace;
 mod warm;
 
 const ROOT: &str = "root:entry/run@1.0.0";
+/// An operation that the root's call graph reaches. Publish folds its grant
+/// into the root. No host runs it: composition embeds it in the root.
 const CHILD: &str = "child:entry/run@1.0.0";
+/// The participant that the composed transaction owner selects.
+const PARTICIPANT: &str = "root:entry/participant@1.0.0";
 const OBSERVE: &str = "test:authority/observe@1.0.0";
 const STATEMENTS: &str = "wamn:postgres/statements@0.1.0";
 const CHILD_MARKER: &str = "WAMN_NATIVE_POLICY_CHILD";
@@ -94,7 +99,7 @@ const NODE_TYPES: &str = r#"
 #[derive(Debug, Clone, Copy)]
 enum Case {
     Success,
-    NestedRefusal,
+    CalleeGrant,
     StartDeadline,
     RunDeadline,
     Cancellation,
@@ -111,40 +116,10 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     if matches!(case, Case::TransactionParticipant) {
         return transaction_participant_component(operation);
     }
-    let nested = matches!(case, Case::NestedRefusal);
     let postgres = if matches!(case, Case::PostgresImport) {
         format!(r#"(import "{STATEMENTS}" (instance))"#)
     } else {
         String::new()
-    };
-    let import = if nested {
-        format!(
-            r#"(import "{CHILD}" (instance $child
-          (export "json" (type (eq $json)))
-          (export "node-context" (type (eq $context)))
-          (export "node-error" (type (eq $error)))
-          (export "emission" (type (eq $emission)))
-          (export "run" (func async (param "ctx" $context) (param "input" $json)
-            (result (result $emission (error $error)))))))"#
-        )
-    } else {
-        String::new()
-    };
-    let lower = if nested {
-        r#"(core func $nested (canon lower (func $child "run")
-          (memory $memory "memory") (realloc (func $memory "realloc"))))"#
-    } else {
-        ""
-    };
-    let core_import = if nested {
-        r#"(import "host" "nested" (func $nested (param i32 i32)))"#
-    } else {
-        ""
-    };
-    let core_binding = if nested {
-        r#"(export "nested" (func $nested))"#
-    } else {
-        ""
     };
     let start = if matches!(case, Case::StartDeadline) {
         "(loop br 0)"
@@ -152,10 +127,9 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
         ""
     };
     let body = match case {
-        Case::NestedRefusal => "local.get $input i32.const 256 call $nested",
         Case::RunDeadline | Case::Cancellation => "(loop br 0)",
         Case::Trap => "unreachable",
-        Case::Success | Case::StartDeadline | Case::PostgresImport => "",
+        Case::Success | Case::CalleeGrant | Case::StartDeadline | Case::PostgresImport => "",
         Case::TransactionOwner | Case::TransactionParticipant => unreachable!(),
     };
     wat::parse_str(format!(
@@ -164,7 +138,6 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
       (import "{OBSERVE}" (instance $observe
         (export "record" (func (param "phase" u32)))))
       {postgres}
-      {import}
       (core module $memory
         (memory (export "memory") 16)
         (global $next (mut i32) (i32.const 1024))
@@ -181,13 +154,11 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
       (core func $observe (canon lower (func $observe "record")))
       (core func $return (canon task.return (result (result $emission (error $error)))
         (memory $memory "memory")))
-      {lower}
       (core module $main
         (import "memory" "memory" (memory 16))
         (import "host" "observe" (func $observe (param i32)))
         (import "host" "return" (func $return
           (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
-        {core_import}
         (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
         (func $start i32.const 0 call $observe {start})
         (start $start)
@@ -199,7 +170,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
           call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "observe" (func $observe))
-          (export "return" (func $return)) {core_binding}))))
+          (export "return" (func $return))))))
       (func $run async (param "ctx" $context) (param "input" $json)
         (result (result $emission (error $error)))
         (canon lift (core func $main "run") (memory $memory "memory")
@@ -312,17 +283,17 @@ fn transaction_participant_component(operation: &str) -> Vec<u8> {
     )).expect("encode transaction participant")
 }
 
+/// A composed transaction owner: the base half begins a transaction and
+/// selects the published participant, and the participant half, embedded in
+/// the same component, runs its statement on the view. No host sits between.
 fn transaction_owner_component(operation: &str) -> Vec<u8> {
     wat::parse_str(format!(r#"(component
       {NODE_TYPES}{POSTGRES_TYPES}
-      (import "{CHILD}" (instance $child
-        (export "json" (type (eq $json))) (export "node-context" (type (eq $context)))
-        (export "node-error" (type (eq $error))) (export "emission" (type (eq $emission)))
-        (export "run" (func async (param "ctx" $context) (param "input" $json)
-          (result (result $emission (error $error)))))))
       (core module $memory
-        (memory (export "memory") 16) (data (i32.const 16) "{CHILD}")
+        (memory (export "memory") 16) (data (i32.const 16) "{PARTICIPANT}")
         (data (i32.const 320) "[]")
+        (data (i32.const 480) "{digest}")
+        (data (i32.const 600) "viewrun")
         (global $next (mut i32) (i32.const 1024))
         (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
           (local $ptr i32) global.get $next local.get $align i32.const 1 i32.sub i32.add
@@ -332,32 +303,48 @@ fn transaction_owner_component(operation: &str) -> Vec<u8> {
       (core func $begin (canon lower (func $statements "begin") (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core func $select (canon lower (func $statements "[method]transaction.select-participant") (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core func $rollback (canon lower (func $statements "[method]transaction.rollback") (memory $memory "memory") (realloc (func $memory "realloc"))))
-      (core func $nested (canon lower (func $child "run") (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $view (canon lower (func $statements "participant-view") (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $run-view (canon lower (func $statements "[method]transaction-view.run") (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core func $return (canon task.return (result (result $emission (error $error)))
         (memory $memory "memory")))
       (core module $main
         (import "memory" "memory" (memory 16))
         (import "host" "begin" (func $begin (param i32))) (import "host" "select" (func $select (param i32 i32 i32 i32)))
-        (import "host" "nested" (func $nested (param i32 i32))) (import "host" "rollback" (func $rollback (param i32 i32)))
+        (import "host" "rollback" (func $rollback (param i32 i32)))
+        (import "host" "view" (func $view (param i32)))
+        (import "host" "run-view" (func $run-view (param i32 i32 i32 i32 i32 i32)))
         (import "host" "return" (func $return
           (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
         (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
         (func (export "run") (param $input i32) (result i32) (local $transaction i32)
           i32.const 64 call $begin i32.const 64 i32.load8_u if unreachable end
-          i32.const 72 i32.load local.tee $transaction i32.const 16 i32.const {child_len} i32.const 96 call $select
+          i32.const 72 i32.load local.tee $transaction i32.const 16 i32.const {participant_len} i32.const 96 call $select
           i32.const 96 i32.load8_u if unreachable end
-          local.get $input i32.const 256 call $nested
-          local.get $transaction i32.const 352 call $rollback
+          i32.const 128 call $view
+          i32.const 128 i32.load8_u if
+            i32.const 0 i32.const 600 i32.const 4 i32.const 0 i32.const 0 i32.const 0
+            i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
+          i32.const 136 i32.load i32.const 480 i32.const {digest_len} i32.const 0 i32.const 0 i32.const 160 call $run-view
+          i32.const 160 i32.load8_u if
+            i32.const 0 i32.const 604 i32.const 3 i32.const 0 i32.const 0 i32.const 0
+            i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
+          local.get $transaction i32.const 704 call $rollback
           i32.const 0 i32.const 320 i32.const 2 i32.const 0 i32.const 0 i32.const 0
           i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "begin" (func $begin)) (export "select" (func $select))
-          (export "nested" (func $nested)) (export "rollback" (func $rollback)) (export "return" (func $return))))))
+          (export "rollback" (func $rollback)) (export "view" (func $view))
+          (export "run-view" (func $run-view)) (export "return" (func $return))))))
       (func $run async (param "ctx" $context) (param "input" $json) (result (result $emission (error $error)))
         (canon lift (core func $main "run") (memory $memory "memory") (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
       (instance $handler (export "json" (type $json)) (export "node-context" (type $context))
         (export "node-error" (type $error)) (export "emission" (type $emission)) (export "run" (func $run)))
-      (export "{operation}" (instance $handler)))"#, child_len = CHILD.len())).expect("encode transaction owner")
+      (export "{operation}" (instance $handler))
+      (export "{PARTICIPANT}" (instance $handler)))"#,
+      participant_len = PARTICIPANT.len(),
+      digest = TRANSACTION_SQL_DIGEST,
+      digest_len = TRANSACTION_SQL_DIGEST.len(),
+    )).expect("encode composed transaction owner")
 }
 
 const TRANSACTION_SQL: &str = "UPDATE native_policy_participant SET value = 2 RETURNING value";
@@ -375,8 +362,6 @@ struct Observation {
     /// which binds its own registry (`wamn-0h0g.7.9`).
     postgres_invocation: Option<ConnectionInvocation>,
     logging: Option<(String, String)>,
-    caller: Option<wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller>,
-    deadline: Option<Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -445,14 +430,6 @@ impl HostPlugin for Observe {
                             )
                             .entered()
                         });
-                    let authority = policy
-                        .invocations
-                        .lock()
-                        .expect("invocation lock")
-                        .get(&scope)
-                        .cloned();
-                    let caller = authority.as_ref().and_then(|entry| entry.caller.clone());
-                    let deadline = authority.as_ref().map(|entry| entry.deadline);
                     events.lock().expect("observations lock").push(Observation {
                         phase,
                         scope,
@@ -461,8 +438,6 @@ impl HostPlugin for Observe {
                         invocation,
                         postgres_invocation,
                         logging,
-                        caller,
-                        deadline,
                     });
                     if phase == 1 {
                         entered.notify_one();
@@ -539,71 +514,48 @@ struct Fixture {
 
 impl Fixture {
     async fn new(case: Case) -> Self {
-        let child = match case {
-            Case::NestedRefusal => Some((Case::Success, false)),
-            Case::TransactionOwner => Some((Case::TransactionParticipant, false)),
-            _ => None,
-        };
-        Self::build(case, child, false).await
+        let callee = matches!(case, Case::CalleeGrant).then_some(false);
+        Self::build(case, callee, false).await
     }
 
-    async fn build(case: Case, child: Option<(Case, bool)>, registered_root: bool) -> Self {
-        Self::build_with_pause(case, child, registered_root, None).await
+    async fn build(case: Case, callee: Option<bool>, registered_root: bool) -> Self {
+        Self::build_with_pause(case, callee, registered_root, None).await
     }
 
     async fn build_with_pause(
         case: Case,
-        child: Option<(Case, bool)>,
+        callee: Option<bool>,
         registered_root: bool,
         resolution_pause: Option<Arc<ResolutionPause>>,
     ) -> Self {
-        Self::build_with_reuse(case, child, registered_root, resolution_pause, false, None).await
+        Self::build_with_reuse(case, callee, registered_root, resolution_pause, false, None).await
     }
 
+    /// `callee` declares a call to [`CHILD`] with its `fresh_only`. Publish
+    /// folds that call into the root's grant. Composition embeds the callee,
+    /// so the release lists only the root and the host loads only the root.
     async fn build_with_reuse(
         case: Case,
-        child: Option<(Case, bool)>,
+        callee: Option<bool>,
         registered_root: bool,
         resolution_pause: Option<Arc<ResolutionPause>>,
         warm: bool,
         postgres: Option<Arc<WamnPostgres>>,
     ) -> Self {
         let root_bytes = component_bytes(ROOT, case);
-        let mut native = Vec::new();
-        let dependencies = if let Some((child_case, fresh_only)) = child {
-            let bytes = component_bytes(CHILD, child_case);
-            let mut child = fact(CHILD, &bytes, true, Vec::new());
+        let mut callees = Vec::new();
+        let dependencies = if let Some(fresh_only) = callee {
+            let mut child = fact(
+                CHILD,
+                &component_bytes(CHILD, Case::Success),
+                true,
+                Vec::new(),
+            );
             child
                 .operations
                 .get_mut(CHILD)
                 .expect("child operation")
                 .fresh_only = fresh_only;
-            if matches!(child_case, Case::TransactionParticipant) {
-                child.imports = vec![
-                    "wamn:node/types@0.1.0".into(),
-                    "wamn:postgres/types@0.1.0".into(),
-                    STATEMENTS.into(),
-                ];
-                child
-                    .operations
-                    .get_mut(CHILD)
-                    .expect("child operation")
-                    .statements = BTreeMap::from([(
-                    TRANSACTION_SQL_DIGEST.into(),
-                    ComponentSqlStatement {
-                        name: "update-participant".into(),
-                        path: "sql/update-participant.sql".into(),
-                        sql: TRANSACTION_SQL.into(),
-                        binds: Vec::new(),
-                        columns: vec![ComponentSqlField {
-                            name: "value".into(),
-                            value_type: ComponentSqlValueType::Int32,
-                            nullable: false,
-                        }],
-                        transactional: true,
-                    },
-                )]);
-            }
             let dependency = ComponentOperationDependency {
                 package: "child".into(),
                 version: "1.0.0".into(),
@@ -611,59 +563,70 @@ impl Fixture {
                 operation: CHILD.into(),
                 participant: None,
             };
-            native.push(NativeComponent { fact: child, bytes });
+            callees.push(child);
             vec![dependency]
         } else {
             Vec::new()
         };
         let mut root = fact(ROOT, &root_bytes, registered_root, dependencies);
-        if matches!(case, Case::NestedRefusal) {
-            root.imports.push(CHILD.into());
+        let transaction_statements = BTreeMap::from([(
+            TRANSACTION_SQL_DIGEST.into(),
+            ComponentSqlStatement {
+                name: "update-participant".into(),
+                path: "sql/update-participant.sql".into(),
+                sql: TRANSACTION_SQL.into(),
+                binds: Vec::new(),
+                columns: vec![ComponentSqlField {
+                    name: "value".into(),
+                    value_type: ComponentSqlValueType::Int32,
+                    nullable: false,
+                }],
+                transactional: true,
+            },
+        )]);
+        if matches!(case, Case::TransactionOwner | Case::TransactionParticipant) {
+            root.imports = vec![
+                "wamn:node/types@0.1.0".into(),
+                "wamn:postgres/types@0.1.0".into(),
+                STATEMENTS.into(),
+            ];
         }
         if matches!(case, Case::TransactionOwner) {
-            root.imports = vec![
-                "wamn:node/types@0.1.0".into(),
-                "wamn:postgres/types@0.1.0".into(),
-                STATEMENTS.into(),
-                CHILD.into(),
-            ];
+            let mut participant = root.operations[ROOT].clone();
+            participant.registered_operation = Some(PARTICIPANT.into());
+            participant.statements = transaction_statements.clone();
+            root.operations.insert(PARTICIPANT.into(), participant);
         }
         if matches!(case, Case::TransactionParticipant) {
-            root.imports = vec![
-                "wamn:node/types@0.1.0".into(),
-                "wamn:postgres/types@0.1.0".into(),
-                STATEMENTS.into(),
-            ];
             root.operations
                 .get_mut(ROOT)
                 .expect("root operation")
-                .statements = BTreeMap::from([(
-                TRANSACTION_SQL_DIGEST.into(),
-                ComponentSqlStatement {
-                    name: "update-participant".into(),
-                    path: "sql/update-participant.sql".into(),
-                    sql: TRANSACTION_SQL.into(),
-                    binds: Vec::new(),
-                    columns: vec![ComponentSqlField {
-                        name: "value".into(),
-                        value_type: ComponentSqlValueType::Int32,
-                        nullable: false,
-                    }],
-                    transactional: true,
-                },
-            )]);
+                .statements = transaction_statements;
         }
         if matches!(case, Case::PostgresImport) {
             root.imports.push(STATEMENTS.into());
         }
-        native.push(NativeComponent {
+        let mut served = ServingComponent::project(&root, &|dependency| {
+            callees
+                .iter()
+                .find(|callee| callee.component_digest == dependency.digest)
+        })
+        .expect("publish folds the root's call graph");
+        if matches!(case, Case::TransactionOwner) {
+            // The composed owner embeds a base whose pre-commit slot the
+            // participant fills. Publish folds that graph as below.
+            let entry = served.operations.get_mut(ROOT).expect("root operation");
+            entry.permissions.insert(PARTICIPANT.into());
+            entry.participant = Some(PARTICIPANT.into());
+            entry
+                .statements
+                .extend(root.operations[PARTICIPANT].statements.clone());
+        }
+        let native = vec![NativeComponent {
             fact: root.clone(),
             bytes: root_bytes,
-        });
-        let facts: Vec<_> = native
-            .iter()
-            .map(|component| component.fact.clone())
-            .collect();
+        }];
+        let facts = vec![root.clone()];
         let manifest = ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
@@ -672,43 +635,14 @@ impl Fixture {
                 environment: "test".into(),
                 packages: facts
                     .iter()
+                    .chain(&callees)
                     .map(|fact| {
                         PackageCoordinate::new(&fact.scope.package_id, "1.0.0")
                             .expect("package coordinate")
                     })
                     .collect(),
             },
-            components: facts
-                .iter()
-                .map(|fact| ServingComponent {
-                    package_id: fact.scope.package_id.clone(),
-                    component: fact.component.clone(),
-                    interface_version: fact.interface_version.clone(),
-                    digest: ArtifactHash::parse(&fact.component_digest).expect("component digest"),
-                    operations: fact
-                        .operations
-                        .iter()
-                        .map(|(name, operation)| {
-                            (
-                                name.clone(),
-                                ServingComponentOperation {
-                                    registered_operation: operation.registered_operation.clone(),
-                                    fresh_only: operation.fresh_only,
-                                    committed_result_schema: None,
-                                    pre_commit: operation.pre_commit.clone(),
-                                    permissions: operation
-                                        .registered_operation
-                                        .iter()
-                                        .cloned()
-                                        .collect(),
-                                    participant: None,
-                                    statements: operation.statements.clone(),
-                                },
-                            )
-                        })
-                        .collect(),
-                })
-                .collect(),
+            components: BTreeSet::from([served]),
             routes: BTreeSet::new(),
             wirings: BTreeSet::new(),
             attachments: BTreeMap::new(),
@@ -784,7 +718,6 @@ impl Fixture {
                 local_resources: LocalResources::default(),
                 host_interfaces: vec![
                     WitInterface::from(ROOT),
-                    WitInterface::from(CHILD),
                     WitInterface::from(OBSERVE),
                     WitInterface::from("wamn:node/types@0.1.0"),
                     WitInterface::from(STATEMENTS),
@@ -969,8 +902,8 @@ async fn run_case(case: Case) {
         let postgres = authenticated::platform_postgres(database.url())
             .await
             .expect("scoped database with provisioned platform principals");
-        let child = matches!(case, Case::NestedRefusal).then_some((Case::Success, false));
-        Fixture::build_with_reuse(case, child, false, None, false, Some(postgres)).await
+        let callee = matches!(case, Case::CalleeGrant).then_some(false);
+        Fixture::build_with_reuse(case, callee, false, None, false, Some(postgres)).await
     } else {
         Fixture::new(case).await
     };
@@ -1007,7 +940,7 @@ async fn run_case(case: Case) {
         let mut budget = BUDGET;
         let (deadline, result) = loop {
             let deadline = Instant::now()
-                + if matches!(case, Case::Success | Case::NestedRefusal | Case::Trap) {
+                + if matches!(case, Case::Success | Case::CalleeGrant | Case::Trap) {
                     CLEANUP
                 } else {
                     budget
@@ -1040,9 +973,10 @@ async fn run_case(case: Case) {
                 assert_eq!(emission.payload, r#"[{"value":37}]"#);
                 assert_eq!(emission.port, None);
             }
-            Case::NestedRefusal => {
+            Case::CalleeGrant => {
+                // The folded grant is checked once, before the guest runs.
                 let error =
-                    result.expect_err("registered child cannot use callerless parent authority");
+                    result.expect_err("a callerless entry cannot use a callee's registered grant");
                 let refusal = error.downcast_ref::<OperationRefusal>().unwrap_or_else(|| {
                     panic!("native boundary retains typed operation refusal: {error:#}")
                 });
@@ -1122,15 +1056,12 @@ async fn run_case(case: Case) {
                 Some(invocation),
                 "a postgres effect can name the node that raised it"
             );
-            assert_eq!(
-                invocation.operation, ROOT,
-                "refused child never gains an execution scope"
-            );
+            assert_eq!(invocation.operation, ROOT, "only the entry has a scope");
         }
     }
     assert_eq!(
         events.iter().filter(|event| event.phase == 1).count(),
-        usize::from(!matches!(case, Case::StartDeadline))
+        usize::from(!matches!(case, Case::StartDeadline | Case::CalleeGrant))
     );
     fixture
         .workload
@@ -1191,10 +1122,10 @@ fn native_node_success_revokes_invocation_authority() {
     );
 }
 #[test]
-fn native_nested_permission_refusal_revokes_invocation_authority() {
+fn native_callee_grant_refusal_revokes_invocation_authority() {
     isolated(
-        "native_nested_permission_refusal_revokes_invocation_authority",
-        Case::NestedRefusal,
+        "native_callee_grant_refusal_revokes_invocation_authority",
+        Case::CalleeGrant,
     );
 }
 #[test]
@@ -1395,10 +1326,6 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
     assert!(
         policy.traces.is_empty(),
         "abandoned resolution retains no trace"
-    );
-    assert!(
-        policy.application.get().is_none(),
-        "an abandoned load publishes no owner"
     );
 }
 

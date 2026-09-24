@@ -33,11 +33,9 @@ use crate::plugins::wamn_postgres::{
 use wamn_engine::engine::build_engine;
 
 const CANCEL_OWNER: &str = "transaction-view-cancel-owner";
-const CANCEL_PARTICIPANT: &str = "transaction-view-cancel-participant";
 const CONTROL_OWNER: &str = "transaction-view-control-owner";
 const OWNER: &str = "transaction-view-owner";
-const PARTICIPANT: &str = "transaction-view-participant";
-const WRONG_PARTICIPANT: &str = "transaction-view-wrong-participant";
+const OTHER: &str = "transaction-view-other-invocation";
 const OWNER_OPERATION: &str = "base:widget/record@1.0.0";
 const PARTICIPANT_OPERATION: &str = "peer:widgets/participate@1.0.0";
 const PARTICIPANT_CALL: &str = "test:transaction-view/participant@1.0.0";
@@ -282,7 +280,8 @@ impl GuestCall for RunView {
                     wash_runtime::wasmtime::format_err!("run-view is not a function")
                 })?;
                 let active = &mut access.get().active_ctx;
-                let previous = std::mem::replace(&mut active.component_id, Arc::from(PARTICIPANT));
+                // A composed participant runs in the scope of the base that calls it.
+                let previous = std::mem::replace(&mut active.component_id, Arc::from(OWNER));
                 Ok::<_, wash_runtime::wasmtime::Error>((run, previous))
             })?;
             let params = [Val::String(self.digest), Val::List(Vec::new())];
@@ -334,21 +333,10 @@ impl GuestCall for RunOwner {
     }
 }
 
-struct RevokeParticipant {
-    postgres: Arc<WamnPostgres>,
-}
-
-impl Drop for RevokeParticipant {
-    fn drop(&mut self) {
-        self.postgres.revoke_transaction_scope(PARTICIPANT);
-    }
-}
-
-/// This fixture supplies trusted invocation bindings and a nested native call.
-/// It does not run execution-host's production NativePolicy.
+/// This fixture stands in for build composition: it plugs the participant
+/// into the owner's import, in the owner's invocation scope. It does not run
+/// execution-host's production NativePolicy.
 struct TestNativeDispatch {
-    postgres: Arc<WamnPostgres>,
-    deadline: Instant,
     digest: String,
     participant: Arc<Mutex<Option<DispatchTarget>>>,
 }
@@ -371,14 +359,11 @@ impl HostPlugin for TestNativeDispatch {
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        let postgres = Arc::clone(&self.postgres);
-        let deadline = self.deadline;
         let digest = self.digest.clone();
         let participant = Arc::clone(&self.participant);
         item.linker()
             .instance(PARTICIPANT_CALL)?
             .func_new_concurrent("run", move |_accessor, _ty, params, results| {
-                let postgres = Arc::clone(&postgres);
                 let participant = participant.clone();
                 let digest = digest.clone();
                 Box::pin(async move {
@@ -395,15 +380,6 @@ impl HostPlugin for TestNativeDispatch {
                         .ok_or_else(|| {
                             wash_runtime::wasmtime::format_err!("participant target unresolved")
                         })?;
-                    let participation = postgres
-                        .prepare_transaction_participation(OWNER, PARTICIPANT_OPERATION)
-                        .map_err(wash_runtime::wasmtime::Error::msg)?;
-                    postgres
-                        .bind_transaction_scope(PARTICIPANT, deadline, participation.as_ref())
-                        .map_err(wash_runtime::wasmtime::Error::msg)?;
-                    let _revoke = RevokeParticipant {
-                        postgres: Arc::clone(&postgres),
-                    };
                     let (reply, receive) = oneshot::channel();
                     target
                         .dispatch(RunView { digest, reply })
@@ -461,8 +437,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
     let release = ManifestDigest::parse(format!("sha256:{}", "c".repeat(64))).unwrap();
     for (scope, operation, package) in [
         (OWNER, OWNER_OPERATION, "base"),
-        (PARTICIPANT, PARTICIPANT_OPERATION, "peer"),
-        (WRONG_PARTICIPANT, PARTICIPANT_OPERATION, "peer"),
+        (OTHER, OWNER_OPERATION, "base"),
     ] {
         postgres
             .bind_session_claims(
@@ -489,10 +464,11 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
         "sha256:{}",
         hex::encode(sha2::Sha256::digest(sql.as_bytes()))
     );
+    // Publish folds the participant's statements into the entry's set.
     postgres
         .bind_statement_operation(
-            PARTICIPANT,
-            PARTICIPANT_OPERATION,
+            OWNER,
+            OWNER_OPERATION,
             [(
                 digest.clone(),
                 VerifiedStatement {
@@ -509,12 +485,13 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
         )
         .expect("participant statement binds");
     postgres
-        .activate_statement_operation(PARTICIPANT, PARTICIPANT_OPERATION)
+        .activate_statement_operation(OWNER, OWNER_OPERATION)
         .expect("participant statement activates");
     let deadline = Instant::now() + Duration::from_secs(10);
+    postgres.bind_transaction_scope(OWNER, deadline).unwrap();
     postgres
-        .bind_transaction_scope(OWNER, deadline, None)
-        .unwrap();
+        .bind_selected_participant(OWNER, PARTICIPANT_OPERATION.into(), "intent".into())
+        .expect("the published participant binds");
     let admin = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
         .await
         .unwrap();
@@ -561,8 +538,6 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
         )
         .expect("native component compiles");
     let dispatch = Arc::new(TestNativeDispatch {
-        postgres: Arc::clone(&postgres),
-        deadline,
         digest: digest.clone(),
         participant: Arc::default(),
     });
@@ -616,111 +591,62 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
         statements: None,
         owner_scope: OWNER.into(),
     };
+    assert!(
+        matches!(
+            postgres.select_transaction_participant(OWNER, &transaction, OWNER_OPERATION.into()),
+            Err(StatementError::Postgres(PgError::PermissionDenied))
+        ),
+        "only the published participant is selected"
+    );
     postgres
         .select_transaction_participant(OWNER, &transaction, PARTICIPANT_OPERATION.into())
         .expect("owner selects participant for authority checks");
-    let participation = postgres
-        .prepare_transaction_participation(OWNER, PARTICIPANT_OPERATION)
-        .unwrap();
     postgres
-        .bind_transaction_scope(PARTICIPANT, deadline, participation.as_ref())
-        .expect("participant binds view");
-    postgres
-        .bind_transaction_scope(WRONG_PARTICIPANT, deadline, None)
-        .expect("different invocation binds without the view");
+        .bind_transaction_scope(OTHER, deadline)
+        .expect("a different invocation binds without the view");
     assert!(matches!(
-        postgres.acquire_transaction_view(WRONG_PARTICIPANT),
-        Err(StatementError::Postgres(PgError::PermissionDenied))
-    ));
-    assert!(
-        postgres
-            .permit_transaction_nested_call(PARTICIPANT)
-            .is_err()
-    );
-    assert!(matches!(
-        postgres
-            .one_shot_statement(
-                PARTICIPANT,
-                &digest,
-                &VerifiedStatement {
-                    exact_sql: sql.into(),
-                    binds: Box::new([]),
-                    columns: Box::new([StatementField {
-                        value_type: StatementValueType::Int32,
-                        nullable: false,
-                    }]),
-                    transactional: true,
-                },
-                &[],
-            )
-            .await,
+        postgres.acquire_transaction_view(OTHER),
         Err(StatementError::Postgres(PgError::PermissionDenied))
     ));
     assert!(matches!(
-        postgres.select_transaction_participant(PARTICIPANT, &transaction, OWNER_OPERATION.into()),
+        postgres.select_transaction_participant(OTHER, &transaction, PARTICIPANT_OPERATION.into()),
         Err(StatementError::Postgres(PgError::PermissionDenied))
     ));
 
     let view = postgres
-        .acquire_transaction_view(PARTICIPANT)
-        .expect("participant acquires its local view");
-    assert!(matches!(
-        postgres.acquire_transaction_view(OWNER),
-        Err(StatementError::Postgres(PgError::PermissionDenied))
-    ));
+        .acquire_transaction_view(OWNER)
+        .expect("the participant acquires the view in its own scope");
+    assert!(
+        matches!(
+            postgres.acquire_transaction_view(OWNER),
+            Err(StatementError::Postgres(PgError::PermissionDenied))
+        ),
+        "one view per selection"
+    );
     let fabricated = PgTransactionView {
         lease: Arc::clone(&view.lease),
-        scope: WRONG_PARTICIPANT.into(),
+        scope: OTHER.into(),
     };
     assert!(matches!(
         postgres
-            .run_transaction_view(PARTICIPANT, &fabricated, &digest, &[])
+            .run_transaction_view(OWNER, &fabricated, &digest, &[])
             .await,
         Err(StatementError::Postgres(PgError::PermissionDenied))
     ));
     assert!(matches!(
         postgres
-            .run_transaction_view(WRONG_PARTICIPANT, &view, &digest, &[])
+            .run_transaction_view(OTHER, &view, &digest, &[])
             .await,
         Err(StatementError::Postgres(PgError::PermissionDenied))
     ));
-    postgres.revoke_transaction_scope(PARTICIPANT);
-    assert!(matches!(
-        postgres
-            .run_transaction_view(PARTICIPANT, &view, &digest, &[])
-            .await,
-        Err(StatementError::Postgres(PgError::PermissionDenied))
-    ));
-    assert!(
-        postgres
-            .bind_transaction_scope(PARTICIPANT, deadline, participation.as_ref())
-            .is_err(),
-        "a revoked selection cannot activate as an ordinary SQL invocation"
-    );
-    postgres
-        .select_transaction_participant(OWNER, &transaction, PARTICIPANT_OPERATION.into())
-        .expect("owner selects a second participant after return");
-    postgres
-        .bind_transaction_scope(
-            PARTICIPANT,
-            deadline,
-            postgres
-                .prepare_transaction_participation(OWNER, PARTICIPANT_OPERATION)
-                .unwrap()
-                .as_ref(),
-        )
-        .expect("participant binds the expiring view");
-    let expiring = postgres
-        .acquire_transaction_view(PARTICIPANT)
-        .expect("participant acquires the expiring view");
     tokio::time::sleep_until(deadline).await;
     assert!(matches!(
         postgres
-            .run_transaction_view(PARTICIPANT, &expiring, &digest, &[])
+            .run_transaction_view(OWNER, &view, &digest, &[])
             .await,
         Err(StatementError::Postgres(PgError::PermissionDenied))
     ));
-    postgres.revoke_transaction_scope(PARTICIPANT);
+    postgres.revoke_transaction_scope(OWNER);
     finish_statement_txn(
         &transaction.transaction.state,
         &transaction.transaction.destroyed,
@@ -735,10 +661,8 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
         .get(0);
     assert_eq!(value, 1, "participant update belonged to owner rollback");
 
-    for (scope, operation, package) in [
-        (CANCEL_OWNER, OWNER_OPERATION, "base"),
-        (CANCEL_PARTICIPANT, PARTICIPANT_OPERATION, "peer"),
-    ] {
+    {
+        let (scope, operation, package) = (CANCEL_OWNER, OWNER_OPERATION, "base");
         postgres
             .bind_session_claims(
                 scope,
@@ -760,8 +684,8 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
     }
     postgres
         .bind_statement_operation(
-            CANCEL_PARTICIPANT,
-            PARTICIPANT_OPERATION,
+            CANCEL_OWNER,
+            OWNER_OPERATION,
             [(
                 digest.clone(),
                 VerifiedStatement {
@@ -778,11 +702,14 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
         )
         .unwrap();
     postgres
-        .activate_statement_operation(CANCEL_PARTICIPANT, PARTICIPANT_OPERATION)
+        .activate_statement_operation(CANCEL_OWNER, OWNER_OPERATION)
         .unwrap();
     let cancel_deadline = Instant::now() + Duration::from_secs(5);
     postgres
-        .bind_transaction_scope(CANCEL_OWNER, cancel_deadline, None)
+        .bind_transaction_scope(CANCEL_OWNER, cancel_deadline)
+        .unwrap();
+    postgres
+        .bind_selected_participant(CANCEL_OWNER, PARTICIPANT_OPERATION.into(), "intent".into())
         .unwrap();
     let cancel_transaction = PgStatementTransaction {
         transaction: begin_statement_transaction(&postgres, CANCEL_OWNER, "default")
@@ -798,19 +725,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
             PARTICIPANT_OPERATION.into(),
         )
         .unwrap();
-    postgres
-        .bind_transaction_scope(
-            CANCEL_PARTICIPANT,
-            cancel_deadline,
-            postgres
-                .prepare_transaction_participation(CANCEL_OWNER, PARTICIPANT_OPERATION)
-                .unwrap()
-                .as_ref(),
-        )
-        .unwrap();
-    let cancel_view = postgres
-        .acquire_transaction_view(CANCEL_PARTICIPANT)
-        .unwrap();
+    let cancel_view = postgres.acquire_transaction_view(CANCEL_OWNER).unwrap();
     admin
         .batch_execute("BEGIN; UPDATE transaction_view_roundtrip SET value = value")
         .await
@@ -819,7 +734,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
     let running_digest = digest.clone();
     let running = tokio::spawn(async move {
         running_postgres
-            .run_transaction_view(CANCEL_PARTICIPANT, &cancel_view, &running_digest, &[])
+            .run_transaction_view(CANCEL_OWNER, &cancel_view, &running_digest, &[])
             .await
     });
     tokio::time::timeout(Duration::from_secs(2), async {

@@ -23,7 +23,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_runtime::session_verifier::SessionVerifier;
 
 use super::trace::TraceCapture;
-use super::{BUDGET, CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
+use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, PARTICIPANT, ROOT};
 use super::{OperationRefusal, OperationRefusalKind, invoke_native};
 
 #[path = "../../../../../../platform/runtime/tests/support/session_fixture.rs"]
@@ -42,7 +42,7 @@ const ATTACHMENT: &str = "native-test-http";
 const PASSWORD: &str = "native-b-disposable-test-only";
 /// The test principal that the fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
-const TEST_NAME: &str = "native_authenticated_nested_authority_and_lifecycle";
+const TEST_NAME: &str = "native_authenticated_call_graph_grant";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
@@ -136,10 +136,12 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
             &[&TENANT, &role, &ROOT],
         ).await?;
     }
-    admin.execute(
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, 'native-child', $2)",
-        &[&TENANT, &CHILD],
-    ).await?;
+    for permission in [CHILD, PARTICIPANT] {
+        admin.execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, 'native-child', $2)",
+            &[&TENANT, &permission],
+        ).await?;
+    }
     let mut scoped_url = url::Url::parse(admin_url)?;
     scoped_url
         .set_username(&generation)
@@ -314,49 +316,24 @@ enum Scenario {
     PermissionDenied,
     FreshOnly,
     Success,
-    InitializationDeadline,
-    Deadline,
-    Cancellation,
 }
 
-const SCENARIOS: [Scenario; 6] = [
+const SCENARIOS: [Scenario; 3] = [
     Scenario::PermissionDenied,
     Scenario::FreshOnly,
     Scenario::Success,
-    Scenario::InitializationDeadline,
-    Scenario::Deadline,
-    Scenario::Cancellation,
 ];
 
-fn child_has_started(fixture: &Fixture) -> bool {
-    fixture
-        .events
-        .lock()
-        .expect("observations lock")
-        .iter()
-        .any(|event| {
-            event.phase == 1
-                && event
-                    .invocation
-                    .as_ref()
-                    .is_some_and(|invocation| invocation.operation == CHILD)
-        })
-}
-
+/// The entry carries the grant of every operation its call graph reaches.
+/// Activation checks that grant once, before the guest runs.
 async fn assert_case(
     scenario: Scenario,
     caller: &AuthenticatedCaller,
     postgres: Arc<WamnPostgres>,
 ) {
-    let child_case = match scenario {
-        Scenario::InitializationDeadline => Case::StartDeadline,
-        Scenario::Deadline => Case::RunDeadline,
-        Scenario::Cancellation => Case::Cancellation,
-        _ => Case::Success,
-    };
     let fixture = Fixture::build_with_reuse(
-        Case::NestedRefusal,
-        Some((child_case, scenario == Scenario::FreshOnly)),
+        Case::CalleeGrant,
+        Some(scenario == Scenario::FreshOnly),
         true,
         None,
         false,
@@ -365,137 +342,65 @@ async fn assert_case(
     .await;
     let target = fixture.target().await;
     let trace = (scenario == Scenario::Success).then(|| TraceCapture::new(&fixture, caller));
-    let deadline = Instant::now()
-        + if matches!(
-            scenario,
-            Scenario::InitializationDeadline | Scenario::Deadline
-        ) {
-            BUDGET
-        } else {
-            Duration::from_secs(30)
-        };
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut request = fixture.request(deadline);
     request.facts.caller = Some(caller.clone());
-    if scenario == Scenario::Cancellation {
-        let task = tokio::spawn(async move { invoke_native(&target, request).await });
-        timeout(CLEANUP, async {
-            while !child_has_started(&fixture) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the permitted child starts before cancellation");
-        task.abort();
-        assert!(
-            timeout(CLEANUP, task)
+    let invocation = invoke_native(&target, request);
+    let result = match &trace {
+        // The dispatcher exists only while the caller polls. Native must
+        // explicitly carry it and the span into its spawned guest task.
+        Some(trace) => {
+            invocation
+                .instrument(trace.span.clone())
+                .with_subscriber(trace.dispatcher.clone())
                 .await
-                .expect("caller cancellation completes")
-                .expect_err("caller was cancelled")
-                .is_cancelled()
-        );
-    } else {
-        let invocation = invoke_native(&target, request);
-        let result = match &trace {
-            // The dispatcher exists only while the caller polls. Native must
-            // explicitly carry it and the span into its spawned guest task.
-            Some(trace) => {
-                invocation
-                    .instrument(trace.span.clone())
-                    .with_subscriber(trace.dispatcher.clone())
-                    .await
-            }
-            None => invocation.await,
-        };
-        match scenario {
-            Scenario::Success | Scenario::FreshOnly => {
-                let emission = result
-                    .expect("permitted nested dispatch")
-                    .expect("typed emission");
-                assert_eq!(emission.payload, r#"[{"value":37}]"#);
-                assert_eq!(emission.port, None);
-            }
-            Scenario::PermissionDenied => {
-                let error = result.expect_err("the registered child must be refused");
-                let refusal = error
-                    .downcast_ref::<OperationRefusal>()
-                    .unwrap_or_else(|| panic!("native dispatch retains typed refusal: {error:#}"));
-                assert_eq!(refusal.operation(), CHILD);
-                assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
-            }
-            Scenario::InitializationDeadline | Scenario::Deadline => {
-                let error =
-                    result.expect_err("the looping child cannot extend its parent's deadline");
-                assert!(Instant::now() >= deadline && Instant::now() < deadline + CLEANUP);
-                assert!(format!("{error:#}").contains("deadline"), "{error:#}");
-            }
-            Scenario::Cancellation => unreachable!("handled by the caller task"),
         }
+        None => invocation.await,
+    };
+    let ran = scenario != Scenario::PermissionDenied;
+    if ran {
+        let emission = result
+            .expect("the permitted call graph dispatches")
+            .expect("typed emission");
+        assert_eq!(emission.payload, r#"[{"value":37}]"#);
+        assert_eq!(emission.port, None);
+    } else {
+        let error = result.expect_err("a caller without the callee grant is refused");
+        let refusal = error
+            .downcast_ref::<OperationRefusal>()
+            .unwrap_or_else(|| panic!("native dispatch retains typed refusal: {error:#}"));
+        assert_eq!(refusal.operation(), CHILD);
+        assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
     }
     fixture.assert_clean().await;
-    let child_ran = matches!(
-        scenario,
-        Scenario::Success | Scenario::FreshOnly | Scenario::Deadline | Scenario::Cancellation
-    );
-    assert_eq!(child_has_started(&fixture), child_ran);
     let observations = fixture.events.lock().expect("observations lock").clone();
-    let child_initialized = child_ran || scenario == Scenario::InitializationDeadline;
-    assert_eq!(
-        observations.iter().any(|event| {
-            event.phase == 0
-                && fixture
-                    .workload
-                    .facts_by_component_id
-                    .get(&event.scope)
-                    .is_some_and(|fact| fact.operations.contains_key(CHILD))
-        }),
-        child_initialized,
-        "the permitted child reaches initialization even when its start function hangs"
-    );
     let native_ids: BTreeSet<_> = fixture
         .workload
         .facts_by_component_id
         .keys()
         .cloned()
         .collect();
-    let mut scopes = BTreeSet::new();
-    let mut operations = BTreeSet::new();
     assert_eq!(
         observations.iter().filter(|event| event.phase == 0).count(),
-        1 + usize::from(child_initialized)
+        1
     );
     assert_eq!(
         observations.iter().filter(|event| event.phase == 1).count(),
-        1 + usize::from(child_ran)
+        usize::from(ran)
     );
     for event in observations {
         if event.phase == 0 {
             assert!(event.native_identity && native_ids.contains(&event.scope));
-            assert!(event.claims.is_none() && event.invocation.is_none() && event.caller.is_none());
-            assert!(event.deadline.is_none());
+            assert!(event.claims.is_none() && event.invocation.is_none());
             continue;
         }
         assert!(!event.native_identity && !native_ids.contains(&event.scope));
-        assert!(
-            scopes.insert(event.scope.clone()),
-            "parent and child have distinct request scopes"
-        );
-        let inherited = event
-            .caller
-            .expect("authenticated authority reaches guest execution");
-        assert_eq!(inherited.principal_id(), caller.principal_id());
-        assert_eq!(inherited.credential_kind(), CredentialKind::Session);
-        assert_eq!(inherited.permits(CHILD), caller.permits(CHILD));
-        assert_eq!(
-            event.deadline,
-            Some(deadline),
-            "nested work keeps the enclosing deadline"
-        );
         let claims = event.claims.expect("host claims");
         assert_eq!(claims.tenant, TENANT);
         assert_eq!(
             claims.user_id.as_deref(),
             Some(caller.principal_id()),
-            "the parent and its nested call bind the caller principal"
+            "the entry binds the caller principal"
         );
         assert_eq!(claims.project.as_deref(), Some(PROJECT));
         assert_eq!(
@@ -503,11 +408,8 @@ async fn assert_case(
             fixture.request(deadline).facts.acquisition.claims.release
         );
         let invocation = event.invocation.expect("host invocation");
-        assert_eq!(
-            claims.operation.as_deref(),
-            Some(invocation.operation.as_str()),
-            "the parent and its nested call each bind their own operation"
-        );
+        assert_eq!(invocation.operation, ROOT);
+        assert_eq!(claims.operation.as_deref(), Some(ROOT));
         assert_eq!(
             invocation.origin,
             fixture
@@ -515,22 +417,15 @@ async fn assert_case(
                 .facts
                 .acquisition
                 .invocation
-                .origin,
-            "nested execution preserves its distinct wiring owner and original root component"
+                .origin
         );
         let position = invocation.entry.wiring().expect("a wiring entry");
         assert_eq!(position.wiring_id, "trusted-wiring");
         assert_eq!(position.wiring_version, 1);
         assert_eq!(position.node_id, "trusted-node");
-        let fact = fixture
-            .workload
-            .facts_by_component_id
-            .values()
-            .find(|fact| fact.operations.contains_key(&invocation.operation))
-            .expect("admitted operation owner");
-        assert_eq!(invocation.package_id, fact.scope.package_id);
-        assert_eq!(invocation.component, fact.component);
-        assert_eq!(invocation.component_digest, fact.component_digest);
+        assert_eq!(invocation.package_id, fixture.root.scope.package_id);
+        assert_eq!(invocation.component, fixture.root.component);
+        assert_eq!(invocation.component_digest, fixture.root.component_digest);
         assert!(
             fixture
                 .policy
@@ -540,16 +435,7 @@ async fn assert_case(
                 .is_err(),
             "statement authority was revoked"
         );
-        operations.insert(invocation.operation);
     }
-    assert_eq!(
-        operations,
-        if child_ran {
-            BTreeSet::from([ROOT.to_owned(), CHILD.to_owned()])
-        } else {
-            BTreeSet::from([ROOT.to_owned()])
-        }
-    );
     fixture
         .workload
         .resolved
@@ -592,7 +478,7 @@ async fn assert_authenticated(admin_url: &str) -> anyhow::Result<()> {
 }
 
 #[test]
-fn native_authenticated_nested_authority_and_lifecycle() {
+fn native_authenticated_call_graph_grant() {
     let full_name = format!("operation::native_policy::tests::authenticated::{TEST_NAME}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(TEST_NAME) {
         let output = Command::new(std::env::current_exe().expect("test executable"))
@@ -687,7 +573,7 @@ fn native_authenticated_transaction_participant() {
 
             let fixture = Fixture::build_with_reuse(
                 Case::TransactionOwner,
-                Some((Case::TransactionParticipant, false)),
+                None,
                 true,
                 None,
                 false,
@@ -721,7 +607,7 @@ fn native_authenticated_transaction_participant() {
                 .downcast_ref::<OperationRefusal>()
                 .expect("participant refusal remains typed");
             assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
-            assert_eq!(refusal.operation(), CHILD);
+            assert_eq!(refusal.operation(), PARTICIPANT);
             fixture.assert_clean().await;
 
             let denied = Fixture::build_with_reuse(
@@ -750,9 +636,9 @@ fn native_authenticated_transaction_participant() {
 }
 
 #[test]
-fn native_warm_alternating_callers_and_fresh_nested_component() {
+fn native_warm_alternating_callers_and_fresh_only_grant() {
     super::run_isolated_test(
-        "authenticated::native_warm_alternating_callers_and_fresh_nested_component",
+        "authenticated::native_warm_alternating_callers_and_fresh_only_grant",
         async {
             let _lock = wamn_test_postgres::lock();
             let database = wamn_test_postgres::database();
@@ -767,8 +653,8 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                 .await
                 .expect("guest-generation fixture");
             let fixture = Fixture::build_with_reuse(
-                Case::NestedRefusal,
-                Some((Case::Success, false)),
+                Case::CalleeGrant,
+                Some(false),
                 true,
                 None,
                 true,
@@ -826,30 +712,28 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                 }
             }
             let observations = fixture.events.lock().expect("events").clone();
-            for (id, fact) in &fixture.workload.facts_by_component_id {
-                assert_eq!(
-                    observations
-                        .iter()
-                        .filter(|event| event.phase == 0 && event.scope == *id)
-                        .count(),
-                    if fact == &fixture.root { 1 } else { 3 },
-                    "warm root reuses while its independent child stays fresh"
-                );
-            }
+            assert_eq!(
+                observations.iter().filter(|event| event.phase == 0).count(),
+                1,
+                "the warm root is reused"
+            );
             let callers: Vec<_> = observations
                 .iter()
                 .filter(|event| event.phase == 1)
-                .map(|event| event.caller.as_ref().expect("bound caller").principal_id())
+                .map(|event| {
+                    event
+                        .claims
+                        .as_ref()
+                        .and_then(|claims| claims.user_id.clone())
+                        .expect("bound caller principal")
+                })
                 .collect();
             assert_eq!(
                 callers,
                 vec![
-                    alice.principal_id(),
-                    alice.principal_id(),
-                    bob.principal_id(),
-                    bob.principal_id(),
-                    alice.principal_id(),
-                    alice.principal_id()
+                    alice.principal_id().to_owned(),
+                    bob.principal_id().to_owned(),
+                    alice.principal_id().to_owned(),
                 ]
             );
             let denied = authenticated_as(&route, false, Some(bob.principal_id())).await;
@@ -857,7 +741,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             request.facts.caller = Some(denied);
             let error = invoke_native(&target, request)
                 .await
-                .expect_err("new caller cannot inherit the prior nested grant");
+                .expect_err("new caller cannot inherit the prior callee grant");
             assert_eq!(
                 error
                     .downcast_ref::<OperationRefusal>()
@@ -868,8 +752,8 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             super::warm::close(&fixture).await;
 
             let fresh_only = Fixture::build_with_reuse(
-                Case::NestedRefusal,
-                Some((Case::Success, true)),
+                Case::CalleeGrant,
+                Some(true),
                 true,
                 None,
                 true,
@@ -880,7 +764,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
             request.facts.caller = Some(alice.clone());
             invoke_native(&fresh_only.target().await, request)
                 .await
-                .expect("session admits the legacy fresh-only child")
+                .expect("session admits the fresh-only callee")
                 .expect("emission");
             let pat = pat_caller(
                 database.url(),
@@ -895,7 +779,7 @@ fn native_warm_alternating_callers_and_fresh_nested_component() {
                 request.facts.caller = Some(caller.clone());
                 invoke_native(&fresh_only.target().await, request)
                     .await
-                    .expect("PAT admits fresh-only child")
+                    .expect("PAT admits the fresh-only callee")
                     .expect("emission");
             }
             let root_id = fresh_only

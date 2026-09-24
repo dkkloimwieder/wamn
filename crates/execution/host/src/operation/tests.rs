@@ -1,4 +1,4 @@
-use wamn_catalog::{AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope};
+use wamn_catalog::{AdmittedComponentOperation, ComponentPackageScope};
 use wamn_runtime::plugins::connection_http::WiringPosition;
 
 use super::*;
@@ -118,7 +118,9 @@ fn partial_statement_binding_failure_cleans_earlier_operations() {
     // The refusal moved to preparation: a digest that does not name its
     // SQL is refused before any scope exists to bind it under, so nothing
     // partial can ever have been bound.
-    let error = prepare_statement_sets(&component)
+    let served = wamn_catalog::ServingComponent::project(&component, &|_| None)
+        .expect("the fixture projects");
+    let error = prepare_statement_sets(&served.operations)
         .expect_err("a digest that does not name its SQL is refused at preparation");
     assert!(
         format!("{error:#}").contains("statement-digest-mismatch"),
@@ -162,7 +164,7 @@ fn a_custom_read_refuses_a_caller_without_its_grant() {
 }
 
 #[test]
-fn nested_acquisition_preserves_causation_and_root_origin() {
+fn acquisition_binds_its_executing_principal_and_operation() {
     let causation = Causation {
         run: "registration:delivery:9".to_owned(),
         root: "attachment:delivery:1".to_owned(),
@@ -212,159 +214,27 @@ fn nested_acquisition_preserves_causation_and_root_origin() {
     };
 
     let original = acquisition.clone();
-    let mut target = component_with_operations(BTreeMap::new());
-    target.scope.package_id = "platform_fixture".to_owned();
-    target.component = "fixture".to_owned();
-    target.component_digest = "sha256:base".to_owned();
     let executor = NodeAcquisition {
         platform: Some(PlatformComponent::Executor),
-        ..acquisition.clone()
-    }
-    .retarget(&target, "platform-fixture:widget/record-batch@1.0.0");
-    let child = acquisition.retarget(&target, "platform-fixture:widget/record-batch@1.0.0");
-    // A callerless parent and its nested call bind the same platform principal.
+        ..acquisition
+    };
+    // A callerless call binds its platform principal.
     let materializer = PlatformComponent::Materializer.principal_id().to_string();
     assert_eq!(
         original.executing_principal(None).as_deref(),
         Some(materializer.as_str())
     );
     assert_eq!(
-        child.executing_principal(None).as_deref(),
-        Some(materializer.as_str())
-    );
-    assert_eq!(
         executor.executing_principal(None),
         Some(PlatformComponent::Executor.principal_id().to_string())
     );
-    // The parent binds its own operation token and the nested call binds
-    // the token of the operation that it executes.
+    // The call binds the token of the operation that it executes.
     assert_eq!(
-        original.executing_claims(None).operation.as_deref(),
-        Some("platform-fixture-overlay:widget/record-batch@1.0.0")
-    );
-    assert_eq!(
-        child.executing_claims(None),
+        original.executing_claims(None),
         SessionClaims {
-            user_id: Some(materializer.clone()),
-            operation: Some("platform-fixture:widget/record-batch@1.0.0".to_owned()),
+            user_id: Some(materializer),
+            operation: Some("platform-fixture-overlay:widget/record-batch@1.0.0".to_owned()),
             ..original.claims.clone()
         }
     );
-    assert_eq!(child.causation.as_ref(), Some(&causation));
-    assert_eq!(child.invocation.package_id, "platform_fixture");
-    assert_eq!(child.invocation.component_digest, "sha256:base");
-    assert_eq!(
-        child
-            .invocation
-            .entry
-            .wiring()
-            .expect("a wiring entry")
-            .wiring_id,
-        "record-batch"
-    );
-    // The child raises its effects under ITS OWN component and operation.
-    // The overlay's pair belongs to the caller (`wamn-b2m6.7`).
-    assert_eq!(child.invocation.component, "fixture");
-    assert_eq!(
-        child.invocation.operation,
-        "platform-fixture:widget/record-batch@1.0.0"
-    );
-    assert_eq!(child.claims, original.claims);
-    assert_eq!(
-        child.invocation,
-        ConnectionInvocation {
-            package_id: "platform_fixture".to_owned(),
-            component_digest: "sha256:base".to_owned(),
-            component: "fixture".to_owned(),
-            operation: "platform-fixture:widget/record-batch@1.0.0".to_owned(),
-            ..original.invocation.clone()
-        }
-    );
-
-    target.scope.package_id = "wamn_inventory".to_owned();
-    target.component = "inventory".to_owned();
-    target.component_digest = "sha256:inventory".to_owned();
-    let grandchild = child.retarget(&target, "wamn-inventory:inventory/receive@1.0.0");
-    assert_eq!(grandchild.claims, original.claims);
-    assert_eq!(grandchild.causation, original.causation);
-    assert_eq!(
-        grandchild.invocation,
-        ConnectionInvocation {
-            package_id: "wamn_inventory".to_owned(),
-            component_digest: "sha256:inventory".to_owned(),
-            component: "inventory".to_owned(),
-            operation: "wamn-inventory:inventory/receive@1.0.0".to_owned(),
-            ..original.invocation
-        }
-    );
-}
-
-#[test]
-fn shared_nested_import_retains_each_declaring_export() {
-    let operation = "platform-fixture:widget/record-batch@1.0.0";
-    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let dependency = ComponentOperationDependency {
-        participant: None,
-        package: "platform_fixture".to_owned(),
-        version: "1.0.0".to_owned(),
-        digest: digest.to_owned(),
-        operation: operation.to_owned(),
-    };
-    let target = AdmittedComponent {
-        scope: ComponentPackageScope {
-            tenant_id: "tenant-a".to_owned(),
-            package_id: "platform_fixture".to_owned(),
-            package_version: "1.0.0".to_owned(),
-        },
-        component: "fixture".to_owned(),
-        interface_version: "0.1.0".to_owned(),
-        operations: BTreeMap::from([(
-            operation.to_owned(),
-            AdmittedComponentOperation {
-                pre_commit: None,
-                registered_operation: Some(operation.to_owned()),
-                fresh_only: false,
-                committed_result_schema: None,
-                dependencies: Vec::new(),
-                input_ports: Vec::new(),
-                output_ports: Vec::new(),
-                parameters: Vec::new(),
-                statements: BTreeMap::new(),
-            },
-        )]),
-        component_digest: digest.to_owned(),
-        imports: Vec::new(),
-        imports_fingerprint:
-            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
-        effects: Vec::<AdmittedComponentEffect>::new(),
-    };
-
-    let declaration = AdmittedComponentOperation {
-        pre_commit: None,
-        registered_operation: None,
-        fresh_only: false,
-        committed_result_schema: None,
-        dependencies: vec![dependency],
-        input_ports: Vec::new(),
-        output_ports: Vec::new(),
-        parameters: Vec::new(),
-        statements: BTreeMap::new(),
-    };
-    let mut caller = target;
-    caller.operations = BTreeMap::from([
-        (
-            "platform-fixture-overlay:one/run@3.0.0".to_owned(),
-            declaration.clone(),
-        ),
-        (
-            "platform-fixture-overlay:two/run@3.0.0".to_owned(),
-            declaration,
-        ),
-    ]);
-    let links = nested_operation_links(&caller).expect("matching pins may share one import");
-    let (_, owners) = links
-        .get(operation)
-        .expect("the exact dependency import is present once");
-    assert_eq!(links.len(), 1);
-    assert_eq!(owners.len(), 2);
 }

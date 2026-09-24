@@ -5,7 +5,7 @@
 //! [`wamn_engine::operation::invoke_operation`], which the router driver and
 //! the route path both call.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,8 +17,8 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, ComponentOperationDependency, ComponentSqlField,
-    ComponentSqlValueType,
+    AdmittedComponent, ArtifactHash, ComponentSqlField, ComponentSqlValueType,
+    ServingComponentOperation,
 };
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
@@ -43,9 +43,7 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
 
-use wamn_engine::operation::{
-    invocation_policy, native_call, native_workload, next_scope, node_types,
-};
+use wamn_engine::operation::{invocation_policy, native_call, native_workload, next_scope};
 use wamn_engine::warm_reuse::WarmReuse;
 
 mod native_policy;
@@ -638,8 +636,7 @@ impl NodeAcquisition {
 
     /// The claims that activation binds: [`Self::claims`] with the executing
     /// principal as `app.user_id` and the operation token that this
-    /// acquisition executes as `app.operation`. A retargeted acquisition
-    /// carries the nested operation, so a nested call binds its own token.
+    /// acquisition executes as `app.operation`.
     fn executing_claims(&self, caller: Option<&AuthenticatedCaller>) -> SessionClaims {
         SessionClaims {
             user_id: self.executing_principal(caller),
@@ -647,103 +644,6 @@ impl NodeAcquisition {
             ..self.claims.clone()
         }
     }
-
-    /// Point one acquisition at the nested target it is about to enter.
-    ///
-    /// The target arrives as the catalog fact rather than as its parts, because
-    /// three of the four retargeted values are read off one fact and four bare
-    /// strings let a caller swap two of them with no type error.
-    ///
-    /// The component name and the operation move with the package and the
-    /// digest. A child that kept the parent's pair would raise its effects under
-    /// the caller's identity while naming its own package (`wamn-b2m6.7`).
-    /// The original wiring owner and root component remain in `origin`.
-    fn retarget(mut self, target: &AdmittedComponent, operation: &str) -> Self {
-        self.invocation
-            .package_id
-            .clone_from(&target.scope.package_id);
-        self.invocation
-            .component_digest
-            .clone_from(&target.component_digest);
-        self.invocation.component.clone_from(&target.component);
-        operation.clone_into(&mut self.invocation.operation);
-        self
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NestedOperationRefusalKind {
-    IdentityUnbound,
-    UndeclaredForExport,
-    ReleaseClosureUnavailable,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NestedOperationRefusal {
-    kind: NestedOperationRefusalKind,
-    operation: Box<str>,
-}
-
-impl NestedOperationRefusal {
-    fn new(kind: NestedOperationRefusalKind, operation: &str) -> Self {
-        Self {
-            kind,
-            operation: operation.into(),
-        }
-    }
-
-    fn literal(&self) -> &'static str {
-        match self.kind {
-            NestedOperationRefusalKind::IdentityUnbound => "nested-operation-identity-unbound",
-            NestedOperationRefusalKind::UndeclaredForExport => {
-                "nested-operation-not-declared-for-export"
-            }
-            NestedOperationRefusalKind::ReleaseClosureUnavailable => {
-                "nested-operation-release-closure-unavailable"
-            }
-        }
-    }
-}
-
-impl fmt::Display for NestedOperationRefusal {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.literal(), self.operation)
-    }
-}
-
-impl std::error::Error for NestedOperationRefusal {}
-
-fn nested_host_error(error: &anyhow::Error) -> wash_runtime::wasmtime::Error {
-    if let Some(denial) = error.downcast_ref::<OperationRefusal>() {
-        return wash_runtime::wasmtime::Error::new(denial.clone());
-    }
-    if let Some(refusal) = error.downcast_ref::<NestedOperationRefusal>() {
-        return wash_runtime::wasmtime::Error::new(refusal.clone());
-    }
-    wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
-}
-
-/// Dependency operation -> (its exact pin, the owner operations that import it).
-type NestedOperationLinks = BTreeMap<String, (ComponentOperationDependency, BTreeSet<String>)>;
-
-fn nested_operation_links(component: &AdmittedComponent) -> anyhow::Result<NestedOperationLinks> {
-    let mut links = NestedOperationLinks::new();
-    for (owner_operation, operation) in &component.operations {
-        for dependency in &operation.dependencies {
-            if links.get(&dependency.operation).is_some_and(|(pinned, _)| {
-                pinned.package != dependency.package
-                    || pinned.version != dependency.version
-                    || pinned.digest != dependency.digest
-            }) {
-                anyhow::bail!("component-operation-dependency-pin-mismatch");
-            }
-            let (_, owners) = links
-                .entry(dependency.operation.clone())
-                .or_insert_with(|| (dependency.clone(), BTreeSet::new()));
-            owners.insert(owner_operation.clone());
-        }
-    }
-    Ok(links)
 }
 
 fn lower_statement_value_type(value_type: ComponentSqlValueType) -> StatementValueType {
@@ -771,10 +671,9 @@ fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
 /// Lower and verify every operation's statement set out of the admitted facts.
 /// The complete admitted fact owns these immutable statements.
 fn prepare_statement_sets(
-    component: &AdmittedComponent,
+    operations: &BTreeMap<String, ServingComponentOperation>,
 ) -> anyhow::Result<BTreeMap<String, PreparedStatementSet>> {
-    component
-        .operations
+    operations
         .iter()
         .map(|(operation, fact)| {
             WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements))

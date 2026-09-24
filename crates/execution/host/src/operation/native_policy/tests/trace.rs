@@ -8,7 +8,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 
-use super::{CHILD, Fixture, ROOT};
+use super::{Fixture, ROOT};
 
 fn attribute<'a>(span: &'a SpanData, key: &str) -> Option<&'a str> {
     span.attributes.iter().find_map(|attribute| {
@@ -102,24 +102,17 @@ impl TraceCapture {
             .iter()
             .filter(|span| span.name == "wamn.component.invoke")
             .collect();
-        assert_eq!(
-            invocations.len(),
-            2,
-            "exactly one root and one child invocation"
-        );
+        // A call inside a composed component reaches no host, so the entry
+        // is the one invocation span.
+        assert_eq!(invocations.len(), 1, "exactly one entry invocation");
         let root = invocations
             .iter()
             .find(|span| attribute(span, "wamn.operation") == Some(ROOT))
             .expect("the original root span");
-        let child = invocations
-            .iter()
-            .find(|span| attribute(span, "wamn.operation") == Some(CHILD))
-            .expect("the nested child span");
         assert_eq!(root.span_context.trace_id(), incoming.trace_id());
         assert_eq!(root.parent_span_id, incoming.span_id());
-        assert_eq!(child.span_context.trace_id(), incoming.trace_id());
-        assert_eq!(child.parent_span_id, root.span_context.span_id());
-        for invocation in [root, child] {
+        {
+            let invocation = root;
             assert_eq!(
                 attribute(invocation, "wamn.caller_principal_id"),
                 Some(caller.principal_id())
@@ -135,10 +128,11 @@ impl TraceCapture {
             .collect();
         assert_eq!(
             effects.len(),
-            2,
-            "each executed guest issues its host observation effect"
+            1,
+            "the executed guest issues its host observation effect"
         );
-        for invocation in [root, child] {
+        {
+            let invocation = root;
             let operation =
                 attribute(invocation, "wamn.operation").expect("host operation identity");
             let fact = fixture
@@ -162,6 +156,6 @@ impl TraceCapture {
                 Some(fact.component_digest.as_str())
             );
         }
-        println!("authenticated-native-trace result=pass invocations=2 host_observations=2");
+        println!("authenticated-native-trace result=pass invocations=1 host_observations=1");
     }
 }

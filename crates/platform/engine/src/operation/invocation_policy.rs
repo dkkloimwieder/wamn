@@ -21,9 +21,6 @@ pub trait InvocationPolicy: HostPlugin + Sized {
     /// Revokes the authority of one call when it drops.
     type Authority: Send;
 
-    /// Retain the application of this policy, once.
-    fn bind_application(&self, application: &Arc<NativeApplication<Self>>) -> anyhow::Result<()>;
-
     /// Grant authority after native initialization, with rollback on every partial failure.
     fn activate(
         &self,

@@ -87,13 +87,11 @@ pub async fn load_native_application<P: InvocationPolicy>(
     let cleanup = NativePolicyCleanup(Arc::clone(&policy));
     let workload =
         Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);
-    let application = Arc::new(NativeApplication {
+    Ok(Arc::new(NativeApplication {
         _cleanup: cleanup,
         workload,
         policy,
-    });
-    application.policy.bind_application(&application)?;
-    Ok(application)
+    }))
 }
 
 /// Identify a complete admitted fact before native plugin binding begins.

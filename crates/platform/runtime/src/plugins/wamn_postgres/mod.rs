@@ -100,7 +100,7 @@ pub use statements::{
     PreparedStatementSet, StatementField, StatementValueType, VerifiedStatement,
     VerifiedStatementSet,
 };
-pub use transaction_views::{PgTransactionView, TransactionParticipation};
+pub use transaction_views::PgTransactionView;
 pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this

@@ -509,18 +509,6 @@ pub(super) async fn begin_statement_transaction(
     })
 }
 
-fn independent_plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {
-    let plugin = plugin_of(ctx)?;
-    plugin
-        .refuse_independent_participant_sql(ctx.component_id.as_ref())
-        .map_err(|_| {
-            wash_runtime::wasmtime::Error::msg(
-                "transaction participant requires its execution-only view",
-            )
-        })?;
-    Ok(plugin)
-}
-
 impl client::Host for ActiveCtx<'_> {}
 
 impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
@@ -532,7 +520,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                independent_plugin_of(&ctx)?,
+                plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
@@ -564,7 +552,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                independent_plugin_of(&ctx)?,
+                plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
@@ -596,7 +584,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                independent_plugin_of(&ctx)?,
+                plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
@@ -639,7 +627,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                independent_plugin_of(&ctx)?,
+                plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
@@ -672,7 +660,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                independent_plugin_of(&ctx)?,
+                plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
@@ -705,7 +693,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         let (plugin, component_id, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
-                independent_plugin_of(&ctx)?,
+                plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 wamn_engine::invocation_trace::invocation_trace(&ctx),
             ))
@@ -742,7 +730,7 @@ async fn txn_query<T: 'static>(
             let ctx = access.get();
             let txn = ctx.table.get(&rep)?;
             Ok::<_, wash_runtime::wasmtime::Error>((
-                independent_plugin_of(&ctx)?,
+                plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
                 wamn_engine::invocation_trace::invocation_trace(&ctx),
                 Arc::clone(&txn.state),
@@ -780,7 +768,7 @@ async fn txn_execute<T: 'static>(
         let ctx = access.get();
         let txn = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
-            independent_plugin_of(&ctx)?,
+            plugin_of(&ctx)?,
             ctx.component_id.to_string(),
             wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&txn.state),
@@ -815,7 +803,7 @@ async fn txn_open_cursor<T: 'static>(
 ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
     let (plugin, component_id, trace, state, destroyed, name) = accessor.with(|mut access| {
         let ctx = access.get();
-        let plugin = independent_plugin_of(&ctx)?;
+        let plugin = plugin_of(&ctx)?;
         let component_id = ctx.component_id.to_string();
         let trace = wamn_engine::invocation_trace::invocation_trace(&ctx);
         let txn = ctx.table.get_mut(&rep)?;
@@ -883,7 +871,7 @@ async fn txn_finish<T: 'static>(
         let ctx = access.get();
         let txn = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
-            independent_plugin_of(&ctx)?,
+            plugin_of(&ctx)?,
             ctx.component_id.to_string(),
             wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&txn.state),
@@ -926,7 +914,7 @@ async fn cursor_fetch<T: 'static>(
         let ctx = access.get();
         let cursor = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
-            independent_plugin_of(&ctx)?,
+            plugin_of(&ctx)?,
             ctx.component_id.to_string(),
             wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&cursor.state),
@@ -1044,7 +1032,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_query(accessor, &project, rep, sql, params).await
@@ -1059,7 +1047,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_execute(accessor, &project, rep, sql, params).await
@@ -1074,7 +1062,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_open_cursor(accessor, &project, rep, sql, params).await
@@ -1087,7 +1075,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_finish(accessor, &project, rep, "COMMIT").await
@@ -1100,7 +1088,7 @@ impl<T: 'static + Send> client::HostTransactionWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         txn_finish(accessor, &project, rep, "ROLLBACK").await
@@ -1143,7 +1131,7 @@ impl<T: 'static + Send> client::HostCursorWithStore<T> for SharedCtx {
         let project = accessor.with(|mut access| {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>(
-                independent_plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
+                plugin_of(&ctx)?.project_for(ctx.component_id.as_ref()),
             )
         })?;
         cursor_fetch(accessor, &project, rep, max_rows).await

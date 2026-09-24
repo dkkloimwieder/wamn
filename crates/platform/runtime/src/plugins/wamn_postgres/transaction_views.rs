@@ -17,16 +17,9 @@ use super::{PgError, RowSet, SessionClaims, SqlValue, StatementError, WamnPostgr
 #[derive(Debug, Default)]
 pub(super) struct TransactionViews {
     scopes: HashMap<String, ViewInvocation>,
-    // At most one outstanding view per live owner invocation.
+    // At most one outstanding view per live invocation.
     owners: HashMap<String, Arc<TransactionViewLease>>,
 }
-
-/// Host-selected participation carried into one native invocation.
-///
-/// This reference retains no transaction connection. Revocation invalidates it
-/// even if native dispatch has not activated the participant yet.
-#[derive(Debug, Clone)]
-pub struct TransactionParticipation(Arc<TransactionViewLease>);
 
 /// Execution-only resource held in the authorized participant's resource table.
 #[derive(Debug, Clone)]
@@ -39,7 +32,6 @@ pub struct PgTransactionView {
 struct ViewInvocation {
     identity: ViewIdentity,
     deadline: Instant,
-    participant: Option<Arc<TransactionViewLease>>,
     selected: Option<super::statement_wit::Participation>,
 }
 
@@ -53,18 +45,10 @@ struct ViewIdentity {
     origin: crate::plugins::connection_http::ConnectionOrigin,
 }
 
-impl ViewIdentity {
-    fn same_transaction(&self, other: &Self) -> bool {
-        // The native dispatcher separately admits the exact target operation,
-        // component digest and package from the same release closure.
-        self.claims == other.claims
-            && self.authority == other.authority
-            && self.origin == other.origin
-    }
-}
-
+/// The view that one invocation's transaction lends to its published
+/// participant. An application composes at build, so the participant runs in
+/// the same invocation scope as the base that selected it.
 pub(super) struct TransactionViewLease {
-    owner: String,
     operation: String,
     identity: ViewIdentity,
     deadline: Instant,
@@ -86,7 +70,7 @@ impl std::fmt::Debug for TransactionViewLease {
 #[derive(Debug)]
 struct ViewAccess {
     active: bool,
-    participant: Option<String>,
+    acquired: bool,
     in_flight: bool,
 }
 
@@ -133,21 +117,6 @@ fn denied() -> StatementError {
 }
 
 impl WamnPostgres {
-    pub(super) fn refuse_independent_participant_sql(&self, scope: &str) -> Result<(), PgError> {
-        let views = self
-            .transaction_views
-            .lock()
-            .expect("transaction views lock poisoned");
-        if views
-            .scopes
-            .get(scope)
-            .is_some_and(|invocation| invocation.participant.is_some())
-        {
-            return Err(PgError::PermissionDenied);
-        }
-        Ok(())
-    }
-
     fn view_identity(&self, scope: &str) -> Result<ViewIdentity, StatementError> {
         let invocation = self.invocation(scope).ok_or_else(denied)?;
         let release = self.release_identity_for(scope).ok_or_else(denied)?;
@@ -175,56 +144,11 @@ impl WamnPostgres {
         })
     }
 
-    /// Select a pending view after the dispatcher admits the exact target.
-    pub fn prepare_transaction_participation(
-        &self,
-        owner_scope: &str,
-        operation: &str,
-    ) -> anyhow::Result<Option<TransactionParticipation>> {
-        let identity = self.view_identity(owner_scope);
-        anyhow::ensure!(
-            self.invocation(owner_scope).is_some(),
-            "transaction-view-owner-unbound"
-        );
-        let views = self
-            .transaction_views
-            .lock()
-            .expect("transaction views lock poisoned");
-        if let Ok(identity) = identity {
-            anyhow::ensure!(
-                views.scopes.get(owner_scope).is_some_and(
-                    |bound| bound.identity == identity && Instant::now() < bound.deadline
-                ),
-                "transaction-view-owner-revoked"
-            );
-        }
-        let Some(view) = views
-            .owners
-            .get(owner_scope)
-            .filter(|view| view.operation == operation)
-        else {
-            return Ok(None);
-        };
-        let access = view.access.lock().expect("transaction view lock poisoned");
-        anyhow::ensure!(
-            access.active && access.participant.is_none() && Instant::now() < view.deadline,
-            "transaction-view-unavailable"
-        );
-        Ok(Some(TransactionParticipation(Arc::clone(view))))
-    }
-
     /// Bind transaction access only after native operation authorization succeeds.
-    pub fn bind_transaction_scope(
-        &self,
-        scope: &str,
-        deadline: Instant,
-        participation: Option<&TransactionParticipation>,
-    ) -> anyhow::Result<()> {
+    pub fn bind_transaction_scope(&self, scope: &str, deadline: Instant) -> anyhow::Result<()> {
         // Non-release calls retain ordinary SQL, but cannot acquire a view.
-        let identity = match self.view_identity(scope) {
-            Ok(identity) => identity,
-            Err(_) if participation.is_none() => return Ok(()),
-            Err(_) => anyhow::bail!("transaction-view-participant-identity-unbound"),
+        let Ok(identity) = self.view_identity(scope) else {
+            return Ok(());
         };
         anyhow::ensure!(
             Instant::now() < deadline,
@@ -238,39 +162,18 @@ impl WamnPostgres {
             !views.scopes.contains_key(scope),
             "transaction-view-scope-already-bound"
         );
-        let participant = if let Some(TransactionParticipation(view)) = participation {
-            let mut access = view.access.lock().expect("transaction view lock poisoned");
-            anyhow::ensure!(
-                access.active
-                    && access.participant.is_none()
-                    && view.operation == identity.operation
-                    && view.identity.same_transaction(&identity)
-                    && deadline <= view.deadline
-                    && Instant::now() < view.deadline
-                    && views
-                        .owners
-                        .get(&view.owner)
-                        .is_some_and(|current| Arc::ptr_eq(current, view)),
-                "transaction-view-participant-mismatch"
-            );
-            access.participant = Some(scope.to_owned());
-            Some(Arc::clone(view))
-        } else {
-            None
-        };
         views.scopes.insert(
             scope.to_owned(),
             ViewInvocation {
                 identity,
                 deadline,
-                participant,
                 selected: None,
             },
         );
         Ok(())
     }
 
-    /// Bind the exact participant selected by an admitted native caller.
+    /// Bind the participant that the release publishes for this entry.
     pub fn bind_selected_participant(
         &self,
         scope: &str,
@@ -290,7 +193,6 @@ impl WamnPostgres {
             .ok_or_else(|| anyhow::anyhow!("participant-owner-revoked"))?;
         anyhow::ensure!(
             invocation.identity == identity
-                && invocation.participant.is_none()
                 && Instant::now() < invocation.deadline
                 && invocation.selected.is_none(),
             "participant-owner-mismatch"
@@ -315,30 +217,13 @@ impl WamnPostgres {
         Ok(invocation.selected.clone())
     }
 
-    /// A participant cannot delegate work beyond its execution-only view.
-    pub fn permit_transaction_nested_call(&self, scope: &str) -> anyhow::Result<()> {
-        self.refuse_independent_participant_sql(scope)
-            .map_err(|_| anyhow::anyhow!("transaction-participant-cannot-delegate"))
-    }
-
     /// Revoke before native authority or its transaction owner leaves the call.
     pub fn revoke_transaction_scope(&self, scope: &str) {
         let mut views = self
             .transaction_views
             .lock()
             .expect("transaction views lock poisoned");
-        if let Some(invocation) = views.scopes.remove(scope)
-            && let Some(view) = invocation.participant
-        {
-            view.revoke();
-            if views
-                .owners
-                .get(&view.owner)
-                .is_some_and(|current| Arc::ptr_eq(current, &view))
-            {
-                views.owners.remove(&view.owner);
-            }
-        }
+        views.scopes.remove(scope);
         if let Some(view) = views.owners.remove(scope) {
             view.revoke();
         }
@@ -359,22 +244,20 @@ impl WamnPostgres {
             .lock()
             .expect("transaction views lock poisoned");
         let invocation = views.scopes.get(scope).ok_or_else(denied)?;
-        if invocation.participant.is_some()
-            || invocation.identity != identity
+        // Only the participant that the release publishes for this entry.
+        if invocation.identity != identity
             || Instant::now() >= invocation.deadline
-            || operation.is_empty()
+            || invocation
+                .selected
+                .as_ref()
+                .is_none_or(|selected| selected.operation != operation)
         {
             return Err(denied());
         }
         let deadline = invocation.deadline;
         if views.owners.get(scope).is_some_and(|view| {
             let access = view.access.lock().expect("transaction view lock poisoned");
-            access.active
-                || access.in_flight
-                || access
-                    .participant
-                    .as_ref()
-                    .is_some_and(|participant| views.scopes.contains_key(participant))
+            access.active || access.in_flight
         }) {
             return Err(denied());
         }
@@ -387,7 +270,6 @@ impl WamnPostgres {
             return Err(denied());
         }
         let view = Arc::new(TransactionViewLease {
-            owner: scope.to_owned(),
             operation,
             identity,
             deadline,
@@ -396,7 +278,7 @@ impl WamnPostgres {
             row_limit: transaction.transaction.row_limit,
             access: Mutex::new(ViewAccess {
                 active: true,
-                participant: None,
+                acquired: false,
                 in_flight: false,
             }),
             changed: tokio::sync::Notify::new(),
@@ -413,16 +295,18 @@ impl WamnPostgres {
             .lock()
             .expect("transaction views lock poisoned");
         let invocation = views.scopes.get(scope).ok_or_else(denied)?;
-        let view = invocation.participant.as_ref().ok_or_else(denied)?;
-        let access = view.access.lock().expect("transaction view lock poisoned");
+        let view = views.owners.get(scope).ok_or_else(denied)?;
+        let mut access = view.access.lock().expect("transaction view lock poisoned");
         if invocation.identity != identity
+            || view.identity != identity
             || Instant::now() >= invocation.deadline
             || Instant::now() >= view.deadline
             || !access.active
-            || access.participant.as_deref() != Some(scope)
+            || access.acquired
         {
             return Err(denied());
         }
+        access.acquired = true;
         Ok(PgTransactionView {
             lease: Arc::clone(view),
             scope: scope.to_owned(),
@@ -447,7 +331,7 @@ impl WamnPostgres {
                 return Err(denied());
             }
             (
-                invocation.participant.clone().ok_or_else(denied)?,
+                Arc::clone(views.owners.get(scope).ok_or_else(denied)?),
                 invocation.deadline,
             )
         };
@@ -455,12 +339,11 @@ impl WamnPostgres {
         let usage = {
             let mut access = view.access.lock().expect("transaction view lock poisoned");
             if !access.active
-                || access.participant.as_deref() != Some(scope)
+                || !access.acquired
                 || access.in_flight
                 || resource.scope != scope
                 || !Arc::ptr_eq(&resource.lease, &view)
-                || !view.identity.same_transaction(&identity)
-                || view.operation != identity.operation
+                || view.identity != identity
                 || Instant::now() >= view.deadline
             {
                 return Err(denied());
@@ -479,8 +362,10 @@ impl WamnPostgres {
             () = view.revoked() => Err(denied()),
             () = tokio::time::sleep_until(deadline) => Err(StatementError::Postgres(PgError::StatementTimeout)),
             result = async {
+                // The participant's statement records its own operation, and
+                // the entry's operation returns for the base that resumes.
                 connection.connection().query_one(
-                    "SELECT set_config('app.operation', $1, true)", &[&identity.operation],
+                    "SELECT set_config('app.operation', $1, true)", &[&view.operation],
                 ).await.map_err(|error| StatementError::Postgres(super::types::map_pg_error(&error)))?;
                 let rows = run_verified_query(connection.connection(), digest, &statement, binds, view.row_limit).await?;
                 connection.connection().query_one(

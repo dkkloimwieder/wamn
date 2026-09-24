@@ -365,7 +365,6 @@ impl WamnPostgres {
         project: &str,
         tenant: &str,
     ) -> Result<(Object, Arc<ProjectPool>, AuthorityClass), PgError> {
-        self.refuse_independent_participant_sql(component_id)?;
         let class = self.workload_authority_for(component_id);
         let (connection, pool) = match class {
             AuthorityClass::GuestSql => self.checkout_guest(project, tenant).await?,
