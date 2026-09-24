@@ -6031,6 +6031,7 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-test-postgres",
+ "wamn-workflow",
  "wash-runtime",
 ]
 
@@ -6518,6 +6519,10 @@ dependencies = [
  "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]
+
+[[package]]
+name = "wamn-workflow"
+version = "0.1.0"
 
 [[package]]
 name = "want"

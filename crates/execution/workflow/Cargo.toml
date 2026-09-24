@@ -1,0 +1,11 @@
+[package]
+name = "wamn-workflow"
+description = "The wiring layer: the graph walk, wiring delivery, the queue, Cron, and registrations. Every node calls invoke_operation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
