@@ -200,6 +200,32 @@ impl Drop for LocalApplication {
     }
 }
 
+/// Put a relative request's `Host` on its URI, as the wash-runtime ingress does.
+///
+/// Since Wasmtime 48, `from_http` strips the `Host` header before the guest sees
+/// the request, so the guest reads its authority from the URI alone.
+fn with_host_authority<B>(mut request: Request<B>) -> anyhow::Result<Request<B>> {
+    if request.uri().authority().is_some() {
+        return Ok(request);
+    }
+    let Some(host) = request.headers().get(hyper::header::HOST) else {
+        return Ok(request);
+    };
+    let authority = host
+        .to_str()
+        .context("the Host header is text")?
+        .parse::<hyper::http::uri::Authority>()
+        .context("the Host header is an authority")?;
+    let mut parts = request.uri().clone().into_parts();
+    parts.scheme = Some(hyper::http::uri::Scheme::HTTP);
+    parts.authority = Some(authority);
+    parts
+        .path_and_query
+        .get_or_insert(hyper::http::uri::PathAndQuery::from_static("/"));
+    *request.uri_mut() = hyper::Uri::from_parts(parts).context("absolute request URI")?;
+    Ok(request)
+}
+
 pub async fn invoke_request<B>(
     engine: &wash_runtime::engine::Engine,
     flow_http: &Component,
@@ -260,6 +286,7 @@ where
     let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
         .await
         .map_err(|error| anyhow::anyhow!("instantiate shipped flow-http: {error}"))?;
+    let request = with_host_authority(request)?;
     let (request, request_io) =
         wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
     let response = store
