@@ -256,6 +256,7 @@ pub fn invocation_span(
         wamn.caller_principal_id = tracing::field::Empty,
         wamn.caller_credential_kind = tracing::field::Empty,
         wamn.input_port = tracing::field::Empty,
+        wamn.attachment_id = tracing::field::Empty,
     );
     if let Some(caller) = site.caller {
         span.record("wamn.caller_principal_id", caller.principal_id());

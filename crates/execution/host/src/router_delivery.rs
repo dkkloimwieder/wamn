@@ -300,6 +300,7 @@ impl RouterDeliveryBridge {
                 let result = invoke_route(
                     &self.operations,
                     RouteCall {
+                        attachment_id: source.id(),
                         package_id: &target.package_id,
                         component,
                         operation,

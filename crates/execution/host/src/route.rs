@@ -21,6 +21,8 @@ use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, 
 
 /// One request to one route.
 pub(crate) struct RouteCall<'a> {
+    /// The attachment that entered the route; its invocation span names it.
+    pub(crate) attachment_id: &'a str,
     pub(crate) package_id: &'a str,
     pub(crate) component: &'a str,
     pub(crate) operation: &'a str,
@@ -71,6 +73,7 @@ pub(crate) async fn invoke_route(
         },
         remote_trace_context(route.traceparent, route.tracestate).as_ref(),
     );
+    span.record("wamn.attachment_id", route.attachment_id);
     let deadline_ms = bounded_node_deadline_ms(None);
     async {
         // Read inside the span: the guest parents to `wamn.component.invoke`.
