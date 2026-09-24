@@ -260,7 +260,8 @@ where
     let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
         .await
         .map_err(|error| anyhow::anyhow!("instantiate shipped flow-http: {error}"))?;
-    let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
+    let (request, request_io) =
+        wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
     let response = store
         .run_concurrent(async |accessor| {
             let handle = async {

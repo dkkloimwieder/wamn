@@ -166,7 +166,10 @@ mod tests {
             .header("content-type", "application/json")
             .body(body)
             .context("build the HTTP request")?;
-        let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
+        let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(
+            wasmtime_wasi_http::default_hooks(),
+            request,
+        );
         // Keep the fresh store driving P3 streams until the response body is collected.
         let response = store
             .run_concurrent(async |accessor| {
@@ -194,9 +197,8 @@ mod tests {
                         Err(error) => (Err(format!("{error:?}")), Err(error)),
                     };
                     let _ = finish_tx.send(finish);
-                    let body = body.map_err(|error| {
-                        anyhow::anyhow!("collect flow-http response: {error}")
-                    })?;
+                    let body = body
+                        .map_err(|error| anyhow::anyhow!("collect flow-http response: {error}"))?;
                     Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
                 };
                 let io = async {
