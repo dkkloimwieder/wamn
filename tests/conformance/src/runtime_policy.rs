@@ -51,7 +51,7 @@ const STRUCK_RELEASE_IDENTITY_KEYS: [&str; 2] = ["wamn.release-version", "wamn.m
 /// the plugin whose bind path used to read them.
 const STRUCK_KEY_SITES: [&str; 3] = [
     "crates/platform/runtime/src/plugins/wamn_postgres/mod.rs",
-    "crates/execution/host/src/queue.rs",
+    "crates/execution/workflow/src/queue.rs",
     "services/host/src/host.rs",
 ];
 

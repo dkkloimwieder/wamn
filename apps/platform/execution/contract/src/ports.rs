@@ -2,7 +2,7 @@
 //!
 //! These are stored bytes, not display strings: an edge written with one
 //! spelling is read back and filtered against another, so a rename here is a
-//! data migration. `crates/platform/runtime/tests/port_constant_agreement.rs`
+//! data migration. `crates/execution/workflow/tests/port_constant_agreement.rs`
 //! guards the port names against the router's independent declarations.
 
 /// The default (main) output port of a node.

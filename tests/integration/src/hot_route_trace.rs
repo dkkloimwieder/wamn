@@ -42,9 +42,9 @@ mod tests {
     const INCOMING_TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     const UPSTREAM_PATH: &str = "/ingest";
 
-    /// The in-tree pattern (`crates/execution/host/src/router_driver.rs`,
+    /// The in-tree pattern (`crates/execution/workflow/src/router_driver.rs`,
     /// `crates/platform/runtime/src/plugins/connection_http.rs`,
-    /// `crates/execution/host/src/queue.rs`): a real OTel layer, because
+    /// `crates/execution/workflow/src/queue.rs`): a real OTel layer, because
     /// `inject_trace_context` has NO no-OTel fallback — without the layer the
     /// host injects nothing and the wire assertion would pass or fail for the
     /// wrong reason.

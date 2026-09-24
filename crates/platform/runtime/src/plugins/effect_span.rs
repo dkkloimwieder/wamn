@@ -86,7 +86,7 @@
 //! `wamn.jetstream` is the one surface that reads back no invocation of its
 //! own. It is not orphaned: an effect raised inside a node runs under
 //! `wamn.component.invoke`, the span
-//! `crates/execution/host/src/router_driver.rs` instruments each `Step::Invoke`
+//! `crates/execution/workflow/src/router_driver.rs` instruments each `Step::Invoke`
 //! with, which already carries `wamn.wiring_id`, `wamn.wiring_version`,
 //! `wamn.node_id`, `wamn.component_digest` and `wamn.operation` — the spelling
 //! [`EffectWiring`] reuses rather than forking. `wamn.connection_http`

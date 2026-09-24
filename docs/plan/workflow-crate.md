@@ -160,7 +160,7 @@ These tests run without a cluster and cover the two wirings:
 
 - WMS: `apps/wamn_wms/tests/wms_publication.rs` and `wms_wiring_shape.rs`.
 - Acme: `apps/client_acme_receiving/tests/acme_overlay_publication.rs`, including `receipt_insert_registration_selects_one_private_owner_wiring`.
-- The walk on real graphs: `tests/integration/src/trusted_http_route.rs` (multi-node graphs through the driver) and `crates/execution/host/src/queue/automation_live.rs` (the queue).
+- The walk on real graphs: `tests/integration/src/trusted_http_route.rs` (multi-node graphs through the driver) and `crates/execution/workflow/src/queue/automation_live.rs` (the queue).
 
 The full workspace sweep runs once, in the last issue, with `--no-fail-fast`. Its log is kept outside the checkout, and the close reason names its path (finding `wamn-ijzy`). The sweep compares by test name with the Epic 14 sweep at 46a880bdc: 2469 passed, 0 failed, 52 ignored. Moved tests are mapped by name.
 

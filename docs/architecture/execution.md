@@ -102,7 +102,7 @@ The [engine operation module](../../crates/platform/engine/src/operation.rs) run
 It owns the deadline, workload loading, and invocation state.
 It reaches the host through two traits: `ApplicationHost` gives the loaded application, and `InvocationPolicy` grants and revokes the authority of each call.
 The [host operation module](../../crates/execution/host/src/operation.rs) implements both traits and owns authority.
-The [driver](../../crates/execution/host/src/router_driver.rs) walks a wiring graph and calls the operation module for each node.
+The [driver](../../crates/execution/workflow/src/router_driver.rs) walks a wiring graph and calls the operation module for each node.
 The [route path](../../crates/execution/host/src/route.rs) calls it once for a route target and never enters the driver.
 A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
 The caller decides whether to send a new request.
