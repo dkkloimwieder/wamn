@@ -13,7 +13,7 @@ wit_bindgen::generate!({
     world: "wamn:http-request/http-request@0.1.0",
     path: [
         "../../../../crates/platform/runtime/wit/deps/wamn-connection",
-        "../../../../crates/execution/router/wit",
+        "../../../../crates/execution/workflow/router/wit",
         "../../no-std/http-request/wit",
     ],
     generate_all,

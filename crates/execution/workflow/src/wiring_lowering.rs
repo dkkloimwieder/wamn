@@ -469,7 +469,7 @@ mod tests {
         resolve
             .push_str(
                 "wamn-node.wit",
-                include_str!("../../../execution/router/wit/package.wit"),
+                include_str!("../../../execution/workflow/router/wit/package.wit"),
             )
             .expect("the live node WIT parses");
         let fixture = format!(

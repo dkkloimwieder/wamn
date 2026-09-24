@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "apps/wamn_receiving/ui", "apps/client_acme_receiving/ui", "apps/wamn_receiving/tests", "apps/client_acme_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "apps/wamn_receiving/generated/receiving-tui", "apps/wamn_wms/generated/wms-tui", "apps/platform_fixture/generated/fixture-tui", "apps/platform_fixture_overlay/generated/fixture_overlay-tui", "apps/client_acme_receiving/generated/client_acme_receiving-tui"]
+members = ["services/host", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "apps/wamn_receiving/ui", "apps/client_acme_receiving/ui", "apps/wamn_receiving/tests", "apps/client_acme_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "apps/wamn_receiving/generated/receiving-tui", "apps/wamn_wms/generated/wms-tui", "apps/platform_fixture/generated/fixture-tui", "apps/platform_fixture_overlay/generated/fixture_overlay-tui", "apps/client_acme_receiving/generated/client_acme_receiving-tui"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -10,7 +10,7 @@ default-members = [
   "crates/client/terminal",
   "crates/client/tui",
   "crates/execution/host",
-  "crates/execution/router",
+  "crates/execution/workflow/router",
   "crates/execution/run-state",
   "crates/execution/workflow",
   "crates/identity/platform",
@@ -235,7 +235,7 @@ wamn-record-history = { path = "apps/platform/data/record-history", version = "0
 wamn-conformance-tests = { path = "tests/conformance", version = "0.1.0" }
 wamn-integration-tests = { path = "tests/integration", version = "0.1.0" }
 wamn-system-tests = { path = "tests/system", version = "0.1.0" }
-wamn-router = { path = "crates/execution/router", version = "0.1.0" }
+wamn-router = { path = "crates/execution/workflow/router", version = "0.1.0" }
 wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
 wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }
 wamn-scenario-worker = { path = "services/scenario-worker", version = "0.1.0" }

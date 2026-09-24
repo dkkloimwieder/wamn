@@ -953,7 +953,7 @@ mod execution_tests {
                 }
             "#,
             path: [
-                "../../../crates/execution/router/wit",
+                "../../../crates/execution/workflow/router/wit",
                 "../../../crates/platform/runtime/wit/deps/wamn-postgres",
                 "../../../apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
             ],

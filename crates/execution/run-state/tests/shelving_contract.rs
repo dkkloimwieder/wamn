@@ -24,7 +24,7 @@
 //! cannot tell a reference from a mention.
 //!
 //! THE COMPILER ENFORCES IT INSTEAD, and more strongly than any scan could.
-//! `crates/execution/router` does not LINK `wamn-run-state`, `wamn-runtime`, or
+//! `crates/execution/workflow/router` does not LINK `wamn-run-state`, `wamn-runtime`, or
 //! any Postgres client, so the class is not merely unreferenced by paths 1-2 —
 //! it is unnameable from them, and a reference is `E0433` at build time. The
 //! one assertion left here reads the router's MANIFEST, which is the fact that
@@ -32,7 +32,7 @@
 //! scan.
 
 /// The router crate's manifest: paths 1-2's entire dependency surface.
-const ROUTER_MANIFEST: &str = include_str!("../../router/Cargo.toml");
+const ROUTER_MANIFEST: &str = include_str!("../../workflow/router/Cargo.toml");
 
 #[test]
 fn the_router_cannot_reach_the_run_plane_at_all() {

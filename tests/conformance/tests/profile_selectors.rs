@@ -517,7 +517,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
                 "apps/platform/execution/materializer/wit/deps/wasi-cli",
                 "apps/platform/execution/materializer/wit/deps/wasi-clocks",
                 "crates/execution/host/wit/deps/wamn-router-delivery",
-                "crates/execution/router/wit",
+                "crates/execution/workflow/router/wit",
                 "crates/platform/runtime/wit/deps",
             ]
             .map(|path| root.join(path)),

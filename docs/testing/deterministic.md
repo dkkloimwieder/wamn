@@ -7,8 +7,8 @@ Live database races still require the observations in [database tests](database-
 
 ## Existing boundaries
 
-The [walk tests](../../crates/execution/router/tests/walk.rs) drive real walk decisions with generated scenarios, supplied outcomes, and a fake clock.
-They evaluate the [walk invariants](../../crates/execution/router/src/invariants.rs) after each applied outcome.
+The [walk tests](../../crates/execution/workflow/router/tests/walk.rs) drive real walk decisions with generated scenarios, supplied outcomes, and a fake clock.
+They evaluate the [walk invariants](../../crates/execution/workflow/router/src/invariants.rs) after each applied outcome.
 This tests walk decisions, not guest execution or process recovery.
 
 The [queue invariants](../../crates/execution/run-state/src/invariants.rs) inspect pure queue decisions for leases, claimability, and attempt limits.

@@ -240,7 +240,7 @@ if [[ "$WAMN_MODE" == watch-roots ]]; then
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -ceS -s --arg profile "$WAMN_PROFILE" \
     --arg root "$WAMN_REPOSITORY_ROOT/" \
     --argjson manifests "$WAMN_MANIFEST_LIST" \
-    --argjson shared_wit_roots '["apps/platform/execution/materializer/wit/deps/wasi-cli","apps/platform/execution/materializer/wit/deps/wasi-clocks","crates/execution/host/wit/deps/wamn-router-delivery","crates/execution/router/wit","crates/platform/runtime/wit/deps"]' \
+    --argjson shared_wit_roots '["apps/platform/execution/materializer/wit/deps/wasi-cli","apps/platform/execution/materializer/wit/deps/wasi-clocks","crates/execution/host/wit/deps/wamn-router-delivery","crates/execution/workflow/router/wit","crates/platform/runtime/wit/deps"]' \
     --argjson build "$WAMN_PLAN" '
     def directory: sub("/Cargo.toml$"; "");
     def closure($packages; $pending; $seen):

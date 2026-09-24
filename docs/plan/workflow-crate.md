@@ -56,7 +56,7 @@ Four runtime readers use wiring facts as data, with no router type. The JetStrea
 
 The generator writes no serving manifest. Publish mints it. So `apps/*/generated/` stays byte-identical, including the format version, which appears only in minted manifests.
 
-The node ABI WIT is at `crates/execution/router/wit/package.wit`. The engine, the generator test, `push_component.rs`, the conformance tests, and 14 component crates name that path. This epic does not move it (section 4).
+The node ABI WIT is at `crates/execution/workflow/router/wit/package.wit`. The engine, the generator test, `push_component.rs`, the conformance tests, and 14 component crates name that path. This epic does not move it (section 4).
 
 Only cluster tests run the two remaining wirings end to end. `apps/wamn_wms/tests/cluster.rs` runs `inventory_move_and_label`, and `apps/wamn_receiving/tests/postcommit.rs` runs the `quality_create_inspection` registration. The WMS local test `local_business.rs` loads no wiring. Section 6 lists the tests that this epic can run without a cluster. Owner ruling 4 decides the proof.
 
@@ -73,7 +73,7 @@ Options:
 
 Pick: merge. The owner's rule is the option with fewer public types. After this epic, only the workflow crate uses the router types. The walk tests (`tests/walk.rs`, `resolution.rs`, `route.rs`, `terminal.rs`) move into the crate as unit tests, so the walk API does not need to stay public for them. `docs/testing/deterministic.md` links move with them.
 
-The node ABI WIT stays at `crates/execution/router/wit`. After the merge, that directory holds only the WIT. Moving it needs edits in the generator and the engine, which are outside this epic. The follow-up `wamn-2bgm` moves it to its owner.
+The node ABI WIT stays at `crates/execution/workflow/router/wit`. After the merge, that directory holds only the WIT. Moving it needs edits in the generator and the engine, which are outside this epic. The follow-up `wamn-2bgm` moves it to its owner.
 
 ### Where the workflow crate sits
 
@@ -132,7 +132,7 @@ The WMS graph `inventory_move_and_label` sits behind the HTTP route `/inventory/
 
 | Today | After |
 | --- | --- |
-| `crates/execution/router` source and tests | `wamn-workflow`, `walk` module. The WIT stays. |
+| `crates/execution/workflow/router` source and tests | `wamn-workflow`, `walk` module. The WIT stays. |
 | host `router_driver.rs` | `wamn-workflow`. `OperationHost` is built outside it. |
 | host `router_delivery.rs` wiring arm, `publish_emit`, the `lower_*` functions | `wamn-workflow`, behind `WiringDelivery` |
 | host `router_delivery.rs` bridge, route arm, `settle_route`, source checks | stay in `wamn-execution-host` |

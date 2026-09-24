@@ -3210,7 +3210,7 @@ mod tests {
         let package = resolve
             .push_str(
                 "wamn-node.wit",
-                include_str!("../../../../crates/execution/router/wit/package.wit"),
+                include_str!("../../../../crates/execution/workflow/router/wit/package.wit"),
             )
             .expect("the live node WIT parses");
         let world = resolve

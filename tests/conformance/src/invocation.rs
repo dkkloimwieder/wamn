@@ -4,7 +4,7 @@
 /// router invokes once per graph node. Included rather than read so that losing
 /// the package fails the build outright, not just a test.
 #[cfg(test)]
-const NODE_WIT: &str = include_str!("../../../crates/execution/router/wit/package.wit");
+const NODE_WIT: &str = include_str!("../../../crates/execution/workflow/router/wit/package.wit");
 
 #[cfg(test)]
 mod tests {

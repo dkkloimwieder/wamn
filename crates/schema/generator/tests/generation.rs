@@ -1237,7 +1237,7 @@ fn compile_inventory_item_component(package: &GeneratedPackage) {
          \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
     )
     .expect("write fixture manifest");
-    let node = root.join("crates/execution/router/wit");
+    let node = root.join("crates/execution/workflow/router/wit");
     let lib = format!(
         r##"wit_bindgen::generate!({{
     world: "wamn:inventory-fixture/component@1.0.0",

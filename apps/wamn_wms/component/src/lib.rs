@@ -43,7 +43,7 @@ wit_bindgen::generate!({
         }
     "#,
     path: [
-        "../../../crates/execution/router/wit",
+        "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres",
         "../generated/wit/deps/wamn-wms-inventory",
         "../generated/wit/deps/wamn-wms-inventory-movement",

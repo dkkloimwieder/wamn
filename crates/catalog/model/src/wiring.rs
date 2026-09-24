@@ -73,7 +73,7 @@ pub const WIRING_DOCUMENT_FORMAT_VERSION: &str = "0.1";
 /// How a node ends its delivery, when it is a terminal.
 ///
 /// This is the *authoring source* of the router's own terminal
-/// (`wamn_router::Terminal`, `crates/execution/router/src/terminal.rs`): the
+/// (`wamn_router::Terminal`, `crates/execution/workflow/router/src/terminal.rs`): the
 /// retired engine decided `respond` by comparing a node's reserved type name,
 /// and the node language retires with that engine, so the wiring **declares**
 /// it as data and the walk reads it.
@@ -563,7 +563,7 @@ mod tests {
         // The port names are PERSISTED bytes, not an internal convention. The
         // walk that reads a stored edge back filters it against
         // `wamn_router::MAIN_PORT`/`ERROR_PORT`, which are declared
-        // independently of these (`crates/execution/router/src/outcome.rs`) and
+        // independently of these (`crates/execution/workflow/router/src/outcome.rs`) and
         // outlived the flow language's retirement (wamn-0h0g.26.5). They agree
         // today;
         // if either side is renamed without the other, every stored edge goes

@@ -27,7 +27,7 @@ fn contract_and_router_port_constants_agree() {
         wamn_router::MAIN_PORT,
         "the main-port name is declared twice and the declarations have \
          diverged: apps/platform/execution/contract/src/ports.rs:9 \
-         (wamn_execution_contract::MAIN_PORT) and crates/execution/router/src/outcome.rs:14 \
+         (wamn_execution_contract::MAIN_PORT) and crates/execution/workflow/router/src/outcome.rs:14 \
          (wamn_router::MAIN_PORT). These must move together (wamn-0h0g.16.17) \
          — the port name is persisted in stored edges, so a one-sided rename \
          silently kills every edge on that port instead of failing"
@@ -37,7 +37,7 @@ fn contract_and_router_port_constants_agree() {
         wamn_router::ERROR_PORT,
         "the error-port name is declared twice and the declarations have \
          diverged: apps/platform/execution/contract/src/ports.rs:13 \
-         (wamn_execution_contract::ERROR_PORT) and crates/execution/router/src/outcome.rs:17 \
+         (wamn_execution_contract::ERROR_PORT) and crates/execution/workflow/router/src/outcome.rs:17 \
          (wamn_router::ERROR_PORT). These must move together (wamn-0h0g.16.17) \
          — the port name is persisted in stored edges, so a one-sided rename \
          silently kills every error-path edge instead of failing"

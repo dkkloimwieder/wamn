@@ -146,7 +146,7 @@ $metadata[0].workspace_root as $root
       elif $path == "apps/Cargo.toml" or $path == "apps/Cargo.lock" then {full: 1, $path}
       elif $path == "apps/platform/no-std/Cargo.toml" or $path == "apps/platform/no-std/Cargo.lock"
       then {full: 2, $path}
-      elif ($path | startswith("crates/execution/router/wit/")
+      elif ($path | startswith("crates/execution/workflow/router/wit/")
              or startswith("crates/platform/runtime/wit/deps/"))
       then (range(0; 3) | {full: ., $path})
       elif ($path | startswith("crates/execution/host/wit/deps/wamn-router-delivery/")

@@ -395,7 +395,7 @@ fn a_platform_crate_selects_its_dependents_in_every_workspace() {
 #[test]
 fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
     for (path, no_std) in [
-        ("crates/execution/router/wit/package.wit", true),
+        ("crates/execution/workflow/router/wit/package.wit", true),
         (
             "crates/platform/runtime/wit/deps/wamn-postgres/package.wit",
             true,
