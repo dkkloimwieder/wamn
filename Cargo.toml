@@ -92,14 +92,14 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 ratatui-core = { version = "0.1.2", default-features = false, features = ["std"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29", default-features = false, features = ["event-stream", "events"] }
-# Direct upstream v2.10.0, with zero patches. Source identity and evidence
+# Direct upstream v2.10.1, with zero patches. Source identity and evidence
 # are recorded in docs/architecture/native-alignment.md.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # No `oci` here, because wamn-engine must not link it. A crate that uses the
 # OCI registry source turns `oci` on in its own manifest.
 # wamn and wash-runtime resolve one crates.io Wasmtime 48.0.x family from the
 # shared 48.0.2 requirement; enforce that source identity in conformance.
-wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "f9b37fc3ab52db32378f88b116a24a763b4484db", default-features = false }
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
 # parallel-compilation is a wasmtime DEFAULT that default-features=false drops.
 # Without it Cranelift compiles every component on one core: receiving took

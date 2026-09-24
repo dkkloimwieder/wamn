@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const REVISION: &str = "f9b37fc3ab52db32378f88b116a24a763b4484db";
+const REVISION: &str = "fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -51,7 +51,7 @@ shift 2
 case "$*" in
   'rev-parse --is-inside-work-tree') echo true ;;
   'remote get-url origin') echo "${WAMN_TEST_ORIGIN:-https://github.com/wasmCloud/wasmCloud}" ;;
-  'rev-parse v2.10.0^{commit}') echo "${WAMN_TEST_TAG:-$WAMN_TEST_REVISION}" ;;
+  'rev-parse v2.10.1^{commit}') echo "${WAMN_TEST_TAG:-$WAMN_TEST_REVISION}" ;;
   'rev-parse HEAD') echo "${WAMN_TEST_HEAD:-$WAMN_TEST_REVISION}" ;;
   'status --porcelain --untracked-files=all')
     printf '%s' "${WAMN_TEST_DIRTY:-}"
@@ -122,8 +122,8 @@ fn dry_run_names_the_upstream_release_and_every_gate_leg() {
     let stdout = String::from_utf8(output.stdout).expect("dry-run output must be UTF-8");
     for required in [
         "expected-repository: https://github.com/wasmCloud/wasmCloud",
-        "expected-tag: v2.10.0",
-        "expected-revision: f9b37fc3ab52db32378f88b116a24a763b4484db",
+        "expected-tag: v2.10.1",
+        "expected-revision: fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa",
         "git-config-global: /dev/null",
         "git-config-nosystem: 1",
         "format:",

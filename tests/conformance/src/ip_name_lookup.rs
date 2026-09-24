@@ -16,8 +16,8 @@ use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
 use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
 use wash_runtime::types::LocalResources;
 
-pub(super) const EXPECTED_VERSION: &str = "2.10.0";
-pub(super) const EXPECTED_REVISION: &str = "f9b37fc3ab52db32378f88b116a24a763b4484db";
+pub(super) const EXPECTED_VERSION: &str = "2.10.1";
+pub(super) const EXPECTED_REVISION: &str = "fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -182,7 +182,7 @@ fn pinned_runtime_is_direct_upstream_v2_10_0() {
         format!(
             "git+https://github.com/wasmCloud/wasmCloud?rev={EXPECTED_REVISION}#{EXPECTED_REVISION}"
         ),
-        "wash-runtime must resolve directly to upstream v2.10.0 revision {EXPECTED_REVISION}"
+        "wash-runtime must resolve directly to upstream v2.10.1 revision {EXPECTED_REVISION}"
     );
 }
 

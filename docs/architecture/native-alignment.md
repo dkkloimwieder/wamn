@@ -7,7 +7,7 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 
 ## Upstream ownership
 
-The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.10.0` source at `f9b37fc3ab52db32378f88b116a24a763b4484db`.
+The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.10.1` source at `fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa`.
 The resolved Wasmtime family is `48.0.2`.
 There are no carried upstream patches, and upstream default providers remain disabled.
 The existing owner rule forbids restoring the retired fork patches.

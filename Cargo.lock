@@ -6567,8 +6567,8 @@ dependencies = [
 
 [[package]]
 name = "wash-runtime"
-version = "2.10.0"
-source = "git+https://github.com/wasmCloud/wasmCloud?rev=f9b37fc3ab52db32378f88b116a24a763b4484db#f9b37fc3ab52db32378f88b116a24a763b4484db"
+version = "2.10.1"
+source = "git+https://github.com/wasmCloud/wasmCloud?rev=fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa#fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa"
 dependencies = [
  "anyhow",
  "arc-swap",
