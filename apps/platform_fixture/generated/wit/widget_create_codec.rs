@@ -102,6 +102,9 @@ fn error_value(error: &contract::CreateError) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::CreateRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
+    if request.code.is_none() {
+        return Err(invalid("code"));
+    }
     if matches!(request.code, Some(None)) {
         return Err(invalid("code"));
     }

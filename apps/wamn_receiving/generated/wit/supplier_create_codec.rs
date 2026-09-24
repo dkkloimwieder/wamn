@@ -83,6 +83,9 @@ fn error_value(error: &contract::CreateError) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::CreateRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
+    if request.name.is_none() {
+        return Err(invalid("name"));
+    }
     if matches!(request.name, Some(None)) {
         return Err(invalid("name"));
     }

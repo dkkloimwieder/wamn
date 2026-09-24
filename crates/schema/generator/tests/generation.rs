@@ -1186,6 +1186,10 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
     (CatalogIr::new(vec![model, claim]), manifest)
 }
 
+/// Build the generated typed CRUD component and run its codec tests.
+///
+/// The codec is generated source, so the test that states its behavior runs
+/// inside the scratch crate that compiles it.
 fn compile_inventory_item_component(package: &GeneratedPackage) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -1284,23 +1288,75 @@ macro_rules! operation {{
          create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, (), create_handler, create_codec);\n\
          update_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, (), update_handler, update_codec);\n\
          delete_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, (), delete_handler, delete_codec);\n\n\
-         export!(Component);\n"
+         export!(Component);\n\n{CODEC_TESTS}"
     );
     std::fs::write(scratch.join("src/lib.rs"), lib).expect("write fixture component");
 
     let output = Command::new(env!("CARGO"))
-        .args(["check", "--offline", "--quiet"])
+        .args(["test", "--offline", "--quiet"])
         .env("CARGO_TARGET_DIR", fixture_target)
         .current_dir(&scratch)
         .output()
-        .expect("cargo check runs for the typed CRUD fixture");
+        .expect("cargo test runs for the typed CRUD fixture");
     assert!(
         output.status.success(),
-        "the generated typed CRUD component does not compile:\n{}",
+        "the generated typed CRUD component does not compile or its codec test fails:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let _ = std::fs::remove_dir_all(&scratch);
 }
+
+/// The create codec refuses what the create contract refuses (wamn-59wi).
+///
+/// `sku` is NOT NULL with no default, so its contract states
+/// `omitted: invalid_input`, and the codec refuses an omitted or null `sku` on
+/// that path before the handler runs. `note` is nullable and `priority` has a
+/// default, so a create may omit both.
+const CODEC_TESTS: &str = r##"
+#[cfg(test)]
+mod codec_tests {
+    use crate::exports::wamn_inventory::inventory_item::create as contract;
+
+    /// The field each item refuses on, and how many items reached the handler.
+    fn create(body: &str) -> (Vec<String>, usize) {
+        let items = super::create_codec::decode(body).expect("the body decodes");
+        let mut calls = 0_usize;
+        let outcomes = {
+            let run = super::create_codec::run(items, &mut calls, async |calls: &mut usize, _| {
+                *calls += 1;
+                Err(contract::CreateError::InvalidInput(contract::InvalidInputDetail {
+                    field: "handler".to_owned(),
+                }))
+            });
+            let mut run = std::pin::pin!(run);
+            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+            let std::task::Poll::Ready(outcomes) = run.as_mut().poll(&mut context) else {
+                panic!("the codec awaits only the handler, which is ready");
+            };
+            outcomes
+        };
+        let fields = outcomes
+            .into_iter()
+            .map(|outcome| match outcome.outcome {
+                Err(contract::CreateError::InvalidInput(detail)) => detail.field,
+                _ => panic!("every item refuses as invalid input"),
+            })
+            .collect();
+        (fields, calls)
+    }
+
+    #[test]
+    fn a_create_refuses_an_omitted_field_that_nothing_would_fill() {
+        let omitted = r#"[{"request_id":"r","idempotency_key":"k"}]"#;
+        assert_eq!(create(omitted), (vec!["sku".to_owned()], 0));
+        let null = r#"[{"request_id":"r","idempotency_key":"k","sku":null}]"#;
+        assert_eq!(create(null), (vec!["sku".to_owned()], 0));
+        let present = r#"[{"request_id":"r","idempotency_key":"k","sku":"A-1"}]"#;
+        assert_eq!(create(present), (vec!["handler".to_owned()], 1));
+    }
+}
+"##;
 
 #[test]
 fn typed_crud_contracts_follow_a_second_model_declaration() {

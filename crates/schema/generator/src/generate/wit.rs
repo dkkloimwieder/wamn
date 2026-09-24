@@ -544,12 +544,21 @@ fn emit_mutation_validation(
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
     prefix: &str,
+    create: bool,
 ) {
     for field in &operation.writable_fields {
         let column = model_column(table, field);
         let name = rust_identifier(field).expect("validated mutation field has a Rust name");
         let path = format!("{prefix}{field}");
         let access = format!("request.{prefix}{name}");
+        // The create contract states `omitted: invalid_input` for this column.
+        if create && super::omission_refused(column) {
+            writeln!(
+                source,
+                "    if {access}.is_none() {{ return Err(invalid({path:?})); }}"
+            )
+            .expect("writing to a String cannot fail");
+        }
         if !column.nullable() {
             writeln!(
                 source,
@@ -592,7 +601,7 @@ fn emit_update_normalizer(
         &[],
         false,
     );
-    emit_mutation_validation(&mut source, table, operation, fields, "change.");
+    emit_mutation_validation(&mut source, table, operation, fields, "change.", false);
     source.push_str("    Ok(())\n}\n\n");
     source
 }
@@ -619,7 +628,7 @@ fn emit_crud_normalizer(
         );
     }
     if action == CrudAction::Create {
-        emit_mutation_validation(&mut source, table, operation, fields, "");
+        emit_mutation_validation(&mut source, table, operation, fields, "", true);
     }
     if action == CrudAction::Query {
         for filter in &operation.filters {

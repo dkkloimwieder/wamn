@@ -1014,10 +1014,7 @@ fn input_contract(
             // take a default, so the omission is refused, not defaulted.
             let omitted = if action == CrudAction::Update {
                 "unchanged"
-            } else if !column.nullable()
-                && column.default().is_none()
-                && column.generation().is_none()
-            {
+            } else if super::omission_refused(column) {
                 "invalid_input"
             } else {
                 "postgres_default"

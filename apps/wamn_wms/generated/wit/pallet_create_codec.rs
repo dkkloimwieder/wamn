@@ -105,8 +105,14 @@ fn error_value(error: &contract::CreateError) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::CreateRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
+    if request.pallet_code.is_none() {
+        return Err(invalid("pallet_code"));
+    }
     if matches!(request.pallet_code, Some(None)) {
         return Err(invalid("pallet_code"));
+    }
+    if request.location_id.is_none() {
+        return Err(invalid("location_id"));
     }
     if matches!(request.location_id, Some(None)) {
         return Err(invalid("location_id"));
@@ -115,6 +121,9 @@ fn normalize(request: &mut contract::CreateRequest) -> Result<(), contract::Inva
         && (!canonical_uuid(value))
     {
         return Err(invalid("location_id"));
+    }
+    if request.status.is_none() {
+        return Err(invalid("status"));
     }
     if matches!(request.status, Some(None)) {
         return Err(invalid("status"));

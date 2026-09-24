@@ -979,6 +979,13 @@ fn insert_bytes(
     }
 }
 
+/// A create cannot omit a NOT NULL column that has no default, because
+/// nothing would fill it. Its input contract states `omitted: invalid_input`,
+/// and its codec refuses the omission on that path.
+fn omission_refused(column: &Column) -> bool {
+    !column.nullable() && column.default().is_none() && column.generation().is_none()
+}
+
 fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
