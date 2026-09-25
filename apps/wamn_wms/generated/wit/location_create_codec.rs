@@ -68,6 +68,12 @@ fn error_value(error: &contract::CreateError) -> Value {
         contract::CreateError::UniqueViolation(value) => {
             let mut detail = Map::new();
             detail.insert("constraint".to_owned(), json!(value.constraint));
+            if let Some(field) = match value.constraint.as_str() {
+                "location_location_code_key" => Some("location_code"),
+                _ => None,
+            } {
+                detail.insert("field".to_owned(), json!(field));
+            }
             ("unique_violation", detail)
         }
         contract::CreateError::Retry => ("retry", Map::new()),

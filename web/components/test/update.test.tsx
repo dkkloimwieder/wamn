@@ -51,9 +51,52 @@ describe("the generated update", () => {
     expect(reads(sent)).toBe(1);
     expect(updates(sent).map(revision)).toEqual(["7"]);
     expect(seen[0]).toMatchObject({ status: "refused", code: "concurrency_conflict" });
-    await waitFor(() =>
-      expect(screen.getAllByText("concurrency_conflict").length).toBeGreaterThan(0),
+    // The operator reads a sentence, never the code (wamn-55bk).
+    await screen.findByText(
+      "Another change saved this record after you opened it. Read it again and retry.",
     );
+    expect(screen.queryByText("concurrency_conflict")).toBeNull();
+  });
+
+  it("marks the field a unique key guards with a sentence (wamn-1dov)", async () => {
+    const { transport, sent } = stub("priority");
+    const seen: Outcome<unknown>[] = [];
+    render(() => (
+      <WidgetUpdateForm
+        transport={transport}
+        key={{ id: WIDGET }}
+        initial={{ change: { code: "priority" } }}
+        onSubmitted={(outcome) => seen.push(outcome)}
+      />
+    ));
+    await waitFor(() => expect(reads(sent)).toBe(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    const sentence = await screen.findByText("Another record already uses this value.");
+    // The sentence reads at the code control, not above the form.
+    expect(sentence.closest("[data-invalid]")?.textContent).toContain("Widget code");
+    expect(screen.queryByText("unique_violation")).toBeNull();
+    expect(screen.queryByText("Completed.")).toBeNull();
+  });
+
+  it("shows that a completed command completed (wamn-55bk)", async () => {
+    const { transport, sent } = stub();
+    const seen: Outcome<unknown>[] = [];
+    render(() => (
+      <WidgetUpdateForm
+        transport={transport}
+        key={{ id: WIDGET }}
+        initial={{ change: { note: "done" } }}
+        onSubmitted={(outcome) => seen.push(outcome)}
+      />
+    ));
+    await waitFor(() => expect(reads(sent)).toBe(1));
+    expect(screen.queryByText("Completed.")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect((await screen.findByText("Completed.")).getAttribute("role")).toBe("status");
   });
 
   it("sends the revision its own completed write moved to", async () => {

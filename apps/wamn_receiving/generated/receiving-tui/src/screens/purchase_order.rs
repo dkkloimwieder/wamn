@@ -163,7 +163,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
             },
             submission::ErrorCase {
                 literal: "foreign_key_violation",
-                required: &["constraint"],
+                required: &["constraint", "field"],
                 sources: &["foreign_key_violation"],
             },
             submission::ErrorCase {

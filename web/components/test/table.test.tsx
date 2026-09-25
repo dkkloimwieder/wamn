@@ -168,7 +168,8 @@ describe("the generated table for a page", () => {
     // The header row, and the one row the grid shows when it holds no record,
     // which states the refusal (wamn-jh80).
     expect(screen.queryAllByRole("row")).toHaveLength(2);
-    expect(screen.getAllByText("permission_denied").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("You do not have permission to do this.").length).toBeGreaterThan(0);
+    expect(screen.queryByText("permission_denied")).toBeNull();
     expect(screen.queryByText("No data available")).toBeNull();
   });
 
@@ -209,7 +210,9 @@ describe("the generated table for a page", () => {
     fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toMatchObject({ status: "refused", code: "unauthenticated" });
-    await waitFor(() => expect(screen.getAllByText("unauthenticated").length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByText("You are not signed in.").length).toBeGreaterThan(0),
+    );
     expect(screen.queryByText("No data available")).toBeNull();
 
     fireEvent.click(screen.getByText("read"));

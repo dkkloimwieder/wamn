@@ -396,6 +396,7 @@ fn emit_update_codec(
         );
     }
     source.push_str(UPDATE_CODEC_ERROR_PREFIX);
+    let guarded = guarded_fields(table, CrudAction::Update, operation);
     for (literal, detail) in details {
         emit_codec_error_arm(
             &mut source,
@@ -403,6 +404,7 @@ fn emit_update_codec(
             access_error_literal(*literal),
             detail,
             revision_width(table, operation),
+            &guarded,
         );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
@@ -525,6 +527,7 @@ fn emit_crud_json_codec(
         operation,
         details,
         revision_width(table, operation),
+        &guarded_fields(table, action, operation),
     );
     source
 }
@@ -834,6 +837,7 @@ fn emit_crud_encoder(
     operation: &OperationDeclaration,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
     revision: Option<ColumnType>,
+    guarded: &[GuardedField],
 ) {
     let type_name = rust_type_identifier(action.as_str());
     writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ \"request_id\": item.request_id, \"value\":")
@@ -868,6 +872,7 @@ fn emit_crud_encoder(
             access_error_literal(*literal),
             detail,
             revision,
+            guarded,
         );
     }
     source.push_str("    };\n    json!({\"code\": code, \"detail\": detail})\n}\n");
@@ -1799,6 +1804,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
                 .as_ref()
                 .and_then(|result| result.fields.iter().find(|field| field.revision))
                 .map(|field| field.ty),
+            &[],
         );
     }
     source.push_str(CUSTOM_CODEC_FOOTER);
@@ -2200,12 +2206,41 @@ fn emit_invalid_detail(source: &mut String, operation: &CustomOperationDeclarati
     source.push_str("    }\n}\n\n");
 }
 
+/// One constraint that guards a field the operation writes: the refusal code
+/// of the constraint, its name, and the input path of the field.
+struct GuardedField {
+    code: &'static str,
+    constraint: String,
+    field: String,
+}
+
+/// Every constraint of the table whose refusal names a field this operation
+/// writes.
+fn guarded_fields(
+    table: &Table,
+    action: CrudAction,
+    operation: &OperationDeclaration,
+) -> Vec<GuardedField> {
+    table
+        .constraints()
+        .iter()
+        .filter_map(|constraint| {
+            super::constraint_field(constraint, action, operation).map(|field| GuardedField {
+                code: access_error_literal(super::constraint_error_code(constraint.kind())),
+                constraint: constraint.name().to_owned(),
+                field,
+            })
+        })
+        .collect()
+}
+
 fn emit_codec_error_arm(
     source: &mut String,
     error_type: &str,
     literal: &str,
     detail: &OperationErrorDetailDeclaration,
     revision: Option<ColumnType>,
+    guarded: &[GuardedField],
 ) {
     let variant = rust_type_identifier(literal);
     if detail.required.is_empty() && detail.optional.is_empty() {
@@ -2260,6 +2295,24 @@ fn emit_codec_error_arm(
             writeln!(source, "            if let Some(detail_value) = &value.{name} {{ detail.insert({name:?}.to_owned(), json!(detail_value)); }}")
                 .expect("writing to a String cannot fail");
         }
+    }
+    // A refusal of a constraint that guards one written field names that
+    // field, as an invalid input does, so a client marks its control.
+    let mut arms = String::new();
+    for guarded in guarded.iter().filter(|guarded| guarded.code == literal) {
+        write!(
+            arms,
+            "{:?} => Some({:?}), ",
+            guarded.constraint, guarded.field
+        )
+        .expect("writing to a String cannot fail");
+    }
+    if !arms.is_empty() {
+        writeln!(
+            source,
+            "            if let Some(field) = match value.constraint.as_str() {{ {arms}_ => None }} {{ detail.insert(\"field\".to_owned(), json!(field)); }}"
+        )
+        .expect("writing to a String cannot fail");
     }
     writeln!(source, "            ({literal:?}, detail)\n        }}")
         .expect("writing to a String cannot fail");

@@ -20,6 +20,7 @@ import {
   newRequestId,
   readMember,
   refusalMarks,
+  refusalSentence,
   refusedMember,
   startRead,
   type JsonValue,
@@ -42,6 +43,7 @@ import {
   FieldError,
   FieldGroup,
   FormActions,
+  FormDone,
   RecordSelect,
   TableScreen,
   TextField,
@@ -113,18 +115,18 @@ export const PalletCreateFormLabel = "create";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function PalletCreateForm(props: PalletCreateFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<PalletCreateRequest>,
     onSubmit: async ({ value }: { value: Partial<PalletCreateRequest> }) => {
+      setDone(false);
       const checked = CREATE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             PALLET_CREATE_REQUEST_FIELDS,
@@ -140,9 +142,10 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
       announceOutcome(outcome, PalletCreateFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
   const [locationIdOptions, setLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
@@ -176,7 +179,7 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`locationId`}>
@@ -194,7 +197,7 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
               }}
               hasNextPage={hasNextPage(locationIdOptions())}
               onNextPage={() => void readLocationIdOptions(locationIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "location_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "location_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -205,7 +208,7 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "pallet_code") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "pallet_code") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -220,12 +223,13 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
               ]}
               value={String(field().state.value ?? "")}
               onChange={(value) => field().handleChange(value as "available" | "held")}
-              error={refusalMarks(refusal()?.member ?? null, "status") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "status") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>

@@ -79,7 +79,7 @@ export const PALLET_CREATE_ROUTE: OperationRoute = {
     partialSchema: null,
     errors: [
       { literal: "check_violation", required: ["constraint"], sources: ["check_violation"] },
-      { literal: "foreign_key_violation", required: ["constraint"], sources: ["foreign_key_violation"] },
+      { literal: "foreign_key_violation", required: ["constraint", "field"], sources: ["foreign_key_violation"] },
       { literal: "idempotency_conflict", required: ["field"], sources: ["changed_canonical_command"] },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded"] },
       { literal: "invalid_input", required: ["field"], sources: [] },

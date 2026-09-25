@@ -249,9 +249,12 @@ export function prefillStub(): Transport {
  *
  * A read answers the current revision. An update with that revision completes
  * and moves it, and an update with any other refuses as a conflict. `write`
- * is a second writer that moves the revision behind the form's back.
+ * is a second writer that moves the revision behind the form's back. An
+ * update to the code `taken` refuses as a unique violation.
  */
-export function updateStub(): { transport: Transport; sent: WireRequest[]; write: () => void } {
+export function updateStub(
+  taken: string | null = null,
+): { transport: Transport; sent: WireRequest[]; write: () => void } {
   const sent: WireRequest[] = [];
   let version = 7;
   const row = (): JsonValue => ({
@@ -282,6 +285,16 @@ export function updateStub(): { transport: Transport; sent: WireRequest[]; write
             status: "refused",
             code: "concurrency_conflict",
             detail: { expected: expected ?? null, observed: String(version) },
+          });
+        }
+        // Another widget holds `taken`, so the unique key refuses it. The
+        // generated codec names the field that the constraint guards.
+        const change = item["change"] as { [key: string]: JsonValue } | undefined;
+        if (taken !== null && change?.["code"] === taken) {
+          return Promise.resolve({
+            status: "refused",
+            code: "unique_violation",
+            detail: { constraint: "widget_code_key", field: "change.code" },
           });
         }
         version += 1;

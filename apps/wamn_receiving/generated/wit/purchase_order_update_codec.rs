@@ -107,6 +107,12 @@ fn error_value(error: &contract::UpdateError) -> Value {
         contract::UpdateError::ForeignKeyViolation(value) => {
             let mut detail = Map::new();
             detail.insert("constraint".to_owned(), json!(value.constraint));
+            if let Some(field) = match value.constraint.as_str() {
+                "purchase_order_supplier_id_fkey" => Some("change.supplier_id"),
+                _ => None,
+            } {
+                detail.insert("field".to_owned(), json!(field));
+            }
             ("foreign_key_violation", detail)
         }
         contract::UpdateError::Retry => ("retry", Map::new()),

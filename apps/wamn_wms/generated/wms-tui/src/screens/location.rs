@@ -276,7 +276,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
             },
             submission::ErrorCase {
                 literal: "unique_violation",
-                required: &["constraint"],
+                required: &["constraint", "field"],
                 sources: &["unique_violation"],
             },
         ],

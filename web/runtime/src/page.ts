@@ -10,6 +10,7 @@
  * its rows when an input changes, so the next reply starts a new list.
  */
 
+import { refusalSentence } from "./refusal.js";
 import type { Outcome } from "./wire.js";
 
 /** What one read screen holds between replies. */
@@ -71,13 +72,14 @@ export function stopRead<Row>(state: PageState<Row>): PageState<Row> {
 /**
  * Mark a read that did not complete as finished, with why.
  *
- * The rows the screen held stay. A refusal states its code, and an uncertain
- * reply states its reason, so the screen never reads as an empty list.
+ * The rows the screen held stay. A refusal states the sentence for its code,
+ * and an uncertain reply states its reason, so the screen never reads as an
+ * empty list.
  */
 export function failedRead<Row>(state: PageState<Row>, outcome: Outcome<unknown>): PageState<Row> {
   const refusal =
     outcome.status === "refused"
-      ? (outcome.code ?? "refused")
+      ? refusalSentence(outcome.code)
       : outcome.status === "uncertain"
         ? outcome.reason
         : outcome.status;

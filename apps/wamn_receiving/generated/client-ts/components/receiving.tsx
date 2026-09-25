@@ -21,6 +21,7 @@ import {
   newRequestId,
   occurredAt,
   refusalMarks,
+  refusalSentence,
   refusedMember,
   startRead,
   type JsonValue,
@@ -41,6 +42,7 @@ import {
   FieldLegend,
   FieldSet,
   FormActions,
+  FormDone,
   RecordSelect,
   TableScreen,
   TextField,
@@ -442,18 +444,18 @@ export const ReceivingRecordReceiptFormLabel = "Record a receipt";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<ReceivingRecordReceiptRequest>,
     onSubmit: async ({ value }: { value: Partial<ReceivingRecordReceiptRequest> }) => {
+      setDone(false);
       const checked = RECORD_RECEIPT_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
@@ -470,9 +472,10 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       announceOutcome(outcome, ReceivingRecordReceiptFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
   const formValues = useStore(form.store, (state) => state.values);
@@ -547,7 +550,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={"value.line"} mode="array">
@@ -566,7 +569,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           optionLabel={(row) => String(row.locationCode)}
                           value={field().state.value == null ? null : String(field().state.value)}
                           onChange={(value) => field().handleChange(value ?? "")}
-                          error={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index()) ? (refusal()?.code ?? "refused") : null}
+                          error={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index()) ? (refusal()?.text ?? null) : null}
                         />
                       )}
                     </form.Field>
@@ -579,7 +582,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           optionLabel={(row) => String(row.itemNumber)}
                           value={field().state.value == null ? null : String(field().state.value)}
                           onChange={(value) => field().handleChange(value ?? "")}
-                          error={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index()) ? (refusal()?.code ?? "refused") : null}
+                          error={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index()) ? (refusal()?.text ?? null) : null}
                         />
                       )}
                     </form.Field>
@@ -590,7 +593,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
                           type="text"
                           value={String(field().state.value ?? "")}
                           onInput={(value) => field().handleChange(value)}
-                          error={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index()) ? (refusal()?.code ?? "refused") : null}
+                          error={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index()) ? (refusal()?.text ?? null) : null}
                         />
                       )}
                     </form.Field>
@@ -632,7 +635,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
               }}
               hasNextPage={hasNextPage(valuePurchaseOrderIdOptions())}
               onNextPage={() => void readValuePurchaseOrderIdOptions(valuePurchaseOrderIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -643,12 +646,13 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>

@@ -18,6 +18,7 @@ import {
   newIdempotencyKey,
   newRequestId,
   refusalMarks,
+  refusalSentence,
   refusedMember,
   startRead,
   type JsonValue,
@@ -35,6 +36,7 @@ import {
   FieldError,
   FieldGroup,
   FormActions,
+  FormDone,
   TableScreen,
   TextField,
   announceOutcome,
@@ -85,18 +87,18 @@ export const SupplierCreateFormLabel = "Add a supplier";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function SupplierCreateForm(props: SupplierCreateFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<SupplierCreateRequest>,
     onSubmit: async ({ value }: { value: Partial<SupplierCreateRequest> }) => {
+      setDone(false);
       const checked = CREATE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             SUPPLIER_CREATE_REQUEST_FIELDS,
@@ -112,9 +114,10 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
       announceOutcome(outcome, SupplierCreateFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
 
@@ -126,7 +129,7 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`name`}>
@@ -136,12 +139,13 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "name") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "name") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>

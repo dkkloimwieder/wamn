@@ -1301,6 +1301,7 @@ fn emit_form(
         "checkedMember",
         "newRequestId",
         "refusalMarks",
+        "refusalSentence",
         "refusedMember",
         "writeMember",
         "type Outcome",
@@ -1426,8 +1427,10 @@ fn emit_form(
     )
     .expect("write");
     source.push_str(
-        "  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(\n    null,\n  );\n",
+        "  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);\n",
     );
+    // True after the last submission completed, so the form shows its result.
+    source.push_str("  const [done, setDone] = createSignal(false);\n");
     if let Some(binding) = screen.revision {
         let read = crate::client_ts::function_name(local_name(binding.read_operation)).map_err(
             |error| {
@@ -1462,6 +1465,7 @@ fn emit_form(
     .expect("write");
     source.push_str("    onSubmit: async ({ value }: { value: Partial<");
     writeln!(source, "{stem}Request> }}) => {{").expect("write");
+    source.push_str("      setDone(false);\n");
     writeln!(
         source,
         "      const checked = {}_INPUT.safeParse(value);",
@@ -1470,7 +1474,7 @@ fn emit_form(
     .expect("write");
     writeln!(
         source,
-        "      if (!checked.success) {{\n        const issue = checked.error.issues[0];\n        setRefusal({{\n          code: issue?.message ?? \"the input is not valid\",\n          member: checkedMember(\n            issue?.path as (string | number)[] | undefined,\n            {fields},\n          ),\n        }});\n        return;\n      }}"
+        "      if (!checked.success) {{\n        const issue = checked.error.issues[0];\n        setRefusal({{\n          text: issue?.message ?? \"A value is not valid.\",\n          member: checkedMember(\n            issue?.path as (string | number)[] | undefined,\n            {fields},\n          ),\n        }});\n        return;\n      }}"
     )
     .expect("write");
     writeln!(source, "      let item = {{ ...value }} as {stem}Request;").expect("write");
@@ -1490,7 +1494,7 @@ fn emit_form(
     if let Some(binding) = screen.revision {
         source.push_str("      // The revision is the one the form read when it opened, never one read\n      // now, because a change made since then is what the conflict outcome names.\n");
         source.push_str(
-            "      const read = record();\n      if (read?.status !== \"completed\") {\n        setRefusal({ code: read?.status ?? \"the record is not read yet\", member: null });\n        return;\n      }\n",
+            "      const read = record();\n      if (read?.status !== \"completed\") {\n        setRefusal({ text: \"The record this form changes is not read yet.\", member: null });\n        return;\n      }\n",
         );
         writeln!(
             source,
@@ -1514,7 +1518,7 @@ fn emit_form(
                 let (state, _) = selector_state(populated.input);
                 writeln!(
                     source,
-                    "      const {state}Chosen = {state}Revision();\n      if ({state}Chosen === null) {{\n        setRefusal({{ code: \"choose the record from its list\", member: {:?} }});\n        return;\n      }}\n      item = writeMember(item, {}, {state}Chosen);",
+                    "      const {state}Chosen = {state}Revision();\n      if ({state}Chosen === null) {{\n        setRefusal({{ text: \"Choose the record from its list.\", member: {:?} }});\n        return;\n      }}\n      item = writeMember(item, {}, {state}Chosen);",
                     populated.input,
                     member_literal(revision)
                 )
@@ -1546,7 +1550,7 @@ fn emit_form(
     // member still marks that member in place.
     writeln!(source, "      announceOutcome(outcome, {stem}FormLabel);").expect("write");
     source.push_str(
-        "      setRefusal(\n        outcome.status === \"refused\"\n          ? { code: outcome.code, member: refusedMember(outcome.detail) }\n          : null,\n      );\n",
+        "      setRefusal(\n        outcome.status === \"refused\"\n          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }\n          : null,\n      );\n      setDone(outcome.status === \"completed\");\n",
     );
     source.push_str("    },\n  }));\n");
 
@@ -1585,9 +1589,15 @@ fn emit_form(
     }
 
     // The markup. A refusal that names no member reads above the controls.
-    ui.extend(["Button", "FieldError", "FormActions", "announceOutcome"]);
+    ui.extend([
+        "Button",
+        "FieldError",
+        "FormActions",
+        "FormDone",
+        "announceOutcome",
+    ]);
     source.push_str(
-        "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <FieldError>{refusal()?.code}</FieldError>\n      </Show>\n",
+        "\n  return (\n    <form\n      onSubmit={(event) => {\n        event.preventDefault();\n        void form.handleSubmit();\n      }}\n    >\n      <Show when={refusal()?.member === null ? refusal() : undefined}>\n        <FieldError>{refusal()?.text}</FieldError>\n      </Show>\n",
     );
     let inputs = operator_inputs(screen);
     let mut repeated_written: Vec<String> = Vec::new();
@@ -1627,7 +1637,7 @@ fn emit_form(
         source.push_str("      </FieldGroup>\n");
     }
     source.push_str(
-        "      <FormActions>\n        <Button type=\"submit\">submit</Button>\n      </FormActions>\n    </form>\n  );\n}\n",
+        "      <FormActions>\n        <FormDone when={done()} />\n        <Button type=\"submit\">submit</Button>\n      </FormActions>\n    </form>\n  );\n}\n",
     );
     Ok(())
 }
@@ -1902,7 +1912,7 @@ fn emit_selector_control(
     }
     writeln!(
         source,
-        "{pad}  error={{{marks} ? (refusal()?.code ?? \"refused\") : null}}\n{pad}/>"
+        "{pad}  error={{{marks} ? (refusal()?.text ?? null) : null}}\n{pad}/>"
     )
     .expect("write");
 }
@@ -2025,7 +2035,7 @@ fn emit_input_control(
 ) {
     let pad = " ".repeat(indent);
     let text = label(input);
-    let error = format!("error={{{marks} ? (refusal()?.code ?? \"refused\") : null}}");
+    let error = format!("error={{{marks} ? (refusal()?.text ?? null) : null}}");
     if input.type_name == "boolean" {
         ui.insert("CheckField");
         writeln!(
@@ -2093,6 +2103,7 @@ fn emit_delete(
     })?;
     runtime.extend([
         "newRequestId",
+        "refusalSentence",
         "refusedMember",
         "writeMember",
         "type Outcome",
@@ -2186,7 +2197,7 @@ fn emit_delete(
     )
     .expect("write");
     source.push_str(
-        "  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(\n    null,\n  );\n",
+        "  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);\n",
     );
     source.push_str("\n  const remove = async () => {\n");
     if let Some(binding) = screen.revision {
@@ -2234,10 +2245,10 @@ fn emit_delete(
     source.push_str("    props.onSubmitted?.(outcome);\n");
     writeln!(source, "    announceOutcome(outcome, {stem}DeleteLabel);").expect("write");
     source.push_str(
-        "    setRefusal(\n      outcome.status === \"refused\"\n        ? { code: outcome.code, member: refusedMember(outcome.detail) }\n        : null,\n    );\n  };\n",
+        "    setRefusal(\n      outcome.status === \"refused\"\n        ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }\n        : null,\n    );\n  };\n",
     );
     source.push_str(
-        "\n  return (\n    <section>\n      <Show when={refusal()}>\n        <FieldError>{refusal()?.code}</FieldError>\n      </Show>\n      <ConfirmAction\n        trigger=\"delete\"\n        question=\"remove this record?\"\n        confirm=\"confirm\"\n        cancel=\"cancel\"\n        onConfirm={() => void remove()}\n      />\n    </section>\n  );\n}\n",
+        "\n  return (\n    <section>\n      <Show when={refusal()}>\n        <FieldError>{refusal()?.text}</FieldError>\n      </Show>\n      <ConfirmAction\n        trigger=\"delete\"\n        question=\"remove this record?\"\n        confirm=\"confirm\"\n        cancel=\"cancel\"\n        onConfirm={() => void remove()}\n      />\n    </section>\n  );\n}\n",
     );
     Ok(())
 }

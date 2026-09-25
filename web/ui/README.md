@@ -46,11 +46,11 @@ Add an item only when an emitter target, or a page that places the generated com
 | `gridFeatures`, `GridFeatures` | The TanStack Table features every generated table declares |
 | `RecordSelect` | The selector: the rows a list returned, a search after a pause in typing, and a next page button |
 | `createRecordLabels` | The text of the records a table column names by key, read once for each key |
-| `announceOutcome` | Shows one runtime outcome as a toast |
-| `TextField`, `ChoiceField`, `CheckField` | One labeled control and the refusal that marks it |
+| `announceOutcome` | Shows one runtime outcome as a toast || `TextField`, `ChoiceField`, `CheckField` | One labeled control and the refusal that marks it |
 | `DetailList`, `DetailItem` | The fields of one record, with a skeleton while it is read |
 | `ConfirmAction` | One action the operator confirms first, in an alert dialog |
 | `FormActions` | The buttons that close a form or a table, in one full-width row aligned right |
+| `FormDone` | The line a form shows beside its buttons after its command completes |
 | `TableScreen` | One table screen: its filter form, its rows and its next page, stacked with one gap |
 
 `RecordSelect` filters nothing itself, so its options are exactly the rows the release sent.

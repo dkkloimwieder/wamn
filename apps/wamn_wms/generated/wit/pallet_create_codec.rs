@@ -79,11 +79,23 @@ fn error_value(error: &contract::CreateError) -> Value {
         contract::CreateError::UniqueViolation(value) => {
             let mut detail = Map::new();
             detail.insert("constraint".to_owned(), json!(value.constraint));
+            if let Some(field) = match value.constraint.as_str() {
+                "pallet_pallet_code_key" => Some("pallet_code"),
+                _ => None,
+            } {
+                detail.insert("field".to_owned(), json!(field));
+            }
             ("unique_violation", detail)
         }
         contract::CreateError::ForeignKeyViolation(value) => {
             let mut detail = Map::new();
             detail.insert("constraint".to_owned(), json!(value.constraint));
+            if let Some(field) = match value.constraint.as_str() {
+                "pallet_location_id_fkey" => Some("location_id"),
+                _ => None,
+            } {
+                detail.insert("field".to_owned(), json!(field));
+            }
             ("foreign_key_violation", detail)
         }
         contract::CreateError::CheckViolation(value) => {

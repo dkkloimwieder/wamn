@@ -97,11 +97,77 @@ fn crud_errors_and_details_are_derived_from_action_and_catalog() {
         if let Some(case) = actual.get("idempotency_conflict") {
             assert_eq!(case["detail"], json!({"required": ["field"]}));
         }
-        for literal in ["check_violation", "unique_violation"] {
-            if let Some(case) = actual.get(literal) {
-                assert_eq!(case["detail"], json!({"required": ["constraint"]}));
+        if let Some(case) = actual.get("check_violation") {
+            assert_eq!(case["detail"], json!({"required": ["constraint"]}));
+        }
+    }
+}
+
+/// A refusal of a constraint that guards one written field names that field,
+/// as an invalid input does, so a client marks its control (wamn-1dov).
+#[test]
+fn a_constraint_refusal_names_the_field_it_guards() {
+    let package = fixture::generate_fixture();
+    for (action, expected) in [
+        (
+            "create",
+            vec![
+                ("widget_code_check", None),
+                ("widget_code_key", Some("code")),
+                ("widget_id_pkey", None),
+                ("widget_maker_id_fkey", Some("maker_id")),
+            ],
+        ),
+        (
+            "update",
+            vec![
+                ("widget_code_key", Some("change.code")),
+                ("widget_maker_id_fkey", Some("change.maker_id")),
+            ],
+        ),
+    ] {
+        let contract = artifact(
+            &package,
+            &format!("generated/contracts/widget/{action}.errors.json"),
+        );
+        let named = contract["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|case| {
+                let constraint = case["constraint"].as_str()?;
+                let required = case["detail"]["required"].clone();
+                Some((constraint.to_owned(), required))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let codec = String::from_utf8(
+            package
+                .file(&format!("generated/wit/widget_{action}_codec.rs"))
+                .unwrap()
+                .bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        for (constraint, field) in &expected {
+            let required = match field {
+                Some(_) => json!(["field", "constraint"]),
+                None => json!(["constraint"]),
+            };
+            assert_eq!(named[*constraint], required, "{action} {constraint}");
+            let arm = format!("{constraint:?} => Some(");
+            assert_eq!(
+                codec.contains(&arm),
+                field.is_some(),
+                "{action} codec for {constraint}"
+            );
+            if let Some(field) = field {
+                assert!(
+                    codec.contains(&format!("{constraint:?} => Some({field:?})")),
+                    "{action} codec names {field}"
+                );
             }
         }
+        assert_eq!(named.len(), expected.len(), "{action}");
     }
 }
 

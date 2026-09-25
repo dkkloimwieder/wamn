@@ -341,7 +341,7 @@ export const LOCATION_UPDATE_ROUTE: OperationRoute = {
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"] },
       { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"] },
       { literal: "timeout", required: [], sources: ["statement_timeout"] },
-      { literal: "unique_violation", required: ["constraint"], sources: ["unique_violation"] },
+      { literal: "unique_violation", required: ["constraint", "field"], sources: ["unique_violation"] },
     ],
     replay: null,
     direct: true,

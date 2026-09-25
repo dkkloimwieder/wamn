@@ -19,6 +19,7 @@ import {
   newRequestId,
   readMember,
   refusalMarks,
+  refusalSentence,
   refusedMember,
   startRead,
   type JsonValue,
@@ -39,6 +40,7 @@ import {
   FieldError,
   FieldGroup,
   FormActions,
+  FormDone,
   TableScreen,
   TextField,
   announceOutcome,
@@ -97,18 +99,18 @@ export const ProductCreateFormLabel = "create";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function ProductCreateForm(props: ProductCreateFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<ProductCreateRequest>,
     onSubmit: async ({ value }: { value: Partial<ProductCreateRequest> }) => {
+      setDone(false);
       const checked = CREATE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             PRODUCT_CREATE_REQUEST_FIELDS,
@@ -124,9 +126,10 @@ export function ProductCreateForm(props: ProductCreateFormProps) {
       announceOutcome(outcome, ProductCreateFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
 
@@ -138,7 +141,7 @@ export function ProductCreateForm(props: ProductCreateFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`productCode`}>
@@ -148,12 +151,13 @@ export function ProductCreateForm(props: ProductCreateFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "product_code") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "product_code") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>
@@ -458,9 +462,8 @@ export const ProductUpdateFormLabel = "update";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function ProductUpdateForm(props: ProductUpdateFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
   // The record this command changes, read when the form opens and again
   // when its key changes. The form sends the revision of this read, so a
   // change another writer makes after it refuses as a conflict.
@@ -472,11 +475,12 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<ProductUpdateRequest>,
     onSubmit: async ({ value }: { value: Partial<ProductUpdateRequest> }) => {
+      setDone(false);
       const checked = UPDATE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             PRODUCT_UPDATE_REQUEST_FIELDS,
@@ -490,7 +494,7 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
       // now, because a change made since then is what the conflict outcome names.
       const read = record();
       if (read?.status !== "completed") {
-        setRefusal({ code: read?.status ?? "the record is not read yet", member: null });
+        setRefusal({ text: "The record this form changes is not read yet.", member: null });
         return;
       }
       item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
@@ -503,9 +507,10 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
       announceOutcome(outcome, ProductUpdateFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
 
@@ -517,7 +522,7 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`change.productCode`}>
@@ -527,12 +532,13 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "change.product_code") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "change.product_code") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>

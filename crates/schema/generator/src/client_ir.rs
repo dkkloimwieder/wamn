@@ -1313,7 +1313,31 @@ fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
         })
         .unwrap_or_default();
     cases.sort_by(|left, right| left.literal.cmp(&right.literal));
-    cases.dedup_by(|left, right| left.literal == right.literal);
+    // One literal can name several constraints, and only some of them name a
+    // field. A key every case requires stays required, and a key that some
+    // case states is optional, so the order of the cases changes nothing.
+    cases.dedup_by(|case, kept| {
+        if case.literal != kept.literal {
+            return false;
+        }
+        let stated = [
+            &kept.detail_required,
+            &kept.detail_optional,
+            &case.detail_required,
+            &case.detail_optional,
+        ]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+        kept.detail_required
+            .retain(|key| case.detail_required.contains(key));
+        kept.detail_optional = stated
+            .into_iter()
+            .filter(|key| !kept.detail_required.contains(key))
+            .collect();
+        true
+    });
     cases
 }
 

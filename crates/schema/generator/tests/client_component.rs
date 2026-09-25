@@ -374,8 +374,17 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "a refusal that names a member reaches that member"
     );
     assert!(
+        create.contains("text: refusalSentence(outcome.code)"),
+        "a refusal reads as a sentence, not as its code"
+    );
+    assert!(
+        create.contains("setDone(outcome.status === \"completed\");")
+            && create.contains("<FormDone when={done()} />"),
+        "a completed command shows its result in the form"
+    );
+    assert!(
         create.contains(
-            "error={refusalMarks(refusal()?.member ?? null, \"code\") ? (refusal()?.code ?? \"refused\") : null}"
+            "error={refusalMarks(refusal()?.member ?? null, \"code\") ? (refusal()?.text ?? null) : null}"
         ),
         "the control states the path it declares, and the runtime decides"
     );
@@ -414,7 +423,7 @@ fn a_form_renders_through_the_ui_fields_and_states_no_class() {
         "a text input is a text field with its label"
     );
     assert!(
-        batch.contains("<FieldError>{refusal()?.code}</FieldError>"),
+        batch.contains("<FieldError>{refusal()?.text}</FieldError>"),
         "a refusal that names no member reads above the controls"
     );
     assert!(
@@ -430,11 +439,12 @@ fn a_form_renders_through_the_ui_fields_and_states_no_class() {
     assert!(
         batch.contains(concat!(
             "      <FormActions>\n",
+            "        <FormDone when={done()} />\n",
             "        <Button type=\"submit\">submit</Button>\n",
             "      </FormActions>\n",
             "    </form>\n",
         )),
-        "the submit button closes the form in the actions row"
+        "the submit button closes the form in the actions row, beside its result"
     );
     assert!(
         batch.contains(concat!(
@@ -1267,7 +1277,7 @@ fn a_form_sends_the_revision_of_the_record_its_revision_names() {
     assert!(widget.contains(concat!(
         "      const valueInspectorIdChosen = valueInspectorIdRevision();\n",
         "      if (valueInspectorIdChosen === null) {\n",
-        "        setRefusal({ code: \"choose the record from its list\", member: \"value.inspector_id\" });\n",
+        "        setRefusal({ text: \"Choose the record from its list.\", member: \"value.inspector_id\" });\n",
         "        return;\n",
         "      }\n",
         "      item = writeMember(item, [\"value\", \"expectedEditVersion\"], valueInspectorIdChosen);\n",

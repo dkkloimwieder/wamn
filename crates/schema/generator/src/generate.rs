@@ -568,6 +568,45 @@ fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
     }
 }
 
+/// The input path of one field this operation writes, as its input states it.
+fn writable_path(action: CrudAction, field: &str) -> String {
+    if action == CrudAction::Update {
+        format!("change.{field}")
+    } else {
+        field.to_owned()
+    }
+}
+
+/// The input path that a refusal of this constraint names, or none.
+///
+/// A constraint over one column that the operation writes guards that field,
+/// so its refusal names the field as the input states it. A constraint over
+/// several columns, a check, or a column the caller does not write names none.
+fn constraint_field(
+    constraint: &Constraint,
+    action: CrudAction,
+    operation: &OperationDeclaration,
+) -> Option<String> {
+    let column = match constraint.kind() {
+        ConstraintKind::PrimaryKey { columns } | ConstraintKind::Unique { columns } => {
+            match &**columns {
+                [column] => &**column,
+                _ => return None,
+            }
+        }
+        ConstraintKind::ForeignKey { columns, .. } => match &**columns {
+            [column] => column.column(),
+            _ => return None,
+        },
+        ConstraintKind::Check { .. } => return None,
+    };
+    operation
+        .writable_fields
+        .iter()
+        .any(|field| field == column)
+        .then(|| writable_path(action, column))
+}
+
 fn operation_error_details(
     catalog: &CatalogIr,
     table: &Table,

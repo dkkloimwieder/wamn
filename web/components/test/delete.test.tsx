@@ -79,8 +79,9 @@ describe("the generated delete", () => {
 
     expect(sent).toHaveLength(1);
     expect(seen[0]).toMatchObject({ status: "refused", code: "concurrency_conflict" });
-    await waitFor(() =>
-      expect(screen.getAllByText("concurrency_conflict").length).toBeGreaterThan(0),
+    await screen.findByText(
+      "Another change saved this record after you opened it. Read it again and retry.",
     );
+    expect(screen.queryByText("concurrency_conflict")).toBeNull();
   });
 });

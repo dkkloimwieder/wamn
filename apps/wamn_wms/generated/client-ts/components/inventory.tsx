@@ -19,6 +19,7 @@ import {
   newRequestId,
   occurredAt,
   refusalMarks,
+  refusalSentence,
   refusedMember,
   startRead,
   type JsonValue,
@@ -39,6 +40,7 @@ import {
   FieldError,
   FieldGroup,
   FormActions,
+  FormDone,
   RecordSelect,
   TableScreen,
   TextField,
@@ -136,18 +138,18 @@ export const InventoryAdjustFormLabel = "adjust";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<InventoryAdjustRequest>,
     onSubmit: async ({ value }: { value: Partial<InventoryAdjustRequest> }) => {
+      setDone(false);
       const checked = ADJUST_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             INVENTORY_ADJUST_REQUEST_FIELDS,
@@ -165,9 +167,10 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
       announceOutcome(outcome, InventoryAdjustFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
   const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
@@ -223,7 +226,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`value.palletId`}>
@@ -241,7 +244,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
               }}
               hasNextPage={hasNextPage(valuePalletIdOptions())}
               onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -260,7 +263,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
               }}
               hasNextPage={hasNextPage(valueProductIdOptions())}
               onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -271,7 +274,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -282,7 +285,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.reason_code") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.reason_code") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -297,12 +300,13 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
               ]}
               value={String(field().state.value ?? "")}
               onChange={(value) => field().handleChange(value as "available" | "held")}
-              error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>
@@ -468,18 +472,18 @@ export const InventoryMergeFormLabel = "merge";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function InventoryMergeForm(props: InventoryMergeFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<InventoryMergeRequest>,
     onSubmit: async ({ value }: { value: Partial<InventoryMergeRequest> }) => {
+      setDone(false);
       const checked = MERGE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             INVENTORY_MERGE_REQUEST_FIELDS,
@@ -493,7 +497,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
       const valueTargetPalletIdChosen = valueTargetPalletIdRevision();
       if (valueTargetPalletIdChosen === null) {
-        setRefusal({ code: "choose the record from its list", member: "value.target_pallet_id" });
+        setRefusal({ text: "Choose the record from its list.", member: "value.target_pallet_id" });
         return;
       }
       item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPalletIdChosen);
@@ -502,9 +506,10 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       announceOutcome(outcome, InventoryMergeFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
   const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
@@ -561,7 +566,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`value.sourcePalletId`}>
@@ -579,7 +584,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
               }}
               hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
               onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -603,12 +608,13 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
               }}
               hasNextPage={hasNextPage(valueTargetPalletIdOptions())}
               onNextPage={() => void readValueTargetPalletIdOptions(valueTargetPalletIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.target_pallet_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.target_pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>
@@ -655,18 +661,18 @@ export const InventoryMoveFormLabel = "move";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function InventoryMoveForm(props: InventoryMoveFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<InventoryMoveRequest>,
     onSubmit: async ({ value }: { value: Partial<InventoryMoveRequest> }) => {
+      setDone(false);
       const checked = MOVE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             INVENTORY_MOVE_REQUEST_FIELDS,
@@ -684,9 +690,10 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
       announceOutcome(outcome, InventoryMoveFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
   const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
@@ -742,7 +749,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`value.palletId`}>
@@ -760,7 +767,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
               }}
               hasNextPage={hasNextPage(valuePalletIdOptions())}
               onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -779,12 +786,13 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
               }}
               hasNextPage={hasNextPage(valueToLocationIdOptions())}
               onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>
@@ -839,18 +847,18 @@ export const InventorySplitFormLabel = "split";
  * come from the runtime at submit time, and the operator never sees them.
  */
 export function InventorySplitForm(props: InventorySplitFormProps) {
-  const [refusal, setRefusal] = createSignal<{ code: string | null; member: string | null } | null>(
-    null,
-  );
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
 
   const form = createForm(() => ({
     defaultValues: { ...props.initial } as Partial<InventorySplitRequest>,
     onSubmit: async ({ value }: { value: Partial<InventorySplitRequest> }) => {
+      setDone(false);
       const checked = SPLIT_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
         setRefusal({
-          code: issue?.message ?? "the input is not valid",
+          text: issue?.message ?? "A value is not valid.",
           member: checkedMember(
             issue?.path as (string | number)[] | undefined,
             INVENTORY_SPLIT_REQUEST_FIELDS,
@@ -868,9 +876,10 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
       announceOutcome(outcome, InventorySplitFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { code: outcome.code, member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
           : null,
       );
+      setDone(outcome.status === "completed");
     },
   }));
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
@@ -948,7 +957,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
-        <FieldError>{refusal()?.code}</FieldError>
+        <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
         <form.Field name={`value.newPalletCode`}>
@@ -958,7 +967,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.new_pallet_code") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.new_pallet_code") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -977,7 +986,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               }}
               hasNextPage={hasNextPage(valueProductIdOptions())}
               onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -988,7 +997,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               type="text"
               value={String(field().state.value ?? "")}
               onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -1007,7 +1016,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               }}
               hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
               onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -1022,7 +1031,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               ]}
               value={String(field().state.value ?? "")}
               onChange={(value) => field().handleChange(value as "available" | "held")}
-              error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
@@ -1041,12 +1050,13 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               }}
               hasNextPage={hasNextPage(valueToLocationIdOptions())}
               onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.code ?? "refused") : null}
+              error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
             />
           )}
         </form.Field>
       </FieldGroup>
       <FormActions>
+        <FormDone when={done()} />
         <Button type="submit">submit</Button>
       </FormActions>
     </form>

@@ -7,7 +7,7 @@
  * replace the mark.
  */
 
-import type { Outcome } from "@wamn/web-runtime";
+import { type Outcome, refusalSentence } from "@wamn/web-runtime";
 import { toast } from "solid-sonner";
 
 /** Shows one outcome of the screen that `screen` names. */
@@ -20,10 +20,7 @@ export function announceOutcome<T>(outcome: Outcome<T>, screen: string): void {
       toast.warning(`${screen}: partially completed`);
       return;
     case "refused":
-      toast.error(
-        `${screen}: refused`,
-        outcome.code === null ? {} : { description: outcome.code },
-      );
+      toast.error(`${screen}: refused`, { description: refusalSentence(outcome.code) });
       return;
     case "uncertain":
       toast.warning(`${screen}: uncertain`, { description: outcome.reason });

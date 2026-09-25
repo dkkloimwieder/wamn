@@ -325,7 +325,7 @@ export const PURCHASE_ORDER_UPDATE_ROUTE: OperationRoute = {
     partialSchema: null,
     errors: [
       { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: [] },
-      { literal: "foreign_key_violation", required: ["constraint"], sources: ["foreign_key_violation"] },
+      { literal: "foreign_key_violation", required: ["constraint", "field"], sources: ["foreign_key_violation"] },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded"] },
       { literal: "invalid_input", required: ["field"], sources: [] },
       { literal: "not_found", required: ["field", "id"], sources: [] },

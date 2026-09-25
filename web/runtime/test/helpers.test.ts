@@ -9,6 +9,7 @@ import { ABSENT_CELL, cellText } from "../src/cell.js";
 import { clearMember, completePair, readMember, writeControl, writeMember } from "../src/draft.js";
 import { canAdd, canRemove } from "../src/group.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
+import { refusalSentence } from "../src/refusal.js";
 import { checkedMember, refusalMarks, refusedMember } from "../src/transport.js";
 
 describe("the page state", () => {
@@ -110,6 +111,20 @@ describe("the cell text", () => {
     expect(cellText(false, "boolean")).toBe("false");
     expect(cellText([1, 2, 3], "bytes")).toBe("3 bytes");
     expect(cellText({ fooBar: 1 }, "json")).toBe('{"fooBar":1}');
+  });
+});
+
+describe("the sentence for a refusal", () => {
+  it("reads a platform code as its own sentence", () => {
+    expect(refusalSentence("unique_violation")).toBe("Another record already uses this value.");
+  });
+
+  it("reads an application code as the code in words", () => {
+    expect(refusalSentence("purchase_order_not_open")).toBe("Purchase order not open.");
+  });
+
+  it("reads a refusal with no code as a plain refusal", () => {
+    expect(refusalSentence(null)).toBe("The request was refused.");
   });
 });
 

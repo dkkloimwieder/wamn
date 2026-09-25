@@ -16,11 +16,12 @@ use super::{
     RequiredConstraint, RequiredField, RequiredSchemaContract, RequiredTable, ResultClass,
     StatementContract, StatementTransactionality, StatementValueContract, Table, Value, WamnApi,
     canonical_operation_identity, column, constraint_error, constraint_error_code,
-    custom_artifact_stem, custom_operation_constraint_origin, insert_bytes, insert_json,
-    insert_json_line, json, operation_constraints, operation_exclusions, query_variants, relation,
-    rust_type_identifier, server_owned_fields, sha256, sql,
+    constraint_field, custom_artifact_stem, custom_operation_constraint_origin, insert_bytes,
+    insert_json, insert_json_line, json, operation_constraints, operation_exclusions,
+    query_variants, relation, rust_type_identifier, server_owned_fields, sha256, sql,
+    writable_path,
 };
-use crate::manifest::FieldReference;
+use crate::manifest::{FieldReference, OperationErrorDetailKey};
 use wamn_record_history::HISTORY_COLUMNS;
 
 #[expect(
@@ -1030,7 +1031,7 @@ fn input_contract(
             };
             let mut declared = json!({
                 "field": field,
-                "path": if action == CrudAction::Update { format!("change.{field}") } else { field.clone() },
+                "path": writable_path(action, field),
                 "type": column.column_type().as_str(),
                 "omitted": omitted,
                 "explicit_null": if column.nullable() { "accepted" } else { "invalid_input" },
@@ -1212,6 +1213,7 @@ fn error_contract(
             }),
         ));
     }
+    let mut guarded = BTreeSet::new();
     for constraint in operation_constraints(catalog, table, action, operation, delete_mode) {
         let code = constraint_error_code(constraint.kind());
         cases.push((
@@ -1222,6 +1224,11 @@ fn error_contract(
                 "constraint": constraint.name(),
             }),
         ));
+        // A refusal of a constraint that guards one written field names that
+        // field, as an invalid input does, so a client marks its control.
+        if constraint_field(constraint, action, operation).is_some() {
+            guarded.insert(constraint.name().to_owned());
+        }
     }
     for exclusion in operation_exclusions(table, action, operation) {
         cases.push((
@@ -1236,14 +1243,16 @@ fn error_contract(
     let cases = cases
         .into_iter()
         .map(|(code, mut case)| {
+            let mut detail = crate::manifest::access_operation_error_detail(action, code);
+            if case["constraint"]
+                .as_str()
+                .is_some_and(|name| guarded.contains(name))
+            {
+                detail.required.insert(0, OperationErrorDetailKey::Field);
+            }
             case.as_object_mut()
                 .expect("error contract case is an object")
-                .insert(
-                    "detail".to_owned(),
-                    error_detail_contract(&crate::manifest::access_operation_error_detail(
-                        action, code,
-                    )),
-                );
+                .insert("detail".to_owned(), error_detail_contract(&detail));
             case
         })
         .collect::<Vec<_>>();
