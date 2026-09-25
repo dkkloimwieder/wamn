@@ -365,59 +365,6 @@ type TooltipProviderContextValue = {
 
 const TooltipProviderContext = createContext<TooltipProviderContextValue>();
 
-type TooltipProviderProps = {
-  children?: JSX.Element;
-  closeDelay?: number;
-  delay?: number;
-  timeout?: number;
-};
-
-const TooltipProvider = (props: TooltipProviderProps) => {
-  const mergedProps = mergeProps({ delay: 0, timeout: 400 }, props);
-  const [instant, setInstant] = createSignal(false);
-  let activeHandle: TooltipHandle<unknown> | undefined;
-  let cooldownTimer: number | undefined;
-  const context: TooltipProviderContextValue = {
-    activate: (handle) => {
-      const shouldOpenInstantly = instant();
-      if (activeHandle && activeHandle !== handle) {
-        activeHandle._requestOpen(false, "none", baseEvent(), activeHandle._activeTriggerId());
-      }
-      if (typeof window !== "undefined") window.clearTimeout(cooldownTimer);
-      cooldownTimer = undefined;
-      activeHandle = handle;
-      setInstant(true);
-      return shouldOpenInstantly;
-    },
-    closeDelay: () => mergedProps.closeDelay,
-    deactivate: (handle) => {
-      if (activeHandle !== handle) return;
-      activeHandle = undefined;
-      if (typeof window === "undefined") {
-        setInstant(false);
-        return;
-      }
-      window.clearTimeout(cooldownTimer);
-      cooldownTimer = window.setTimeout(() => {
-        cooldownTimer = undefined;
-        setInstant(false);
-      }, mergedProps.timeout);
-    },
-    delay: () => mergedProps.delay,
-    isInstant: instant,
-  };
-
-  onCleanup(() => {
-    if (typeof window !== "undefined") window.clearTimeout(cooldownTimer);
-  });
-
-  return (
-    <TooltipProviderContext.Provider value={context}>
-      {mergedProps.children}
-    </TooltipProviderContext.Provider>
-  );
-};
-
 type TooltipContextValue<Payload = unknown> = {
   anchorRect: () => { height?: number; width?: number; x?: number; y?: number } | undefined;
   anchorHidden: () => boolean;
@@ -1295,24 +1242,10 @@ const TooltipContent = <T extends ValidComponent = "div">(props: TooltipContentP
 };
 
 export type {
-  TooltipActions,
-  TooltipAlign,
-  TooltipChangeDetails,
-  TooltipChangeReason,
   TooltipContentProps,
-  TooltipOffset,
-  TooltipOffsetData,
-  TooltipPayloadChildRenderFunction,
-  TooltipProps,
-  TooltipProviderProps,
-  TooltipSide,
-  TooltipTriggerProps,
 };
 export {
-  createTooltipHandle,
   Tooltip,
   TooltipContent,
-  TooltipHandle,
-  TooltipProvider,
   TooltipTrigger,
 };

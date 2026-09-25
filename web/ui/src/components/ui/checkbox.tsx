@@ -42,26 +42,4 @@ const Checkbox = <T extends ValidComponent = "div">(props: CheckboxProps<T>) => 
   );
 };
 
-type CheckboxLabelProps<T extends ValidComponent = "label"> = PolymorphicProps<
-  T,
-  CheckboxPrimitive.CheckboxLabelProps<T>
-> &
-  Pick<ComponentProps<T>, "class" | "children">;
-
-const CheckboxLabel = <T extends ValidComponent = "label">(props: CheckboxLabelProps<T>) => {
-  const [local, others] = splitProps(props as CheckboxLabelProps, ["class", "children"]);
-  return (
-    <CheckboxPrimitive.Label
-      data-slot="checkbox-label"
-      class={cn(
-        "font-medium text-sm leading-none peer-data-disabled:cursor-not-allowed peer-data-disabled:opacity-70",
-        local.class,
-      )}
-      {...others}
-    >
-      {local.children}
-    </CheckboxPrimitive.Label>
-  );
-};
-
-export { Checkbox, CheckboxLabel };
+export { Checkbox };

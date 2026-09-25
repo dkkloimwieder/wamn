@@ -48,4 +48,4 @@ const Badge = <T extends ValidComponent = "span">(props: BadgeProps<T>) => {
   );
 };
 
-export { Badge, badgeVariants };
+export { Badge };

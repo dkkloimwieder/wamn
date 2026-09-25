@@ -100,19 +100,6 @@ const AlertDialogFooter = (props: AlertDialogFooterProps) => {
   );
 };
 
-type AlertDialogMediaProps = ComponentProps<"div">;
-
-const AlertDialogMedia = (props: AlertDialogMediaProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="alert-dialog-media"
-      class={cn("z-alert-dialog-media", local.class)}
-      {...others}
-    />
-  );
-};
-
 type AlertDialogTitleProps<T extends ValidComponent = "h2"> = PolymorphicProps<
   T,
   AlertDialogPrimitive.AlertDialogTitleProps<T>
@@ -125,25 +112,6 @@ const AlertDialogTitle = <T extends ValidComponent = "h2">(props: AlertDialogTit
     <AlertDialogPrimitive.Title
       class={cn("z-alert-dialog-title z-font-heading", local.class)}
       data-slot="alert-dialog-title"
-      {...others}
-    />
-  );
-};
-
-type AlertDialogDescriptionProps<T extends ValidComponent = "p"> = PolymorphicProps<
-  T,
-  AlertDialogPrimitive.AlertDialogDescriptionProps<T>
-> &
-  Pick<ComponentProps<T>, "class">;
-
-const AlertDialogDescription = <T extends ValidComponent = "p">(
-  props: AlertDialogDescriptionProps<T>,
-) => {
-  const [local, others] = splitProps(props as AlertDialogDescriptionProps, ["class"]);
-  return (
-    <AlertDialogPrimitive.Description
-      class={cn("z-alert-dialog-description", local.class)}
-      data-slot="alert-dialog-description"
       {...others}
     />
   );
@@ -196,12 +164,8 @@ export {
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogOverlay,
-  AlertDialogPortal,
   AlertDialogTitle,
   AlertDialogTrigger,
 };

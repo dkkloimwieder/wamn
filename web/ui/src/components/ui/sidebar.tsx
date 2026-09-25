@@ -7,7 +7,6 @@ import type { Accessor, Component, ComponentProps, JSX, ValidComponent } from "s
 import {
   createContext,
   createEffect,
-  createMemo,
   createSignal,
   Match,
   mergeProps,
@@ -21,8 +20,6 @@ import { cn } from "../../lib/utils";
 import { useIsMobile } from "../../hooks/use-mobile";
 import type { ButtonProps } from "./button";
 import { Button } from "./button";
-import { Input } from "./input";
-import { Separator } from "./separator";
 import {
   Sheet,
   SheetContent,
@@ -30,7 +27,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "./sheet";
-import { Skeleton } from "./skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -297,50 +293,12 @@ const SidebarTrigger = (props: SidebarTriggerProps) => {
   );
 };
 
-const SidebarRail = (props: ComponentProps<"button">) => {
-  const [local, others] = splitProps(props, ["class"]);
-  const { toggleSidebar } = useSidebar();
-
-  return (
-    <button
-      data-sidebar="rail"
-      data-slot="sidebar-rail"
-      aria-label="Toggle Sidebar"
-      tabIndex={-1}
-      onClick={toggleSidebar}
-      title="Toggle Sidebar"
-      class={cn(
-        "absolute inset-y-0 z-20 z-sidebar-rail hidden w-4 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-0.5 group-data-[side=left]:-right-4 group-data-[side=right]:left-0 sm:flex",
-        "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
-        "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-        "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
-        "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-        "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
-        local.class,
-      )}
-      {...others}
-    />
-  );
-};
-
 const SidebarInset = (props: ComponentProps<"main">) => {
   const [local, others] = splitProps(props, ["class"]);
   return (
     <main
       data-slot="sidebar-inset"
       class={cn("relative z-sidebar-inset flex w-full flex-1 flex-col", local.class)}
-      {...others}
-    />
-  );
-};
-
-const SidebarInput = (props: ComponentProps<typeof Input>) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <Input
-      data-slot="sidebar-input"
-      data-sidebar="input"
-      class={cn("z-sidebar-input", local.class)}
       {...others}
     />
   );
@@ -353,35 +311,6 @@ const SidebarHeader = (props: ComponentProps<"div">) => {
       data-slot="sidebar-header"
       data-sidebar="header"
       class={cn("z-sidebar-header flex flex-col", local.class)}
-      {...others}
-    />
-  );
-};
-
-const SidebarFooter = (props: ComponentProps<"div">) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="sidebar-footer"
-      data-sidebar="footer"
-      class={cn("z-sidebar-footer flex flex-col", local.class)}
-      {...others}
-    />
-  );
-};
-
-type SidebarSeparatorProps<T extends ValidComponent = "div"> = PolymorphicProps<
-  T,
-  ComponentProps<typeof Separator<T>>
->;
-
-const SidebarSeparator = <T extends ValidComponent = "div">(props: SidebarSeparatorProps<T>) => {
-  const [local, others] = splitProps(props as SidebarSeparatorProps, ["class"]);
-  return (
-    <Separator
-      data-slot="sidebar-separator"
-      data-sidebar="separator"
-      class={cn("z-sidebar-separator w-auto", local.class)}
       {...others}
     />
   );
@@ -409,51 +338,6 @@ const SidebarGroup = (props: ComponentProps<"div">) => {
       data-slot="sidebar-group"
       data-sidebar="group"
       class={cn("relative z-sidebar-group flex w-full min-w-0 flex-col", local.class)}
-      {...others}
-    />
-  );
-};
-
-type SidebarGroupLabelProps<T extends ValidComponent = "div"> = PolymorphicProps<
-  T,
-  ComponentProps<T>
->;
-
-const SidebarGroupLabel = <T extends ValidComponent = "div">(props: SidebarGroupLabelProps<T>) => {
-  const [local, others] = splitProps(props as SidebarGroupLabelProps, ["class"]);
-
-  return (
-    <Polymorphic<SidebarGroupLabelProps>
-      as="div"
-      data-slot="sidebar-group-label"
-      data-sidebar="group-label"
-      class={cn(
-        "z-sidebar-group-label flex shrink-0 items-center outline-hidden [&>svg]:shrink-0",
-        local.class,
-      )}
-      {...others}
-    />
-  );
-};
-
-type SidebarGroupActionProps<T extends ValidComponent = "button"> = PolymorphicProps<
-  T,
-  ComponentProps<T>
->;
-
-const SidebarGroupAction = <T extends ValidComponent = "button">(
-  props: SidebarGroupActionProps<T>,
-) => {
-  const [local, others] = splitProps(props as SidebarGroupActionProps, ["class"]);
-  return (
-    <Polymorphic<SidebarGroupActionProps>
-      as="button"
-      data-slot="sidebar-group-action"
-      data-sidebar="group-action"
-      class={cn(
-        "z-sidebar-group-action flex aspect-square items-center justify-center outline-hidden transition-transform after:absolute after:-inset-2 group-data-[collapsible=icon]:hidden md:after:hidden [&>svg]:shrink-0",
-        local.class,
-      )}
       {...others}
     />
   );
@@ -577,79 +461,6 @@ const SidebarMenuButton = <T extends ValidComponent = "button">(
   );
 };
 
-type SidebarMenuActionProps<T extends ValidComponent = "button"> = ComponentProps<T> & {
-  showOnHover?: boolean;
-};
-
-const SidebarMenuAction = <T extends ValidComponent = "button">(
-  rawProps: PolymorphicProps<T, SidebarMenuActionProps<T>>,
-) => {
-  const props = mergeProps({ showOnHover: false }, rawProps);
-  const [local, others] = splitProps(props as SidebarMenuActionProps, ["class", "showOnHover"]);
-
-  return (
-    <Polymorphic<SidebarMenuActionProps>
-      as="button"
-      data-slot="sidebar-menu-action"
-      data-sidebar="menu-action"
-      class={cn(
-        "z-sidebar-menu-action flex items-center justify-center outline-hidden transition-transform after:absolute after:-inset-2 group-data-[collapsible=icon]:hidden md:after:hidden [&>svg]:shrink-0",
-        local.showOnHover &&
-          "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 peer-data-[active=true]/menu-button:text-sidebar-accent-foreground aria-expanded:opacity-100 md:opacity-0",
-        local.class,
-      )}
-      {...others}
-    />
-  );
-};
-
-const SidebarMenuBadge: Component<ComponentProps<"div">> = (props) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="sidebar-menu-badge"
-      data-sidebar="menu-badge"
-      class={cn(
-        "z-sidebar-menu-badge flex select-none items-center justify-center tabular-nums group-data-[collapsible=icon]:hidden",
-        local.class,
-      )}
-      {...others}
-    />
-  );
-};
-
-type SidebarMenuSkeletonProps = ComponentProps<"div"> & {
-  showIcon?: boolean;
-};
-
-const SidebarMenuSkeleton: Component<SidebarMenuSkeletonProps> = (rawProps) => {
-  const props = mergeProps({ showIcon: false }, rawProps);
-  const [local, others] = splitProps(props, ["class", "showIcon"]);
-
-  // Random width between 50 to 90%.
-  const width = createMemo(() => `${Math.floor(Math.random() * 40) + 50}%`);
-
-  return (
-    <div
-      data-slot="sidebar-menu-skeleton"
-      data-sidebar="menu-skeleton"
-      class={cn("z-sidebar-menu-skeleton flex items-center", local.class)}
-      {...others}
-    >
-      <Show when={local.showIcon}>
-        <Skeleton class="z-sidebar-menu-skeleton-icon" data-sidebar="menu-skeleton-icon" />
-      </Show>
-      <Skeleton
-        class="z-sidebar-menu-skeleton-text max-w-(--skeleton-width) flex-1"
-        data-sidebar="menu-skeleton-text"
-        style={{
-          "--skeleton-width": width(),
-        }}
-      />
-    </div>
-  );
-};
-
 const SidebarMenuSub: Component<ComponentProps<"ul">> = (props) => {
   const [local, others] = splitProps(props, ["class"]);
   return (
@@ -708,27 +519,16 @@ const SidebarMenuSubButton = <T extends ValidComponent = "a">(
 export {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
-  SidebarInput,
   SidebarInset,
   SidebarMenu,
-  SidebarMenuAction,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSkeleton,
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-  type SidebarProps,
   SidebarProvider,
-  SidebarRail,
-  SidebarSeparator,
   SidebarTrigger,
-  useSidebar,
 };

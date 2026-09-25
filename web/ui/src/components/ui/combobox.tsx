@@ -1,10 +1,7 @@
 import type {
   ComboboxContentProps as ComboboxPrimitiveContentProps,
-  ComboboxControlProps as ComboboxPrimitiveControlProps,
   ComboboxInputProps as ComboboxPrimitiveInputProps,
   ComboboxItemProps as ComboboxPrimitiveItemProps,
-  ComboboxSectionProps as ComboboxPrimitiveSectionProps,
-  ComboboxTriggerProps as ComboboxPrimitiveTriggerProps,
   ComboboxRootProps,
 } from "@kobalte/core/combobox";
 import * as ComboboxPrimitive from "@kobalte/core/combobox";
@@ -13,7 +10,6 @@ import { Check, ChevronsUpDown, X } from "lucide-solid";
 import type { ComponentProps, JSX, ValidComponent } from "solid-js";
 import { mergeProps, Show, splitProps } from "solid-js";
 import { cn } from "../../lib/utils";
-import { Button } from "./button";
 import {
   InputGroup,
   InputGroupAddon,
@@ -51,129 +47,9 @@ const Combobox = <O, OptGroup = never, T extends ValidComponent = "div">(
 // Combobox Control
 // ============================================================================
 
-type ComboboxControlProps<T extends ValidComponent = "div"> = PolymorphicProps<
-  T,
-  ComboboxPrimitiveControlProps<T>
-> &
-  Pick<ComponentProps<T>, "class" | "children">;
-
-const ComboboxControl = <T extends ValidComponent = "div">(props: ComboboxControlProps<T>) => {
-  const [local, others] = splitProps(props as ComboboxControlProps, ["class"]);
-  return (
-    <ComboboxPrimitive.Control
-      class={cn("z-combobox-control", local.class)}
-      data-slot="combobox-control"
-      {...others}
-    />
-  );
-};
-
 // ============================================================================
 // Combobox Chips
 // ============================================================================
-
-type ComboboxChipsProps = ComboboxControlProps;
-
-const ComboboxChips = (props: ComboboxChipsProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <ComboboxPrimitive.Control
-      data-slot="combobox-chips"
-      class={cn("z-combobox-chips", local.class)}
-      {...others}
-    />
-  );
-};
-
-type ComboboxValueProps<O> = {
-  children: JSX.Element | ((values: O[]) => JSX.Element);
-};
-
-const ComboboxValue = <O,>(props: ComboboxValueProps<O>) => {
-  const context = ComboboxPrimitive.useComboboxContext();
-  return (
-    <>
-      {typeof props.children === "function"
-        ? props.children(context.selectedOptions() as O[])
-        : props.children}
-    </>
-  );
-};
-
-type ComboboxChipProps = ComponentProps<"span"> & {
-  /** The selected option to remove; Kobalte identifies options by value, not chip position. */
-  value: unknown;
-  children: JSX.Element;
-  removeLabel: string;
-  showRemove?: boolean;
-  disabled?: boolean;
-};
-
-const ComboboxChip = (rawProps: ComboboxChipProps) => {
-  const props = mergeProps({ showRemove: true }, rawProps);
-  const [local, others] = splitProps(props, [
-    "class",
-    "children",
-    "value",
-    "showRemove",
-    "removeLabel",
-    "disabled",
-  ]);
-  const context = ComboboxPrimitive.useComboboxContext();
-  const isDisabled = () => context.isDisabled() || local.disabled;
-  return (
-    <span
-      data-slot="combobox-chip"
-      class={cn(
-        "z-combobox-chip has-disabled:pointer-events-none has-disabled:cursor-not-allowed has-disabled:opacity-50",
-        local.class,
-      )}
-      {...others}
-    >
-      {local.children}
-      <Show when={local.showRemove}>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          type="button"
-          data-slot="combobox-chip-remove"
-          class="z-combobox-chip-remove"
-          aria-label={local.removeLabel}
-          disabled={isDisabled()}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => {
-            if (isDisabled()) return;
-            context.removeOptionFromSelection(local.value);
-            context.inputRef()?.focus();
-          }}
-        >
-          <X class="z-combobox-chip-indicator-icon pointer-events-none" aria-hidden="true" />
-        </Button>
-      </Show>
-    </span>
-  );
-};
-
-type ComboboxChipsInputProps<T extends ValidComponent = "input"> = PolymorphicProps<
-  T,
-  ComboboxPrimitiveInputProps<T>
-> &
-  Pick<ComponentProps<"input">, "class" | "placeholder" | "disabled" | "id" | "name">;
-
-const ComboboxChipsInput = <T extends ValidComponent = "input">(
-  props: ComboboxChipsInputProps<T>,
-) => {
-  const [local, others] = splitProps(props as ComboboxChipsInputProps, ["class", "disabled"]);
-  const context = ComboboxPrimitive.useComboboxContext();
-  return (
-    <ComboboxPrimitive.Input
-      data-slot="combobox-chip-input"
-      class={cn("z-combobox-chip-input min-w-16 flex-1 outline-none", local.class)}
-      disabled={context.isDisabled() || local.disabled}
-      {...others}
-    />
-  );
-};
 
 // ============================================================================
 // Combobox Input
@@ -258,41 +134,6 @@ const ComboboxInput = <T extends ValidComponent = "input">(rawProps: ComboboxInp
 // Combobox Trigger (for popup-style combobox)
 // ============================================================================
 
-type ComboboxTriggerProps<T extends ValidComponent = "button"> = PolymorphicProps<
-  T,
-  ComboboxPrimitiveTriggerProps<T>
-> &
-  Pick<ComponentProps<T>, "class" | "children"> & {
-    size?: "sm" | "default";
-  };
-
-const ComboboxTrigger = <T extends ValidComponent = "button">(
-  rawProps: ComboboxTriggerProps<T>,
-) => {
-  const props = mergeProps({ size: "default" }, rawProps);
-  const [local, others] = splitProps(props as ComboboxTriggerProps, ["class", "children", "size"]);
-
-  return (
-    <ComboboxPrimitive.Control>
-      <ComboboxPrimitive.Trigger
-        class={cn(
-          "z-combobox-trigger z-select-trigger flex w-fit items-center justify-between whitespace-nowrap outline-none disabled:cursor-not-allowed disabled:opacity-50 *:data-[slot=combobox-value]:line-clamp-1 *:data-[slot=combobox-value]:flex *:data-[slot=combobox-value]:items-center [&_svg]:pointer-events-none [&_svg]:shrink-0",
-          local.class,
-        )}
-        data-size={local.size}
-        data-slot="combobox-trigger"
-        {...others}
-      >
-        {local.children}
-        <ComboboxPrimitive.Icon
-          as={ChevronsUpDown}
-          class="pointer-events-none z-combobox-trigger-icon"
-        />
-      </ComboboxPrimitive.Trigger>
-    </ComboboxPrimitive.Control>
-  );
-};
-
 // ============================================================================
 // Combobox Content
 // ============================================================================
@@ -342,41 +183,9 @@ const ComboboxContent = <T extends ValidComponent = "div">(props: ComboboxConten
 // Combobox Section (Group)
 // ============================================================================
 
-type ComboboxSectionProps<T extends ValidComponent = "li"> = PolymorphicProps<
-  T,
-  ComboboxPrimitiveSectionProps<T>
-> &
-  Pick<ComponentProps<T>, "class">;
-
-const ComboboxSection = <T extends ValidComponent = "li">(props: ComboboxSectionProps<T>) => {
-  const [local, others] = splitProps(props as ComboboxSectionProps, ["class"]);
-  return (
-    <ComboboxPrimitive.Section
-      class={cn("z-combobox-section", local.class)}
-      data-slot="combobox-section"
-      {...others}
-    />
-  );
-};
-
 // ============================================================================
 // Combobox Section Label
 // ============================================================================
-
-type ComboboxSectionLabelProps = ComponentProps<"span"> & {
-  class?: string;
-};
-
-const ComboboxSectionLabel = (props: ComboboxSectionLabelProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <span
-      class={cn("z-combobox-section-label z-select-label", local.class)}
-      data-slot="combobox-section-label"
-      {...others}
-    />
-  );
-};
 
 // ============================================================================
 // Combobox Item
@@ -418,55 +227,13 @@ const ComboboxItem = <T extends ValidComponent = "li">(props: ComboboxItemProps<
 // Combobox Empty
 // ============================================================================
 
-type ComboboxEmptyProps = ComponentProps<"div"> & {
-  class?: string;
-};
-
-const ComboboxEmpty = (props: ComboboxEmptyProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      class={cn("z-combobox-empty py-6 text-center text-sm", local.class)}
-      data-slot="combobox-empty"
-      {...others}
-    />
-  );
-};
-
 // ============================================================================
 // Combobox Separator
 // ============================================================================
 
-type ComboboxSeparatorProps<T extends ValidComponent = "hr"> = ComponentProps<T> & {
-  class?: string;
-};
-
-const ComboboxSeparator = <T extends ValidComponent = "hr">(
-  props: PolymorphicProps<T, ComboboxSeparatorProps<T>>,
-) => {
-  const [local, others] = splitProps(props as ComboboxSeparatorProps, ["class"]);
-  return (
-    <hr
-      class={cn("pointer-events-none z-combobox-separator z-select-separator", local.class)}
-      data-slot="combobox-separator"
-      {...others}
-    />
-  );
-};
-
 export {
   Combobox,
-  ComboboxChip,
-  ComboboxChips,
-  ComboboxChipsInput,
   ComboboxContent,
-  ComboboxControl,
-  ComboboxEmpty,
   ComboboxInput,
   ComboboxItem,
-  ComboboxSection,
-  ComboboxSectionLabel,
-  ComboboxSeparator,
-  ComboboxTrigger,
-  ComboboxValue,
 };

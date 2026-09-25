@@ -7,17 +7,17 @@ import {
   useContext,
 } from "solid-js";
 
-export const ZAIDAN_COLOR_MODE_COOKIE_KEY = "zaidan-color-mode";
+const ZAIDAN_COLOR_MODE_COOKIE_KEY = "zaidan-color-mode";
 
-export type ColorMode = "light" | "dark";
+type ColorMode = "light" | "dark";
 
-export type ColorModeContextValue = {
+type ColorModeContextValue = {
   colorMode: Accessor<ColorMode>;
   toggleColorMode: () => void;
   setColorMode: (mode: ColorMode) => void;
 };
 
-export const ColorModeContext = createContext<ColorModeContextValue>();
+const ColorModeContext = createContext<ColorModeContextValue>();
 
 export function ColorModeProvider(
   props: ParentProps<{

@@ -1,9 +1,5 @@
 import type {
-  Column,
-  ColumnFiltersState,
-  RowData,
   SolidTable,
-  SortingState,
   Table,
   TableFeatures,
 } from "@tanstack/solid-table";
@@ -88,7 +84,7 @@ export interface DataGridColumnMeta<TData> {
  * Or drop it entirely and hand `<DataGrid>` a leaner table - the components
  * accept any bundle, so you keep full ownership of the TanStack core.
  */
-export const dataGridFeatures = tableFeatures({
+const dataGridFeatures = tableFeatures({
   columnVisibilityFeature,
   columnOrderingFeature,
   columnPinningFeature,
@@ -137,45 +133,17 @@ export type DataGridFeatures = typeof dataGridFeatures;
  */
 export type DataGridTableInstance<TData extends object> = SolidTable<DataGridFeatures, TData>;
 
-/** Label for headers / column visibility: `meta.headerTitle`, string `columnDef.header`, or `column.id`. */
-export function getColumnHeaderLabel<TData extends RowData, TValue>(
-  column: Column<DataGridFeatures, TData, TValue>,
-): string {
-  const meta = column.columnDef.meta as { headerTitle?: string } | undefined;
-  if (typeof meta?.headerTitle === "string") return meta.headerTitle;
-  const defHeader = column.columnDef.header;
-  if (typeof defHeader === "string") return defHeader;
-  return String(column.id);
-}
-
-export type DataGridApiFetchParams = {
-  pageIndex: number;
-  pageSize: number;
-  sorting?: SortingState;
-  filters?: ColumnFiltersState;
-  searchQuery?: string;
-};
-
-export type DataGridApiResponse<T> = {
-  data: T[];
-  empty: boolean;
-  pagination: {
-    total: number;
-    page: number;
-  };
-};
-
 /**
  * Everything `<DataGrid>` accepts except the two props the provider consumes
  * itself. Kept feature-agnostic: layout and messaging never depend on which
  * TanStack features the consumer registered.
  */
-export type DataGridLayoutProps<TData extends object> = Omit<
+type DataGridLayoutProps<TData extends object> = Omit<
   DataGridProps<TableFeatures, TData>,
   "table" | "children"
 >;
 
-export interface DataGridContextProps<TData extends object> {
+interface DataGridContextProps<TData extends object> {
   props: DataGridLayoutProps<TData>;
   table: DataGridTableInstance<TData>;
   recordCount: number;
@@ -187,7 +155,7 @@ export interface DataGridContextProps<TData extends object> {
   autoSize?: DataGridAutoSizeController;
 }
 
-export type DataGridAutoSizeController = {
+type DataGridAutoSizeController = {
   /**
    * Grows the first visible `meta.autoSize` column by the given free space.
    * Applies at most once per column id; safe to call from every viewport
@@ -268,14 +236,7 @@ function createDataGridAutoSizeController<TData extends object>(
   };
 }
 
-export type DataGridRequestParams = {
-  pageIndex: number;
-  pageSize: number;
-  sorting?: SortingState;
-  columnFilters?: ColumnFiltersState;
-};
-
-export interface DataGridProps<TFeatures extends TableFeatures, TData extends object> {
+interface DataGridProps<TFeatures extends TableFeatures, TData extends object> {
   class?: string;
   table?: Table<TFeatures, TData>;
   recordCount: number;
@@ -494,4 +455,4 @@ function DataGridContainer(props: {
   );
 }
 
-export { DataGrid, DataGridContainer, DataGridProvider, useDataGrid };
+export { DataGrid, DataGridContainer, useDataGrid };

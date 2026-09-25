@@ -11,24 +11,6 @@ const Sheet: Component<SheetPrimitive.DialogRootProps> = (props) => {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />;
 };
 
-type SheetTriggerProps<T extends ValidComponent = "button"> = PolymorphicProps<
-  T,
-  SheetPrimitive.DialogTriggerProps<T>
->;
-
-const SheetTrigger = <T extends ValidComponent = "button">(props: SheetTriggerProps<T>) => {
-  return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />;
-};
-
-type SheetCloseProps<T extends ValidComponent = "button"> = PolymorphicProps<
-  T,
-  SheetPrimitive.DialogCloseButtonProps<T>
->;
-
-const SheetClose = <T extends ValidComponent = "button">(props: SheetCloseProps<T>) => {
-  return <SheetPrimitive.CloseButton data-slot="sheet-close" {...props} />;
-};
-
 const SheetPortal = (props: SheetPrimitive.DialogPortalProps) => {
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />;
 };
@@ -105,19 +87,6 @@ const SheetHeader = (props: SheetHeaderProps) => {
   );
 };
 
-type SheetFooterProps = ComponentProps<"div">;
-
-const SheetFooter = (props: SheetFooterProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="sheet-footer"
-      class={cn("z-sheet-footer mt-auto flex flex-col", local.class)}
-      {...others}
-    />
-  );
-};
-
 type SheetTitleProps<T extends ValidComponent = "h2"> = PolymorphicProps<
   T,
   SheetPrimitive.DialogTitleProps<T>
@@ -154,11 +123,8 @@ const SheetDescription = <T extends ValidComponent = "p">(props: SheetDescriptio
 
 export {
   Sheet,
-  SheetClose,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 };

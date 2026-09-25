@@ -861,10 +861,4 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
   );
 }
 
-export type {
-  DataGridTableVirtualizerOptions,
-  DataGridTableVirtualProps,
-  DataGridTableVirtualScrollAlignment,
-  DataGridTableVirtualScrollElements,
-};
 export { DataGridTableVirtual };

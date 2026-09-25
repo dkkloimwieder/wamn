@@ -4,7 +4,6 @@ import { type ComponentProps, mergeProps, splitProps } from "solid-js";
 import { cn } from "../../lib/utils";
 import { Button, type ButtonProps } from "./button";
 import { Input, type InputProps } from "./input";
-import { Textarea } from "./textarea";
 
 type InputGroupProps = ComponentProps<"div">;
 
@@ -100,18 +99,6 @@ const InputGroupButton = (rawProps: InputGroupButtonProps) => {
   );
 };
 
-type InputGroupTextProps = ComponentProps<"span">;
-
-const InputGroupText = (props: InputGroupTextProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <span
-      class={cn("z-input-group-text flex items-center [&_svg]:pointer-events-none", local.class)}
-      {...others}
-    />
-  );
-};
-
 type InputGroupInputProps = InputProps;
 
 const InputGroupInput = (props: InputGroupInputProps) => {
@@ -125,24 +112,9 @@ const InputGroupInput = (props: InputGroupInputProps) => {
   );
 };
 
-type InputGroupTextareaProps = ComponentProps<"textarea">;
-
-const InputGroupTextarea = (props: InputGroupTextareaProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <Textarea
-      data-slot="input-group-control"
-      class={cn("z-input-group-textarea flex-1 resize-none", local.class)}
-      {...others}
-    />
-  );
-};
-
 export {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-  InputGroupText,
-  InputGroupTextarea,
 };

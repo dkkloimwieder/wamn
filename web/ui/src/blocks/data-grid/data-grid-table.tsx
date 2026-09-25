@@ -15,8 +15,6 @@ import {
 } from "solid-js";
 
 import { cn } from "../../lib/utils";
-import { Checkbox } from "../../components/ui/checkbox";
-import { Spinner } from "../../components/ui/spinner";
 import type { DataGridFeatures, DataGridTableInstance } from "./data-grid";
 import { useDataGrid } from "./data-grid";
 
@@ -26,9 +24,6 @@ const headerCellSpacingVariants = ({ size }: { size?: "dense" | "default" }) =>
   size === "dense" ? "px-2 h-8" : "px-3";
 
 const bodyCellSpacingVariants = ({ size }: { size?: "dense" | "default" }) =>
-  size === "dense" ? "px-2 py-1.5" : "px-3 py-2";
-
-const footerCellSpacingVariants = ({ size }: { size?: "dense" | "default" }) =>
   size === "dense" ? "px-2 py-1.5" : "px-3 py-2";
 
 /**
@@ -52,18 +47,6 @@ function getPinningStyles<TData extends object>(
     width: `${column.getSize()}px`,
     "z-index": isPinned ? 30 : undefined,
     "background-clip": isPinned ? "padding-box" : undefined,
-  };
-}
-
-// Shared indent contract for tree rows: DataGridTableRowExpand consumes it,
-// and fully custom cells can reuse it for depth alignment without the
-// built-in toggle.
-function getDataGridTreeIndentStyle<TData extends object>(
-  row: Row<DataGridFeatures, TData>,
-  indent = 20,
-): JSX.CSSProperties {
-  return {
-    "--data-grid-tree-padding": `${row.depth * indent}px`,
   };
 }
 
@@ -492,21 +475,6 @@ function DataGridTableFillBodyCell() {
       <td
         aria-hidden="true"
         data-slot="data-grid-table-fill-body-cell"
-        style={{ width: "var(--data-grid-fill-size, 0px)" }}
-        class="p-0"
-      />
-    </Show>
-  );
-}
-
-function DataGridTableFillFootCell() {
-  const grid = useDataGrid();
-
-  return (
-    <Show when={grid.props.tableLayout?.columnsResizable}>
-      <td
-        aria-hidden="true"
-        data-slot="data-grid-table-fill-foot-cell"
         style={{ width: "var(--data-grid-fill-size, 0px)" }}
         class="p-0"
       />
@@ -1012,52 +980,6 @@ function DataGridTableFoot(props: { children: JSX.Element }) {
   );
 }
 
-function DataGridTableFootRow(props: { children: JSX.Element }) {
-  const grid = useDataGrid();
-  const footRowBottomBorderClasses = "[&:not(:last-child)>td]:border-b";
-
-  return (
-    <tr
-      data-slot="data-grid-table-foot-row"
-      class={cn(
-        grid.props.tableLayout?.footerBackground && "bg-muted/40 dark:bg-background",
-        grid.props.tableLayout?.rowBorder && footRowBottomBorderClasses,
-        grid.props.tableLayout?.cellBorder && "*:last:border-e-0",
-      )}
-    >
-      {props.children}
-      <DataGridTableFillFootCell />
-    </tr>
-  );
-}
-
-function DataGridTableFootRowCell(props: {
-  children?: JSX.Element;
-  colSpan?: number;
-  class?: string;
-}) {
-  const grid = useDataGrid();
-  const spacing = () =>
-    footerCellSpacingVariants({
-      size: grid.props.tableLayout?.dense ? "dense" : "default",
-    });
-
-  return (
-    <td
-      colSpan={props.colSpan}
-      class={cn(
-        "text-secondary-foreground/80 align-middle font-medium",
-        spacing(),
-        grid.props.tableLayout?.footerBackground && "bg-muted/40 dark:bg-background",
-        grid.props.tableLayout?.cellBorder && "border-e",
-        props.class,
-      )}
-    >
-      {props.children}
-    </td>
-  );
-}
-
 function DataGridTableBodyRowSkeleton(props: { children: JSX.Element }) {
   const grid = useDataGrid();
 
@@ -1333,198 +1255,6 @@ function DataGridTableEmpty() {
   );
 }
 
-function DataGridTableLoader() {
-  const grid = useDataGrid();
-
-  return (
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-      <div class="text-muted-foreground bg-card style-vega:rounded-lg style-nova:rounded-lg style-maia:rounded-2xl style-lyra:rounded-none style-mira:rounded-lg style-luma:rounded-3xl style-sera:rounded-none style-rhea:rounded-2xl flex items-center gap-2 border px-4 py-2 text-sm leading-none font-medium">
-        <Spinner class="size-5 opacity-60" />
-        {grid.props.loadingMessage || "Loading..."}
-      </div>
-    </div>
-  );
-}
-
-function DataGridTableRowPin<TData extends object>(props: { row: Row<DataGridFeatures, TData> }) {
-  const isPinned = () => props.row.getIsPinned();
-
-  return (
-    <button
-      type="button"
-      aria-label={isPinned() ? "Unpin row" : "Pin row"}
-      onClick={(event) => {
-        // Pinning must not bubble into the row's onRowClick handler.
-        event.stopPropagation();
-
-        if (isPinned()) {
-          props.row.pin(false);
-        } else {
-          props.row.pin("top");
-        }
-      }}
-      class={cn(
-        "text-muted-foreground hover:text-foreground style-vega:rounded-md style-nova:rounded-lg style-maia:rounded-full style-lyra:rounded-none style-mira:rounded-md style-luma:rounded-full style-sera:rounded-none style-rhea:rounded-full inline-flex size-7 items-center justify-center transition-colors",
-        isPinned() && "text-primary hover:text-primary/80",
-      )}
-    >
-      <Show
-        when={isPinned()}
-        fallback={
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <line x1="12" y1="17" x2="12" y2="22" />
-            <path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24z" />
-          </svg>
-        }
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          stroke="none"
-          aria-hidden="true"
-        >
-          <path d="M16 2l4.585 4.586-2.122 2.121L17.05 7.293l-3.535 3.536 1.413 5.658-2.12 2.121-4.244-4.243L4.322 18.6l-1.414-1.41 4.242-4.244-4.243-4.243 2.122-2.121 5.656 1.414 3.536-3.536-1.414-1.414z" />
-        </svg>
-      </Show>
-    </button>
-  );
-}
-
-/**
- * Selection cell.
- *
- * Upstream wraps the state reads below in TanStack's `Subscribe` because the
- * React Compiler cannot see the dependency behind `row.getIsSelected()`. In
- * Solid the read itself is the subscription - the adapter backs every state
- * slice with a signal - so the wrapper is dropped rather than translated.
- */
-function DataGridTableRowSelect<TData extends object>(props: {
-  row: Row<DataGridFeatures, TData>;
-}) {
-  return (
-    <>
-      <div
-        class={cn(
-          "bg-primary absolute inset-s-0 top-0 bottom-0 hidden w-[2px]",
-          props.row.getIsSelected() && "block",
-        )}
-      />
-      <Checkbox
-        checked={props.row.getIsSelected()}
-        indeterminate={props.row.getIsSomeSelected() && !props.row.getIsSelected()}
-        onChange={(value) => props.row.toggleSelected(!!value)}
-        onClick={(event: MouseEvent) => {
-          // Selection must not bubble into the row's onRowClick handler.
-          event.stopPropagation();
-        }}
-        aria-label="Select row"
-        class="align-[inherit]"
-      />
-    </>
-  );
-}
-
-function DataGridTableRowSelectAll() {
-  const grid = useDataGrid();
-
-  // `getIsSomePageRowsSelected()` means "at least one" in v9, where v8 meant
-  // "some but not all", so the all-selected case has to be excluded explicitly
-  // or the header checkbox stays indeterminate once every row is checked.
-  const isAllSelected = () => grid.table.getIsAllPageRowsSelected();
-  const isSomeSelected = () => grid.table.getIsSomePageRowsSelected();
-
-  return (
-    <Checkbox
-      checked={isAllSelected()}
-      indeterminate={isSomeSelected() && !isAllSelected()}
-      disabled={grid.isLoading || grid.recordCount === 0}
-      onChange={(value) => grid.table.toggleAllPageRowsSelected(!!value)}
-      aria-label="Select all"
-      class="align-[inherit]"
-    />
-  );
-}
-
-function DataGridTableRowExpand<TData extends object>(props: {
-  row: Row<DataGridFeatures, TData>;
-  /** Horizontal offset in px applied per tree depth level. */
-  indent?: number;
-  class?: string;
-  /** Custom toggle icon; replaces the default chevron. */
-  children?: JSX.Element;
-}) {
-  const grid = useDataGrid<TData>();
-  const isExpanded = () => props.row.getIsExpanded();
-  const controlSize = () => (grid.props.tableLayout?.dense ? "size-6" : "size-7");
-
-  return (
-    <span
-      data-slot="data-grid-table-row-expand"
-      style={getDataGridTreeIndentStyle(props.row, props.indent ?? 20)}
-      class={cn(
-        "inline-flex shrink-0 items-center ps-(--data-grid-tree-padding) align-middle",
-        props.class,
-      )}
-    >
-      <Show
-        when={props.row.getCanExpand()}
-        fallback={
-          // Leaf spacer: compact by design so leaf content sits near the
-          // parent label instead of a full toggle width deeper.
-          <span aria-hidden="true" class="w-2 shrink-0" />
-        }
-      >
-        <button
-          type="button"
-          aria-expanded={isExpanded()}
-          aria-label={isExpanded() ? "Collapse row" : "Expand row"}
-          onClick={(event) => {
-            // Expansion must not bubble into the row's onRowClick handler.
-            event.stopPropagation();
-            props.row.toggleExpanded();
-          }}
-          class={cn(
-            "text-muted-foreground hover:text-foreground style-vega:rounded-md style-nova:rounded-lg style-maia:rounded-full style-lyra:rounded-none style-mira:rounded-md style-luma:rounded-full style-sera:rounded-none style-rhea:rounded-full inline-flex items-center justify-center transition-colors",
-            controlSize(),
-          )}
-        >
-          {props.children ?? (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-              class="transition-transform duration-200 in-aria-[expanded=false]:-rotate-90 rtl:in-aria-[expanded=false]:rotate-90"
-            >
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          )}
-        </button>
-      </Show>
-    </span>
-  );
-}
-
 /**
  * Body rows.
  *
@@ -1645,8 +1375,7 @@ function DataGridTableBodyRows<TData extends object>(props: {
 }
 
 /**
- * The merged start/center/end header rows. Shared by `DataGridTable` and the
- * header-only `DataGridTableHeader` so both stay byte-identical.
+ * The merged start/center/end header rows of `DataGridTable`.
  */
 function DataGridTableHeadGroups<TData extends object = object>() {
   const grid = useDataGrid<TData>();
@@ -1683,18 +1412,6 @@ function DataGridTableHeadGroups<TData extends object = object>() {
         </DataGridTableHeadRow>
       )}
     </For>
-  );
-}
-
-function DataGridTableHeader() {
-  return (
-    <DataGridTableViewport>
-      <DataGridTableBase>
-        <DataGridTableHead>
-          <DataGridTableHeadGroups />
-        </DataGridTableHead>
-      </DataGridTableBase>
-    </DataGridTableViewport>
   );
 }
 
@@ -1738,40 +1455,25 @@ function DataGridTable<TData extends object>(props: {
   );
 }
 
-export type { DataGridRefCallback, DataGridTablePinnedBoundary };
+export type { DataGridRefCallback };
 export {
   DataGridTable,
   DataGridTableBase,
   DataGridTableBody,
-  DataGridTableBodyRow,
-  DataGridTableBodyRowCell,
-  DataGridTableBodyRowExpandded,
-  DataGridTableBodyRowSkeleton,
-  DataGridTableBodyRowSkeletonCell,
   DataGridTableEmpty,
   DataGridTableFillBodyCell,
   DataGridTableFillHeadCell,
   DataGridTableFoot,
-  DataGridTableFootRow,
-  DataGridTableFootRowCell,
   DataGridTableHead,
-  DataGridTableHeader,
   DataGridTableHeadRow,
   DataGridTableHeadRowCell,
   DataGridTableHeadRowCellResize,
-  DataGridTableLoader,
   DataGridTableRenderedRow,
-  DataGridTableRowExpand,
-  DataGridTableRowPin,
-  DataGridTableRowSelect,
-  DataGridTableRowSelectAll,
   DataGridTableRowSpacer,
   DataGridTableViewport,
   getDataGridScrollAreaViewport,
   getDataGridTableMergedHeaderGroups,
-  getDataGridTableResolvedRows,
   getDataGridTableRowSections,
-  getDataGridTreeIndentStyle,
   getPinningStyles,
   hasDataGridTableRightPinnedColumns,
 };

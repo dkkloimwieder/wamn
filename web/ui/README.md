@@ -21,7 +21,7 @@ Labels, column headers, buttons, card titles and detail terms read in capitals, 
 | Kind | Items |
 | --- | --- |
 | Block | `data-grid`, trimmed to `data-grid.tsx`, `data-grid-table.tsx`, `data-grid-table-virtual.tsx`, and an index of those three |
-| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `field`, `input`, `input-group`, `label`, `select`, `separator`, `sheet`, `sidebar`, `skeleton`, `spinner`, `textarea`, `toast`, `tooltip` |
+| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `field`, `input`, `input-group`, `label`, `select`, `separator`, `sheet`, `sidebar`, `skeleton`, `spinner`, `toast`, `tooltip` |
 | Hook | `use-mobile` |
 | Shared | `color-mode` |
 | Design system | `preset-buIovdQ`: `style-lyra`, `neutral`, the indigo theme, `font-inter`, the default radius |
@@ -38,9 +38,11 @@ The copy changed these things:
 - `src/lib/utils.ts` is the usual `cn`, because the CLI writes it only at `init`.
 - `src/styles.css` imports `tw-animate-css`, which `init` also adds, and names this package as its Tailwind source.
 - `src/styles.css` carries the shadcn base layer, which gives the page body the theme colors. No registry item writes it.
+- The copy keeps only what something imports. A component part, a helper or a type that no file names is removed. A rule in `src/styles/base.css` is removed when no source names its `z-` class, and `src/styles/utilities.css` keeps only `no-scrollbar`. The `textarea` item went because nothing used it.
 
 To add an item, run the CLI in a scratch Vite SolidJS project with the Zaidan `components.json`.
 Then copy the new files here and make the same changes.
+If the CLI writes `src/styles/base.css`, remove again the rules that no source names.
 Add an item only when an emitter target, or a page that places the generated components, needs it.
 
 ## The platform exports

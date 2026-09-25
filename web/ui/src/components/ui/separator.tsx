@@ -28,4 +28,4 @@ const Separator = <T extends ValidComponent = "div">(props: SeparatorProps<T>) =
   );
 };
 
-export { Separator, type SeparatorProps };
+export { Separator };

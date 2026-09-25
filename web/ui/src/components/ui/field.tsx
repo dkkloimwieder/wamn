@@ -11,7 +11,6 @@ import {
 
 import { cn } from "../../lib/utils";
 import { Label } from "./label";
-import { Separator } from "./separator";
 
 type FieldSetProps = ComponentProps<"fieldset"> & {
   class?: string | undefined;
@@ -101,24 +100,6 @@ const Field = (props: FieldProps) => {
   );
 };
 
-type FieldContentProps = ComponentProps<"div"> & {
-  class?: string | undefined;
-};
-
-const FieldContent = (props: FieldContentProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="field-content"
-      class={cn(
-        "z-field-content group/field-content flex flex-1 flex-col leading-snug",
-        local.class,
-      )}
-      {...others}
-    />
-  );
-};
-
 type FieldLabelProps = ComponentProps<typeof Label> & {
   class?: string | undefined;
 };
@@ -135,72 +116,6 @@ const FieldLabel = (props: FieldLabelProps) => {
       )}
       {...others}
     />
-  );
-};
-
-type FieldTitleProps = ComponentProps<"div"> & {
-  class?: string | undefined;
-};
-
-const FieldTitle = (props: FieldTitleProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="field-label"
-      class={cn("z-field-title flex w-fit items-center", local.class)}
-      {...others}
-    />
-  );
-};
-
-type FieldDescriptionProps = ComponentProps<"p"> & {
-  class?: string | undefined;
-};
-
-const FieldDescription = (props: FieldDescriptionProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <p
-      data-slot="field-description"
-      class={cn(
-        "z-field-description leading-normal font-normal group-has-data-horizontal/field:text-balance",
-        "last:mt-0 nth-last-2:-mt-1",
-        "[&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary",
-        local.class,
-      )}
-      {...others}
-    />
-  );
-};
-
-type FieldSeparatorProps = ComponentProps<"div"> & {
-  class?: string | undefined;
-  children?: JSX.Element;
-};
-
-const FieldSeparator = (props: FieldSeparatorProps) => {
-  const [local, others] = splitProps(props, ["class", "children"]);
-  const resolvedChildren = resolveChildren(() => local.children);
-
-  return (
-    <div
-      data-slot="field-separator"
-      data-content={!!resolvedChildren()}
-      class={cn("z-field-separator relative", local.class)}
-      {...others}
-    >
-      <Separator class="absolute inset-0 top-1/2" />
-      <Show when={resolvedChildren()}>
-        {(content) => (
-          <span
-            class="z-field-separator-content relative mx-auto block w-fit bg-background"
-            data-slot="field-separator-content"
-          >
-            {content()}
-          </span>
-        )}
-      </Show>
-    </div>
   );
 };
 
@@ -264,13 +179,9 @@ const FieldError = (props: FieldErrorProps) => {
 
 export {
   Field,
-  FieldContent,
-  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
   FieldLegend,
-  FieldSeparator,
   FieldSet,
-  FieldTitle,
 };

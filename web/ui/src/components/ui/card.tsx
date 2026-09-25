@@ -54,22 +54,6 @@ const CardDescription = (props: CardDescriptionProps) => {
   );
 };
 
-type CardActionProps = ComponentProps<"div">;
-
-const CardAction = (props: CardActionProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="card-action"
-      class={cn(
-        "z-card-action col-start-2 row-span-2 row-start-1 self-start justify-self-end",
-        local.class,
-      )}
-      {...others}
-    />
-  );
-};
-
 type CardContentProps = ComponentProps<"div">;
 
 const CardContent = (props: CardContentProps) => {
@@ -77,17 +61,4 @@ const CardContent = (props: CardContentProps) => {
   return <div data-slot="card-content" class={cn("z-card-content", local.class)} {...others} />;
 };
 
-type CardFooterProps = ComponentProps<"div">;
-
-const CardFooter = (props: CardFooterProps) => {
-  const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      data-slot="card-footer"
-      class={cn("z-card-footer flex items-center", local.class)}
-      {...others}
-    />
-  );
-};
-
-export { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle };
+export { Card, CardContent, CardDescription, CardHeader, CardTitle };

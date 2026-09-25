@@ -2,12 +2,10 @@ import type { PolymorphicProps } from "@kobalte/core/polymorphic";
 import * as SelectPrimitive from "@kobalte/core/select";
 import {
   Root,
-  Section,
   type SelectContentProps as SelectPrimitiveContentProps,
   type SelectTriggerProps as SelectPrimitiveTriggerProps,
   type SelectValueProps as SelectPrimitiveValueProps,
   type SelectRootProps,
-  type SelectSectionProps,
   useSelectContext,
   Value,
 } from "@kobalte/core/select";
@@ -34,17 +32,6 @@ const Select = <O, OptGroup = never, T extends ValidComponent = "div">(
     props,
   );
   return <Root {...mergedProps} />;
-};
-
-type SelectGroupProps<T extends ValidComponent = "div"> = PolymorphicProps<
-  T,
-  SelectSectionProps<T>
-> &
-  Pick<ComponentProps<T>, "class">;
-
-const SelectGroup = <T extends ValidComponent = "div">(props: SelectGroupProps<T>) => {
-  const [local, others] = splitProps(props as SelectGroupProps, ["class"]);
-  return <Section class={cn("z-select-group", local.class)} data-slot="select-group" {...others} />;
 };
 
 type SelectValueProps<Option, T extends ValidComponent = "span"> = PolymorphicProps<
@@ -123,23 +110,6 @@ const SelectContent = <T extends ValidComponent = "div">(props: SelectContentPro
   );
 };
 
-type SelectLabelProps<T extends ValidComponent = "span"> = SelectPrimitive.SelectLabelProps<T> & {
-  class?: string | undefined;
-};
-
-const SelectLabel = <T extends ValidComponent = "span">(
-  props: PolymorphicProps<T, SelectLabelProps<T>>,
-) => {
-  const [local, others] = splitProps(props as SelectLabelProps, ["class"]);
-  return (
-    <SelectPrimitive.Label
-      class={cn("z-select-label", local.class)}
-      data-slot="select-label"
-      {...others}
-    />
-  );
-};
-
 type SelectItemProps<T extends ValidComponent = "li"> = SelectPrimitive.SelectItemProps<T> & {
   class?: string | undefined;
   children?: JSX.Element;
@@ -168,30 +138,10 @@ const SelectItem = <T extends ValidComponent = "li">(
   );
 };
 
-type SelectSeparatorProps<T extends ValidComponent = "hr"> = ComponentProps<T> & {
-  class?: string | undefined;
-};
-
-const SelectSeparator = <T extends ValidComponent = "hr">(
-  props: PolymorphicProps<T, SelectSeparatorProps<T>>,
-) => {
-  const [local, others] = splitProps(props as SelectSeparatorProps, ["class"]);
-  return (
-    <hr
-      class={cn("pointer-events-none z-select-separator", local.class)}
-      data-slot="select-separator"
-      {...others}
-    />
-  );
-};
-
 export {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 };

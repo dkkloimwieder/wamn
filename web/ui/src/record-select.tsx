@@ -28,7 +28,7 @@ import {
 } from "./components/ui/combobox";
 
 /** How long the operator pauses typing before the search is sent. */
-export const SEARCH_PAUSE_MS = 300;
+const SEARCH_PAUSE_MS = 300;
 
 export interface RecordSelectProps<Row extends object> {
   /** The rows the list returned, in the order it returned them. */
