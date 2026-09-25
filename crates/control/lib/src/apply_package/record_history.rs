@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
+use wamn_catalog::{VERSION_BUMP_TRIGGER, VERSION_NOTE_TRIGGER};
 use wamn_control_provision::AUDIT_RETENTION_ROLE;
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, reconcile_audit_retention_grants_sql,
@@ -64,15 +65,17 @@ pub(super) async fn create_history_tables(
     Ok(changed)
 }
 
-/// Make each owned relation carry exactly the record-history triggers that its declaration names.
+/// Make each owned relation carry exactly the platform triggers that its declaration derives.
 ///
 /// The triggers are derived state, like the operation grants. A declaration
 /// that selects no column has no stamp trigger, and a retention of `none` has
 /// no log trigger. A trigger that a declaration no longer needs is removed. The
-/// log trigger carries the retention as its one argument. One format string
-/// gives the text that creates each trigger and the text that PostgreSQL
-/// renders for it. The installed triggers of the owned relations are then read
-/// as `pg_get_triggerdef` text and compared with the declared text.
+/// log trigger carries the retention as its one argument. Every owned relation
+/// also carries the two model version triggers of
+/// `deploy/sql/model-versions.sql`. One format string gives the text that
+/// creates each trigger and the text that PostgreSQL renders for it. The
+/// installed triggers of the owned relations are then read as
+/// `pg_get_triggerdef` text and compared with the declared text.
 ///
 /// The step takes the audit retention lock first, so a retention run never
 /// sees a retention change between its read and its delete. It ends with the
@@ -108,33 +111,54 @@ pub(super) async fn reconcile_record_history_triggers(
             .map(|column| format!("'{}'", column.as_str()))
             .collect::<Vec<_>>();
         let (quoted, definitions) = &installed[relation];
-        for (name, timing, call) in [
-            (
-                STAMP_TRIGGER,
-                "BEFORE INSERT OR UPDATE",
-                (!columns.is_empty()).then(|| format!("stamp_row({})", columns.join(", "))),
-            ),
-            (
-                LOG_TRIGGER,
-                "AFTER INSERT OR DELETE OR UPDATE",
-                model.log_retention().map(|retention| {
-                    format!("log_row_change('{}')", retention.replace('\'', "''"))
-                }),
-            ),
+        let stamp = (!columns.is_empty()).then(|| {
+            format!(
+                "TRIGGER {STAMP_TRIGGER} BEFORE INSERT OR UPDATE ON {quoted} FOR EACH ROW \
+                 EXECUTE FUNCTION wamn_history.stamp_row({})",
+                columns.join(", ")
+            )
+        });
+        let log = model.log_retention().map(|retention| {
+            format!(
+                "TRIGGER {LOG_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} FOR EACH ROW \
+                 EXECUTE FUNCTION wamn_history.log_row_change('{}')",
+                retention.replace('\'', "''")
+            )
+        });
+        let note = format!(
+            "TRIGGER {VERSION_NOTE_TRIGGER} AFTER INSERT OR DELETE OR UPDATE OR TRUNCATE ON {quoted} \
+             FOR EACH STATEMENT EXECUTE FUNCTION wamn_cache.note_change()"
+        );
+        let bump = format!(
+            "CONSTRAINT TRIGGER {VERSION_BUMP_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} \
+             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION wamn_cache.bump_changed()"
+        );
+        for (name, definition) in [
+            (STAMP_TRIGGER, stamp),
+            (LOG_TRIGGER, log),
+            (VERSION_NOTE_TRIGGER, Some(note)),
+            (VERSION_BUMP_TRIGGER, Some(bump)),
         ] {
-            let Some(call) = call else {
-                if definitions.contains_key(name) {
+            let installed = definitions.get(name);
+            let Some(definition) = definition else {
+                if installed.is_some() {
                     statements.push(format!("DROP TRIGGER {name} ON {quoted}"));
                 }
                 continue;
             };
-            let definition = format!(
-                "TRIGGER {name} {timing} ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{call}"
-            );
-            if definitions.get(name) != Some(&format!("CREATE {definition}")) {
-                statements.push(format!("CREATE OR REPLACE {definition}"));
+            let created = format!("CREATE {definition}");
+            if installed != Some(&created) {
+                // PostgreSQL cannot replace a constraint trigger in place.
+                if definition.starts_with("CONSTRAINT") {
+                    if installed.is_some() {
+                        statements.push(format!("DROP TRIGGER {name} ON {quoted}"));
+                    }
+                    statements.push(created.clone());
+                } else {
+                    statements.push(format!("CREATE OR REPLACE {definition}"));
+                }
             }
-            expected.insert(format!("CREATE {definition}"));
+            expected.insert(created);
         }
     }
     for statement in &statements {

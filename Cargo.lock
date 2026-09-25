@@ -6484,6 +6484,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+ "wamn-catalog",
  "wamn-fixture-package",
  "wamn-record-history",
  "wamn-test-postgres",

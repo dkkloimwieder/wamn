@@ -601,6 +601,29 @@ The system database has two more limits:
 - The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a person caller.
 - The system database keeps stamps only. A delete gets no stamp, so role, membership, and PAT removals stay unattributed. Beads `wamn-emtx.24` is the closed record of the system database log. Its reopen trigger is a need to attribute those removals beyond the stamps, for example a security review that asks for revoke history.
 
+## Model versions
+
+A model version is a counter that changes with every committed write to a model relation.
+A read of a query or a projection will take its weak ETag from the versions of the relations that it reads, as [HTTP reads](../plan/http-reads.md) plans.
+[`deploy/sql/model-versions.sql`](../../deploy/sql/model-versions.sql) defines the table, the functions and the grants, and `CATALOG_SCHEMA_SQL` carries it into each project database.
+
+`wamn_cache.model_versions` holds one row for each relation that a transaction changed, keyed by schema and relation name.
+A relation with no row has version 0.
+One project database serves one tenant, so the table has no tenant column.
+
+apply-package installs two platform triggers on each relation that the package owns, in the same step as the record history triggers.
+The statement trigger `wamn_cache_note` records the changed relation in the transaction and takes no lock.
+The deferred constraint trigger `wamn_cache_bump` fires at commit.
+Its first firing adds 1 to the version of each recorded relation, in name order, and the later firings do nothing.
+A transaction therefore adds 1 to each relation that it changed, once, whatever its statements.
+Two transactions that change two relations in opposite order cannot deadlock on the versions, because both lock them in name order and only through the commit.
+A rolled-back transaction or savepoint adds nothing, and a statement that changes no row adds nothing.
+A `TRUNCATE` fires no row trigger, so the statement trigger adds 1 at once.
+
+Both trigger functions run as their owner.
+`wamn_app` holds no privilege on `wamn_cache`, so a guest cannot write a version directly.
+The catalog reader skips both triggers by name, as it skips the record history triggers.
+
 ## Canonical values and SQL names
 
 `wamn_execution_contract::canonical_json_bytes` owns durable command, cursor, and package-record JSON bytes.

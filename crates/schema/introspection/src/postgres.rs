@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use tokio_postgres::{Client, Row};
+use wamn_catalog::{VERSION_BUMP_TRIGGER, VERSION_NOTE_TRIGGER};
 use wamn_record_history::{
     AUDIT_RETENTION_ROLE, LOG_TRIGGER, STAMP_TRIGGER, is_history_table_name,
 };
@@ -608,6 +609,8 @@ SELECT namespace.nspname::text AS schema_name,
     ON supporting_method.oid = supporting_index_relation.relam
  WHERE namespace.nspname = ANY($1::text[])
    AND relation.relkind = 'r'
+   -- A constraint trigger is a trigger, which the trigger query judges.
+   AND constraint_row.contype <> 't'
  ORDER BY namespace.nspname, relation.relname, constraint_row.conname
 ";
 
@@ -930,11 +933,17 @@ async fn refuse_triggers(
         .query(TRIGGERS_SQL, &[&schemas])
         .await
         .map_err(|error| database_error("query configured-schema triggers", error))?;
-    // The record history triggers are platform fixtures, so their names alone skip them.
+    // The record history and model version triggers are platform fixtures, so
+    // their names alone skip them.
     let Some(row) = rows.into_iter().find(|row| {
         let trigger = row.get::<_, String>("trigger_name");
-        trigger != STAMP_TRIGGER
-            && trigger != LOG_TRIGGER
+        ![
+            STAMP_TRIGGER,
+            LOG_TRIGGER,
+            VERSION_NOTE_TRIGGER,
+            VERSION_BUMP_TRIGGER,
+        ]
+        .contains(&trigger.as_str())
             && !relation_is_excluded(
                 excluded_relations,
                 &row.get::<_, String>("schema_name"),

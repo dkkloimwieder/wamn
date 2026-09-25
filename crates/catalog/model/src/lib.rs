@@ -76,8 +76,18 @@ pub const CATALOG_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/reject-immutable-row-change.sql"),
     include_str!("../../../../deploy/sql/record-history.sql"),
     include_str!("../../../../deploy/sql/record-history-app-grants.sql"),
+    include_str!("../../../../deploy/sql/model-versions.sql"),
     include_str!("../../../../deploy/sql/catalog-schema.sql"),
 );
+
+/// The statement trigger that records a changed relation for its model version
+/// (`deploy/sql/model-versions.sql`). apply-package installs it on each owned
+/// relation, and every other component recognizes it by this name.
+pub const VERSION_NOTE_TRIGGER: &str = "wamn_cache_note";
+
+/// The deferred constraint trigger that adds 1 to the model version of every
+/// relation a transaction changed, at commit.
+pub const VERSION_BUMP_TRIGGER: &str = "wamn_cache_bump";
 
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;

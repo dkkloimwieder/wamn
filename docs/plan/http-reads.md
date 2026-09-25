@@ -75,6 +75,8 @@ Option A has one rule and needs no schema to decode. The encoder writes paramete
 | C | The host keeps the versions in memory. | Two hosts disagree, and a restart loses them. |
 | D | The CDC reader derives versions from the change stream. | It adds a dependency on the change stream to every read. |
 
+Option A landed with `wamn-rst8.3`, and [data access](../architecture/data-access.md#model-versions) describes it. By owner ruling of 2026-09-25, a statement trigger only records the changed relation, and one deferred trigger adds 1 to each recorded version in name order at commit. That removes the deadlock between two writers that change two models in opposite order, and it holds the version lock only through the commit.
+
 Option A is correct for every writer, and the version becomes visible in the same commit as the data. A sequence or an append-only log avoids the lock. But it can show a version before its data, or miss a commit. The router reads the version before it runs the read. A newer response under an older tag only costs one extra read later. The opposite order can keep stale data under a current tag.
 
 ### 4.3 ETag strength
