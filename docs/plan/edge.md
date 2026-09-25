@@ -209,11 +209,33 @@ The forward, as issue `wamn-e5in.9` built it in [`forward.rs`](../../services/ed
 
 The edge sets its own memory budgets: 8 core instances and the 256 MiB memory cap. Components compile on the box, and Wasmtime's disk cache keeps the result. Build components ahead of time for aarch64 only if the first compile misses its ceiling. The owner has no Pi 3B. Issue 2 measures on an aarch64 emulator or builder, and the closeout records the target as not measured on hardware. New crates are few: `rusqlite` with its bundled SQLite. The serial port uses `rustix` termios, which the tree links already, so the edge adds no serial crate (owner ruling, `wamn-e5in.8`). The box artifact is a release build, because a debug Wasmtime is too slow for the box. Tests use debug builds.
 
+The closeout (`wamn-e5in.10`) measured the aarch64 release build:
+
+- The stripped binary is 40,365,304 bytes (38.5 MiB), under the 64 MiB ceiling. Cargo built it in 14 minutes 47 seconds in `docker build --target edge` on the workstation.
+- The binary links libc, libm and libgcc_s, and it needs glibc 2.38 or later. So the box runs a Debian trixie system, such as Raspberry Pi OS trixie. Raspberry Pi OS bookworm has glibc 2.36.
+- Under qemu user emulation in a trixie container, the binary ran `samples list` and `intents list`, and it served the fixture release and stopped on SIGINT. This shows that it links and loads, and nothing about speed on the Pi.
+- The edge does not yet set the memory budget of the paragraph above. It runs with the cloud host's defaults: 512 core instances and a 128 GiB pool reservation, and no compilation cache (finding `wamn-wk8e`).
+- Resident memory, the first compile, and the restart time are not measured. An emulator gives no numbers about the Pi (owner ruling). Measure them on hardware.
+
+The dependency counts are unique crate names from `cargo tree -p <crate> -e normal`, with the crate itself. This method gives the Epic 12 numbers again at their commit.
+
+| Crate, commit or target | Pruned at wash-runtime | With wash-runtime |
+| --- | --- | --- |
+| `wamn-engine` at Epic 12 issue 3 (`33a7ea78d`), the recorded numbers | 128 | 299 |
+| `wamn-engine` at the Epic 12 close (`688103564`) | 183 | 317 |
+| `wamn-engine` at the Epic 19 closeout | 227 | 330, and 329 for aarch64 |
+| `wamn-edge`, x86_64 host | 253 | 338 |
+| `wamn-edge`, aarch64 | 253 | 337 |
+
+- The edge adds 26 crate names to the engine when pruned, but only 8 with wash-runtime, because wash-runtime already brings `hyper-rustls`, `hyper-util`, `rustls-native-certs`, `tracing-subscriber` and `time`. The 8 are `rusqlite`, `libsqlite3-sys`, `hashlink`, `fallible-iterator`, `fallible-streaming-iterator`, `tracing-log`, `wamn-run-state-sqlite` and `wamn-edge`.
+- The engine gained 44 crate names after the Epic 12 close and lost none. They include the Wasmtime WASI and WASI HTTP crates, `hyper`, `h2`, `rustls` with `aws-lc-rs` and `ring`, and `wamn-session`.
+- On aarch64, 84 crate names reach the edge only through wash-runtime, among them `async-nats`, `redis`, `tonic` and `opentelemetry-otlp` (finding `wamn-qt1t`). The binary is under its ceiling with them, so the edge needs no wash-runtime fork now (epic ruling 1).
+
 ### 4.10 Cross-compile and test
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (ruled) | A Dockerfile target `edge` builds `aarch64-unknown-linux-gnu` with the Debian bookworm cross compiler. | A new image stage. The C code in `aws-lc-sys` and `libsqlite3-sys` needs that compiler. |
+| A (ruled) | A Dockerfile target `edge` builds `aarch64-unknown-linux-gnu` with the Debian trixie cross compiler, the release of the `toolchain` image (owner ruling, `wamn-e5in.10`). | A new image stage. The C code in `aws-lc-sys` and `libsqlite3-sys` needs that compiler. |
 | B | `cargo-zigbuild` on the workstation. | A tool outside the repository, and a result that depends on the workstation. |
 | C | Build on the Pi. | 1 GiB of memory does not compile Wasmtime. |
 

@@ -96,4 +96,5 @@ Sequence, each its own epic, one at a time:
 3. Split `wamn-runtime` into engine and cloud plugins. Run-state becomes its own crate with a storage trait.
    Built by Beads `wamn-3lw7`. `wamn-engine` holds the host and `invoke_operation`, `wamn-runtime` keeps the plugin set, and `wamn-run-state` holds `RunStore` and `IntentStore`. Route intent logging is `wamn-an24`.
 4. Edge: engine + `invoke_operation` + SQLite run-state + edge plugins. First target: read a serial scale, store, forward.
+   Built by Beads `wamn-e5in`. `wamn-edge` links `wamn-engine`, `wamn-session` and `wamn-run-state-sqlite`, and no `wamn-runtime`, `wamn-workflow` or Postgres. NATS, Redis and OTLP gRPC reach it only through wash-runtime (finding `wamn-qt1t`). It serves one release loaded from a file, reads a serial device into a SQLite sample store, and forwards each sample over HTTPS with a device PAT. The run against a real platform stack is `wamn-at15`, and the diagnostics UI is epic `wamn-1bd2`.
 5. Workflow feature: the workflow contract (start, park, release, list), triggers (event, schedule, manual call), platform nodes, approvals. Only when a real workflow is needed.

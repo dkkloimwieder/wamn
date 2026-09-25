@@ -74,6 +74,19 @@ The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream,
 The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
 Application contracts remain under each package's `generated/wit` directory. Do not copy platform WIT into application directories.
 
+## The edge box binary
+
+The edge box is an aarch64 Linux computer, for example a Raspberry Pi 3B.
+Build its release binary with the Dockerfile target `edge`:
+
+```bash
+docker build --target edge --output type=local,dest=target/edge .
+```
+
+The result is one stripped file, `target/edge/wamn-edge`.
+The target compiles with the Debian trixie cross compiler, so the box needs glibc 2.38 or later.
+[The edge specification](../plan/edge.md) section 4.9 records the measured size and dependency counts.
+
 ## Isolated worktrees
 
 Keep one Cargo process per target directory.

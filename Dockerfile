@@ -5,6 +5,7 @@
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
+#   docker build --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
 # Later invocations reuse shared BuildKit registry and Git caches and one
 # locked target cache per build stage, so the stages no longer wait on each
 # other. Each retained native image builds only its top-level package. The
@@ -92,6 +93,22 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-target-gates,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-gates \
  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
+
+# ---- edge box binary: aarch64 release, cross-compiled ----------------------
+# docs/plan/edge.md 4.10 option A. The C code in aws-lc-sys and libsqlite3-sys
+# needs the Debian cross compiler; the Rust linker is the same compiler.
+FROM root-source AS build-edge
+RUN apt-get update && apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross && rm -rf /var/lib/apt/lists/* \
+ && rustup target add aarch64-unknown-linux-gnu
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-edge,target=/build/target,sharing=locked \
+    cargo build --locked --release -p wamn-edge --target aarch64-unknown-linux-gnu \
+ && mkdir -p /native-output \
+ && aarch64-linux-gnu-strip -o /native-output/wamn-edge target/aarch64-unknown-linux-gnu/release/wamn-edge
 
 # ---- locked component outputs shared by every embedding image --------------
 FROM toolchain AS component-toolchain
@@ -193,6 +210,11 @@ COPY --from=component-builder /component-output/http_route.wasm /bench/http-rout
 COPY --from=component-builder /component-output/materializer.wasm /bench/materializer.wasm
 COPY --from=component-builder /component-output/connection_http_standard.wasm /bench/connection-http-standard.wasm
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
+
+# ---- edge box artifact: the stripped aarch64 binary alone ------------------
+# The box runs no container; export the file with --output (header above).
+FROM scratch AS edge
+COPY --from=build-edge /native-output/wamn-edge /wamn-edge
 
 FROM toolchain AS cranelift-dev
 # Opt-in native debug shell only. No shipping stage inherits this toolchain.

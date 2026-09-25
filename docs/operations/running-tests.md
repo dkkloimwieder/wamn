@@ -259,7 +259,7 @@ WAMN_RESULTS="$(mktemp -d)"
 Keep source unchanged while a command runs.
 Use diagnostic output to understand failures and the actual execution boundary.
 Keep credentials in private files and out of shared output.
-No permanent archive or result-only commit is required.
+No permanent archive or result-only commit is required, except the sweep log of an epic closeout ([the full sweep](#the-full-sweep)).
 [Result interpretation](../testing/evidence.md) defines passes, failures, and unexecuted cases.
 
 ## The full sweep
@@ -275,6 +275,13 @@ cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast
 ```
 
 Record its exit status before running another command.
+
+Keep one sweep log per epic closeout in the repository, at `tests/sweeps/<epic>-<commit>.log`.
+`<epic>` is the Beads id of the epic, and `<commit>` is the short hash of the commit that the sweep ran on.
+Set `WAMN_RESULTS` outside the checkout, because a cluster test refuses a tree with untracked files.
+After the sweep ends, copy `$WAMN_RESULTS/workspace.log` to that path.
+Commit the log with the closeout.
+The next closeout compares its failures with the last log by name.
 Do not pipe the command through `tail` or another output filter.
 `--workspace` selects all root members, including members outside Cargo's defaults.
 `--features wamn-ctl/ops` builds the targets that require the `ops` feature.
