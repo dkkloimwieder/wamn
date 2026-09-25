@@ -32,13 +32,32 @@ function stubScreen(name: string) {
           use {name}
         </button>
         <p>{used() ? `${name} holds a transport` : ""}</p>
+        <button type="button" onClick={() => props.open("pallets/abc")}>
+          open pallet abc
+        </button>
       </>
     );
   };
 }
 
+/** A record page that shows the key from its address, and opens another record. */
+function stubRecord(props: ScreenProps) {
+  return (
+    <>
+      <p>pallet {props.params.id} record</p>
+      <button type="button" onClick={() => props.open("pallets/def")}>
+        open pallet def
+      </button>
+    </>
+  );
+}
+
 const SECTIONS: readonly ShellSection[] = [
-  { label: "Pallets", screens: [{ path: "pallets", label: "query", component: stubScreen("pallets") }] },
+  {
+    label: "Pallets",
+    screens: [{ path: "pallets", label: "query", component: stubScreen("pallets") }],
+    records: [{ path: "pallets/:id", component: stubRecord }],
+  },
   {
     label: "Products",
     screens: [
@@ -170,6 +189,25 @@ describe("the app shell", () => {
     fireEvent.click(screen.getByText("query"));
     expect(await screen.findByText("products screen")).toBeDefined();
     expect(window.location.pathname).toBe(`/${AUD}/products`);
+  });
+
+  it("opens a record page from a screen, and shows the key from the address", async () => {
+    const { fetch } = identity(true);
+    open(`/${AUD}/products`, fetch);
+    fireEvent.click(await screen.findByText("open pallet abc"));
+    expect(await screen.findByText("pallet abc record")).toBeDefined();
+    expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`);
+    expect(screen.getByText("Pallets").closest("a")?.getAttribute("data-active")).toBe("true");
+    fireEvent.click(screen.getByText("open pallet def"));
+    expect(await screen.findByText("pallet def record")).toBeDefined();
+    expect(window.location.pathname).toBe(`/${AUD}/pallets/def`);
+  });
+
+  it("shows a record page from its address after a reload", async () => {
+    const { state, fetch } = identity(true);
+    open(`/${AUD}/pallets/abc`, fetch);
+    expect(await screen.findByText("pallet abc record")).toBeDefined();
+    expect(state.calls).toEqual(["/password/renew"]);
   });
 
   it("shows no page for an address that names none", async () => {

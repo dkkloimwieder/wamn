@@ -12,6 +12,7 @@ export {
   Shell,
   type ScreenProps,
   type ShellProps,
+  type ShellRoute,
   type ShellScreen,
   type ShellSection,
 } from "./shell";

@@ -5,6 +5,8 @@
  * a reload renews the session with nothing in browser storage. Each screen
  * route sits below that segment and renders inside the layout. The shell owns
  * no screen: the application writes each one from its generated components.
+ * The shell owns the router, so a screen gets its address values and a way to
+ * open another address as props, and never imports the router.
  */
 
 import {
@@ -64,15 +66,26 @@ export const API_BASE = "/api";
 export interface ScreenProps {
   /** The transport of the signed-in session. */
   readonly transport: Transport;
+  /** The values in the address, by the names in the route path, such as `id` for `pallets/:id`. */
+  readonly params: Readonly<Record<string, string | undefined>>;
+  /**
+   * Opens a path below the environment, such as `pallets/<id>`. The caller
+   * encodes each value it puts in the path.
+   */
+  readonly open: (path: string) => void;
 }
 
-/** One screen of the application, on its own route. */
-export interface ShellScreen {
-  /** The path below the environment, with no leading slash, such as `pallets`. */
+/** One route of the application, with no navigation entry, such as a record page. */
+export interface ShellRoute {
+  /** The path below the environment, with no leading slash, such as `pallets/:id`. */
   readonly path: string;
+  readonly component: Component<ScreenProps>;
+}
+
+/** One screen of the application, on its own route, with a navigation entry. */
+export interface ShellScreen extends ShellRoute {
   /** The navigation label, from the screen label the generated module exports. */
   readonly label: string;
-  readonly component: Component<ScreenProps>;
 }
 
 /**
@@ -84,6 +97,8 @@ export interface ShellSection {
   /** The model name, such as `Pallets`. */
   readonly label: string;
   readonly screens: readonly ShellScreen[];
+  /** The routes of the model that the navigation does not list, such as its record page. */
+  readonly records?: readonly ShellRoute[];
 }
 
 export interface ShellProps {
@@ -97,23 +112,33 @@ export interface ShellProps {
 const TransportContext = createContext<Transport>();
 
 /**
- * One screen on its route, with the transport of the session it renders in.
- * The transport is read here, while the route renders. A component reads its
- * prop later, in an event handler, where no context is in reach.
+ * One route with the transport of the session it renders in, its address
+ * values, and a way to open another path. Each one is read here, while the
+ * route renders. A component uses its props later, in an event handler, where
+ * no context is in reach.
  */
-function screenRoute(screen: ShellScreen): Component {
+function screenRoute(route: ShellRoute): Component {
   return () => {
     const transport = useContext(TransportContext);
     if (transport === undefined) {
       throw new Error("a screen renders outside a signed-in session");
     }
-    return <screen.component transport={transport} />;
+    const params = useParams();
+    const navigate = useNavigate();
+    return (
+      <route.component
+        transport={transport}
+        params={params}
+        open={(path) => navigate(`/${params.aud}/${path}`)}
+      />
+    );
   };
 }
 
 export function Shell(props: ShellProps): JSX.Element {
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const screens = props.sections.flatMap((section) => section.screens);
+  const routes = props.sections.flatMap((section) => [...section.screens, ...(section.records ?? [])]);
   const first = screens[0];
   return (
     <Router>
@@ -127,8 +152,8 @@ export function Shell(props: ShellProps): JSX.Element {
         )}
       >
         <Route path="/" component={() => (first === undefined ? <NotFound /> : <Navigate href={first.path} />)} />
-        {screens.map((screen) => (
-          <Route path={`/${screen.path}`} component={screenRoute(screen)} />
+        {routes.map((route) => (
+          <Route path={`/${route.path}`} component={screenRoute(route)} />
         ))}
         <Route path="*" component={NotFound} />
       </Route>

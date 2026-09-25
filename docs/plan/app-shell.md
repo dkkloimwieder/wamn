@@ -65,7 +65,7 @@ Each application writes its navigation by hand in its route table, grouped by mo
 
 ### 4.5 Record and command screens
 
-A record route carries the key in the path, for example `/pallets/<id>`, and mounts the detail component from it. The table row link navigates to that path. This is the row link callback of Epic 3B, pointed at the router. The record route actions open the forms, and a create form has its own route. The key in the path replaces the selected record that the demo holds in memory.
+Issue 2 built the record routes, which [execution](../architecture/execution.md) describes. The record route actions open the forms, and a create form has its own route. The key in the path replaces the selected record that the demo holds in memory.
 
 ### 4.6 The environment in the address
 
@@ -73,12 +73,13 @@ The demo writes the environment into the address fragment, so a reload renews th
 
 ## 5. Issues
 
-Only issue 1 is filed. It starts when `wamn-is2k` merges.
+Issues 1 and 2 are filed. Each next issue is scoped after the owner reviews the one before it.
 
 1. `wamn-d0zc.1`: the shell package and the WMS application. Sign in and sign out, the layout with a sidebar and a header, one route for each WMS table screen, a not-found route, and the `/api` prefix. Component tests on a stub transport.
-2. WMS record and command screens: a row opens a record route, and the forms open from routes.
-3. Receiving on the shell.
-4. Delete `web/demo`, and move its run instructions and seed notes to the applications.
+2. `wamn-d0zc.2`: WMS record pages. A table row opens `/<path>/<id>`, and the page mounts the get detail from the key in the address.
+3. WMS command screens: the forms open from routes.
+4. Receiving on the shell.
+5. Delete `web/demo`, and move its run instructions and seed notes to the applications.
 
 The epic is done when WMS and Receiving run every generated component from the shell against a local stack at the 1000 seed, and `web/demo` is gone.
 
