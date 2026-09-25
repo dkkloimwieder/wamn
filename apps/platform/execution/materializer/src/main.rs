@@ -513,9 +513,13 @@ enum DeliveryDisposition {
 
 fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> DeliveryDisposition {
     match result {
-        Ok(DeliveryOutcome::Respond(_) | DeliveryOutcome::Emit(_) | DeliveryOutcome::Discard) => {
-            DeliveryDisposition::Ack
-        }
+        // A registration delivery sends no tag, so not-modified is a completed read.
+        Ok(
+            DeliveryOutcome::Respond(_)
+            | DeliveryOutcome::Emit(_)
+            | DeliveryOutcome::Discard
+            | DeliveryOutcome::NotModified,
+        ) => DeliveryDisposition::Ack,
         // Partial completion never permits repeating the whole delivery.
         Ok(DeliveryOutcome::PartiallyCompleted(_)) => {
             DeliveryDisposition::Terminate("router-terminal")
@@ -564,6 +568,7 @@ async fn deliver(
             root: parent.root.clone(),
             depth: parent.depth,
         }),
+        if_none_match: None,
     })
     .await
     .outcome
@@ -1077,6 +1082,7 @@ mod tests {
         );
         for result in [
             Ok(DeliveryOutcome::Discard),
+            Ok(DeliveryOutcome::NotModified),
             Ok(DeliveryOutcome::Respond("{}".into())),
             Ok(DeliveryOutcome::Emit(delivery::Emission {
                 event: "{}".into(),
