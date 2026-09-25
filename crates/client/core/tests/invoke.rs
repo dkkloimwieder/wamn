@@ -92,6 +92,42 @@ async fn the_request_carries_the_bearer_the_host_and_a_canonical_envelope() {
     assert_eq!(body[0]["request_id"], "r1");
 }
 
+#[tokio::test]
+async fn a_read_is_a_get_with_its_one_item_in_the_query_and_no_body() {
+    let transport = FakeTransport::replying(200, r#"[{"value":{"ok":true}}]"#);
+    let read = RouteMetadata {
+        method: "GET".to_owned(),
+        template: "/widget/get".to_owned(),
+    };
+    let item = serde_json::json!({ "id": "3f8e" });
+    let outcomes = client(Arc::clone(&transport))
+        .invoke(&read, &BTreeMap::new(), std::slice::from_ref(&item))
+        .await
+        .expect("the read succeeds");
+    assert_eq!(
+        outcomes[0].request_id, None,
+        "a read outcome carries no request identity"
+    );
+
+    let sent = transport.request();
+    assert_eq!(sent.method, "GET");
+    assert_eq!(
+        sent.url,
+        format!(
+            "http://flow-http.wamn-system.svc/widget/get?{}",
+            wamn_execution_contract::encode_read_query(item.as_object().unwrap())
+        )
+    );
+    assert!(sent.body.is_empty());
+    assert!(!sent.headers.contains_key("content-type"));
+
+    let two = client(FakeTransport::replying(200, "[]"))
+        .invoke(&read, &BTreeMap::new(), &[item.clone(), item])
+        .await
+        .expect_err("a read sends exactly one item");
+    assert_eq!(two.code(), "invalid_input");
+}
+
 /// The base URL is joined without doubling the separator: a trailing slash on
 /// the deployment URL and a leading slash on the route must not produce `//`,
 /// which some gateways route differently.
@@ -124,7 +160,7 @@ async fn a_stale_write_surfaces_both_revisions_through_the_client() {
         .expect("the envelope itself succeeded");
 
     assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].request_id, "r1");
+    assert_eq!(outcomes[0].request_id.as_deref(), Some("r1"));
     match outcomes[0].clone().into_result() {
         Err(ClientError::ConcurrencyConflict {
             expected_row_version,

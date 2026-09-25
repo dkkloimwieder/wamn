@@ -102,7 +102,7 @@ pub static AGGREGATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "projection",
     input: crate::inventory::INVENTORY_AGGREGATE_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -147,10 +147,7 @@ pub static AGGREGATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]

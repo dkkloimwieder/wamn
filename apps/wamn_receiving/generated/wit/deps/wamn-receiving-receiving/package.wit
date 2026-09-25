@@ -26,7 +26,6 @@ interface load-purchase-order-history {
   }
 
   record load-purchase-order-history-item {
-    request-id: string,
     input: result<load-purchase-order-history-request, invalid-input-detail>,
   }
 
@@ -46,7 +45,6 @@ interface load-purchase-order-history {
   }
 
   record load-purchase-order-history-outcome {
-    request-id: string,
     outcome: result<load-purchase-order-history-result, load-purchase-order-history-error>,
   }
 
@@ -84,7 +82,6 @@ interface load-receipt-screen {
   }
 
   record load-receipt-screen-item {
-    request-id: string,
     input: result<load-receipt-screen-request, invalid-input-detail>,
   }
 
@@ -108,7 +105,6 @@ interface load-receipt-screen {
   }
 
   record load-receipt-screen-outcome {
-    request-id: string,
     outcome: result<load-receipt-screen-result, load-receipt-screen-error>,
   }
 

@@ -55,8 +55,6 @@ pub const RECEIPT_FIELDS: &[FieldDescriptor] = &[
 pub struct ReceiptGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-receiving:receipt/get@1.0.0`.
@@ -79,20 +77,12 @@ pub struct ReceiptGetResult {
 }
 
 /// Input descriptors for `wamn-receiving:receipt/get@1.0.0`.
-pub const RECEIPT_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const RECEIPT_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-receiving:receipt/get@1.0.0`.
 pub const RECEIPT_GET_RESULT: &[FieldDescriptor] = &[
@@ -140,8 +130,8 @@ pub const RECEIPT_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const RECEIPT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const RECEIPT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -152,20 +142,7 @@ pub const RECEIPT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const RECEIPT_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -279,7 +256,7 @@ pub const RECEIPT_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/receipt/get".to_owned(),
     }
 }
@@ -306,8 +283,6 @@ pub struct ReceiptQueryRequest {
     pub cursor: Option<String>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-receiving:receipt/query@1.0.0`.
@@ -341,12 +316,6 @@ pub const RECEIPT_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
 ];
@@ -418,18 +387,6 @@ pub const RECEIPT_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
             values: &[],
         },
         required: false,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
         minimum: None,
         maximum: None,
         children: &[],
@@ -547,7 +504,7 @@ pub const RECEIPT_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/receipt/query".to_owned(),
     }
 }

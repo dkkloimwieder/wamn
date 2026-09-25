@@ -26,7 +26,7 @@ interface Expectation {
 interface Case {
   readonly name: string;
   readonly contract: string;
-  readonly request_id: string;
+  readonly request_id: string | null;
   readonly status: number;
   readonly body: string;
   readonly expect: Expectation;

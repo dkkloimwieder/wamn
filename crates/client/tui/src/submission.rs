@@ -202,11 +202,20 @@ impl Submission {
         let Some(request) = self.captured.as_ref() else {
             return false;
         };
-        let request_id = request
-            .item()
-            .get("request_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        // A read carries no request identity: its one outcome answers its one
+        // item by position.
+        let read = matches!(contract.kind, "get" | "query" | "projection");
+        let request_id = if read {
+            None
+        } else {
+            Some(
+                request
+                    .item()
+                    .get("request_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )
+        };
         let evidence = classify(contract, request_id, response);
         self.resolve_evidence(attempt, evidence)
     }
@@ -316,7 +325,7 @@ impl std::error::Error for SubmissionError {}
 #[must_use]
 pub fn classify(
     contract: &ResponseContract,
-    request_id: &str,
+    request_id: Option<&str>,
     response: Result<HttpResponse, ClientError>,
 ) -> Evidence {
     let response = match response {
@@ -399,7 +408,7 @@ pub fn classify(
         return uncertain("the response must contain exactly one outcome");
     };
     let item = &items[0];
-    if request_id.is_empty() || item.get("request_id").and_then(Value::as_str) != Some(request_id) {
+    if !matches_request(request_id, item) {
         return uncertain("the response does not match the submitted request");
     }
     match (item.get("value"), item.get("error")) {
@@ -419,7 +428,23 @@ pub fn classify(
     }
 }
 
-fn classify_partial(contract: &ResponseContract, request_id: &str, document: &Value) -> Evidence {
+/// Whether an outcome echoes the submitted identity, or carries none for a
+/// read, which is `None`.
+fn matches_request(request_id: Option<&str>, item: &Value) -> bool {
+    match request_id {
+        None => item.get("request_id").is_none(),
+        Some(request_id) => {
+            !request_id.is_empty()
+                && item.get("request_id").and_then(Value::as_str) == Some(request_id)
+        }
+    }
+}
+
+fn classify_partial(
+    contract: &ResponseContract,
+    request_id: Option<&str>,
+    document: &Value,
+) -> Evidence {
     let Some(schema) = contract.partial_schema else {
         return unknown("the route declares no partial completion contract");
     };
@@ -437,7 +462,7 @@ fn classify_partial(contract: &ResponseContract, request_id: &str, document: &Va
         return unknown("the committed result must contain exactly one outcome");
     };
     let item = &items[0];
-    if request_id.is_empty() || item.get("request_id").and_then(Value::as_str) != Some(request_id) {
+    if !matches_request(request_id, item) {
         return unknown("the committed result does not match the submitted request");
     }
     let (Some(value), None, Some(failed_outcome)) = (

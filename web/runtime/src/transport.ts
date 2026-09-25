@@ -15,6 +15,7 @@
 
 import { z } from "zod";
 
+import { encodeReadQuery } from "./readQuery.js";
 import type {
   ErrorCase,
   FieldMap,
@@ -189,11 +190,13 @@ function reported(reason: string, document: unknown): Outcome<JsonValue> {
  *
  * `requestId` is the identity the caller wrote into the item it sent. The
  * release echoes it, and a reply that does not carry it back establishes
- * nothing about this submission.
+ * nothing about this submission. It is `null` for a read, which carries no
+ * request identity: its one outcome matches its one item by position, and an
+ * outcome that carries an identity establishes nothing.
  */
 export function classify(
   contract: ResponseContract,
-  requestId: string,
+  requestId: string | null,
   reply: HttpReply,
 ): Outcome<JsonValue> {
   if (reply.status === 401 && contract.direct) {
@@ -249,7 +252,7 @@ export function classify(
     return reported("the response must contain exactly one outcome", document);
   }
   const item = outcomes.data[0];
-  if (requestId === "" || item?.request_id !== requestId) {
+  if (item === undefined || !matchesRequest(requestId, item.request_id)) {
     return reported("the response does not match the submitted request", document);
   }
   if (item.value !== undefined && item.error === undefined) {
@@ -375,7 +378,7 @@ function isPointerOnly(error: { [key: string]: unknown }): boolean {
 
 function classifyPartial(
   contract: ResponseContract,
-  requestId: string,
+  requestId: string | null,
   document: {
     committed_result?: readonly unknown[] | undefined;
     failed_outcome?: unknown;
@@ -389,7 +392,7 @@ function classifyPartial(
     return uncertain("the committed result must contain exactly one outcome");
   }
   const item = ITEM.safeParse(committed[0]);
-  if (!item.success || requestId === "" || item.data.request_id !== requestId) {
+  if (!item.success || !matchesRequest(requestId, item.data.request_id)) {
     return uncertain("the committed result does not match the submitted request");
   }
   if (
@@ -416,20 +419,29 @@ export function createTransport(options: TransportOptions): Transport {
   const call = options.fetch ?? globalThis.fetch;
   return {
     async invoke(request: WireRequest): Promise<Outcome<JsonValue>> {
-      const requestId = submittedRequestId(request);
-      const headers: { [name: string]: string } = {
-        "content-type": "application/json",
-      };
-      const init: RequestInit = {
-        method: request.method,
-        headers,
-        body: JSON.stringify(request.items),
-      };
+      const read = request.method === "GET";
+      const requestId = read ? null : submittedRequestId(request);
+      const headers: { [name: string]: string } = {};
+      const init: RequestInit = { method: request.method, headers };
+      let target = request.template;
+      if (read) {
+        // A read carries its one item in the query string, and has no body.
+        const [item, ...rest] = request.items;
+        if (rest.length > 0 || item === null || typeof item !== "object" || Array.isArray(item)) {
+          return uncertain("a read sends exactly one request item");
+        }
+        const query = encodeReadQuery(item as { readonly [name: string]: JsonValue });
+        target = query === "" ? target : `${target}?${query}`;
+      } else {
+        headers["content-type"] = "application/json";
+        init.body = JSON.stringify(request.items);
+      }
       if (options.cookie === true) {
         // The CSRF cookie is read on every request, because a renewal replaces
-        // it. Without it the header stays off, and the router decides.
+        // it. Without it the header stays off, and the router decides. A read
+        // needs no CSRF header, and a request with one is never cached.
         const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
-        if (csrf !== null) {
+        if (csrf !== null && !read) {
           headers[CSRF_HEADER] = csrf;
         }
         init.credentials = "include";
@@ -438,7 +450,7 @@ export function createTransport(options: TransportOptions): Transport {
       }
       let reply: HttpReply;
       try {
-        const response = await call(`${options.baseUrl}${request.template}`, init);
+        const response = await call(`${options.baseUrl}${target}`, init);
         reply = { status: response.status, body: await response.text() };
       } catch (error) {
         return uncertain(`the request did not complete: ${String(error)}`);
@@ -446,6 +458,11 @@ export function createTransport(options: TransportOptions): Transport {
       return classify(request.contract, requestId, reply);
     },
   };
+}
+
+/** Whether an echoed identity matches the submitted one, or is absent for a read. */
+function matchesRequest(requestId: string | null, echoed: string | undefined): boolean {
+  return requestId === null ? echoed === undefined : requestId !== "" && echoed === requestId;
 }
 
 /**

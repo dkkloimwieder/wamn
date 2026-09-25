@@ -54,17 +54,6 @@ fn validate_count(count: usize) -> Result<(), CodecError> {
 }
 
 #[allow(dead_code)]
-pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
-    validate_count(input.len())?;
-    if input.iter().any(|item| item.request_id.is_empty()) {
-        return Err(CodecError(
-            "every operation item must carry a nonempty string request_id",
-        ));
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
 fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
     let Value::Array(values) = serde_json::from_str(input)
         .map_err(|_| CodecError("operation input must be a JSON array"))?
@@ -89,6 +78,23 @@ fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
                 ));
             }
             Ok((request_id, Value::Object(object)))
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+fn decode_read_envelope(input: &str) -> Result<Vec<Value>, CodecError> {
+    let Value::Array(values) = serde_json::from_str(input)
+        .map_err(|_| CodecError("operation input must be a JSON array"))?
+    else {
+        return Err(CodecError("operation input must be a JSON array"));
+    };
+    validate_count(values.len())?;
+    values
+        .into_iter()
+        .map(|value| match value {
+            Value::Object(_) => Ok(value),
+            _ => Err(CodecError("every operation item must be a JSON object")),
         })
         .collect()
 }

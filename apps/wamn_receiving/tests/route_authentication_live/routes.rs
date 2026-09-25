@@ -3,14 +3,21 @@
 use super::*;
 
 const P3_REQUEST_ID: &str = "p3-protocol";
-const P3_PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
-const P3_PAYLOAD: &[u8] =
-    br#"[{"request_id":"p3-protocol","id":"00000000-0000-0000-0000-000000000301"}]"#;
+/// A write whose revision no row ever reaches, so every run refuses it the
+/// same way and changes nothing. The probe needs a body, and a read has none.
+const P3_PAYLOAD: &[u8] = br#"[{"request_id":"p3-protocol","id":"00000000-0000-0000-0000-000000000301","expected_row_version":2147483647,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#;
 
-fn validate_p3_read(response: &hyper::Response<Bytes>) -> anyhow::Result<()> {
+fn validate_p3_refusal(response: &hyper::Response<Bytes>) -> anyhow::Result<()> {
     anyhow::ensure!(
-        successful_value(response, P3_REQUEST_ID)?["id"] == P3_PURCHASE_ORDER_ID,
-        "P3 protocol read returned another purchase order"
+        response.status() == StatusCode::OK,
+        "P3 protocol request returned {}",
+        response.status()
+    );
+    let body: Value = serde_json::from_slice(response.body())?;
+    anyhow::ensure!(
+        body[0]["request_id"] == P3_REQUEST_ID
+            && body[0]["error"]["code"] == "concurrency_conflict",
+        "P3 protocol request did not reach the stale-revision refusal: {body}"
     );
     Ok(())
 }
@@ -336,7 +343,7 @@ async fn receiving_release_journey(
     );
 
     let (_, traceparent) = journey_trace(15);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -347,10 +354,10 @@ async fn receiving_release_journey(
         "/location/list",
         Some(&route.token),
         &traceparent,
-        Bytes::from_static(br#"[{"request_id":"location-list"}]"#),
+        &serde_json::json!({}),
     )
     .await?;
-    let value = successful_value(&response, "location-list")?;
+    let value = successful_read_value(&response, "location-list")?;
     anyhow::ensure!(
         value["rows"].as_array().is_some_and(|rows| {
             rows.len() == 1
@@ -361,7 +368,7 @@ async fn receiving_release_journey(
     );
 
     let (_, traceparent) = journey_trace(16);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -372,12 +379,10 @@ async fn receiving_release_journey(
         "/receiving/load_receipt_screen",
         Some(&route.token),
         &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"load-receipt-screen","purchase_order_id":"00000000-0000-0000-0000-000000000301"}]"#,
-        ),
+        &serde_json::json!({"purchase_order_id": "00000000-0000-0000-0000-000000000301"}),
     )
     .await?;
-    let value = successful_value(&response, "load-receipt-screen")?;
+    let value = successful_read_value(&response, "load-receipt-screen")?;
     anyhow::ensure!(
         value["rows"].as_array().is_some_and(|rows| {
             rows.len() == 1
@@ -389,7 +394,7 @@ async fn receiving_release_journey(
     );
 
     let (trace_id, traceparent) = journey_trace(2);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -400,12 +405,10 @@ async fn receiving_release_journey(
         "/purchase_order/get",
         Some(&route.token),
         &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"purchase-order-get","id":"00000000-0000-0000-0000-000000000301"}]"#,
-        ),
+        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000301"}),
     )
     .await?;
-    let value = successful_value(&response, "purchase-order-get")?;
+    let value = successful_read_value(&response, "purchase-order-get")?;
     anyhow::ensure!(
         value["id"] == "00000000-0000-0000-0000-000000000301" && value["row_version"] == 1,
         "purchase_order.get returned the wrong row: {value}"
@@ -418,7 +421,7 @@ async fn receiving_release_journey(
     ));
 
     let (trace_id, traceparent) = journey_trace(3);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -429,12 +432,17 @@ async fn receiving_release_journey(
         "/purchase_order/query",
         Some(&route.token),
         &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"purchase-order-query","filter":{"supplier_id":["00000000-0000-0000-0000-000000000401"],"status":["open"]},"sort":{"field":"created_at","direction":"ascending"},"limit":100}]"#,
-        ),
+        &serde_json::json!({
+            "filter": {
+                "supplier_id": ["00000000-0000-0000-0000-000000000401"],
+                "status": ["open"],
+            },
+            "sort": {"field": "created_at", "direction": "ascending"},
+            "limit": 100,
+        }),
     )
     .await?;
-    let value = successful_value(&response, "purchase-order-query")?;
+    let value = successful_read_value(&response, "purchase-order-query")?;
     anyhow::ensure!(
         value["item"].as_array().is_some_and(|items| {
             items.len() == 1 && items[0]["id"] == "00000000-0000-0000-0000-000000000301"
@@ -541,11 +549,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((trace_id, "", BASE_RECORD_RECEIPT, BASE_PACKAGE_ID));
 
     let (trace_id, traceparent) = journey_trace(6);
-    let receipt_get = serde_json::to_vec(&serde_json::json!([{
-        "request_id": "receipt-get",
-        "id": receipt_id,
-    }]))?;
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -556,10 +560,10 @@ async fn receiving_release_journey(
         "/receipt/get",
         Some(&route.token),
         &traceparent,
-        Bytes::from(receipt_get),
+        &serde_json::json!({"id": receipt_id}),
     )
     .await?;
-    let value = successful_value(&response, "receipt-get")?;
+    let value = successful_read_value(&response, "receipt-get")?;
     anyhow::ensure!(
         value["receipt_reference"] == "RECEIPT-1",
         "receipt.get returned the wrong receipt: {value}"
@@ -572,7 +576,7 @@ async fn receiving_release_journey(
     ));
 
     let (trace_id, traceparent) = journey_trace(7);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -583,10 +587,10 @@ async fn receiving_release_journey(
         "/receipt/query",
         Some(&route.token),
         &traceparent,
-        Bytes::from_static(br#"[{"request_id":"receipt-query","limit":100}]"#),
+        &serde_json::json!({"limit": 100}),
     )
     .await?;
-    let value = successful_value(&response, "receipt-query")?;
+    let value = successful_read_value(&response, "receipt-query")?;
     anyhow::ensure!(
         value["item"].as_array().is_some_and(|items| {
             items.len() == 2
@@ -608,7 +612,7 @@ async fn receiving_release_journey(
     seed_preexisting_quality_fixture(project.as_ref()).await?;
 
     let (trace_id, traceparent) = journey_trace(8);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -619,12 +623,10 @@ async fn receiving_release_journey(
         overlay_route_path("purchase_order_get"),
         Some(&route.token),
         &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"acme-purchase-order-get","id":"00000000-0000-0000-0000-000000000302"}]"#,
-        ),
+        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000302"}),
     )
     .await?;
-    let value = successful_value(&response, "acme-purchase-order-get")?;
+    let value = successful_read_value(&response, "acme-purchase-order-get")?;
     anyhow::ensure!(
         value["id"] == "00000000-0000-0000-0000-000000000302"
             && value["row_version"] == 2
@@ -688,7 +690,7 @@ async fn receiving_release_journey(
     .await?;
 
     let (trace_id, traceparent) = journey_trace(10);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -699,12 +701,10 @@ async fn receiving_release_journey(
         overlay_route_path("quality_load_purchase_order_detail"),
         Some(&route.token),
         &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"quality-load-detail","purchase_order_id":"00000000-0000-0000-0000-000000000302"}]"#,
-        ),
+        &serde_json::json!({"purchase_order_id": "00000000-0000-0000-0000-000000000302"}),
     )
     .await?;
-    let value = successful_value(&response, "quality-load-detail")?;
+    let value = successful_read_value(&response, "quality-load-detail")?;
     anyhow::ensure!(
         value["id"] == "00000000-0000-0000-0000-000000000302"
             && value["row_version"] == 3
@@ -768,7 +768,7 @@ async fn receiving_release_journey(
         "history denial setup removed {removed} permission rows instead of one"
     );
     let (denied_history_trace, denied_history_parent) = journey_trace(22);
-    let denied_history = invoke_journey_route(
+    let denied_history = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -779,9 +779,7 @@ async fn receiving_release_journey(
         "/receiving/load_purchase_order_history",
         Some(&route.token),
         &denied_history_parent,
-        Bytes::from_static(
-            br#"[{"request_id":"history-permission-denied","id":"00000000-0000-0000-0000-000000000302","limit":100}]"#,
-        ),
+        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000302", "limit": 100}),
     )
     .await?;
     super::sessions::assert_operation_refusal(
@@ -846,7 +844,7 @@ async fn receiving_release_journey(
     .await?;
 
     let (unauthorized_trace, unauthorized_parent) = journey_trace(13);
-    let unauthorized = invoke_journey_route(
+    let unauthorized = invoke_journey_read(
         &JourneyRuntime {
             engine: &engine,
             flow_http: &flow_http,
@@ -857,9 +855,7 @@ async fn receiving_release_journey(
         "/purchase_order/get",
         None,
         &unauthorized_parent,
-        Bytes::from_static(
-            br#"[{"request_id":"unauthorized","id":"00000000-0000-0000-0000-000000000301"}]"#,
-        ),
+        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000301"}),
     )
     .await?;
     anyhow::ensure!(
@@ -869,6 +865,7 @@ async fn receiving_release_journey(
         String::from_utf8_lossy(unauthorized.body())
     );
 
+    // A read GET has no body, so the body limit is probed on a write route.
     let (oversized_trace, oversized_parent) = journey_trace(14);
     let oversized = invoke_journey_route(
         &JourneyRuntime {
@@ -878,7 +875,7 @@ async fn receiving_release_journey(
             bridge: &bridge,
         },
         &inputs.route_host,
-        "/purchase_order/get",
+        "/purchase_order/update",
         Some(&route.token),
         &oversized_parent,
         Bytes::from(vec![b' '; RAW_BODY_LIMIT + 1]),
@@ -903,11 +900,11 @@ async fn receiving_release_journey(
         Arc::clone(&bridge),
         &inputs.route_host,
         &route.token,
-        &wamn_integration_tests::p3_shell::ReadProbe {
-            path: "/purchase_order/get",
+        &wamn_integration_tests::p3_shell::BodyProbe {
+            path: "/purchase_order/update",
             payload: P3_PAYLOAD,
             body_limit: RAW_BODY_LIMIT,
-            validate_response: validate_p3_read,
+            validate_response: validate_p3_refusal,
         },
     )
     .await?;
@@ -1112,7 +1109,7 @@ async fn assert_route_history_read(
     const ORDER: &str = "00000000-0000-0000-0000-000000000302";
     const ACME_COLUMNS: [&str; 2] = ["acme_inspection_required", "acme_quality_status"];
     let (_, traceparent) = journey_trace(21);
-    let response = invoke_journey_route(
+    let response = invoke_journey_read(
         &JourneyRuntime {
             engine,
             flow_http,
@@ -1123,12 +1120,10 @@ async fn assert_route_history_read(
         "/receiving/load_purchase_order_history",
         Some(token),
         &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"purchase-order-history","id":"00000000-0000-0000-0000-000000000302","limit":100}]"#,
-        ),
+        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000302", "limit": 100}),
     )
     .await?;
-    let value = successful_value(&response, "purchase-order-history")?;
+    let value = successful_read_value(&response, "purchase-order-history")?;
     let served = value["rows"]
         .as_array()
         .context("the history read returned no rows")?;

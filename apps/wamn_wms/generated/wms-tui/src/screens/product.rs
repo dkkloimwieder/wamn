@@ -92,7 +92,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "get",
     input: crate::product::PRODUCT_GET_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\",\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -146,10 +146,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]
@@ -164,7 +161,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "query",
     input: crate::product::PRODUCT_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"product_code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"product_code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -213,10 +210,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]

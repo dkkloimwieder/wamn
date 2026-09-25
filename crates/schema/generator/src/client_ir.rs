@@ -166,7 +166,8 @@ pub struct ModelIr {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RouteIr {
-    /// HTTP method exactly as the attachment publishes it, e.g. `POST`.
+    /// HTTP method, from the kind of the operation the route calls: `GET` for
+    /// a read, `POST` otherwise. No author writes it.
     pub method: String,
     /// Authored path template, parameter names intact, e.g.
     /// `/purchase_order/{id}`.
@@ -729,10 +730,11 @@ pub fn published_routes(
 /// # Normalization
 ///
 /// This reads the AUTHORED publication input, which publication normalizes on
-/// a copy downstream (`normalize_http_route`, uppercasing the method and
-/// trimming the path). This layer is a sibling reader of those bytes, not a
-/// consumer of the normalized output, so an authored `"post"` would reach a
-/// generated client as `post` and call a method the deployment does not serve.
+/// a copy downstream (`normalize_http_route`, trimming the path). This layer
+/// is a sibling reader of those bytes, not a consumer of the normalized
+/// output, so an authored `/widget/` would reach a generated client as
+/// `/widget/` and call a path the deployment does not serve. Neither side
+/// reads an authored method: both derive it from the operation kind.
 ///
 /// It cannot simply normalize: `normalize_http_route` lives in
 /// `wamn-schema-control`, which DEPENDS on this crate, so reaching for it
@@ -792,9 +794,18 @@ fn route_index(
                     )
                 })
         };
+        if attachment.definition.pointer("/route/method").is_some() {
+            return Err(ClientIrError::new(
+                ClientIrErrorKind::UnnormalizedRoute,
+                format!(
+                    "attachment {id:?} authors route.method; remove it, because the method follows from the operation kind"
+                ),
+            ));
+        }
         let evidence = crate::client_route::evidence(attachments, &attachment)?;
         let route = RouteIr {
-            method: member("method")?,
+            // The join with the operation contract writes the method from its kind.
+            method: String::new(),
             template: member("template").or_else(|_| member("path"))?,
             input_schema: evidence.input_schema,
             terminal_operation: evidence.terminal_operation,
@@ -822,17 +833,13 @@ fn route_index(
             },
             replay: None,
         };
-        if route.method != route.method.to_ascii_uppercase()
-            || route.template != normalized_template(&route.template)
-        {
+        if route.template != normalized_template(&route.template) {
             return Err(ClientIrError::new(
                 ClientIrErrorKind::UnnormalizedRoute,
                 format!(
-                    "attachment {id:?} publishes {} {:?}; author it as publication would \
-                     normalize it, {} {:?}",
-                    route.method,
+                    "attachment {id:?} publishes {:?}; author it as publication would \
+                     normalize it, {:?}",
                     route.template,
-                    route.method.to_ascii_uppercase(),
                     normalized_template(&route.template),
                 ),
             ));
@@ -848,13 +855,25 @@ fn route_index(
             return Err(ClientIrError::new(
                 ClientIrErrorKind::AmbiguousRoute,
                 format!(
-                    "operation {operation:?} is published at both {} {:?} and {} {:?}",
-                    existing.method, existing.template, route.method, route.template
+                    "operation {operation:?} is published at both {:?} and {:?}",
+                    existing.template, route.template
                 ),
             ));
         }
     }
     Ok(index)
+}
+
+/// The HTTP method of a route to an operation of this contract kind.
+fn route_method(kind: &str, module: &str, name: &str) -> Result<&'static str, ClientIrError> {
+    serde_json::from_value::<wamn_catalog::OperationKind>(Value::String(kind.to_owned()))
+        .map(wamn_catalog::OperationKind::http_method)
+        .map_err(|error| {
+            ClientIrError::new(
+                ClientIrErrorKind::MalformedContract,
+                format!("{module}/{name} kind {kind:?}: {error}"),
+            )
+        })
 }
 
 /// The path form publication would normalize to: no trailing slash below the
@@ -1089,10 +1108,17 @@ fn build_operation(
         || leaf_fields(&input_fields)
             .iter()
             .any(|field| field.revision);
+    let route = match routes.get(&identity) {
+        Some(route) => Some(RouteIr {
+            method: route_method(&kind, module, name)?.to_owned(),
+            ..route.clone()
+        }),
+        None => None,
+    };
     Ok(Some(OperationIr {
         name: name.to_owned(),
         kind,
-        route: routes.get(&identity).cloned(),
+        route,
         record,
         revision_binding: None,
         requires_composition,

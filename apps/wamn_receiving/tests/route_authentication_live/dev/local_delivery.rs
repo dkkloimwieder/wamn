@@ -135,10 +135,10 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         project.execute("INSERT INTO receiving.location(id,location_code) VALUES ('00000000-0000-0000-0000-000000000202','DOCK-2')", &[]).await?;
         task.abort();
         let token = &environment.route.token;
-        let denied = http_client()?.post(format!("{}/location/list", first.url))
-            .header("Host", &first.host).json(&json!([{"request_id":"denied"}])).send().await?;
+        let denied = http_client()?.get(format!("{}/location/list", first.url))
+            .header("Host", &first.host).send().await?;
         ensure!(denied.status() == reqwest::StatusCode::UNAUTHORIZED, "the local route must require authentication");
-        first.locations(token, "timing-original", &["DOCK-1", "DOCK-2"]).await?;
+        first.locations(token, &["DOCK-1", "DOCK-2"]).await?;
         let updated = first.request(token, "/purchase_order/update", json!([{
             "request_id":"local-update", "id":"00000000-0000-0000-0000-000000000301",
             "expected_row_version":1, "change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}
@@ -149,20 +149,20 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
         let code = watch.served().await?;
         code.retained(&first, &["migrate", "introspect", "generate", "acl"])?;
-        code.locations(token, "timing-original", &["DOCK-1-edited", "DOCK-2-edited"]).await?;
+        code.locations(token, &["DOCK-1-edited", "DOCK-2-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(SQL, "location.location_code ASC", "location.location_code DESC")?;
         let sql = watch.served().await?;
         sql.retained(&code, &["migrate", "introspect"])?;
         ensure!(!sql.skipped.contains("generate"), "a named SQL edit cannot skip generation");
-        sql.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+        sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         let valid_sql = fs::read(repository.join(SQL))?;
         fs::write(repository.join(SQL), b"SELECT invalid_delivery_sql FROM receiving.location;\n")?;
         watch.refused_generation().await?;
-        sql.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+        sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
         fs::write(repository.join(SQL), valid_sql)?;
         let repaired = watch.served().await?;
@@ -173,19 +173,19 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         appended.retained(&repaired, &[])?;
         ensure!(!appended.skipped.contains("migrate"), "an appended migration must reach the kept target");
         ensure!(location_note(&environment.route.database_url).await?, "the kept target lacks the appended column");
-        appended.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+        appended.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(MANIFEST, MANIFEST_BEFORE, MANIFEST_AFTER)?;
         let declared = watch.served().await?;
         declared.retained(&appended, &[])?;
-        declared.locations(token, "timing-original", &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+        declared.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(MANIFEST, OWNER_BEFORE, OWNER_AFTER)?;
         let reset = watch.served().await?;
         ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a declared definition owner must create a new target instance");
-        reset.locations(token, "timing-original", &[]).await?;
+        reset.locations(token, &[]).await?;
         ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
         ensure!(current_database_acl(admin.as_ref()).await? == system_acl, "the local loop changed the system database ACL");
@@ -356,22 +356,24 @@ impl Served {
             .await?)
     }
 
-    async fn locations(
-        &self,
-        token: &str,
-        request_id: &str,
-        expected: &[&str],
-    ) -> anyhow::Result<()> {
-        let body = self
-            .request(
-                token,
-                "/location/list",
-                json!([{"request_id":"timing-original"}]),
-            )
-            .await?;
+    /// A read whose one item is empty: a GET with no query and no body.
+    async fn get(&self, token: &str, path: &str) -> anyhow::Result<Value> {
+        Ok(http_client()?
+            .get(format!("{}{path}", self.url))
+            .header("Host", &self.host)
+            .bearer_auth(token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    async fn locations(&self, token: &str, expected: &[&str]) -> anyhow::Result<()> {
+        let body = self.get(token, "/location/list").await?;
         ensure!(
-            body[0]["request_id"] == request_id,
-            "the served component did not reflect its source edit"
+            body[0].get("request_id").is_none(),
+            "the location read reply echoed a request_id"
         );
         let rows = body[0]["value"]["rows"]
             .as_array()

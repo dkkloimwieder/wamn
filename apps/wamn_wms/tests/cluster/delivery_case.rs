@@ -168,16 +168,12 @@ pub(super) async fn run(
     let address = bootstrap::kind_address(
         &deployment::inspect(lifecycle, &format!("{cluster}-control-plane")).await?,
     )?;
-    let request = artifact(
-        evidence,
-        "request.json",
-        &json!([{"request_id":"delivery-inventory-aggregate"}]),
-    )?;
+    let request = artifact(evidence, "request.json", &json!([{}]))?;
     let expected = artifact(
         evidence,
         "expected-response.json",
         &json!([{
-            "request_id":"delivery-inventory-aggregate","value":{"rows":[{
+            "value":{"rows":[{
                 "product_id":"00000000-0000-0000-0000-000000000101",
                 "location_id":"00000000-0000-0000-0000-000000000201",
                 "status":"available","quantity":"10","pallet_count":1

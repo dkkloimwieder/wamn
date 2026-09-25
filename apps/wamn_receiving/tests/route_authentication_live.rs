@@ -97,7 +97,8 @@ use runtime::{
     assert_invocation_identity, assert_native_nested_acquisition,
     assert_nested_permission_denial_trace, assert_nested_record_receipt_trace,
     assert_no_component_trace, assert_postgres_descendants, build_journey_runtime,
-    invoke_journey_route, journey_trace, span_attribute, span_descends_from, successful_value,
+    invoke_journey_method, invoke_journey_read, invoke_journey_route, journey_trace,
+    span_attribute, span_descends_from, successful_read_value, successful_value,
     trace_component_invocations,
 };
 use sessions::{assert_operation_refusal, nested_receipt_state};
@@ -194,6 +195,8 @@ struct JourneyAttachment {
     package_id: &'static str,
     wiring_id: &'static str,
     path: &'static str,
+    /// Publish derives it from the operation kind: GET for a read, else POST.
+    method: &'static str,
     operation: &'static str,
 }
 
@@ -207,6 +210,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "location_list",
         path: "/location/list",
+        method: "GET",
         operation: "wamn-receiving:location/list@1.0.0",
     },
     JourneyAttachment {
@@ -214,6 +218,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "purchase_order_get",
         path: "/purchase_order/get",
+        method: "GET",
         operation: "wamn-receiving:purchase-order/get@1.0.0",
     },
     JourneyAttachment {
@@ -221,6 +226,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "purchase_order_query",
         path: "/purchase_order/query",
+        method: "GET",
         operation: "wamn-receiving:purchase-order/query@1.0.0",
     },
     JourneyAttachment {
@@ -228,6 +234,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "purchase_order_update",
         path: "/purchase_order/update",
+        method: "POST",
         operation: "wamn-receiving:purchase-order/update@1.0.0",
     },
     JourneyAttachment {
@@ -235,6 +242,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "receipt_get",
         path: "/receipt/get",
+        method: "GET",
         operation: "wamn-receiving:receipt/get@1.0.0",
     },
     JourneyAttachment {
@@ -242,6 +250,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "receipt_query",
         path: "/receipt/query",
+        method: "GET",
         operation: "wamn-receiving:receipt/query@1.0.0",
     },
     JourneyAttachment {
@@ -249,6 +258,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "receiving_record_receipt",
         path: "/receiving/record_receipt",
+        method: "POST",
         operation: BASE_RECORD_RECEIPT,
     },
     JourneyAttachment {
@@ -256,6 +266,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "receiving_load_receipt_screen",
         path: "/receiving/load_receipt_screen",
+        method: "GET",
         operation: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
     },
     JourneyAttachment {
@@ -263,6 +274,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "receiving_load_purchase_order_history",
         path: "/receiving/load_purchase_order_history",
+        method: "GET",
         operation: HISTORY_OPERATION,
     },
     JourneyAttachment {
@@ -270,6 +282,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "supplier_create",
         path: "/supplier/create",
+        method: "POST",
         operation: "wamn-receiving:supplier/create@1.0.0",
     },
     JourneyAttachment {
@@ -277,6 +290,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "supplier_query",
         path: "/supplier/query",
+        method: "GET",
         operation: "wamn-receiving:supplier/query@1.0.0",
     },
     JourneyAttachment {
@@ -284,6 +298,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: OVERLAY_PACKAGE_ID,
         wiring_id: "purchase_order_get",
         path: "/acme/purchase_order/get",
+        method: "GET",
         operation: "client-acme-receiving:purchase-order/get@3.0.0",
     },
     JourneyAttachment {
@@ -291,6 +306,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: OVERLAY_PACKAGE_ID,
         wiring_id: "purchase_order_update",
         path: "/acme/purchase_order/update",
+        method: "POST",
         operation: "client-acme-receiving:purchase-order/update@3.0.0",
     },
     JourneyAttachment {
@@ -298,6 +314,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: OVERLAY_PACKAGE_ID,
         wiring_id: "receiving_record_receipt",
         path: "/acme/receiving/record_receipt",
+        method: "POST",
         operation: OVERLAY_RECORD_RECEIPT,
     },
     JourneyAttachment {
@@ -305,6 +322,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: OVERLAY_PACKAGE_ID,
         wiring_id: "quality_load_purchase_order_detail",
         path: "/acme/quality/load_purchase_order_detail",
+        method: "GET",
         operation: "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
     },
     JourneyAttachment {
@@ -312,6 +330,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: OVERLAY_PACKAGE_ID,
         wiring_id: "quality_approve_inspection",
         path: "/acme/quality/approve_inspection",
+        method: "POST",
         operation: "client-acme-receiving:quality/approve-inspection@3.0.0",
     },
 ];

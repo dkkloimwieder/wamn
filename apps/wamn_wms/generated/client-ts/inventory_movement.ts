@@ -9,14 +9,11 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 export interface InventoryMovementGetRequest {
   /** `uuid` */
   id: Uuid;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-wms:inventory-movement/get@1.0.0` calls its input members. */
 export const INVENTORY_MOVEMENT_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
-  "request_id": "requestId",
 };
 
 /** Result of `wamn-wms:inventory-movement/get@1.0.0`. */
@@ -71,7 +68,7 @@ export const INVENTORY_MOVEMENT_GET_RESULT_FIELDS: FieldMap = {
  */
 export const INVENTORY_MOVEMENT_GET_ROUTE: OperationRoute = {
   operation: "wamn-wms:inventory-movement/get@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/inventory_movement/get",
   freshOnly: false,
   contract: {
@@ -112,15 +109,12 @@ export interface InventoryMovementQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-wms:inventory-movement/query@1.0.0` calls its input members. */
 export const INVENTORY_MOVEMENT_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-wms:inventory-movement/query@1.0.0`. */
@@ -189,7 +183,7 @@ export const INVENTORY_MOVEMENT_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const INVENTORY_MOVEMENT_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-wms:inventory-movement/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/inventory_movement/query",
   freshOnly: false,
   contract: {

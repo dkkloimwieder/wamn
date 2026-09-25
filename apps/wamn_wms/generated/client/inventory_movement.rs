@@ -85,8 +85,6 @@ pub const INVENTORY_MOVEMENT_FIELDS: &[FieldDescriptor] = &[
 pub struct InventoryMovementGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-wms:inventory-movement/get@1.0.0`.
@@ -119,20 +117,12 @@ pub struct InventoryMovementGetResult {
 }
 
 /// Input descriptors for `wamn-wms:inventory-movement/get@1.0.0`.
-pub const INVENTORY_MOVEMENT_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const INVENTORY_MOVEMENT_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-wms:inventory-movement/get@1.0.0`.
 pub const INVENTORY_MOVEMENT_GET_RESULT: &[FieldDescriptor] = &[
@@ -210,8 +200,8 @@ pub const INVENTORY_MOVEMENT_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const INVENTORY_MOVEMENT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const INVENTORY_MOVEMENT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -222,20 +212,7 @@ pub const INVENTORY_MOVEMENT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldS
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const INVENTORY_MOVEMENT_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -409,7 +386,7 @@ pub const INVENTORY_MOVEMENT_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/inventory_movement/get".to_owned(),
     }
 }
@@ -436,8 +413,6 @@ pub struct InventoryMovementQueryRequest {
     pub cursor: Option<String>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-wms:inventory-movement/query@1.0.0`.
@@ -481,12 +456,6 @@ pub const INVENTORY_MOVEMENT_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
 ];
@@ -588,18 +557,6 @@ pub const INVENTORY_MOVEMENT_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::Fiel
             values: &[],
         },
         required: false,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
         minimum: None,
         maximum: None,
         children: &[],
@@ -777,7 +734,7 @@ pub const INVENTORY_MOVEMENT_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/inventory_movement/query".to_owned(),
     }
 }

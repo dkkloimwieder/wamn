@@ -237,7 +237,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     .await?;
 
     let definition = json!({"id": WIRING, "kind": "http",
-        "route": {"path": ROUTE, "method": "POST"},
+        "route": {"path": ROUTE},
         "raw-body-bytes": {"maximum": 1_048_576},
         "input-schema": ports["input-ports"][0]["schema"]});
     let attachment = root.join("attachment.json");
@@ -459,7 +459,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                 .await;
             super::session_client::assert_value(
                 &result,
-                "session-nested-replay",
+                Some("session-nested-replay"),
                 test.expected_base,
             )?;
             anyhow::ensure!(

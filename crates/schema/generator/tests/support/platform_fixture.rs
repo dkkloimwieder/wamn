@@ -167,9 +167,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["request_id"],
                             "properties": {
-                                "request_id": {"type": "string"},
                                 "cursor": {"type": "string"},
                                 "limit": {"type": "integer"},
                                 "filter": {"type": "object", "properties": {

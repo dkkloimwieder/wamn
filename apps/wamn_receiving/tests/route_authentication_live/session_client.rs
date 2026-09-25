@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context as _;
+use hyper::Method;
 use serde_json::{Value, json};
 use wamn_client::{
     ClientError, CredentialProvider, HttpRequest, HttpResponse, ItemOutcome, RouteMetadata,
@@ -20,7 +21,7 @@ use wash_runtime::wasmtime::component::Component;
 
 use super::{
     BASE_RECORD_RECEIPT, JourneyRuntime, OPERATION, assert_direct_route_trace, fresh_only,
-    invoke_journey_route, journey_trace, nested_receipt_state, span_attribute,
+    invoke_journey_method, journey_trace, nested_receipt_state, span_attribute,
     trace_component_invocations,
 };
 
@@ -163,14 +164,25 @@ impl RouteTransport {
 impl Transport for RouteTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
         let url = reqwest::Url::parse(&request.url).map_err(|_| transport_failure())?;
+        let content_type = request.headers.get("content-type").map(String::as_str);
+        // A read is a GET with its one item in the query and no body; a write
+        // is a JSON POST.
+        let method = match request.method.as_str() {
+            "GET" if content_type.is_none() && request.body.is_empty() => Method::GET,
+            "POST" if content_type == Some("application/json") && url.query().is_none() => {
+                Method::POST
+            }
+            _ => return Err(transport_failure()),
+        };
         if url.origin().ascii_serialization() != "http://client-test.test"
-            || request.method != "POST"
-            || url.query().is_some()
             || url.fragment().is_some()
-            || request.headers.get("content-type").map(String::as_str) != Some("application/json")
         {
             return Err(transport_failure());
         }
+        let target = url.query().map_or_else(
+            || url.path().to_owned(),
+            |query| format!("{}?{query}", url.path()),
+        );
         let host = request.headers.get("host").ok_or_else(transport_failure)?;
         let bearer = request
             .headers
@@ -179,15 +191,16 @@ impl Transport for RouteTransport {
             .ok_or_else(transport_failure)?;
         let index = self.calls.fetch_add(1, Ordering::SeqCst);
         let (_, parent) = journey_trace(self.first_trace + index as u64);
-        let response = invoke_journey_route(
+        let response = invoke_journey_method(
             &JourneyRuntime {
                 engine: &self.engine,
                 flow_http: &self.flow_http,
                 routing: &self.routing,
                 bridge: &self.bridge,
             },
+            method,
             host,
-            url.path(),
+            &target,
             Some(bearer),
             &parent,
             request.body.into(),
@@ -223,13 +236,21 @@ pub(super) fn route(path: &str) -> RouteMetadata {
     }
 }
 
+pub(super) fn read_route(path: &str) -> RouteMetadata {
+    RouteMetadata {
+        method: "GET".to_owned(),
+        template: path.to_owned(),
+    }
+}
+
+/// A read expects no `request_id`; its outcome matches the item by position.
 pub(super) fn assert_value(
     result: &Result<Vec<ItemOutcome>, ClientError>,
-    request_id: &str,
+    request_id: Option<&str>,
     expected: &Value,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        matches!(result.as_deref(), Ok([item]) if item.request_id == request_id && item.value.as_ref() == Some(expected) && item.error.is_none()),
+        matches!(result.as_deref(), Ok([item]) if item.request_id.as_deref() == request_id && item.value.as_ref() == Some(expected) && item.error.is_none()),
         "client response differs from the independent full operation result"
     );
     Ok(())
@@ -266,14 +287,13 @@ pub(super) async fn assert_session_client(
          'updated_at', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) \
          FROM receiving.purchase_order WHERE id = '00000000-0000-0000-0000-000000000301'", &[]
     ).await.context("read independent client GET result")?.get(0);
-    let get =
-        [json!({"request_id": "session-client-get", "id": "00000000-0000-0000-0000-000000000301"})];
+    let get = [json!({"id": "00000000-0000-0000-0000-000000000301"})];
     for index in 0..2 {
         assert_value(
             &client
-                .invoke(&route("/purchase_order/get"), &BTreeMap::new(), &get)
+                .invoke(&read_route("/purchase_order/get"), &BTreeMap::new(), &get)
                 .await,
-            "session-client-get",
+            None,
             &expected,
         )?;
         anyhow::ensure!(
@@ -294,7 +314,7 @@ pub(super) async fn assert_session_client(
         &client
             .invoke_fresh(&route(direct_path), &BTreeMap::new(), &body)
             .await,
-        "session-nested-replay",
+        Some("session-nested-replay"),
         test.expected_base,
     )?;
     anyhow::ensure!(

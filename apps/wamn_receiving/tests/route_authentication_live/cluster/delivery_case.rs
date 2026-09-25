@@ -194,16 +194,12 @@ async fn exercise(
         "the owned HTTP NodePort is invalid"
     );
     let address = resources::kind_address(&resources::inspect(resources, "control-plane").await?)?;
-    let request = artifact(
-        cluster,
-        "request.json",
-        &json!([{"request_id":"delivery-location-list"}]),
-    )?;
+    let request = artifact(cluster, "request.json", &json!([{}]))?;
     let expected = artifact(
         cluster,
         "expected-response.json",
         &json!([{
-            "request_id":"delivery-location-list","value":{"rows":[{
+            "value":{"rows":[{
                 "id":"00000000-0000-0000-0000-000000000201","location_code":"DOCK-1"
             }]}
         }]),

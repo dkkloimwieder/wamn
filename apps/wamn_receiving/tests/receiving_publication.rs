@@ -173,7 +173,8 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
             attachment.definition["route"].get("host").is_none(),
             "package attachments leave route hostnames to the deployment overlay"
         );
-        assert_eq!(attachment.definition["route"]["method"], "POST");
+        // No author writes a method: publish derives it from the operation kind.
+        assert!(attachment.definition["route"].get("method").is_none());
         assert_eq!(attachment.definition["route"]["path"], operation.route);
         assert_eq!(
             attachment.definition["raw-body-bytes"]["maximum"],

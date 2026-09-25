@@ -584,11 +584,9 @@ fn f5_refreshes_command_a_even_when_the_shared_read_now_holds_b() {
         name: "get",
         operation: "stock.get",
         kind: "get",
-        input: &[
-            field("request_id", "string"),
-            field("id", "text"),
-            field("locale", "text"),
-        ],
+        // A read carries no request identity.
+        input: &[field("id", "text"), field("locale", "text")],
+        supplied: &[],
         response: ResponseContract {
             fields: &[field("id", "text"), field("version", "int64")],
             kind: "get",
@@ -627,17 +625,14 @@ fn f5_refreshes_command_a_even_when_the_shared_read_now_holds_b() {
             false,
         )
         .unwrap();
-    assert!(
-        read.resolve(
-            attempt,
-            Ok(HttpResponse {
-                actor_labels: std::collections::BTreeMap::new(),
-                status: 200,
-                body: json!([{"request_id": "request-a", "value": {"id": "A", "version": "7"}}])
-                    .to_string()
-            })
-        )
-    );
+    assert!(read.resolve(
+        attempt,
+        Ok(HttpResponse {
+            actor_labels: std::collections::BTreeMap::new(),
+            status: 200,
+            body: json!([{"value": {"id": "A", "version": "7"}}]).to_string()
+        })
+    ));
     let mut command = Screen::new(&COMMAND, binding());
     command.bind_from_read(&read).unwrap();
     read.edit("/id", FieldState::Value(json!("B"))).unwrap();
@@ -1049,8 +1044,11 @@ async fn a_legacy_fresh_screen_accepts_session_only_credentials() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
+    // A read carries no request identity, so its outcome matches by position.
     const READ: ScreenSpec = ScreenSpec {
         kind: "get",
+        input: &[INPUT[1], INPUT[2]],
+        supplied: &[],
         response: ResponseContract {
             kind: "get",
             replay: Replay::Unknown,
@@ -1098,7 +1096,6 @@ async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
     assert_eq!(app.queued.len(), 1);
     let initial = queued_application_action(&mut app, false);
     let first = prepare_application(&mut app, initial).unwrap();
-    let first_id = first.body.item()["request_id"].clone();
     assert!(matches!(
         queued_application_action(&mut app, false),
         Action::None
@@ -1109,7 +1106,7 @@ async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
         [Ok(HttpResponse {
             actor_labels: std::collections::BTreeMap::new(),
             status: 200,
-            body: json!([{"request_id": first_id, "value": {"id": "A"}}]).to_string(),
+            body: json!([{"value": {"id": "A"}}]).to_string(),
         })],
     );
     let (screen, attempt, response) = submit_request(&client, &first).await;
@@ -1123,8 +1120,6 @@ async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
     assert_eq!(app.queued.len(), 1);
     let follow_up = queued_application_action(&mut app, false);
     let second = prepare_application(&mut app, follow_up).unwrap();
-    let second_id = second.body.item()["request_id"].clone();
-    assert_ne!(first_id, second_id);
     transport
         .replies
         .lock()
@@ -1132,7 +1127,7 @@ async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
         .push_back(Ok(HttpResponse {
             actor_labels: std::collections::BTreeMap::new(),
             status: 200,
-            body: json!([{"request_id": second_id, "value": {"id": "dock-1"}}]).to_string(),
+            body: json!([{"value": {"id": "dock-1"}}]).to_string(),
         }));
     let (screen, attempt, response) = submit_request(&client, &second).await;
     app.resolve(screen, attempt, response);

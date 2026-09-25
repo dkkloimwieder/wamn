@@ -334,12 +334,18 @@ async fn try_handle(
         .await
         .map_err(|rejection| rejection_response(&rejection))?;
 
-    let body_limit = matched.definition.body_limit.min(limits.body_bytes);
-    let raw_body = read_bounded(body, body_limit).await?;
-    let body_json = if raw_body.is_empty() {
-        Value::Null
+    let body_json = if method == "GET" && matched.definition.mappings.is_empty() {
+        // A read carries its one request item in the query string, in the one
+        // canonical encoding, and has no body to read (docs/plan/http-reads.md).
+        read_query_item(&head.target)?
     } else {
-        serde_json::from_slice(&raw_body).map_err(|_| error_response(400, "malformed-json"))?
+        let body_limit = matched.definition.body_limit.min(limits.body_bytes);
+        let raw_body = read_bounded(body, body_limit).await?;
+        if raw_body.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&raw_body).map_err(|_| error_response(400, "malformed-json"))?
+        }
     };
     let mapped = map_input(
         &matched.definition.mappings,
@@ -386,6 +392,21 @@ async fn try_handle(
     response.deadline_adjustments = report.deadline_adjustments;
     response.actor_labels = report.actor_labels;
     Ok(response)
+}
+
+/// The longest request target a read accepts, path and query together.
+const READ_TARGET_BYTES: usize = 8 * 1024;
+
+/// The one request item of a read, as the list of one item that the route
+/// input schema describes.
+fn read_query_item(target: &str) -> Result<Value, HttpResponse> {
+    if target.len() > READ_TARGET_BYTES {
+        return Err(error_response(400, "invalid-target"));
+    }
+    let query = target.split_once('?').map_or("", |(_, query)| query);
+    let item = wamn_execution_contract::decode_read_query(query)
+        .map_err(|_| error_response(400, "invalid-target"))?;
+    Ok(Value::Array(vec![Value::Object(item)]))
 }
 
 fn normalize_method(method: &str) -> Option<String> {

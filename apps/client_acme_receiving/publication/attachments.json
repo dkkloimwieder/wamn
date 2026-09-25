@@ -4,11 +4,11 @@
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:purchase-order/get@3.0.0",
-    "definition-hash": "sha256:2a75af7cc0ba73c17f55ad059cab69e27b5bc2798300ef8518a3d94532cee9a1",
+    "definition-hash": "sha256:43155b42e7845d3620708ecc3cb7766c4312f56f56fca8db0229aed4308e25ed",
     "definition": {
       "id": "client-acme-receiving-purchase-order-get-http",
       "kind": "http",
-      "route": {"path": "/acme/purchase_order/get", "method": "POST"},
+      "route": {"path": "/acme/purchase_order/get"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {"$ref": "generated/routes/purchase_order/get.json"}
     },
@@ -20,11 +20,11 @@
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:purchase-order/update@3.0.0",
-    "definition-hash": "sha256:a5d41193293902003caf8a0c769e3ec880da0cd5164db9f57094072e69b6b897",
+    "definition-hash": "sha256:01390350482d9171b9f6ae33d8d5862b673272a58d80fdb888707db29da47651",
     "definition": {
       "id": "client-acme-receiving-purchase-order-update-http",
       "kind": "http",
-      "route": {"path": "/acme/purchase_order/update", "method": "POST"},
+      "route": {"path": "/acme/purchase_order/update"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {"$ref": "generated/routes/purchase_order/update.json"}
     },
@@ -36,11 +36,11 @@
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
-    "definition-hash": "sha256:2e0c1a505b894b406fdfd8114ffae32fbf130813bb0de11487930a0e53e00c60",
+    "definition-hash": "sha256:829bbbf5e8eed922cbafeed672aa8e3afdd13ed6674173c0a072a7128ee98483",
     "definition": {
       "id": "client-acme-receiving-receiving-record-receipt-http",
       "kind": "http",
-      "route": {"path": "/acme/receiving/record_receipt", "method": "POST"},
+      "route": {"path": "/acme/receiving/record_receipt"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
@@ -90,20 +90,19 @@
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
-    "definition-hash": "sha256:33599e76765546c3df9918386a2909862a97b06481787f4f2b463d1327c4deb6",
+    "definition-hash": "sha256:29253c340fc33cbe48eba9949d72a0a76214e8e32fcbd35e934e5837006bd0d4",
     "definition": {
       "id": "client-acme-receiving-quality-load-purchase-order-detail-http",
       "kind": "http",
-      "route": {"path": "/acme/quality/load_purchase_order_detail", "method": "POST"},
+      "route": {"path": "/acme/quality/load_purchase_order_detail"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
         "items": {
           "type": "object",
-          "required": ["request_id", "purchase_order_id"],
+          "required": ["purchase_order_id"],
           "additionalProperties": false,
           "properties": {
-            "request_id": {"type": "string", "minLength": 1},
             "purchase_order_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
           }
         }
@@ -117,11 +116,11 @@
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:quality/approve-inspection@3.0.0",
-    "definition-hash": "sha256:cd1af17c09b45c9df5d122bd565bcf82117f737bdde7a3242430b7df28a1afe0",
+    "definition-hash": "sha256:d69e1168647f0e09638aa031e8373a405c8ca872b3bcc39cb1c6da64720a6ad7",
     "definition": {
       "id": "client-acme-receiving-quality-approve-inspection-http",
       "kind": "http",
-      "route": {"path": "/acme/quality/approve_inspection", "method": "POST"},
+      "route": {"path": "/acme/quality/approve_inspection"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",

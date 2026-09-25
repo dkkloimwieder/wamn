@@ -17,8 +17,6 @@ export interface ReceivingLoadPurchaseOrderHistoryRequest {
   id: Uuid;
   /** `int32` */
   limit: number;
-  /** `text` */
-  requestId: string;
 }
 
 /** What `wamn-receiving:receiving/load-purchase-order-history@1.0.0` calls its input members. */
@@ -26,7 +24,6 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REQUEST_FIELDS: FieldMap = {
   "after_cursor": "afterCursor",
   "id": "id",
   "limit": "limit",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
@@ -80,7 +77,7 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS: FieldMap = {
  */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE: OperationRoute = {
   operation: "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/receiving/load_purchase_order_history",
   freshOnly: false,
   contract: {
@@ -118,14 +115,11 @@ export async function loadPurchaseOrderHistory(
 export interface ReceivingLoadReceiptScreenRequest {
   /** `uuid` */
   purchaseOrderId: Uuid;
-  /** `text` */
-  requestId: string;
 }
 
 /** What `wamn-receiving:receiving/load-receipt-screen@1.0.0` calls its input members. */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_REQUEST_FIELDS: FieldMap = {
   "purchase_order_id": "purchaseOrderId",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */
@@ -191,7 +185,7 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_FIELDS: FieldMap = {
  */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE: OperationRoute = {
   operation: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/receiving/load_receipt_screen",
   freshOnly: false,
   contract: {

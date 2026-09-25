@@ -78,6 +78,22 @@
       "expect": { "outcome": "completed", "value": { "id": "a" } }
     },
     {
+      "name": "a completed read matches its one item by position",
+      "contract": "record",
+      "request_id": null,
+      "status": 200,
+      "body": "[{\"value\":{\"id\":\"a\"}}]",
+      "expect": { "outcome": "completed", "value": { "id": "a" } }
+    },
+    {
+      "name": "a read outcome that carries a request identity matches nothing",
+      "contract": "record",
+      "request_id": null,
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}]",
+      "expect": { "outcome": "uncertain", "reason": "the response does not match the submitted request" }
+    },
+    {
       "name": "a completed page",
       "contract": "page",
       "request_id": "r1",

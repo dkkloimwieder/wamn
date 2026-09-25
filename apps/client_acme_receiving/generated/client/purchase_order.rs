@@ -79,8 +79,6 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
 pub struct PurchaseOrderGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `client-acme-receiving:purchase-order/get@3.0.0`.
@@ -111,20 +109,12 @@ pub struct PurchaseOrderGetResult {
 }
 
 /// Input descriptors for `client-acme-receiving:purchase-order/get@3.0.0`.
-pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `client-acme-receiving:purchase-order/get@3.0.0`.
 pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
@@ -196,8 +186,8 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -208,20 +198,7 @@ pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchem
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const PURCHASE_ORDER_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -383,7 +360,7 @@ pub const PURCHASE_ORDER_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/acme/purchase_order/get".to_owned(),
     }
 }

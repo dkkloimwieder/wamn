@@ -419,8 +419,6 @@ pub async fn create(
 pub struct PalletGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-wms:pallet/get@1.0.0`.
@@ -447,20 +445,12 @@ pub struct PalletGetResult {
 }
 
 /// Input descriptors for `wamn-wms:pallet/get@1.0.0`.
-pub const PALLET_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const PALLET_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-wms:pallet/get@1.0.0`.
 pub const PALLET_GET_RESULT: &[FieldDescriptor] = &[
@@ -520,8 +510,8 @@ pub const PALLET_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const PALLET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const PALLET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -532,20 +522,7 @@ pub const PALLET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const PALLET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -683,7 +660,7 @@ pub const PALLET_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/pallet/get".to_owned(),
     }
 }
@@ -712,8 +689,6 @@ pub struct PalletQueryRequest {
     pub filter: Option<PalletQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
     /// `object`, omittable
     pub sort: Option<PalletQueryRequestSort>,
 }
@@ -789,12 +764,6 @@ pub const PALLET_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
     FieldDescriptor {
@@ -978,18 +947,6 @@ pub const PALLET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
             path: "sort",
             type_name: "object",
             nullable: false,
@@ -1162,7 +1119,7 @@ pub const PALLET_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/pallet/query".to_owned(),
     }
 }

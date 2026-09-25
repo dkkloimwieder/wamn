@@ -471,10 +471,7 @@ pub async fn adjust(
 
 /// Input for `wamn-wms:inventory/aggregate@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct InventoryAggregateRequest {
-    /// `text`
-    pub request_id: String,
-}
+pub struct InventoryAggregateRequest {}
 
 /// Result of `wamn-wms:inventory/aggregate@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -492,12 +489,7 @@ pub struct InventoryAggregateResult {
 }
 
 /// Input descriptors for `wamn-wms:inventory/aggregate@1.0.0`.
-pub const INVENTORY_AGGREGATE_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
-    path: "request_id",
-    type_name: "text",
-    nullable: false,
-    values: &[],
-}];
+pub const INVENTORY_AGGREGATE_INPUT: &[FieldDescriptor] = &[];
 
 /// Result descriptors for `wamn-wms:inventory/aggregate@1.0.0`.
 pub const INVENTORY_AGGREGATE_RESULT: &[FieldDescriptor] = &[
@@ -533,19 +525,7 @@ pub const INVENTORY_AGGREGATE_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const INVENTORY_AGGREGATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
-    &[wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "text",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    }];
+pub const INVENTORY_AGGREGATE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[];
 
 pub const INVENTORY_AGGREGATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -634,7 +614,7 @@ pub const INVENTORY_AGGREGATE_ERRORS: &[&str] = &[
 #[must_use]
 pub fn aggregate_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/inventory/aggregate".to_owned(),
     }
 }

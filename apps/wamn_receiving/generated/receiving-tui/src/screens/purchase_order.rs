@@ -9,7 +9,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "get",
     input: crate::purchase_order::PURCHASE_ORDER_GET_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\",\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -63,10 +63,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]
@@ -81,7 +78,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "query",
     input: crate::purchase_order::PURCHASE_ORDER_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_number\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"status\":{\"items\":{\"enum\":[\"open\",\"complete\",\"cancelled\"],\"type\":\"string\"},\"type\":\"array\"},\"supplier_id\":{\"items\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"purchase_order_number\",\"status\",\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"required\":[\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_number\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"status\":{\"items\":{\"enum\":[\"open\",\"complete\",\"cancelled\"],\"type\":\"string\"},\"type\":\"array\"},\"supplier_id\":{\"items\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"purchase_order_number\",\"status\",\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -130,10 +127,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]

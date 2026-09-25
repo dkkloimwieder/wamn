@@ -967,6 +967,20 @@ fn validate_custom_operation_kind(
                     format!("projection {operation_name} must not declare a registration"),
                 ));
             }
+            // A read carries no request identity (docs/plan/http-reads.md).
+            if operation
+                .input
+                .fields
+                .iter()
+                .any(|field| field.path == "request_id")
+            {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "projection {operation_name} must not declare request_id: a read carries no request identity"
+                    ),
+                ));
+            }
             if operation.relations.iter().any(|relation| {
                 !relation.insert_fields.is_empty()
                     || !relation.update_fields.is_empty()
@@ -1376,7 +1390,11 @@ fn validate_custom_operation_input(
     operation_name: &str,
     input: &CustomOperationInputDeclaration,
 ) -> Result<(), GenerateError> {
-    validate_contract_fields(operation_name, "input", &input.fields)?;
+    // An input may be empty: a read whose only member was its request
+    // identity has nothing left to send.
+    if !input.fields.is_empty() {
+        validate_contract_fields(operation_name, "input", &input.fields)?;
+    }
     let envelope_fields = [input.raw_body_maximum.is_some(), input.envelope.is_some()];
     if envelope_fields.iter().any(|present| *present)
         && !envelope_fields.iter().all(|present| *present)

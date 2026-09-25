@@ -9,14 +9,11 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 export interface PalletQuantityGetRequest {
   /** `uuid` */
   id: Uuid;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-wms:pallet-quantity/get@1.0.0` calls its input members. */
 export const PALLET_QUANTITY_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
-  "request_id": "requestId",
 };
 
 /** Result of `wamn-wms:pallet-quantity/get@1.0.0`. */
@@ -53,7 +50,7 @@ export const PALLET_QUANTITY_GET_RESULT_FIELDS: FieldMap = {
  */
 export const PALLET_QUANTITY_GET_ROUTE: OperationRoute = {
   operation: "wamn-wms:pallet-quantity/get@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/pallet_quantity/get",
   freshOnly: false,
   contract: {
@@ -94,15 +91,12 @@ export interface PalletQuantityQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-wms:pallet-quantity/query@1.0.0` calls its input members. */
 export const PALLET_QUANTITY_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-wms:pallet-quantity/query@1.0.0`. */
@@ -153,7 +147,7 @@ export const PALLET_QUANTITY_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const PALLET_QUANTITY_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-wms:pallet-quantity/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/pallet_quantity/query",
   freshOnly: false,
   contract: {

@@ -113,14 +113,11 @@ export async function create(
 export interface PalletGetRequest {
   /** `uuid` */
   id: Uuid;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-wms:pallet/get@1.0.0` calls its input members. */
 export const PALLET_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
-  "request_id": "requestId",
 };
 
 /** Result of `wamn-wms:pallet/get@1.0.0`. */
@@ -166,7 +163,7 @@ export const PALLET_GET_RESULT_FIELDS: FieldMap = {
  */
 export const PALLET_GET_ROUTE: OperationRoute = {
   operation: "wamn-wms:pallet/get@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/pallet/get",
   freshOnly: false,
   contract: {
@@ -209,8 +206,6 @@ export interface PalletQueryRequest {
   filter?: PalletQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
   /** `object`, omittable */
   sort?: PalletQueryRequestSort;
 }
@@ -243,7 +238,6 @@ export const PALLET_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
-  "request_id": "requestId",
   "sort": {
     member: "sort",
     fields: {
@@ -310,7 +304,7 @@ export const PALLET_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const PALLET_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-wms:pallet/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/pallet/query",
   freshOnly: false,
   contract: {

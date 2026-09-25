@@ -9,7 +9,7 @@ pub static LOAD_PURCHASE_ORDER_HISTORY_SPEC: screen::ScreenSpec = screen::Screen
     kind: "projection",
     input: crate::receiving::RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"after_cursor\":{\"minLength\":1,\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\",\"id\",\"limit\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"after_cursor\":{\"minLength\":1,\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\"}},\"required\":[\"id\",\"limit\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -54,10 +54,7 @@ pub static LOAD_PURCHASE_ORDER_HISTORY_SPEC: screen::ScreenSpec = screen::Screen
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]
@@ -72,7 +69,7 @@ pub static LOAD_RECEIPT_SCREEN_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "projection",
     input: crate::receiving::RECEIVING_LOAD_RECEIPT_SCREEN_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\",\"purchase_order_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"purchase_order_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -122,10 +119,7 @@ pub static LOAD_RECEIPT_SCREEN_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]

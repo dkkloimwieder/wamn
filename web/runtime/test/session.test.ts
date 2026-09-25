@@ -130,6 +130,37 @@ describe("the transport carrier", () => {
     expect(call?.init.credentials).toBeUndefined();
     expect(headersOf(call)).toEqual({ "content-type": "application/json" });
   });
+
+  it("sends a read as a GET with its one item in the query and no CSRF header", async () => {
+    const stub = stubFetch([
+      () => new Response('[{"value":{"id":"a"}}]', { status: 200 }),
+      () => new Response('[{"request_id":"r1","value":{"id":"a"}}]', { status: 200 }),
+    ]);
+    const transport = createTransport({
+      baseUrl: "https://example.test",
+      cookie: true,
+      cookies: () => "__Host-wamn-csrf=c5rf",
+      fetch: stub.fetch,
+    });
+    const read = { ...request, method: "GET", items: [{ id: "a" }] };
+    expect(await transport.invoke(read)).toEqual({ status: "completed", value: { id: "a" } });
+    const call = stub.seen[0];
+    expect(call?.url).toBe("https://example.test/widget/get?id=%22a%22");
+    expect(call?.init.method).toBe("GET");
+    expect(call?.init.body).toBeUndefined();
+    expect(call?.init.credentials).toBe("include");
+    expect(headersOf(call)).toEqual({});
+    // A read carries no request identity, so an outcome with one matches nothing.
+    expect((await transport.invoke(read)).status).toBe("uncertain");
+  });
+
+  it("refuses to send a read with more than one item", async () => {
+    const stub = stubFetch([completed]);
+    const transport = createTransport({ baseUrl: "", fetch: stub.fetch });
+    const read = { ...request, method: "GET", items: [{ id: "a" }, { id: "b" }] };
+    expect((await transport.invoke(read)).status).toBe("uncertain");
+    expect(stub.seen).toEqual([]);
+  });
 });
 
 const TIMES = '{"expires_at":1000,"login_expires_at":28000}';

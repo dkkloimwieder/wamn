@@ -22,7 +22,6 @@ interface %list {
   }
 
   record %list-item {
-    request-id: string,
     input: result<%list-request, invalid-input-detail>,
   }
 
@@ -36,7 +35,6 @@ interface %list {
   }
 
   record %list-outcome {
-    request-id: string,
     outcome: result<%list-result, %list-error>,
   }
 

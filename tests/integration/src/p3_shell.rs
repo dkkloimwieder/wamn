@@ -21,9 +21,10 @@ use crate::local_application::{LocalInvocation, invoke_request};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Application-owned read request used to exercise the HTTP protocol shell.
+/// Application-owned request with a body, used to exercise the HTTP protocol
+/// shell. It is a write, because a read is a GET and carries no body.
 #[derive(Debug)]
-pub struct ReadProbe<'a> {
+pub struct BodyProbe<'a> {
     pub path: &'a str,
     pub payload: &'a [u8],
     pub body_limit: usize,
@@ -37,7 +38,7 @@ pub async fn assert_p3_route(
     bridge: Arc<RouterDeliveryBridge>,
     route_host: &str,
     bearer: &str,
-    probe: &ReadProbe<'_>,
+    probe: &BodyProbe<'_>,
 ) -> anyhow::Result<()> {
     let invoke = |request| {
         invoke_checked(
@@ -108,7 +109,7 @@ pub async fn assert_p3_route(
     .await
     .context("P3 protocol case exact-1mib timed out")??;
     (probe.validate_response)(&response)
-        .context("P3 protocol case exact-1mib did not execute the valid read")?;
+        .context("P3 protocol case exact-1mib did not execute the valid request")?;
 
     padded.push(b' ');
     let response = tokio::time::timeout(

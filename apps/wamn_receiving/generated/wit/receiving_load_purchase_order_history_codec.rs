@@ -6,6 +6,12 @@ const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
+#[allow(dead_code)]
+pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
+    validate_count(input.len())?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
@@ -17,9 +23,9 @@ struct JsonRequest {
 pub(crate) fn decode(
     input: &str,
 ) -> Result<Vec<contract::LoadPurchaseOrderHistoryItem>, CodecError> {
-    decode_envelope(input)?
+    decode_read_envelope(input)?
         .into_iter()
-        .map(|(request_id, body)| {
+        .map(|body| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::LoadPurchaseOrderHistoryRequest {
                     after_cursor: request.after_cursor,
@@ -27,7 +33,7 @@ pub(crate) fn decode(
                     limit: request.limit,
                 })
                 .map_err(|_| invalid("input"));
-            Ok(contract::LoadPurchaseOrderHistoryItem { request_id, input })
+            Ok(contract::LoadPurchaseOrderHistoryItem { input })
         })
         .collect()
 }
@@ -43,7 +49,6 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderHistoryOutcome]) -> St
         .iter()
         .map(|item| match &item.outcome {
             Ok(value) => json!({
-                "request_id": item.request_id,
                 "value": { "rows": value.rows.iter().map(|row| json!({
                     "cursor": row.cursor,
                     "kind": row.kind,
@@ -56,7 +61,6 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderHistoryOutcome]) -> St
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
-                "request_id": item.request_id,
                 "error": error_value(error),
             }),
         })
@@ -120,10 +124,7 @@ where
             },
             Err(error) => Err(contract::LoadPurchaseOrderHistoryError::InvalidInput(error)),
         };
-        output.push(contract::LoadPurchaseOrderHistoryOutcome {
-            request_id: item.request_id,
-            outcome,
-        });
+        output.push(contract::LoadPurchaseOrderHistoryOutcome { outcome });
     }
     output
 }

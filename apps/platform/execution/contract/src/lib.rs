@@ -15,12 +15,15 @@
 //!   the walk and the exposure row both read;
 //! - **cases** — [`TestSetCase`] and [`Expect`], the publish gate's bounded test
 //!   contract;
-//! - **failure** — [`WiringFailureKind`], the frozen `failure-code` literals.
+//! - **failure** — [`WiringFailureKind`], the frozen `failure-code` literals;
+//! - **read query** — [`encode_read_query`] / [`decode_read_query`], the one
+//!   query-string encoding of a read request item.
 
 mod effect_outcome;
 mod expect;
 pub mod node_contract;
 mod ports;
+mod read_query;
 mod status;
 mod test_set;
 
@@ -36,6 +39,7 @@ pub use node_contract::{
     normalize_portable_http_target,
 };
 pub use ports::{ERROR_PORT, EntryKind, MAIN_PORT};
+pub use read_query::{ReadQueryError, decode_read_query, encode_read_query};
 pub use status::WiringFailureKind;
 pub use test_set::{
     MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorKind, validate_cases,

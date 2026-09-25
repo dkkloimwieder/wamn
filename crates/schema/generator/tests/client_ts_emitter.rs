@@ -161,7 +161,6 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
         widget.contains(concat!(
             "export const WIDGET_LIST_REQUEST_FIELDS: FieldMap = {\n",
             "  \"maker_id\": \"makerId\",\n",
-            "  \"request_id\": \"requestId\",\n",
             "  \"selector\": \"selector\",\n",
             "};\n",
         )),
@@ -178,7 +177,6 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
             "    },\n",
             "  },\n",
             "  \"limit\": \"limit\",\n",
-            "  \"request_id\": \"requestId\",\n",
             "  \"sort\": {\n",
             "    member: \"sort\",\n",
             "    fields: {\n",

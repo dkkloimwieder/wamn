@@ -2556,13 +2556,7 @@
       "permission": "inventory.aggregate",
       "connection": "postgres",
       "input": {
-        "fields": [
-          {
-            "path": "request_id",
-            "type": "text",
-            "nullable": false
-          }
-        ]
+        "fields": []
       },
       "result": {
         "class": "bounded_list",

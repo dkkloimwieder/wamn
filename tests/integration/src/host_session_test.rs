@@ -156,14 +156,11 @@ fn fixture(bytes: &[u8]) -> anyhow::Result<Fixture> {
         .get("value")
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow!("host fixture needs a successful GET value"))?;
+    // A get is a read: it carries no request identity, and its one outcome
+    // answers its one item by position.
     ensure!(
-        request.len() == 2
-            && expected.len() == 2
-            && request
-                .get("request_id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id.is_empty())
-            && request.get("request_id") == expected.get("request_id")
+        request.len() == 1
+            && expected.len() == 1
             && request.get("id") == value.get("id")
             && value.len() == 7
             && [
@@ -275,12 +272,15 @@ async fn host_request(
     token: &str,
     timeout: Duration,
 ) -> anyhow::Result<(reqwest::StatusCode, Vec<u8>)> {
+    let mut url = endpoint.clone();
+    url.set_query(Some(&wamn_execution_contract::encode_read_query(
+        unit_item(&fixture.request_body)?,
+    )));
     let response = http
-        .post(endpoint.clone())
+        .get(url)
         .timeout(timeout)
         .header(reqwest::header::HOST, &fixture.route_host)
         .bearer_auth(token)
-        .json(&fixture.request_body)
         .send()
         .await
         .map_err(|error| {

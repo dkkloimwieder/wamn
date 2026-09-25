@@ -82,7 +82,7 @@ pub static LOAD_PURCHASE_ORDER_DETAIL_SPEC: screen::ScreenSpec = screen::ScreenS
     kind: "projection",
     input: crate::quality::QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\",\"purchase_order_id\"],\"type\":\"object\"},\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"purchase_order_id\"],\"type\":\"object\"},\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -132,10 +132,7 @@ pub static LOAD_PURCHASE_ORDER_DETAIL_SPEC: screen::ScreenSpec = screen::ScreenS
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: &[screen::SuppliedField {
-        path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
-    }],
+    supplied: &[],
 };
 
 #[must_use]

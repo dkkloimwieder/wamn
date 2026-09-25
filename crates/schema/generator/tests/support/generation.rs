@@ -103,7 +103,6 @@ pub(super) fn projection_operation() -> Value {
         "connection": "postgres",
         "input": {
             "fields": [
-                {"path": "request_id", "type": "text", "nullable": false},
                 {"path": "gadget_id", "type": "uuid", "nullable": false}
             ]
         },

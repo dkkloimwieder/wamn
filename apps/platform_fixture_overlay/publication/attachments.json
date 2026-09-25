@@ -4,13 +4,12 @@
     "package-id": "platform_fixture_overlay",
     "component": "fixture_overlay",
     "operation": "platform-fixture-overlay:widget/get@1.0.0",
-    "definition-hash": "sha256:283e9e652047e5eeb3490c07f42639ab32acb86397bf20ba64b86590f04c8e76",
+    "definition-hash": "sha256:300eeb6ce9bc91e12d40abe524f15493c1f6475196f5fdfd6bab8efcccb29700",
     "definition": {
       "id": "widget-get-http",
       "kind": "http",
       "route": {
-        "path": "/overlay/widget/get",
-        "method": "POST"
+        "path": "/overlay/widget/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576

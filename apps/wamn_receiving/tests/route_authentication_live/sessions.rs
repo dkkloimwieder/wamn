@@ -9,7 +9,6 @@ pub(super) async fn prepare_session_host_fixture(
 ) -> anyhow::Result<()> {
     const SESSION_ATTACHMENT: &str = "purchase-order-get-http";
     const SESSION_ROLE: &str = "session-host-reader";
-    const REQUEST_ID: &str = "session-host-test";
     const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
     const SESSION_RELEASE_ID: u32 = RELEASE_ID + 1;
 
@@ -194,8 +193,8 @@ pub(super) async fn prepare_session_host_fixture(
         "roles": [SESSION_ROLE],
         "route_path": "/purchase_order/get",
         "route_host": inputs.route_host,
-        "request_body": [{"request_id": REQUEST_ID, "id": ORDER_ID}],
-        "expected_response": [{"request_id": REQUEST_ID, "value": expected_value}],
+        "request_body": [{"id": ORDER_ID}],
+        "expected_response": [{"value": expected_value}],
     });
     let mut file = std::fs::OpenOptions::new()
         .write(true)

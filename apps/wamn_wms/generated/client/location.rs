@@ -247,8 +247,6 @@ pub async fn create(
 pub struct LocationGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-wms:location/get@1.0.0`.
@@ -265,20 +263,12 @@ pub struct LocationGetResult {
 }
 
 /// Input descriptors for `wamn-wms:location/get@1.0.0`.
-pub const LOCATION_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const LOCATION_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-wms:location/get@1.0.0`.
 pub const LOCATION_GET_RESULT: &[FieldDescriptor] = &[
@@ -308,8 +298,8 @@ pub const LOCATION_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const LOCATION_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const LOCATION_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -320,20 +310,7 @@ pub const LOCATION_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const LOCATION_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -411,7 +388,7 @@ pub const LOCATION_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/location/get".to_owned(),
     }
 }
@@ -440,8 +417,6 @@ pub struct LocationQueryRequest {
     pub filter: Option<LocationQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -481,12 +456,6 @@ pub const LOCATION_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
 ];
@@ -578,18 +547,6 @@ pub const LOCATION_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
         maximum: None,
         children: &[],
     },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
 ];
 
 pub const LOCATION_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
@@ -667,7 +624,7 @@ pub const LOCATION_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/location/query".to_owned(),
     }
 }

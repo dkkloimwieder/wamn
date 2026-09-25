@@ -763,7 +763,7 @@ pub(super) fn released_component_digests(
                 && attachment.component == component
                 && attachment.operation == expected.operation
                 && attachment.registered_operation.as_deref() == Some(expected.operation)
-                && attachment.definition["route"]["method"] == "POST"
+                && attachment.definition["route"]["method"] == expected.method
                 && attachment.definition["route"]["path"] == expected.path
                 && attachment.definition["route"]["host"] == route_host
                 && attachment.auth_policy == serde_json::json!({"modes": ["pat", "session"]}),

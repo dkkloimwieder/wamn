@@ -55,8 +55,6 @@ pub const WIDGET_FIELDS: &[FieldDescriptor] = &[
 pub struct WidgetGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `platform-fixture-overlay:widget/get@1.0.0`.
@@ -79,20 +77,12 @@ pub struct WidgetGetResult {
 }
 
 /// Input descriptors for `platform-fixture-overlay:widget/get@1.0.0`.
-pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `platform-fixture-overlay:widget/get@1.0.0`.
 pub const WIDGET_GET_RESULT: &[FieldDescriptor] = &[
@@ -140,8 +130,8 @@ pub const WIDGET_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const WIDGET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const WIDGET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -152,20 +142,7 @@ pub const WIDGET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const WIDGET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -279,7 +256,7 @@ pub const WIDGET_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/overlay/widget/get".to_owned(),
     }
 }

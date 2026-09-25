@@ -79,6 +79,34 @@ impl Route {
         serde_json::from_str(&text).with_context(|| format!("the route's answer is JSON: {text}"))
     }
 
+    /// Send the one item of a read as a GET, as its route is published.
+    async fn get(
+        &self,
+        client: &reqwest::Client,
+        path: &str,
+        item: &Value,
+    ) -> anyhow::Result<Value> {
+        let item = item.as_object().context("a read sends one object item")?;
+        let query = wamn_execution_contract::encode_read_query(item);
+        let response = client
+            .get(format!("{}{path}?{query}", self.endpoint))
+            .header("Host", &self.host)
+            .bearer_auth(&self.bearer)
+            .send()
+            .await
+            .with_context(|| format!("GET {path} from the released route"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .context("read the route's response body")?;
+        anyhow::ensure!(
+            status.is_success(),
+            "GET {path} answered {status} with body {text}"
+        );
+        serde_json::from_str(&text).with_context(|| format!("the route's answer is JSON: {text}"))
+    }
+
     async fn post_response(
         &self,
         client: &reqwest::Client,
@@ -261,6 +289,21 @@ pub(crate) async fn assert_label_delivery_and_replay(
 
 /// The `value` of the single item answering `request_id`, or the refusal as
 /// an error naming it.
+/// The `value` of the single item a read answers. A read carries no request
+/// identity, so its one outcome answers its one item by position.
+fn read_value(answer: &Value) -> anyhow::Result<&Value> {
+    let items = answer
+        .as_array()
+        .context("the route answers with an array envelope")?;
+    anyhow::ensure!(
+        items.len() == 1 && items[0].get("request_id").is_none(),
+        "one read, one outcome with no request identity: {answer}"
+    );
+    items[0]
+        .get("value")
+        .with_context(|| format!("the read was refused: {}", items[0]))
+}
+
 fn value<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
     let item = item(answer, request_id)?;
     item.get("value")
@@ -316,13 +359,9 @@ pub(crate) async fn assert_remaining_operations(
     // from an assumption about which test ran first: the pallet's revision and
     // location by get, and its product by the live-stock aggregate.
     let answer = route
-        .post(
-            &client,
-            "/pallet/get",
-            &json!([{"request_id": "ops-get", "id": pallet_id}]),
-        )
+        .get(&client, "/pallet/get", &json!({"id": pallet_id}))
         .await?;
-    let pallet = value(&answer, "ops-get")?;
+    let pallet = read_value(&answer)?;
     anyhow::ensure!(
         pallet["status"] == "available",
         "the fixture pallet is live: {pallet}"
@@ -331,13 +370,9 @@ pub(crate) async fn assert_remaining_operations(
     let location = uuid(&pallet["location_id"])?;
 
     let answer = route
-        .post(
-            &client,
-            "/inventory/aggregate",
-            &json!([{"request_id": "ops-aggregate"}]),
-        )
+        .get(&client, "/inventory/aggregate", &json!({}))
         .await?;
-    let rows = value(&answer, "ops-aggregate")?["rows"].clone();
+    let rows = read_value(&answer)?["rows"].clone();
     let rows = rows.as_array().context("aggregate answers rows")?;
     anyhow::ensure!(
         rows.len() == 1 && rows[0]["pallet_count"] == 1 && rows[0]["status"] == "available",
@@ -439,13 +474,9 @@ pub(crate) async fn assert_remaining_operations(
         "the merge advanced the target: {merged}"
     );
     let answer = route
-        .post(
-            &client,
-            "/pallet/get",
-            &json!([{"request_id": "ops-get-consumed", "id": new_pallet_id}]),
-        )
+        .get(&client, "/pallet/get", &json!({"id": new_pallet_id}))
         .await?;
-    let consumed = value(&answer, "ops-get-consumed")?;
+    let consumed = read_value(&answer)?;
     anyhow::ensure!(
         consumed["status"] == "consumed",
         "the merged pallet reads consumed: {consumed}"
@@ -470,13 +501,9 @@ pub(crate) async fn assert_remaining_operations(
     // LIVE STOCK EXCLUDES THE CONSUMED PALLET: 4 left plus the 3 merged back
     // is 7, on one pallet, though the consumed one still holds its history.
     let answer = route
-        .post(
-            &client,
-            "/inventory/aggregate",
-            &json!([{"request_id": "ops-aggregate-after"}]),
-        )
+        .get(&client, "/inventory/aggregate", &json!({}))
         .await?;
-    let rows = value(&answer, "ops-aggregate-after")?["rows"].clone();
+    let rows = read_value(&answer)?["rows"].clone();
     let rows = rows.as_array().context("aggregate answers rows")?;
     anyhow::ensure!(
         rows.len() == 1
@@ -490,13 +517,9 @@ pub(crate) async fn assert_remaining_operations(
     // consumed filter finds exactly the merged one.
     let sort = json!({"field": "pallet_code", "direction": "descending"});
     let answer = route
-        .post(
-            &client,
-            "/pallet/query",
-            &json!([{"request_id": "ops-query-1", "sort": sort, "limit": 1}]),
-        )
+        .get(&client, "/pallet/query", &json!({"sort": sort, "limit": 1}))
         .await?;
-    let page = value(&answer, "ops-query-1")?;
+    let page = read_value(&answer)?;
     anyhow::ensure!(
         page["item"]
             .as_array()
@@ -509,25 +532,25 @@ pub(crate) async fn assert_remaining_operations(
         .with_context(|| format!("a second page exists, so the first carries a cursor: {page}"))?
         .to_owned();
     let answer = route
-        .post(
+        .get(
             &client,
             "/pallet/query",
-            &json!([{"request_id": "ops-query-2", "sort": sort, "limit": 1, "cursor": cursor}]),
+            &json!({"sort": sort, "limit": 1, "cursor": cursor}),
         )
         .await?;
-    let page = value(&answer, "ops-query-2")?;
+    let page = read_value(&answer)?;
     anyhow::ensure!(
         page["item"][0]["id"] == pallet_id && page["next_cursor"].is_null(),
         "the second page holds the fixture pallet and ends: {page}"
     );
     let answer = route
-        .post(
+        .get(
             &client,
             "/pallet/query",
-            &json!([{"request_id": "ops-query-consumed", "filter": {"status": ["consumed"]}}]),
+            &json!({"filter": {"status": ["consumed"]}}),
         )
         .await?;
-    let page = value(&answer, "ops-query-consumed")?;
+    let page = read_value(&answer)?;
     anyhow::ensure!(
         page["item"]
             .as_array()
@@ -552,15 +575,9 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         .build()
         .context("build the route client")?;
     let before = route
-        .post(
-            &client,
-            "/pallet/get",
-            &json!([{
-                "request_id":"partial-before", "id":runtime.pallet_id
-            }]),
-        )
+        .get(&client, "/pallet/get", &json!({"id":runtime.pallet_id}))
         .await?;
-    let before = value(&before, "partial-before")?;
+    let before = read_value(&before)?;
     let revision = revision(&before["row_version"])?;
     anyhow::ensure!(
         before["location_id"] != runtime.to_location_id,
@@ -644,15 +661,9 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         "the store failure carries its nonempty message: {failure:?}"
     );
     let after = route
-        .post(
-            &client,
-            "/pallet/get",
-            &json!([{
-                "request_id":"partial-after", "id":runtime.pallet_id
-            }]),
-        )
+        .get(&client, "/pallet/get", &json!({"id":runtime.pallet_id}))
         .await?;
-    let after = value(&after, "partial-after")?;
+    let after = read_value(&after)?;
     anyhow::ensure!(
         after["location_id"] == expected["location_id"]
             && after["row_version"] == expected["row_version"]

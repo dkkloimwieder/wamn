@@ -100,7 +100,6 @@ interface aggregate {
   }
 
   record aggregate-item {
-    request-id: string,
     input: result<aggregate-request, invalid-input-detail>,
   }
 
@@ -117,7 +116,6 @@ interface aggregate {
   }
 
   record aggregate-outcome {
-    request-id: string,
     outcome: result<aggregate-result, aggregate-error>,
   }
 

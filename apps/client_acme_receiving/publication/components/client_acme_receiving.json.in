@@ -115,10 +115,9 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["request_id", "purchase_order_id"],
+            "required": ["purchase_order_id"],
             "additionalProperties": false,
             "properties": {
-              "request_id": {"type": "string", "minLength": 1},
               "purchase_order_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
             }
           }

@@ -4,13 +4,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet/get@1.0.0",
-    "definition-hash": "sha256:e917d9f977f54131a1b6fa255dc2aaed93792e6e04aaf05c4295f22f154f99ec",
+    "definition-hash": "sha256:45d468c7861e92fbd20c9e7bfbf115e3d1196c41c757c0a60b2b32cd31f53547",
     "definition": {
       "id": "pallet-get-http",
       "kind": "http",
       "route": {
-        "path": "/pallet/get",
-        "method": "POST"
+        "path": "/pallet/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -27,13 +26,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet/query@1.0.0",
-    "definition-hash": "sha256:371247417d486ca870516f9c80a5733c7b81d35b6ab714752bb6d2a5618c2e95",
+    "definition-hash": "sha256:b20af551952a53ccd8effcfb029adb677363cc814f2c9354d2fba4c047654a3b",
     "definition": {
       "id": "pallet-query-http",
       "kind": "http",
       "route": {
-        "path": "/pallet/query",
-        "method": "POST"
+        "path": "/pallet/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -50,13 +48,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/move@1.0.0",
-    "definition-hash": "sha256:e8961e0158be5cb6707dbf08f141189455a3796ef5b655a765d1e9a95c8fa550",
+    "definition-hash": "sha256:aff04c82b622dd3d97cdc11023c565fd54ea60f2b4b47f22d4dba520a1f9242f",
     "definition": {
       "id": "inventory-move-http",
       "kind": "http",
       "route": {
-        "path": "/inventory/move",
-        "method": "POST"
+        "path": "/inventory/move"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -123,13 +120,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/adjust@1.0.0",
-    "definition-hash": "sha256:6306f9196b3d7c425b6b45900bde728257d736430d4036e67090716c46628f19",
+    "definition-hash": "sha256:4fc5ae98bcb1d0101a243457c4f4ffd27a0f42b8426a2c1c9c1b3eb1cdc19182",
     "definition": {
       "id": "inventory-adjust-http",
       "kind": "http",
       "route": {
-        "path": "/inventory/adjust",
-        "method": "POST"
+        "path": "/inventory/adjust"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -214,13 +210,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/merge@1.0.0",
-    "definition-hash": "sha256:8888a9041e36f42f1d097b06b0898be2ab746208cec7dc542d3b718803d325d2",
+    "definition-hash": "sha256:0068bcf98c32c2d3e2018540ed6eba4375e10863851329b1b78ba7c916e46c84",
     "definition": {
       "id": "inventory-merge-http",
       "kind": "http",
       "route": {
-        "path": "/inventory/merge",
-        "method": "POST"
+        "path": "/inventory/merge"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -287,13 +282,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/split@1.0.0",
-    "definition-hash": "sha256:36c2e7e727986781d5a153973e25ce3c71a9c3562ad0759327a6b7026e133093",
+    "definition-hash": "sha256:fc407ccb32d7a0208f99bca7006dbb425e073bb2fec4e79bf6a70afd2b72170a",
     "definition": {
       "id": "inventory-split-http",
       "kind": "http",
       "route": {
-        "path": "/inventory/split",
-        "method": "POST"
+        "path": "/inventory/split"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -383,13 +377,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/aggregate@1.0.0",
-    "definition-hash": "sha256:c601e23b8d3b8610c2e1923e2ca6ac758081b8dc57aa7d6e4558e35ea70911e1",
+    "definition-hash": "sha256:b38d671e87b272062b9d9a87c1cc002beb36e48b47929138f2b7d211b17df98b",
     "definition": {
       "id": "inventory-aggregate-http",
       "kind": "http",
       "route": {
-        "path": "/inventory/aggregate",
-        "method": "POST"
+        "path": "/inventory/aggregate"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -400,15 +393,9 @@
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": [
-            "request_id"
-          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            }
+            
           }
         }
       }
@@ -423,13 +410,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory-movement/get@1.0.0",
-    "definition-hash": "sha256:04feb5353cb8b4074e0e38013d57a0fa875c71911a8644c5b1b42759259f616b",
+    "definition-hash": "sha256:a447540646411ae68300c1ce626f0a114be19775b27e15a72218f5ae6500458a",
     "definition": {
       "id": "inventory-movement-get-http",
       "kind": "http",
       "route": {
-        "path": "/inventory_movement/get",
-        "method": "POST"
+        "path": "/inventory_movement/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -446,13 +432,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory-movement/query@1.0.0",
-    "definition-hash": "sha256:8016a66d6847aec1445b899c48661c4c76eb8a11e76efb5c27cb4acf82d76a9c",
+    "definition-hash": "sha256:7099de7fca9283d2b4e21cf8b8baee1447d72ce5a19758e408144449ff4136f7",
     "definition": {
       "id": "inventory-movement-query-http",
       "kind": "http",
       "route": {
-        "path": "/inventory_movement/query",
-        "method": "POST"
+        "path": "/inventory_movement/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -469,13 +454,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/create@1.0.0",
-    "definition-hash": "sha256:881f849efee56f0df907b9344118382ffab0c47d7f2eba1fe2b2171185bb916a",
+    "definition-hash": "sha256:c8436ec51e25a874601fb2a3f76edccc088d593835f97cb9f6f8f87bc4ced164",
     "definition": {
       "id": "location-create-http",
       "kind": "http",
       "route": {
-        "path": "/location/create",
-        "method": "POST"
+        "path": "/location/create"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -492,13 +476,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/get@1.0.0",
-    "definition-hash": "sha256:0572ec868568fb1adfff7079f88b59b64ca3c1dbeef781a1bb446df6097db0fd",
+    "definition-hash": "sha256:0771730864c055995e496d81ba2ae6bea2ea210cdde7016c3474da2104a93668",
     "definition": {
       "id": "location-get-http",
       "kind": "http",
       "route": {
-        "path": "/location/get",
-        "method": "POST"
+        "path": "/location/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -515,13 +498,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/query@1.0.0",
-    "definition-hash": "sha256:7e6492336e5721b66c7339aac582c574314f4ee53ff128915f1e0d979d8f4135",
+    "definition-hash": "sha256:2a980818a7d8373455e098f590a52f590b81d5054d74283697196d7c5bdc972a",
     "definition": {
       "id": "location-query-http",
       "kind": "http",
       "route": {
-        "path": "/location/query",
-        "method": "POST"
+        "path": "/location/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -538,13 +520,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:location/update@1.0.0",
-    "definition-hash": "sha256:0182ad6c60f31be046b024893eee812b886cf624a9105f4ebaff290ebaaca414",
+    "definition-hash": "sha256:427c68844092d0338f63274d32d8b74cded1836ed04b721504f680225615ef4f",
     "definition": {
       "id": "location-update-http",
       "kind": "http",
       "route": {
-        "path": "/location/update",
-        "method": "POST"
+        "path": "/location/update"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -561,13 +542,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet/create@1.0.0",
-    "definition-hash": "sha256:96371b03808898b85afb3fbda1a1649772c6f1fe74d55b7dd8152deb45b260f5",
+    "definition-hash": "sha256:e7bbcd94a9bc2ef999022cf0d4770c3bbd5fa6c43b356f41865961465b9b0306",
     "definition": {
       "id": "pallet-create-http",
       "kind": "http",
       "route": {
-        "path": "/pallet/create",
-        "method": "POST"
+        "path": "/pallet/create"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -584,13 +564,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet-quantity/get@1.0.0",
-    "definition-hash": "sha256:b802d4863b2e4293a8fe1d8558168b826fb615342a12039157a17aaa5fa44d05",
+    "definition-hash": "sha256:446d814ea2e004271e6b868e5af21e29cea10e0fc7a891238aa86edc7fd91cab",
     "definition": {
       "id": "pallet-quantity-get-http",
       "kind": "http",
       "route": {
-        "path": "/pallet_quantity/get",
-        "method": "POST"
+        "path": "/pallet_quantity/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -607,13 +586,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:pallet-quantity/query@1.0.0",
-    "definition-hash": "sha256:08b62bd10a2d534b8786e5382681920a11d681565936f6e18612491840b66225",
+    "definition-hash": "sha256:453d4a7ff432b039fc7cca25cbb13b8420d44c7f8a91afd90dd78f18d8128074",
     "definition": {
       "id": "pallet-quantity-query-http",
       "kind": "http",
       "route": {
-        "path": "/pallet_quantity/query",
-        "method": "POST"
+        "path": "/pallet_quantity/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -630,13 +608,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/create@1.0.0",
-    "definition-hash": "sha256:93f79e6ff115e9b46c33aed91600898ff041866f955c61ebcc6556a0cc8cfcf4",
+    "definition-hash": "sha256:c2682544bc26a60fcb89f557133e198b189e435f1400acf26aeafe11d04b08fb",
     "definition": {
       "id": "product-create-http",
       "kind": "http",
       "route": {
-        "path": "/product/create",
-        "method": "POST"
+        "path": "/product/create"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -653,13 +630,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/get@1.0.0",
-    "definition-hash": "sha256:2a50327ae9dd16239d323530814db3ea4522594d17a57f167be89b303cea95f1",
+    "definition-hash": "sha256:3d74d9c82c99c2e0de6476d0cd0a9e8c6f0984e77d0c6ccfedcfccf8a97fde17",
     "definition": {
       "id": "product-get-http",
       "kind": "http",
       "route": {
-        "path": "/product/get",
-        "method": "POST"
+        "path": "/product/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -676,13 +652,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/query@1.0.0",
-    "definition-hash": "sha256:3b2616bcd4d929dd1dac10e556d14ab860811fedf7fe098f9cb8ee546b0c9fcd",
+    "definition-hash": "sha256:95e6e5add51c8e6b94c413278215f52331073e59f613e8a41e06c5775879e284",
     "definition": {
       "id": "product-query-http",
       "kind": "http",
       "route": {
-        "path": "/product/query",
-        "method": "POST"
+        "path": "/product/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -699,13 +674,12 @@
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:product/update@1.0.0",
-    "definition-hash": "sha256:dffeda5324f30dcbe8c2ceba51213f507646a180d6ddfb2a1cafcdbde3458928",
+    "definition-hash": "sha256:9890660185c68065d3badbaafc3c3623522e292401cddd41765ac74959e27abc",
     "definition": {
       "id": "product-update-http",
       "kind": "http",
       "route": {
-        "path": "/product/update",
-        "method": "POST"
+        "path": "/product/update"
       },
       "raw-body-bytes": {
         "maximum": 1048576

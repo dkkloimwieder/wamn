@@ -7,14 +7,10 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:location/list@1.0.0`. */
 export interface LocationListRequest {
-  /** `text` */
-  requestId: string;
 }
 
 /** What `wamn-receiving:location/list@1.0.0` calls its input members. */
-export const LOCATION_LIST_REQUEST_FIELDS: FieldMap = {
-  "request_id": "requestId",
-};
+export const LOCATION_LIST_REQUEST_FIELDS: FieldMap = {};
 
 /** One row of `wamn-receiving:location/list@1.0.0`. */
 export interface LocationListRow {
@@ -49,7 +45,7 @@ export const LOCATION_LIST_RESULT_FIELDS: FieldMap = {
  */
 export const LOCATION_LIST_ROUTE: OperationRoute = {
   operation: "wamn-receiving:location/list@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/location/list",
   freshOnly: false,
   contract: {

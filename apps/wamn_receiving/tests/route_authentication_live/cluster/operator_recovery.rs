@@ -24,6 +24,8 @@ use wamn_integration_tests::operator_recovery::{
 use super::{ReceivingCluster, kubectl, materializer_case};
 
 const SYSTEM: &str = "wamn-system";
+/// The request id the retained POST runs sent and got back. A live GET read
+/// carries none.
 const REQUEST_ID: &str = "00000000-0000-4000-8000-000000000929";
 const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 const OUTAGE_SECONDS: u32 = 150;
@@ -40,7 +42,11 @@ struct Sample {
     result: String,
     origin: String,
 }
-fn classify(sample: &Sample, expected_id: &str) -> anyhow::Result<&'static str> {
+fn classify(
+    sample: &Sample,
+    expected_id: &str,
+    request_id: Option<&str>,
+) -> anyhow::Result<&'static str> {
     if sample.status == 200 && sample.transport_failure.is_none() {
         let value: Value = serde_json::from_str(&sample.body)?;
         ensure!(
@@ -52,7 +58,7 @@ fn classify(sample: &Sample, expected_id: &str) -> anyhow::Result<&'static str> 
             .context("the Receiving response is an array")?;
         ensure!(
             values.len() == 1
-                && values[0]["request_id"] == REQUEST_ID
+                && values[0].get("request_id") == request_id.map(Value::from).as_ref()
                 && values[0].get("error").is_none()
                 && values[0]["value"]["id"] == expected_id,
             "HTTP 200 must return the selected Receiving purchase order"
@@ -117,11 +123,14 @@ async fn sample(
     token: &str,
 ) -> anyhow::Result<Sample> {
     let started = Instant::now();
+    let query = wamn_execution_contract::encode_read_query(&serde_json::Map::from_iter([(
+        "id".to_owned(),
+        json!(ORDER_ID),
+    )]));
     let response = http
-        .post(format!("{endpoint}/purchase_order/get"))
+        .get(format!("{endpoint}/purchase_order/get?{query}"))
         .header("Host", route_host)
         .bearer_auth(token)
-        .json(&json!([{"id":ORDER_ID,"request_id":REQUEST_ID}]))
         .send()
         .await;
     let mut sample = Sample {
@@ -155,7 +164,7 @@ async fn sample(
     }
     sample.seconds = started.elapsed().as_secs_f64();
     sample.timestamp = chrono::Utc::now().timestamp();
-    sample.result = classify(&sample, ORDER_ID)?.to_owned();
+    sample.result = classify(&sample, ORDER_ID, None)?.to_owned();
     Ok(sample)
 }
 
@@ -1020,7 +1029,7 @@ mod tests {
                     result: String::new(),
                     origin: "retained-in-cluster-request_task".to_owned(),
                 };
-                let class = classify(&sample, ORDER_ID)?;
+                let class = classify(&sample, ORDER_ID, Some(REQUEST_ID))?;
                 assert_eq!(value["result"], class);
                 classes.insert(class);
                 total += 1;
@@ -1032,16 +1041,16 @@ mod tests {
         assert_eq!(total, 222);
         assert_eq!(classes, BTreeSet::from(["serving", "transport_failure"]));
         let mut sample = last.context("the retained data has a successful request")?;
-        assert!(classify(&sample, "another-order").is_err());
+        assert!(classify(&sample, "another-order", Some(REQUEST_ID)).is_err());
         sample.content_type = "text/plain".to_owned();
-        assert!(classify(&sample, ORDER_ID).is_err());
+        assert!(classify(&sample, ORDER_ID, Some(REQUEST_ID)).is_err());
         sample.status = 404;
         sample.body.clear();
-        assert_eq!(classify(&sample, ORDER_ID)?, "native_404");
+        assert_eq!(classify(&sample, ORDER_ID, Some(REQUEST_ID))?, "native_404");
         sample.status = 503;
-        assert_eq!(classify(&sample, ORDER_ID)?, "native_503");
+        assert_eq!(classify(&sample, ORDER_ID, Some(REQUEST_ID))?, "native_503");
         sample.status = 403;
-        assert!(classify(&sample, ORDER_ID).is_err());
+        assert!(classify(&sample, ORDER_ID, Some(REQUEST_ID)).is_err());
         println!(
             "OPERATOR_ROUTE_REPLAY samples={total} recorded_classes=2 native_empty_statuses=2 unexpected_responses=refused"
         );

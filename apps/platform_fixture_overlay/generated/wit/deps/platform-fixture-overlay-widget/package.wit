@@ -30,7 +30,6 @@ interface get {
   }
 
   record get-item {
-    request-id: string,
     input: result<get-request, invalid-input-detail>,
   }
 
@@ -49,7 +48,6 @@ interface get {
   }
 
   record get-outcome {
-    request-id: string,
     outcome: result<get-result, get-error>,
   }
 

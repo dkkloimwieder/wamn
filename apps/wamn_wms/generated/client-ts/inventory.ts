@@ -121,14 +121,10 @@ export async function adjust(
 
 /** Input for `wamn-wms:inventory/aggregate@1.0.0`. */
 export interface InventoryAggregateRequest {
-  /** `text` */
-  requestId: string;
 }
 
 /** What `wamn-wms:inventory/aggregate@1.0.0` calls its input members. */
-export const INVENTORY_AGGREGATE_REQUEST_FIELDS: FieldMap = {
-  "request_id": "requestId",
-};
+export const INVENTORY_AGGREGATE_REQUEST_FIELDS: FieldMap = {};
 
 /** One row of `wamn-wms:inventory/aggregate@1.0.0`. */
 export interface InventoryAggregateRow {
@@ -172,7 +168,7 @@ export const INVENTORY_AGGREGATE_RESULT_FIELDS: FieldMap = {
  */
 export const INVENTORY_AGGREGATE_ROUTE: OperationRoute = {
   operation: "wamn-wms:inventory/aggregate@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/inventory/aggregate",
   freshOnly: false,
   contract: {

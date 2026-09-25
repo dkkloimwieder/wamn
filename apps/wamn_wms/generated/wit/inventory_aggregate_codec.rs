@@ -6,21 +6,27 @@ const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
+#[allow(dead_code)]
+pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
+    validate_count(input.len())?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {}
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::AggregateItem>, CodecError> {
-    decode_envelope(input)?
+    decode_read_envelope(input)?
         .into_iter()
-        .map(|(request_id, body)| {
+        .map(|body| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| {
                     let _ = request;
                     contract::AggregateRequest::Request
                 })
                 .map_err(|_| invalid("input"));
-            Ok(contract::AggregateItem { request_id, input })
+            Ok(contract::AggregateItem { input })
         })
         .collect()
 }
@@ -36,7 +42,6 @@ pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
         .iter()
         .map(|item| match &item.outcome {
             Ok(value) => json!({
-                "request_id": item.request_id,
                 "value": { "rows": value.rows.iter().map(|row| json!({
                     "product_id": row.product_id,
                     "location_id": row.location_id,
@@ -46,7 +51,6 @@ pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
-                "request_id": item.request_id,
                 "error": error_value(error),
             }),
         })
@@ -99,10 +103,7 @@ where
             },
             Err(error) => Err(contract::AggregateError::InvalidInput(error)),
         };
-        output.push(contract::AggregateOutcome {
-            request_id: item.request_id,
-            outcome,
-        });
+        output.push(contract::AggregateOutcome { outcome });
     }
     output
 }

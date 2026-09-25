@@ -22,10 +22,7 @@ pub const LOCATION_FIELDS: &[FieldDescriptor] = &[
 
 /// Input for `wamn-receiving:location/list@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct LocationListRequest {
-    /// `text`
-    pub request_id: String,
-}
+pub struct LocationListRequest {}
 
 /// Result of `wamn-receiving:location/list@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,12 +34,7 @@ pub struct LocationListResult {
 }
 
 /// Input descriptors for `wamn-receiving:location/list@1.0.0`.
-pub const LOCATION_LIST_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
-    path: "request_id",
-    type_name: "text",
-    nullable: false,
-    values: &[],
-}];
+pub const LOCATION_LIST_INPUT: &[FieldDescriptor] = &[];
 
 /// Result descriptors for `wamn-receiving:location/list@1.0.0`.
 pub const LOCATION_LIST_RESULT: &[FieldDescriptor] = &[
@@ -60,19 +52,7 @@ pub const LOCATION_LIST_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const LOCATION_LIST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
-    &[wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "text",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    }];
+pub const LOCATION_LIST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[];
 
 pub const LOCATION_LIST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -125,7 +105,7 @@ pub const LOCATION_LIST_ERRORS: &[&str] = &[
 #[must_use]
 pub fn list_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/location/list".to_owned(),
     }
 }

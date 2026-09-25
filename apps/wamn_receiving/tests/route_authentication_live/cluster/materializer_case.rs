@@ -277,10 +277,10 @@ pub(super) async fn trigger(
             && receipt_id.len() == 36 && receipt_id.bytes().all(|byte| byte == b'-'
                 || (byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
             "the materializer Receipt command must return the exact base result");
-        let detail = http.post(format!("{endpoint}/acme/purchase_order/get"))
+        let detail_query = wamn_execution_contract::encode_read_query(
+            &serde_json::Map::from_iter([("id".to_owned(), json!(order.order_id))]));
+        let detail = http.get(format!("{endpoint}/acme/purchase_order/get?{detail_query}"))
             .header("Host", &cluster.inputs.route_host).bearer_auth(&token)
-            .json(&json!([{"request_id":"materializer-receipt-detail",
-                "id":order.order_id}]))
             .send().await?;
         ensure!(detail.status() == reqwest::StatusCode::OK,
             "the materializer Receipt detail read must return HTTP 200");
@@ -288,7 +288,7 @@ pub(super) async fn trigger(
         fs::write(cluster.resources.evidence.join("materializer-receipt-detail.json"),
             serde_json::to_vec_pretty(&detail)?)?;
         ensure!(detail.as_array().is_some_and(|items| items.len() == 1)
-            && detail[0]["request_id"] == "materializer-receipt-detail"
+            && detail[0].get("request_id").is_none()
             && detail[0]["value"]["id"] == order.order_id.as_str()
             && detail[0]["value"]["row_version"] == 3
             && detail[0]["value"]["acme_inspection_required"] == true

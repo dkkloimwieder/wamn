@@ -2,8 +2,17 @@
 
 use super::{
     AuthoredHttpRoute, BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, PathBuf,
-    ServingAttachment, canonical_http_route_template, normalize_http_route,
+    RouteKinds, ServingAttachment, canonical_http_route_template, normalize_http_route,
 };
+use wamn_catalog::AttachmentTarget;
+
+/// The route an author writes: the path alone. The deployment adds the host,
+/// and publish adds the method from the operation kind.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthoredRoute {
+    path: String,
+}
 
 /// Read the package attachment documents, with every generated input schema
 /// they name resolved against the package that owns the attachment.
@@ -162,10 +171,12 @@ pub(super) fn validate_attachment_definition_hashes(
 }
 
 /// Resolve deployment-owned route identity without letting package content
-/// become a second hostname emitter.
+/// become a second hostname emitter, and write each route's method from the
+/// kind of the operation it calls.
 pub(super) fn resolve_route_host_overlay(
     authored: &BTreeMap<String, ServingAttachment>,
     route_host: Option<&str>,
+    route_kinds: &RouteKinds,
 ) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
     validate_authored_attachment_routes(authored)?;
     validate_attachment_definition_hashes(authored)?;
@@ -196,6 +207,7 @@ pub(super) fn resolve_route_host_overlay(
     }
     let route_host = route_host.to_ascii_lowercase();
     let mut resolved = authored.clone();
+    let mut route_keys = BTreeSet::new();
     for (attachment_id, attachment) in &mut resolved {
         if !matches!(
             attachment.kind,
@@ -203,6 +215,7 @@ pub(super) fn resolve_route_host_overlay(
         ) {
             continue;
         }
+        let method = route_method(attachment_id, attachment, route_kinds)?;
         let route = attachment
             .definition
             .as_object_mut()
@@ -214,6 +227,47 @@ pub(super) fn resolve_route_host_overlay(
                     format!("attachment {attachment_id:?} carries no route object"),
                 )
             })?;
+        let AuthoredRoute { path } = serde_json::from_value(serde_json::Value::Object(
+            route.clone(),
+        ))
+        .map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} route must contain exactly a string path field"
+                ),
+                error,
+            )
+        })?;
+        let normalized = normalize_http_route(
+            &AuthoredHttpRoute {
+                path,
+                method: method.to_owned(),
+            },
+            attachment_id,
+        )
+        .map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!("attachment {attachment_id:?} carries an invalid route"),
+                error,
+            )
+        })?;
+        if !route_keys.insert((
+            canonical_http_route_template(&normalized.path),
+            normalized.method,
+        )) {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} duplicates another attachment's canonical path and method"
+                ),
+            ));
+        }
+        route.insert(
+            "method".to_owned(),
+            serde_json::Value::String(method.to_owned()),
+        );
         route.insert(
             "host".to_owned(),
             serde_json::Value::String(route_host.clone()),
@@ -226,12 +280,35 @@ pub(super) fn resolve_route_host_overlay(
     Ok(resolved)
 }
 
-/// Admit only package-owned route coordinates. The deployment hostname is
-/// deliberately absent from this schema and joins at publication.
+/// The method of one routed attachment: GET for a route to a read operation,
+/// POST for every other route and for every wiring.
+fn route_method(
+    attachment_id: &str,
+    attachment: &ServingAttachment,
+    route_kinds: &RouteKinds,
+) -> Result<&'static str, MintManifestError> {
+    let AttachmentTarget::Route { operation, .. } = &attachment.target else {
+        return Ok("POST");
+    };
+    route_kinds
+        .get(&(attachment.package_id.clone(), operation.clone()))
+        .map(|kind| kind.http_method())
+        .ok_or_else(|| {
+            MintManifestError::new(
+                MintManifestErrorKind::GeneratedPackageMetadata,
+                format!(
+                    "route attachment {attachment_id:?} calls operation {operation:?}, which has no generated contract kind; regenerate the package evidence"
+                ),
+            )
+        })
+}
+
+/// Admit only package-owned route coordinates. The deployment hostname and
+/// the method are deliberately absent from this schema: the hostname joins at
+/// publication, and the method follows from the operation kind.
 fn validate_authored_attachment_routes(
     authored: &BTreeMap<String, ServingAttachment>,
 ) -> Result<(), MintManifestError> {
-    let mut route_keys = BTreeSet::new();
     for (attachment_id, attachment) in authored {
         if attachment.definition.pointer("/route/host").is_some() {
             return Err(MintManifestError::new(
@@ -241,39 +318,15 @@ fn validate_authored_attachment_routes(
                 ),
             ));
         }
-        if !matches!(
+        if matches!(
             attachment.kind,
             wamn_catalog::AttachmentKind::Http | wamn_catalog::AttachmentKind::Studio
-        ) {
-            continue;
-        }
-        let route = attachment
-            .definition
-            .get("route")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let route = serde_json::from_value::<AuthoredHttpRoute>(route).map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorKind::Document,
-                format!(
-                    "attachment {attachment_id:?} route must contain exactly string path and method fields"
-                ),
-                error,
-            )
-        })?;
-        let route = normalize_http_route(&route, attachment_id).map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorKind::Document,
-                format!("attachment {attachment_id:?} carries an invalid route"),
-                error,
-            )
-        })?;
-        let key = (canonical_http_route_template(&route.path), route.method);
-        if !route_keys.insert(key) {
+        ) && attachment.definition.pointer("/route/method").is_some()
+        {
             return Err(MintManifestError::new(
                 MintManifestErrorKind::Document,
                 format!(
-                    "attachment {attachment_id:?} duplicates another attachment's canonical path and method"
+                    "attachment {attachment_id:?} authors route.method; remove it, because the method follows from the operation kind"
                 ),
             ));
         }

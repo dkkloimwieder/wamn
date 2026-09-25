@@ -470,8 +470,9 @@ pub async fn mint_local(
         .context("local release identity exhausted")?
         .max(args.effective_release_id);
     let authored = read_package_attachments(&args.attachments, &args.package_manifests)?;
-    let attachments = resolve_route_host_overlay(&authored, args.route_host.as_deref())?;
     let (package_manifests, _, route_kinds) = read_package_manifests(&args.package_manifests)?;
+    let attachments =
+        resolve_route_host_overlay(&authored, args.route_host.as_deref(), &route_kinds)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -673,10 +674,13 @@ async fn mint_candidate(
     );
     let authored_attachments =
         read_package_attachments(&args.attachments, &args.package_manifests)?;
-    let attachments =
-        resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
     let (package_manifests, package_manifest_hashes, route_kinds) =
         read_package_manifests(&args.package_manifests)?;
+    let attachments = resolve_route_host_overlay(
+        &authored_attachments,
+        args.route_host.as_deref(),
+        &route_kinds,
+    )?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
         packages.len() == args.packages.len(),
@@ -2160,7 +2164,7 @@ mod tests {
         let definition = serde_json::json!({
             "id": attachment_id,
             "kind": "http",
-            "route": {"path": path, "method": "POST"},
+            "route": {"path": path},
         });
         let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         ServingAttachment {
@@ -2232,8 +2236,9 @@ mod tests {
                 .count(),
             1
         );
-        let resolved = resolve_route_host_overlay(&authored, Some("Fixture.Localhost"))
-            .expect("merged routes retain deployment-owned host binding");
+        let resolved =
+            resolve_route_host_overlay(&authored, Some("Fixture.Localhost"), &RouteKinds::new())
+                .expect("merged routes retain deployment-owned host binding");
         assert!(
             resolved
                 .values()
@@ -2303,8 +2308,9 @@ mod tests {
             ),
         ])
         .expect("distinct attachment identities merge before route validation");
-        let error = resolve_route_host_overlay(&authored, Some("fixture.localhost"))
-            .expect_err("canonical route collisions remain refused after package merging");
+        let error =
+            resolve_route_host_overlay(&authored, Some("fixture.localhost"), &RouteKinds::new())
+                .expect_err("canonical route collisions remain refused after package merging");
 
         assert_eq!(error.kind(), MintManifestErrorKind::Document);
         assert!(error.detail().contains("canonical path and method"));
@@ -2315,7 +2321,7 @@ mod tests {
         let definition = serde_json::json!({
             "id": "fixture-http",
             "kind": "http",
-            "route": {"path": "/widget/get", "method": "POST"},
+            "route": {"path": "/widget/get"},
         });
         let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
@@ -2350,7 +2356,7 @@ mod tests {
         let definition = serde_json::json!({
             "id": "fixture-http",
             "kind": "http",
-            "route": {"path": "/widget/get", "method": "POST"},
+            "route": {"path": "/widget/get"},
         });
         let authored_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
@@ -2368,15 +2374,16 @@ mod tests {
         };
         let authored = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
 
-        let missing = resolve_route_host_overlay(&authored, None)
+        let missing = resolve_route_host_overlay(&authored, None, &RouteKinds::new())
             .expect_err("a routed release requires its deployment hostname");
         assert_eq!(missing.kind(), MintManifestErrorKind::RouteHostUnbound);
         assert_eq!(missing.kind().as_str(), "route-host-unbound");
         assert!(missing.detail().contains("fixture-http"));
         assert!(missing.detail().contains("--route-host"));
 
-        let resolved = resolve_route_host_overlay(&authored, Some("Route.Example"))
-            .expect("the deployment overlay resolves the route hostname");
+        let resolved =
+            resolve_route_host_overlay(&authored, Some("Route.Example"), &RouteKinds::new())
+                .expect("the deployment overlay resolves the route hostname");
         assert!(
             authored["fixture-http"].definition["route"]
                 .get("host")
@@ -2405,7 +2412,7 @@ mod tests {
                 .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
-        let package_host = resolve_route_host_overlay(&package_authored, None)
+        let package_host = resolve_route_host_overlay(&package_authored, None, &RouteKinds::new())
             .expect_err("package content cannot author a deployment hostname");
         assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
         assert!(package_host.detail().contains("remove it"));
@@ -2416,7 +2423,7 @@ mod tests {
             .get_mut("fixture-http")
             .expect("the attachment exists")
             .kind = wamn_catalog::AttachmentKind::Internal;
-        let package_host = resolve_route_host_overlay(&non_routed, None)
+        let package_host = resolve_route_host_overlay(&non_routed, None, &RouteKinds::new())
             .expect_err("every attachment kind refuses an authored route hostname");
         assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
 
@@ -2430,10 +2437,14 @@ mod tests {
                 .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
-        let extra = resolve_route_host_overlay(&extra_route_field, Some("route.example"))
-            .expect_err("package route schema admits only path and method");
+        let extra = resolve_route_host_overlay(
+            &extra_route_field,
+            Some("route.example"),
+            &RouteKinds::new(),
+        )
+        .expect_err("package route schema admits only a path");
         assert_eq!(extra.kind(), MintManifestErrorKind::Document);
-        assert!(extra.detail().contains("exactly string path and method"));
+        assert!(extra.detail().contains("exactly a string path field"));
 
         let mut colliding = authored;
         let first = colliding
@@ -2446,10 +2457,109 @@ mod tests {
         second.definition["route"]["path"] = serde_json::json!("/widget/{widget_id}");
         refresh_definition_hash(&mut second);
         colliding.insert("fixture-http-alias".to_owned(), second);
-        let collision = resolve_route_host_overlay(&colliding, Some("route.example"))
-            .expect_err("one overlay host cannot carry ambiguous route templates");
+        let collision =
+            resolve_route_host_overlay(&colliding, Some("route.example"), &RouteKinds::new())
+                .expect_err("one overlay host cannot carry ambiguous route templates");
         assert_eq!(collision.kind(), MintManifestErrorKind::Document);
         assert!(collision.detail().contains("canonical path and method"));
+    }
+
+    #[test]
+    fn release_mint_writes_the_method_from_the_operation_kind() {
+        let route = |id: &str, operation: &str, path: &str| {
+            let mut attachment = package_http_attachment(id, "source_fixture", id, operation, path);
+            attachment.target = wamn_catalog::AttachmentTarget::Route {
+                component: "widget".to_owned(),
+                operation: operation.to_owned(),
+            };
+            (id.to_owned(), attachment)
+        };
+        let authored = BTreeMap::from([
+            route("get-http", "source-fixture:widget/get@1.0.0", "/widget/get"),
+            route(
+                "query-http",
+                "source-fixture:widget/query@1.0.0",
+                "/widget/query",
+            ),
+            route(
+                "load-http",
+                "source-fixture:widget/load@1.0.0",
+                "/widget/load",
+            ),
+            route(
+                "update-http",
+                "source-fixture:widget/update@1.0.0",
+                "/widget/update",
+            ),
+            route(
+                "record-http",
+                "source-fixture:widget/record@1.0.0",
+                "/widget/record",
+            ),
+            (
+                "wiring-http".to_owned(),
+                package_http_attachment(
+                    "wiring-http",
+                    "source_fixture",
+                    "widget_flow",
+                    "source-fixture:widget/flow@1.0.0",
+                    "/widget/flow",
+                ),
+            ),
+        ]);
+        let kinds: RouteKinds = [
+            ("widget/get", OperationKind::Get),
+            ("widget/query", OperationKind::Query),
+            ("widget/load", OperationKind::Projection),
+            ("widget/update", OperationKind::Update),
+            ("widget/record", OperationKind::Command),
+        ]
+        .into_iter()
+        .map(|(operation, kind)| {
+            (
+                (
+                    "source_fixture".to_owned(),
+                    format!("source-fixture:{operation}@1.0.0"),
+                ),
+                kind,
+            )
+        })
+        .collect();
+        let resolved = resolve_route_host_overlay(&authored, Some("route.example"), &kinds)
+            .expect("every route resolves a method");
+        for (id, method) in [
+            ("get-http", "GET"),
+            ("query-http", "GET"),
+            ("load-http", "GET"),
+            ("update-http", "POST"),
+            ("record-http", "POST"),
+            ("wiring-http", "POST"),
+        ] {
+            assert_eq!(resolved[id].definition["route"]["method"], method, "{id}");
+        }
+
+        let unknown =
+            resolve_route_host_overlay(&authored, Some("route.example"), &RouteKinds::new())
+                .expect_err("a route to an operation with no contract kind refuses");
+        assert_eq!(
+            unknown.kind(),
+            MintManifestErrorKind::GeneratedPackageMetadata
+        );
+
+        let mut authored_method = authored;
+        let get = authored_method
+            .get_mut("get-http")
+            .expect("the attachment exists");
+        get.definition["route"]["method"] = serde_json::json!("GET");
+        refresh_definition_hash(get);
+        let refusal = resolve_route_host_overlay(&authored_method, Some("route.example"), &kinds)
+            .expect_err("an authored method refuses");
+        assert_eq!(refusal.kind(), MintManifestErrorKind::Document);
+        assert!(
+            refusal.detail().contains("route.method"),
+            "{}",
+            refusal.detail()
+        );
     }
 
     fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {

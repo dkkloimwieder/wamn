@@ -104,7 +104,6 @@ interface load-purchase-order-detail {
   }
 
   record load-purchase-order-detail-item {
-    request-id: string,
     input: result<load-purchase-order-detail-request, invalid-input-detail>,
   }
 
@@ -119,7 +118,6 @@ interface load-purchase-order-detail {
   }
 
   record load-purchase-order-detail-outcome {
-    request-id: string,
     outcome: result<load-purchase-order-detail-result, load-purchase-order-detail-error>,
   }
 

@@ -530,6 +530,18 @@ fn selected_attachments(
         };
         if served {
             let mut attachment = attachment.clone();
+            // As publish does: a route to a read is a GET, and every other
+            // route and every wiring is a POST.
+            let method = match &attachment.target {
+                AttachmentTarget::Route { operation, .. } => {
+                    let root = roots
+                        .get(&attachment.package_id)
+                        .context("a route attachment names an assembled package")?;
+                    operation_kind(root, operation)?.http_method()
+                }
+                AttachmentTarget::Wiring { .. } => "POST",
+            };
+            attachment.definition["route"]["method"] = Value::String(method.into());
             attachment.definition["route"]["host"] = Value::String(input.route_host.into());
             attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
                 wamn_execution_contract::canonical_json_sha256(&attachment.definition),

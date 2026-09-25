@@ -1,0 +1,66 @@
+[
+  {
+    "item": {},
+    "query": ""
+  },
+  {
+    "item": {
+      "id": "b1c2d3e4-0000-4000-8000-000000000001"
+    },
+    "query": "id=%22b1c2d3e4-0000-4000-8000-000000000001%22"
+  },
+  {
+    "item": {
+      "cursor": "eyJrIjoxfQ==",
+      "limit": 50
+    },
+    "query": "cursor=%22eyJrIjoxfQ%3D%3D%22&limit=50"
+  },
+  {
+    "item": {
+      "filter": {
+        "status": [
+          "open",
+          "received"
+        ],
+        "supplier_id": [
+          "00000000-0000-4000-8000-00000000000a"
+        ]
+      },
+      "sort": {
+        "direction": "desc",
+        "field": "purchase_order_number"
+      }
+    },
+    "query": "filter=%7B%22status%22%3A%5B%22open%22%2C%22received%22%5D%2C%22supplier_id%22%3A%5B%2200000000-0000-4000-8000-00000000000a%22%5D%7D&sort=%7B%22direction%22%3A%22desc%22%2C%22field%22%3A%22purchase_order_number%22%7D"
+  },
+  {
+    "item": {
+      "flag": true,
+      "none": null,
+      "count": -3,
+      "ratio": 1.5
+    },
+    "query": "count=-3&flag=true&none=null&ratio=1.5"
+  },
+  {
+    "item": {
+      "name": "Müller & Söhne / 10%"
+    },
+    "query": "name=%22M%C3%BCller%20%26%20S%C3%B6hne%20%2F%2010%25%22"
+  },
+  {
+    "item": {
+      "note": "line\nbreak \"quoted\""
+    },
+    "query": "note=%22line%5Cnbreak%20%5C%22quoted%5C%22%22"
+  },
+  {
+    "item": {
+      "Zeta": 1,
+      "alpha": 2,
+      "_x": 3
+    },
+    "query": "Zeta=1&_x=3&alpha=2"
+  }
+]

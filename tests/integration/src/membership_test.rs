@@ -202,16 +202,7 @@ async fn exercise(
         .context("assign the project role that must not imply membership")?;
     seed_tenant_role(args, project, principal, role).await?;
 
-    let request = |case: &'static str, status| {
-        post_case(
-            args,
-            http,
-            token.token(),
-            format!("{principal}-{case}"),
-            case,
-            status,
-        )
-    };
+    let request = |case: &'static str, status| get_case(args, http, token.token(), case, status);
     request("absent_membership", 401).await?;
     for case in ["granted", "repeated_grant"] {
         membership(args, principal, "grant-project-env-membership").await?;
@@ -329,22 +320,25 @@ async fn membership(
     Ok(())
 }
 
-async fn post_case(
+async fn get_case(
     args: &MembershipTestArgs,
     http: &reqwest::Client,
     token: &str,
-    request_id: String,
     case: &str,
     expected: u16,
 ) -> anyhow::Result<()> {
+    let query = wamn_execution_contract::encode_read_query(
+        json!({"id": PURCHASE_ORDER_ID})
+            .as_object()
+            .context("the get item is an object")?,
+    );
     let response = http
-        .post(format!(
-            "{}/purchase_order/get",
+        .get(format!(
+            "{}/purchase_order/get?{query}",
             args.endpoint_url.trim_end_matches('/')
         ))
         .header(reqwest::header::HOST, &args.host)
         .bearer_auth(token)
-        .json(&json!([{"request_id": request_id, "id": PURCHASE_ORDER_ID}]))
         .send()
         .await
         .map_err(|_| anyhow!("membership case {case}: HTTP request failed"))?;
@@ -358,21 +352,22 @@ async fn post_case(
             .json::<Value>()
             .await
             .map_err(|_| anyhow!("membership case {case}: invalid JSON response"))?;
-        check_record(&body, &request_id).with_context(|| format!("membership case {case}"))?;
+        check_record(&body).with_context(|| format!("membership case {case}"))?;
     }
     println!("MEMBERSHIP_TEST case={case} status={status} result=pass");
     Ok(())
 }
 
-fn check_record(body: &Value, request_id: &str) -> anyhow::Result<()> {
+fn check_record(body: &Value) -> anyhow::Result<()> {
     let items = body
         .as_array()
         .context("response must be a batched envelope")?;
     ensure!(items.len() == 1, "response must contain exactly one item");
     let item = &items[0];
+    // A read carries no request identity, so its one outcome answers by position.
     ensure!(
-        item["request_id"] == request_id,
-        "response lost request correlation"
+        item.get("request_id").is_none(),
+        "a read outcome carries no request identity"
     );
     ensure!(
         item.get("error").is_none(),
@@ -498,20 +493,20 @@ mod tests {
     }
 
     #[test]
-    fn success_requires_the_correlated_seeded_record() {
-        let good = json!([{"request_id": "test", "value": {
+    fn success_requires_the_seeded_record() {
+        let good = json!([{"value": {
             "id": PURCHASE_ORDER_ID, "purchase_order_number": "PO-301"
         }}]);
-        check_record(&good, "test").expect("the expected record passes");
-        assert!(check_record(&good, "another-request").is_err());
+        check_record(&good).expect("the expected record passes");
         for bad in [
             json!([]),
             json!([good[0], good[0]]),
-            json!([{"request_id": "test", "error": "permission-denied", "value": good[0]["value"]}]),
-            json!([{"request_id": "test", "value": {"id": "another-order", "purchase_order_number": "PO-301"}}]),
-            json!([{"request_id": "test", "value": {"id": PURCHASE_ORDER_ID, "purchase_order_number": "PO-302"}}]),
+            json!([{"request_id": "test", "value": good[0]["value"]}]),
+            json!([{"error": "permission-denied", "value": good[0]["value"]}]),
+            json!([{"value": {"id": "another-order", "purchase_order_number": "PO-301"}}]),
+            json!([{"value": {"id": PURCHASE_ORDER_ID, "purchase_order_number": "PO-302"}}]),
         ] {
-            assert!(check_record(&bad, "test").is_err());
+            assert!(check_record(&bad).is_err());
         }
     }
 }

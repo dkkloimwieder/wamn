@@ -339,11 +339,6 @@
         "fields": [
           {
             "nullable": false,
-            "path": "request_id",
-            "type": "text"
-          },
-          {
-            "nullable": false,
             "path": "selector",
             "type": "json"
           },
@@ -676,13 +671,7 @@
         "internal_error"
       ],
       "input": {
-        "fields": [
-          {
-            "nullable": false,
-            "path": "request_id",
-            "type": "text"
-          }
-        ]
+        "fields": []
       },
       "kind": "projection",
       "permission": "widget_maker.list",

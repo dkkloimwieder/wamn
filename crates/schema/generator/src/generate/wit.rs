@@ -163,11 +163,15 @@ fn emit_crud_interface(
     }
     source.push_str("  }\n\n");
     emit_operation_errors(source, name, details, revision_width(table, operation));
-    writeln!(source, "  record {name}-item {{\n    request-id: string,\n    input: result<{name}-request, invalid-input-detail>,\n  }}\n")
+    let key = request_key_field(crud_is_keyed(action));
+    writeln!(source, "  record {name}-item {{\n{key}    input: result<{name}-request, invalid-input-detail>,\n  }}\n")
         .expect("writing to a String cannot fail");
     emit_crud_result(source, name, action, fields, operation.result);
-    writeln!(source, "  record {name}-outcome {{\n    request-id: string,\n    outcome: result<{name}-result, {name}-error>,\n  }}\n")
-        .expect("writing to a String cannot fail");
+    writeln!(
+        source,
+        "  record {name}-outcome {{\n{key}    outcome: result<{name}-result, {name}-error>,\n  }}\n"
+    )
+    .expect("writing to a String cannot fail");
     writeln!(source, "  run: async func(ctx: node-context, input: list<{name}-item>) -> result<list<{name}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n")
         .expect("writing to a String cannot fail");
 }
@@ -335,7 +339,7 @@ fn emit_update_codec(
     fields: &[ContractFieldDeclaration],
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
-    let mut source = codec_prelude("UpdateItem", CRUD_ITEMS_MINIMUM, CRUD_ITEMS_MAXIMUM);
+    let mut source = codec_prelude("UpdateItem", CRUD_ITEMS_MINIMUM, CRUD_ITEMS_MAXIMUM, true);
     let revision = operation
         .revision_field
         .as_deref()
@@ -409,7 +413,7 @@ fn emit_update_codec(
     }
     source.push_str(UPDATE_CODEC_FOOTER);
     source.push_str(&emit_update_normalizer(table, operation, fields));
-    source.push_str(&emit_handler("Update"));
+    source.push_str(&emit_handler("Update", true));
     source.push_str(&emit_row_adapter(
         table
             .columns()
@@ -442,12 +446,13 @@ fn emit_crud_codec(
         &format!("{type_name}Item"),
         CRUD_ITEMS_MINIMUM,
         CRUD_ITEMS_MAXIMUM,
+        crud_is_keyed(action),
     );
     source.push_str(&emit_crud_json_codec(
         action, table, operation, fields, details,
     ));
     source.push_str(&emit_crud_normalizer(action, table, operation, fields));
-    source.push_str(&emit_handler(&type_name));
+    source.push_str(&emit_handler(&type_name, crud_is_keyed(action)));
     source.push_str(&emit_row_adapter(
         fields
             .iter()
@@ -514,10 +519,11 @@ fn emit_crud_json_codec(
     } else {
         "request"
     };
-    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|{request}| contract::{type_name}Request {{")
+    let (envelope, key) = decode_envelope_parts(crud_is_keyed(action));
+    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    {envelope}\n        let input = serde_json::from_value::<JsonRequest>(body).map(|{request}| contract::{type_name}Request {{")
         .expect("writing to a String cannot fail");
     emit_crud_request_assignments(&mut source, action, table, operation);
-    writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
+    writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ {key}input }})\n    }}).collect()\n}}\n")
         .expect("writing to a String cannot fail");
     emit_crud_invalid_detail(&mut source, details);
     emit_crud_encoder(
@@ -840,7 +846,8 @@ fn emit_crud_encoder(
     guarded: &[GuardedField],
 ) {
     let type_name = rust_type_identifier(action.as_str());
-    writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ \"request_id\": item.request_id, \"value\":")
+    let key = outcome_key_member(crud_is_keyed(action));
+    writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ {key}\"value\":")
         .expect("writing to a String cannot fail");
     match operation.result {
         ResultClass::One => emit_json_row(source, fields, "value.value", 12),
@@ -862,7 +869,8 @@ fn emit_crud_encoder(
             );
         }
     }
-    source.push_str("        }),\n        Err(error) => json!({ \"request_id\": item.request_id, \"error\": error_value(error) }),\n    }).collect::<Vec<_>>();\n    serde_json::to_string(&values).expect(\"typed operation outcomes always serialize\")\n}\n\n");
+    writeln!(source, "        }}),\n        Err(error) => json!({{ {key}\"error\": error_value(error) }}),\n    }}).collect::<Vec<_>>();\n    serde_json::to_string(&values).expect(\"typed operation outcomes always serialize\")\n}}\n")
+        .expect("writing to a String cannot fail");
     writeln!(source, "fn error_value(error: &contract::{type_name}Error) -> Value {{\n    let (code, detail) = match error {{")
         .expect("writing to a String cannot fail");
     for (literal, detail) in details {
@@ -895,7 +903,12 @@ fn emit_json_row_fields(source: &mut String, fields: &[ContractFieldDeclaration]
     }
 }
 
-fn emit_handler(type_name: &str) -> String {
+fn emit_handler(type_name: &str, keyed: bool) -> String {
+    let key = if keyed {
+        "request_id: item.request_id, "
+    } else {
+        ""
+    };
     format!(
         r"
 #[allow(dead_code)]
@@ -912,7 +925,7 @@ where
             }},
             Err(error) => Err(contract::{type_name}Error::InvalidInput(error)),
         }};
-        output.push(contract::{type_name}Outcome {{ request_id: item.request_id, outcome }});
+        output.push(contract::{type_name}Outcome {{ {key}outcome }});
     }}
     output
 }}
@@ -932,25 +945,65 @@ fn emit_codec_support(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), Gener
     Ok(())
 }
 
-fn codec_prelude(item: &str, minimum: u32, maximum: u32) -> String {
+fn codec_prelude(item: &str, minimum: u32, maximum: u32, keyed: bool) -> String {
+    let key_check = if keyed {
+        "\n    if input.iter().any(|item| item.request_id.is_empty()) {\n        return Err(CodecError(\"every operation item must carry a nonempty string request_id\"));\n    }"
+    } else {
+        ""
+    };
     format!(
-        "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\ntype Item = contract::{item};\nconst MINIMUM: usize = {minimum};\nconst MAXIMUM: usize = {maximum};\nconst COUNT_ERROR: &str = \"operation input item count must be {minimum}..={maximum}\";\n\n"
+        "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\ntype Item = contract::{item};\nconst MINIMUM: usize = {minimum};\nconst MAXIMUM: usize = {maximum};\nconst COUNT_ERROR: &str = \"operation input item count must be {minimum}..={maximum}\";\n\n#[allow(dead_code)]\npub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {{\n    validate_count(input.len())?;{key_check}\n    Ok(())\n}}\n\n"
     )
+}
+
+/// Whether the items of a generated CRUD operation carry a `request_id`.
+///
+/// A read carries none (`docs/plan/http-reads.md`): its one item travels in a
+/// GET query string, and its outcomes match its items by list position.
+fn crud_is_keyed(action: CrudAction) -> bool {
+    !matches!(action, CrudAction::Get | CrudAction::Query)
+}
+
+/// Whether the items of a custom operation carry a `request_id`: every kind
+/// but a projection, which is a read.
+fn custom_is_keyed(operation: &CustomOperationDeclaration) -> bool {
+    operation.kind != crate::manifest::CustomOperationKind::Projection
+}
+
+/// The WIT field that keys an item or an outcome, or nothing for a read.
+fn request_key_field(keyed: bool) -> &'static str {
+    if keyed {
+        "    request-id: string,\n"
+    } else {
+        ""
+    }
+}
+
+/// The JSON member that keys an encoded outcome, or nothing for a read.
+fn outcome_key_member(keyed: bool) -> &'static str {
+    if keyed {
+        "\"request_id\": item.request_id, "
+    } else {
+        ""
+    }
+}
+
+/// The start of a decode loop, and the key field its item takes.
+fn decode_envelope_parts(keyed: bool) -> (&'static str, &'static str) {
+    if keyed {
+        (
+            "decode_envelope(input)?.into_iter().map(|(request_id, body)| {",
+            "request_id, ",
+        )
+    } else {
+        ("decode_read_envelope(input)?.into_iter().map(|body| {", "")
+    }
 }
 
 const CODEC_ENVELOPE: &str = r#"
 fn validate_count(count: usize) -> Result<(), CodecError> {
     if !(MINIMUM..=MAXIMUM).contains(&count) {
         return Err(CodecError(COUNT_ERROR));
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
-    validate_count(input.len())?;
-    if input.iter().any(|item| item.request_id.is_empty()) {
-        return Err(CodecError("every operation item must carry a nonempty string request_id"));
     }
     Ok(())
 }
@@ -972,6 +1025,18 @@ fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
             return Err(CodecError("every operation item must carry a nonempty string request_id"));
         }
         Ok((request_id, Value::Object(object)))
+    }).collect()
+}
+
+#[allow(dead_code)]
+fn decode_read_envelope(input: &str) -> Result<Vec<Value>, CodecError> {
+    let Value::Array(values) = serde_json::from_str(input)
+        .map_err(|_| CodecError("operation input must be a JSON array"))?
+    else { return Err(CodecError("operation input must be a JSON array")); };
+    validate_count(values.len())?;
+    values.into_iter().map(|value| match value {
+        Value::Object(_) => Ok(value),
+        _ => Err(CodecError("every operation item must be a JSON object")),
     }).collect()
 }
 "#;
@@ -1500,7 +1565,8 @@ fn emit_owned_interface(
             .expect("writing to a String cannot fail");
         }
     }
-    writeln!(source, "  }}\n\n  record {interface}-item {{\n    request-id: string,\n    input: result<{interface}-request, invalid-input-detail>,\n  }}\n").expect("writing to a String cannot fail");
+    let key = request_key_field(custom_is_keyed(operation));
+    writeln!(source, "  }}\n\n  record {interface}-item {{\n{key}    input: result<{interface}-request, invalid-input-detail>,\n  }}\n").expect("writing to a String cannot fail");
     if result.is_some_and(|result| {
         matches!(
             result.class,
@@ -1531,7 +1597,7 @@ fn emit_owned_interface(
             emit_record_fields(&mut source, &result.fields, "", false);
         }
     }
-    writeln!(source, "  }}\n\n  record {interface}-outcome {{\n    request-id: string,\n    outcome: result<{interface}-result, {interface}-error>,\n  }}\n").expect("writing to a String cannot fail");
+    writeln!(source, "  }}\n\n  record {interface}-outcome {{\n{key}    outcome: result<{interface}-result, {interface}-error>,\n  }}\n").expect("writing to a String cannot fail");
     writeln!(source, "  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n").expect("writing to a String cannot fail");
     source
 }
@@ -1758,14 +1824,19 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         .as_ref()
         .map_or((1, 100), |limit| (limit.minimum, limit.maximum));
     let type_name = rust_type_identifier(local_name);
-    let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum);
+    let keyed = custom_is_keyed(operation);
+    let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum, keyed);
     source.push_str(&emit_custom_decoder(&type_name, operation));
     emit_invalid_detail(&mut source, operation);
     // The template states the type name of the operation under generation.
     // No application name reaches this file.
     source.push_str("pub(crate) fn encode(output: &[contract::");
     source.push_str(&type_name);
-    source.push_str("Outcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n                \"request_id\": item.request_id,\n                \"value\": ");
+    source.push_str("Outcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n");
+    if keyed {
+        source.push_str("                \"request_id\": item.request_id,\n");
+    }
+    source.push_str("                \"value\": ");
     if result.class == ResultClass::BoundedList {
         source.push_str("{ \"rows\": value.rows.iter().map(|row| json!({\n");
         for field in &result.fields {
@@ -1788,7 +1859,10 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         }
         source.push_str("                }\n");
     }
-    source.push_str("            }),\n");
+    source.push_str("            }),\n            Err(error) => json!({\n");
+    if keyed {
+        source.push_str("                \"request_id\": item.request_id,\n");
+    }
     source.push_str(CUSTOM_CODEC_ERROR_HEAD);
     source.push_str(&type_name);
     source.push_str(CUSTOM_CODEC_ERROR_TAIL);
@@ -1809,7 +1883,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     }
     source.push_str(CUSTOM_CODEC_FOOTER);
     source.push_str(&emit_custom_normalizer(&type_name, operation));
-    source.push_str(&emit_handler(&type_name));
+    source.push_str(&emit_handler(&type_name, keyed));
     source.push_str(&emit_row_adapter(
         result
             .fields
@@ -1916,7 +1990,8 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
         emit_json_tree_fields(&mut source, &fields, root);
         source.push_str("}\n\n");
     }
-    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    decode_envelope(input)?.into_iter().map(|(request_id, body)| {{\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| {{")
+    let (envelope, key) = decode_envelope_parts(custom_is_keyed(operation));
+    writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    {envelope}\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| {{")
         .expect("writing to a String cannot fail");
     if fields.is_empty() {
         writeln!(
@@ -1935,7 +2010,7 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
         emit_contract_tree_assignments(&mut source, type_name, &fields, access, root, 16);
         source.push_str("            }\n");
     }
-    writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ request_id, input }})\n    }}).collect()\n}}\n")
+    writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ {key}input }})\n    }}).collect()\n}}\n")
         .expect("writing to a String cannot fail");
     source
 }
@@ -2361,9 +2436,7 @@ fn emit_codec_result_field_for(
 }
 
 /// The error arm of the custom codec, up to the error type of the operation.
-const CUSTOM_CODEC_ERROR_HEAD: &str = r#"            Err(error) => json!({
-                "request_id": item.request_id,
-                "error": error_value(error),
+const CUSTOM_CODEC_ERROR_HEAD: &str = r#"                "error": error_value(error),
             }),
         }
     }).collect::<Vec<_>>();

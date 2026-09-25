@@ -151,7 +151,7 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
 
     let changed = result(&run(&url, "reconcile operation grants", &reconcile));
     assert_eq!(changed.role_rows_changed(), 1, "role was not hardened");
-    assert_eq!(changed.grants_added(), 10, "missing grants were not exact");
+    assert_eq!(changed.grants_added(), 11, "missing grants were not exact");
     assert_eq!(
         changed.grants_removed(),
         1,
@@ -168,6 +168,7 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
                 AND right(permission, length('@1.0.0')) = '@1.0.0'"
         ),
         [
+            "platform-fixture:widget-maker/get@1.0.0",
             "platform-fixture:widget-maker/list@1.0.0",
             "platform-fixture:widget-maker/query@1.0.0",
             "platform-fixture:widget-tag/update@1.0.0",
@@ -181,7 +182,7 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
             "platform-fixture:widget/update@1.0.0",
         ]
         .join("\n"),
-        "server did not retain exactly the manifest's eleven operation grants"
+        "server did not retain exactly the manifest's twelve operation grants"
     );
     assert_eq!(
         query(

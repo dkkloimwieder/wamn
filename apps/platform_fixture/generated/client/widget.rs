@@ -676,8 +676,6 @@ pub async fn delete(
 pub struct WidgetGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `platform-fixture:widget/get@1.0.0`.
@@ -698,20 +696,12 @@ pub struct WidgetGetResult {
 }
 
 /// Input descriptors for `platform-fixture:widget/get@1.0.0`.
-pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `platform-fixture:widget/get@1.0.0`.
 pub const WIDGET_GET_RESULT: &[FieldDescriptor] = &[
@@ -753,8 +743,8 @@ pub const WIDGET_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const WIDGET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const WIDGET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -765,20 +755,7 @@ pub const WIDGET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const WIDGET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -880,7 +857,7 @@ pub const WIDGET_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/widget/get".to_owned(),
     }
 }
@@ -905,8 +882,6 @@ pub async fn get(
 pub struct WidgetListRequest {
     /// `uuid`
     pub maker_id: Option<uuid::Uuid>,
-    /// `text`
-    pub request_id: String,
     /// `json`
     pub selector: serde_json::Value,
 }
@@ -930,12 +905,6 @@ pub const WIDGET_LIST_INPUT: &[FieldDescriptor] = &[
         path: "maker_id",
         type_name: "uuid",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "text",
-        nullable: false,
         values: &[],
     },
     FieldDescriptor {
@@ -980,18 +949,6 @@ pub const WIDGET_LIST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
             path: "maker_id",
             type_name: "uuid",
             nullable: true,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "text",
-            nullable: false,
             values: &[],
         },
         required: true,
@@ -1088,7 +1045,7 @@ pub const WIDGET_LIST_ERRORS: &[&str] = &[
 #[must_use]
 pub fn list_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/widget/list".to_owned(),
     }
 }
@@ -1117,8 +1074,6 @@ pub struct WidgetQueryRequest {
     pub filter: Option<WidgetQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
     /// `object`, omittable
     pub sort: Option<WidgetQueryRequestSort>,
 }
@@ -1172,12 +1127,6 @@ pub const WIDGET_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
     FieldDescriptor {
@@ -1289,18 +1238,6 @@ pub const WIDGET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
             values: &[],
         },
         required: false,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
         minimum: None,
         maximum: None,
         children: &[],
@@ -1443,7 +1380,7 @@ pub const WIDGET_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/widget/query".to_owned(),
     }
 }

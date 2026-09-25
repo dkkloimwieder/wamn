@@ -406,57 +406,57 @@ mod tests {
     use wamn_postgres_statements::{Numeric, Uuid};
 
     #[test]
-    fn envelope_requires_all_request_ids_before_item_processing() {
-        assert!(
-            get::decode(
-                r#"[
-            {"request_id":"first","id":"00000000-0000-0000-0000-000000000001"},
-            {"id":"00000000-0000-0000-0000-000000000002"}
-        ]"#
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn envelope_preserves_order_and_removes_only_correlation_identity() {
+    fn a_read_item_carries_no_request_id() {
         let items = get::decode(
             r#"[
-            {"request_id":"second","id":"00000000-0000-0000-0000-000000000002"},
-            {"request_id":"first","id":"00000000-0000-0000-0000-000000000001"}
+            {"request_id":"first","id":"00000000-0000-0000-0000-000000000001"},
+            {"id":"00000000-0000-0000-0000-000000000002"}
         ]"#,
         )
         .unwrap();
-        assert_eq!(items[0].request_id, "second");
-        assert_eq!(items[1].request_id, "first");
+        assert!(items[0].input.is_err(), "a read refuses a request identity");
+        assert!(items[1].input.is_ok());
+    }
+
+    #[test]
+    fn envelope_preserves_item_order() {
+        let items = get::decode(
+            r#"[
+            {"id":"00000000-0000-0000-0000-000000000002"},
+            {"id":"00000000-0000-0000-0000-000000000001"}
+        ]"#,
+        )
+        .unwrap();
         assert_eq!(
             items[0].input.as_ref().unwrap().id,
             "00000000-0000-0000-0000-000000000002"
+        );
+        assert_eq!(
+            items[1].input.as_ref().unwrap().id,
+            "00000000-0000-0000-0000-000000000001"
         );
     }
 
     #[test]
     fn dto_unknown_fields_and_non_int64_wire_scalars_refuse_in_memory() {
         assert!(
-            super::purchase_order_query::decode(r#"[{"request_id":"page","limit":2}]"#).unwrap()[0]
+            super::purchase_order_query::decode(r#"[{"limit":2}]"#).unwrap()[0]
                 .input
                 .is_ok()
         );
         assert!(
-            get::decode(
-                r#"[{"request_id":"x","id":"00000000-0000-0000-0000-000000000001","future":true}]"#
-            )
-            .unwrap()[0]
+            get::decode(r#"[{"id":"00000000-0000-0000-0000-000000000001","future":true}]"#)
+                .unwrap()[0]
                 .input
                 .is_err()
         );
         assert!(
-            locations::decode(r#"[{"request_id":"x","unexpected":true}]"#).unwrap()[0]
+            locations::decode(r#"[{"unexpected":true}]"#).unwrap()[0]
                 .input
                 .is_err()
         );
         for value in ["", "1.0", "9223372036854775808"] {
-            let input = serde_json::json!([{"request_id":"x","id":"00000000-0000-0000-0000-000000000001","after_position":value,"limit":1}]);
+            let input = serde_json::json!([{"id":"00000000-0000-0000-0000-000000000001","after_position":value,"limit":1}]);
             assert!(
                 super::receiving_load_purchase_order_history::decode(&input.to_string()).unwrap()
                     [0]
@@ -473,13 +473,16 @@ mod tests {
             location_code: "DOCK-A".to_owned(),
         };
         let output = [location_contract::ListOutcome {
-            request_id: "location".to_owned(),
             outcome: Ok(location_contract::ListResult {
                 rows: vec![locations::row!(row, location_contract::ListRow)],
             }),
         }];
         let value: serde_json::Value = serde_json::from_str(&locations::encode(&output)).unwrap();
         assert_eq!(value[0]["value"]["rows"][0]["location_code"], "DOCK-A");
+        assert!(
+            value[0].get("request_id").is_none(),
+            "a read outcome carries no request identity"
+        );
 
         let row = wamn_receiving_data_access::read::LoadReceiptScreenRow {
             purchase_order_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
@@ -496,7 +499,6 @@ mod tests {
             remaining_quantity: Some(Numeric("12.3400".to_owned())),
         };
         let output = [screen_contract::LoadReceiptScreenOutcome {
-            request_id: "screen".to_owned(),
             outcome: Ok(screen_contract::LoadReceiptScreenResult {
                 rows: vec![screen::row!(row, screen_contract::LoadReceiptScreenRow)],
             }),

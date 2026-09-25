@@ -9,14 +9,11 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 export interface PurchaseOrderGetRequest {
   /** `uuid` */
   id: Uuid;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-receiving:purchase-order/get@1.0.0` calls its input members. */
 export const PURCHASE_ORDER_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
-  "request_id": "requestId",
 };
 
 /** Result of `wamn-receiving:purchase-order/get@1.0.0`. */
@@ -62,7 +59,7 @@ export const PURCHASE_ORDER_GET_RESULT_FIELDS: FieldMap = {
  */
 export const PURCHASE_ORDER_GET_ROUTE: OperationRoute = {
   operation: "wamn-receiving:purchase-order/get@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/purchase_order/get",
   freshOnly: false,
   contract: {
@@ -105,8 +102,6 @@ export interface PurchaseOrderQueryRequest {
   filter?: PurchaseOrderQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
   /** `object`, omittable */
   sort?: PurchaseOrderQueryRequestSort;
 }
@@ -139,7 +134,6 @@ export const PURCHASE_ORDER_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
-  "request_id": "requestId",
   "sort": {
     member: "sort",
     fields: {
@@ -206,7 +200,7 @@ export const PURCHASE_ORDER_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const PURCHASE_ORDER_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-receiving:purchase-order/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/purchase_order/query",
   freshOnly: false,
   contract: {

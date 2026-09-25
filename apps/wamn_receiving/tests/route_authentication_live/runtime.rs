@@ -436,6 +436,57 @@ pub(super) async fn invoke_journey_route(
     traceparent: &str,
     body: Bytes,
 ) -> anyhow::Result<hyper::Response<Bytes>> {
+    invoke_journey_method(
+        runtime,
+        Method::POST,
+        route_host,
+        path,
+        bearer,
+        traceparent,
+        body,
+    )
+    .await
+}
+
+/// A read is a GET that carries its one request item in the query string and
+/// no body.
+pub(super) async fn invoke_journey_read(
+    runtime: &JourneyRuntime<'_>,
+    route_host: &str,
+    path: &str,
+    bearer: Option<&str>,
+    traceparent: &str,
+    item: &Value,
+) -> anyhow::Result<hyper::Response<Bytes>> {
+    let item = item.as_object().context("a read item is a JSON object")?;
+    let query = wamn_execution_contract::encode_read_query(item);
+    let target = if query.is_empty() {
+        path.to_owned()
+    } else {
+        format!("{path}?{query}")
+    };
+    invoke_journey_method(
+        runtime,
+        Method::GET,
+        route_host,
+        &target,
+        bearer,
+        traceparent,
+        Bytes::new(),
+    )
+    .await
+}
+
+/// `target` is the path and any query. Only a POST carries a JSON body.
+pub(super) async fn invoke_journey_method(
+    runtime: &JourneyRuntime<'_>,
+    method: Method,
+    route_host: &str,
+    target: &str,
+    bearer: Option<&str>,
+    traceparent: &str,
+    body: Bytes,
+) -> anyhow::Result<hyper::Response<Bytes>> {
     let JourneyRuntime {
         engine,
         flow_http,
@@ -445,11 +496,14 @@ pub(super) async fn invoke_journey_route(
     let routing = Arc::clone(routing);
     let bridge = Arc::clone(bridge);
     let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
+    let post = method == Method::POST;
     let mut request = Request::builder()
-        .method(Method::POST)
-        .uri(format!("http://{route_host}{path}"))
-        .header("content-type", "application/json")
+        .method(method)
+        .uri(format!("http://{route_host}{target}"))
         .header("traceparent", traceparent);
+    if post {
+        request = request.header("content-type", "application/json");
+    }
     if let Some(bearer) = bearer {
         request = request.header("authorization", format!("Bearer {bearer}"));
     }
@@ -494,24 +548,41 @@ pub(super) fn successful_value(
     response: &hyper::Response<Bytes>,
     request_id: &str,
 ) -> anyhow::Result<Value> {
+    successful_outcome(response, request_id, Some(request_id))
+}
+
+/// A read reply matches its one item by position and echoes no `request_id`.
+pub(super) fn successful_read_value(
+    response: &hyper::Response<Bytes>,
+    label: &str,
+) -> anyhow::Result<Value> {
+    successful_outcome(response, label, None)
+}
+
+fn successful_outcome(
+    response: &hyper::Response<Bytes>,
+    label: &str,
+    request_id: Option<&str>,
+) -> anyhow::Result<Value> {
     anyhow::ensure!(
         response.status() == StatusCode::OK,
-        "request {request_id} returned {}: {}",
+        "request {label} returned {}: {}",
         response.status(),
         String::from_utf8_lossy(response.body())
     );
     let body: Value = serde_json::from_slice(response.body())
-        .with_context(|| format!("decode response for {request_id}"))?;
+        .with_context(|| format!("decode response for {label}"))?;
     let item = body
         .as_array()
         .filter(|items| items.len() == 1)
         .and_then(|items| items.first())
-        .with_context(|| format!("request {request_id} returned a non-unit envelope: {body}"))?;
+        .with_context(|| format!("request {label} returned a non-unit envelope: {body}"))?;
     anyhow::ensure!(
-        item["request_id"] == request_id && item.get("error").is_none(),
-        "request {request_id} returned a refusal or lost correlation: {item}"
+        item.get("request_id") == request_id.map(Value::from).as_ref()
+            && item.get("error").is_none(),
+        "request {label} returned a refusal or lost correlation: {item}"
     );
     item.get("value")
         .cloned()
-        .with_context(|| format!("request {request_id} returned no value: {item}"))
+        .with_context(|| format!("request {label} returned no value: {item}"))
 }

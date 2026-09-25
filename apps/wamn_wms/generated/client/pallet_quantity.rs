@@ -49,8 +49,6 @@ pub const PALLET_QUANTITY_FIELDS: &[FieldDescriptor] = &[
 pub struct PalletQuantityGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-wms:pallet-quantity/get@1.0.0`.
@@ -71,20 +69,12 @@ pub struct PalletQuantityGetResult {
 }
 
 /// Input descriptors for `wamn-wms:pallet-quantity/get@1.0.0`.
-pub const PALLET_QUANTITY_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const PALLET_QUANTITY_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-wms:pallet-quantity/get@1.0.0`.
 pub const PALLET_QUANTITY_GET_RESULT: &[FieldDescriptor] = &[
@@ -126,8 +116,8 @@ pub const PALLET_QUANTITY_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const PALLET_QUANTITY_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const PALLET_QUANTITY_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -138,20 +128,7 @@ pub const PALLET_QUANTITY_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSche
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const PALLET_QUANTITY_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -253,7 +230,7 @@ pub const PALLET_QUANTITY_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/pallet_quantity/get".to_owned(),
     }
 }
@@ -280,8 +257,6 @@ pub struct PalletQuantityQueryRequest {
     pub cursor: Option<String>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-wms:pallet-quantity/query@1.0.0`.
@@ -313,12 +288,6 @@ pub const PALLET_QUANTITY_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
 ];
@@ -384,18 +353,6 @@ pub const PALLET_QUANTITY_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSc
             values: &[],
         },
         required: false,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
         minimum: None,
         maximum: None,
         children: &[],
@@ -501,7 +458,7 @@ pub const PALLET_QUANTITY_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/pallet_quantity/query".to_owned(),
     }
 }

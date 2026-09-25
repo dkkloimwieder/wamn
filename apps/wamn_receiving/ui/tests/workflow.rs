@@ -45,11 +45,19 @@ impl Deployment {
 #[async_trait::async_trait]
 impl Transport for Deployment {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
-        let path = request
+        let target = request
             .url
             .strip_prefix("http://receiving.test")
             .expect("bound target");
-        let body: Value = serde_json::from_slice(&request.body).expect("request JSON");
+        // A read is a GET with its item in the query string. It has no body,
+        // and its outcome carries no request identity.
+        let path = target.split_once('?').map_or(target, |(path, _)| path);
+        let request_id = if request.method == "GET" {
+            None
+        } else {
+            let body: Value = serde_json::from_slice(&request.body).expect("request JSON");
+            Some(body[0]["request_id"].clone())
+        };
         let (status, mut payload) = self
             .responses
             .lock()
@@ -58,7 +66,9 @@ impl Transport for Deployment {
             .cloned()
             .unwrap_or_else(|| panic!("no fixture response at {path}"));
         if status == 200 {
-            payload["request_id"] = body[0]["request_id"].clone();
+            if let Some(request_id) = request_id {
+                payload["request_id"] = request_id;
+            }
             payload = json!([payload]);
         }
         self.sent.lock().expect("sent").push(request);
@@ -186,10 +196,11 @@ async fn acme_posts_to_its_route_then_reads_quality_details_locally() {
     let sent = deployment.sent.lock().expect("sent");
     assert_eq!(sent.len(), 2);
     assert!(sent[0].url.ends_with("/acme/receiving/record_receipt"));
+    assert_eq!(sent[1].method, "GET", "the detail is a read");
     assert!(
         sent[1]
             .url
-            .ends_with("/acme/quality/load_purchase_order_detail")
+            .contains("/acme/quality/load_purchase_order_detail?")
     );
 }
 

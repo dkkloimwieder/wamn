@@ -369,6 +369,15 @@ impl OperationKind {
     pub fn is_read(self) -> bool {
         Self::READ_KINDS.contains(&self)
     }
+
+    /// The HTTP method of a route that calls an operation of this kind.
+    ///
+    /// A read is a GET and every other kind is a POST. The method follows from
+    /// the kind alone, so no author writes it (`docs/plan/http-reads.md`).
+    #[must_use]
+    pub fn http_method(self) -> &'static str {
+        if self.is_read() { "GET" } else { "POST" }
+    }
 }
 
 /// One component export that a route calls once, with no graph walk.

@@ -28,7 +28,6 @@ interface query {
   }
 
   record query-item {
-    request-id: string,
     input: result<query-request, invalid-input-detail>,
   }
 
@@ -44,7 +43,6 @@ interface query {
   }
 
   record query-outcome {
-    request-id: string,
     outcome: result<query-result, query-error>,
   }
 

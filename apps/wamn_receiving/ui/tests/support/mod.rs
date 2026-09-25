@@ -100,14 +100,14 @@ pub fn recorded() -> Value {
     reason = "The simulated transport consumes each prepared request and response."
 )]
 pub fn reply(app: &mut ReceivingApplication, request: PreparedRequest, value: Value) {
-    let request_id = request.body.item()["request_id"].clone();
+    let body = outcome(&request, "value", value);
     app.resolve(
         request.screen,
         request.attempt,
         Ok(HttpResponse {
             actor_labels: std::collections::BTreeMap::new(),
             status: 200,
-            body: json!([{"request_id": request_id, "value": value}]).to_string(),
+            body,
         }),
     );
 }
@@ -117,16 +117,26 @@ pub fn reply(app: &mut ReceivingApplication, request: PreparedRequest, value: Va
     reason = "The simulated transport consumes each prepared request and response."
 )]
 pub fn refuse(app: &mut ReceivingApplication, request: PreparedRequest, error: Value) {
-    let request_id = request.body.item()["request_id"].clone();
+    let body = outcome(&request, "error", error);
     app.resolve(
         request.screen,
         request.attempt,
         Ok(HttpResponse {
             actor_labels: std::collections::BTreeMap::new(),
             status: 200,
-            body: json!([{"request_id": request_id, "error": error}]).to_string(),
+            body,
         }),
     );
+}
+
+/// The one outcome the release returns: a write echoes its `request_id`, and
+/// a read carries none, because its outcome matches its item by position.
+fn outcome(request: &PreparedRequest, member: &str, value: Value) -> String {
+    let mut outcome = serde_json::Map::from_iter([(member.to_owned(), value)]);
+    if let Some(request_id) = request.body.item().get("request_id") {
+        outcome.insert("request_id".to_owned(), request_id.clone());
+    }
+    json!([outcome]).to_string()
 }
 
 pub fn read(app: &mut ReceivingApplication, id: &str, value: Value) {

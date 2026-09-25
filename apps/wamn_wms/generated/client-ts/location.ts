@@ -90,14 +90,11 @@ export async function create(
 export interface LocationGetRequest {
   /** `uuid` */
   id: Uuid;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-wms:location/get@1.0.0` calls its input members. */
 export const LOCATION_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
-  "request_id": "requestId",
 };
 
 /** Result of `wamn-wms:location/get@1.0.0`. */
@@ -128,7 +125,7 @@ export const LOCATION_GET_RESULT_FIELDS: FieldMap = {
  */
 export const LOCATION_GET_ROUTE: OperationRoute = {
   operation: "wamn-wms:location/get@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/location/get",
   freshOnly: false,
   contract: {
@@ -171,8 +168,6 @@ export interface LocationQueryRequest {
   filter?: LocationQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
 }
 
 export interface LocationQueryRequestFilter {
@@ -190,7 +185,6 @@ export const LOCATION_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-wms:location/query@1.0.0`. */
@@ -235,7 +229,7 @@ export const LOCATION_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const LOCATION_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-wms:location/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/location/query",
   freshOnly: false,
   contract: {

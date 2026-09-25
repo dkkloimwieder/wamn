@@ -89,7 +89,7 @@ impl PlatformPackage {
             }},
             "custom_operations": {"widget.list": {
                 "kind": "projection", "visibility": "public", "permission": "widget.list",
-                "connection": "postgres", "input": {"fields": [{"path": "request_id", "type": "text", "nullable": false}]},
+                "connection": "postgres", "input": {"fields": []},
                 "result": {"class": "bounded_list", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
                 "errors": ["invalid_input", "retry", "timeout", "permission_denied", "internal_error"],
                 "constraint_errors": {},
@@ -142,7 +142,7 @@ async fn generation_refuses_whole_row_references_as_the_application_role() {
         "visibility": "public",
         "permission": "widget.load_image",
         "connection": "postgres",
-        "input": {"fields": [{"path": "request_id", "type": "text", "nullable": false}]},
+        "input": {"fields": []},
         "result": {
             "class": "bounded_list",
             "fields": [{"path": "image", "type": "text", "nullable": false}]

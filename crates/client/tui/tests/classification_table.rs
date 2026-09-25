@@ -66,7 +66,8 @@ fn every_shared_case_classifies_as_the_table_states() {
             status: u16::try_from(case["status"].as_u64().expect("a status")).expect("a status"),
             body: case["body"].as_str().expect("a body").to_owned(),
         };
-        let request_id = case["request_id"].as_str().expect("a request identity");
+        // A read case states a null identity: its outcome matches by position.
+        let request_id = case["request_id"].as_str();
         let evidence = classify(&contract, request_id, Ok(response));
         let expect = &case["expect"];
         let outcome = expect["outcome"].as_str().expect("an expected outcome");

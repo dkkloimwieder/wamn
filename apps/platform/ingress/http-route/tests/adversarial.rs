@@ -918,3 +918,40 @@ fn actor_labels_are_metadata_and_leave_the_result_contract_unchanged() {
     assert_eq!(response.actor_labels, backend.actor_labels);
     assert_eq!(response.body, payload.as_bytes());
 }
+
+#[test]
+fn a_read_takes_its_one_item_from_the_canonical_query_and_reads_no_body() {
+    let mut read = route();
+    read.method = "GET".to_string();
+    read.path = "/receipts/get".to_string();
+    read.mappings = Vec::new();
+    let item = json!({"filter": {"status": ["open"]}, "id": "r-1"});
+    let query = wamn_execution_contract::encode_read_query(item.as_object().unwrap());
+    let mut get = head();
+    get.method = "get".to_string();
+    get.target = format!("/receipts/get?{query}");
+
+    let mut backend = FakeBackend::new(read.clone());
+    let mut body = Chunks::json(&[b"{\"ignored\":true}"]);
+    let output = block_on(handle_request(&mut backend, &mut body, &get, limits()));
+    assert_eq!(output.status, 200);
+    assert_eq!(body.reads, 0, "a read never reads a body");
+    assert_eq!(
+        serde_json::from_str::<Value>(&backend.deliveries[0].payload).unwrap(),
+        json!([item])
+    );
+
+    for target in [
+        "/receipts/get?id=%22r-1%22&filter=%7B%7D".to_string(),
+        "/receipts/get?id=r-1".to_string(),
+        format!("/receipts/get?id=%22{}%22", "a".repeat(8 * 1024)),
+    ] {
+        let mut backend = FakeBackend::new(read.clone());
+        let mut refused = get.clone();
+        refused.target = target;
+        let output = request(&mut backend, &refused, b"");
+        assert_eq!(output.status, 400, "{}", refused.target);
+        assert_eq!(error_code(&output.body), "invalid-target");
+        assert!(backend.deliveries.is_empty());
+    }
+}

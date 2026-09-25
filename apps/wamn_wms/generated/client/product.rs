@@ -247,8 +247,6 @@ pub async fn create(
 pub struct ProductGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-wms:product/get@1.0.0`.
@@ -265,20 +263,12 @@ pub struct ProductGetResult {
 }
 
 /// Input descriptors for `wamn-wms:product/get@1.0.0`.
-pub const PRODUCT_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const PRODUCT_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-wms:product/get@1.0.0`.
 pub const PRODUCT_GET_RESULT: &[FieldDescriptor] = &[
@@ -308,8 +298,8 @@ pub const PRODUCT_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const PRODUCT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const PRODUCT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -320,20 +310,7 @@ pub const PRODUCT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const PRODUCT_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -411,7 +388,7 @@ pub const PRODUCT_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/product/get".to_owned(),
     }
 }
@@ -440,8 +417,6 @@ pub struct ProductQueryRequest {
     pub filter: Option<ProductQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -481,12 +456,6 @@ pub const PRODUCT_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
 ];
@@ -578,18 +547,6 @@ pub const PRODUCT_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
         maximum: None,
         children: &[],
     },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
 ];
 
 pub const PRODUCT_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
@@ -667,7 +624,7 @@ pub const PRODUCT_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/product/query".to_owned(),
     }
 }

@@ -9,14 +9,11 @@ import { reviveOutcome, toWire } from "@wamn/web-runtime";
 export interface ReceiptGetRequest {
   /** `uuid` */
   id: Uuid;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-receiving:receipt/get@1.0.0` calls its input members. */
 export const RECEIPT_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
-  "request_id": "requestId",
 };
 
 /** Result of `wamn-receiving:receipt/get@1.0.0`. */
@@ -56,7 +53,7 @@ export const RECEIPT_GET_RESULT_FIELDS: FieldMap = {
  */
 export const RECEIPT_GET_ROUTE: OperationRoute = {
   operation: "wamn-receiving:receipt/get@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/receipt/get",
   freshOnly: false,
   contract: {
@@ -97,15 +94,12 @@ export interface ReceiptQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-receiving:receipt/query@1.0.0` calls its input members. */
 export const RECEIPT_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-receiving:receipt/query@1.0.0`. */
@@ -159,7 +153,7 @@ export const RECEIPT_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const RECEIPT_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-receiving:receipt/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/receipt/query",
   freshOnly: false,
   contract: {

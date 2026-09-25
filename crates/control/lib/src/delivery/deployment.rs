@@ -167,7 +167,7 @@ pub async fn deploy_release(
     let body = pinned_bytes(&qualification, &request.request_body)?;
     let expected: Value =
         serde_json::from_slice(&pinned_bytes(&qualification, &request.expected_response)?)?;
-    require_released_route(
+    let method = require_released_route(
         &snapshot.manifest,
         &request.interaction_url,
         &request.route_host,
@@ -197,6 +197,7 @@ pub async fn deploy_release(
                 request,
                 DeploymentPayload {
                     documents: &documents,
+                    method,
                     request: body,
                     expected,
                     token: token.trim(),
@@ -212,6 +213,7 @@ pub async fn deploy_release(
 /// The activation body one deployment posts, and the credential it posts with.
 struct DeploymentPayload<'a> {
     documents: &'a [Value],
+    method: &'static str,
     request: Vec<u8>,
     expected: Value,
     token: &'a str,
@@ -226,6 +228,7 @@ async fn deploy(
 ) -> anyhow::Result<DeployedRelease> {
     let DeploymentPayload {
         documents,
+        method,
         request,
         expected,
         token,
@@ -291,6 +294,7 @@ async fn deploy(
         &args.interaction_url,
         &args.route_host,
         token,
+        method,
         request,
         expected,
     )
@@ -708,11 +712,13 @@ fn require_supplied_fields(expected: &Value, actual: &Value) -> anyhow::Result<(
     Ok(())
 }
 
+/// Find the released PAT route that the interaction URL targets, and return
+/// its method, which the kind of the operation it calls decides.
 fn require_released_route(
     manifest: &ServingManifest,
     input: &str,
     host: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<&'static str> {
     let url = url::Url::parse(input)?;
     ensure!(
         matches!(url.scheme(), "http" | "https")
@@ -720,51 +726,80 @@ fn require_released_route(
             && url.password().is_none(),
         "deployment interaction requires an HTTP URL without embedded credentials"
     );
-    ensure!(
-        manifest
-            .every_attachment()
-            .any(
-                |(_, attachment)| attachment.kind() == wamn_catalog::AttachmentKind::Http
-                    && attachment
-                        .definition()
-                        .pointer("/route/path")
-                        .and_then(Value::as_str)
-                        == Some(url.path())
-                    && attachment
-                        .definition()
-                        .pointer("/route/method")
-                        .and_then(Value::as_str)
-                        == Some("POST")
-                    && attachment
-                        .definition()
-                        .pointer("/route/host")
-                        .and_then(Value::as_str)
-                        == Some(host)
-                    && wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy())
-                        .is_some_and(wamn_catalog::AttachmentAuthPolicy::allows_pat)
-                    && attachment.registered_operation().is_some()
-            ),
-        "the authenticated interaction must target a PAT operation in the selected release"
-    );
-    Ok(())
+    manifest
+        .every_attachment()
+        .find_map(|(_, attachment)| {
+            let method = route_method(manifest, attachment);
+            let route = |member: &str| {
+                attachment
+                    .definition()
+                    .pointer(&format!("/route/{member}"))
+                    .and_then(Value::as_str)
+            };
+            (attachment.kind() == wamn_catalog::AttachmentKind::Http
+                && route("path") == Some(url.path())
+                && route("method") == Some(method)
+                && route("host") == Some(host)
+                && wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy())
+                    .is_some_and(wamn_catalog::AttachmentAuthPolicy::allows_pat)
+                && attachment.registered_operation().is_some())
+            .then_some(method)
+        })
+        .context(
+            "the authenticated interaction must target a PAT operation in the selected release",
+        )
 }
 
+/// GET for a route to a read operation, POST for every other route and wiring.
+fn route_method(
+    manifest: &ServingManifest,
+    attachment: wamn_catalog::AttachmentRef<'_>,
+) -> &'static str {
+    let wamn_catalog::AttachmentTarget::Route { operation, .. } = attachment.target() else {
+        return "POST";
+    };
+    manifest
+        .routes
+        .iter()
+        .find(|route| route.package_id == attachment.package_id() && route.operation == operation)
+        .map_or("POST", |route| route.kind.http_method())
+}
+
+/// Send the qualified request and require the qualified result.
+///
+/// A GET carries its one request item in the query string, in the encoding
+/// the router reads, so the qualified body is an array of exactly one object.
 async fn authenticated_interaction(
     url: &str,
     host: &str,
     bearer: &str,
+    method: &str,
     body: Vec<u8>,
     expected: Value,
 ) -> anyhow::Result<()> {
-    let response = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
-        .build()?
-        .post(url)
+        .build()?;
+    let request = if method == "GET" {
+        let items: Vec<serde_json::Map<String, Value>> = serde_json::from_slice(&body)
+            .context("a read interaction body is an array of request items")?;
+        let [item] = items.as_slice() else {
+            anyhow::bail!("a read interaction sends exactly one request item");
+        };
+        let mut url = url::Url::parse(url)?;
+        let query = wamn_execution_contract::encode_read_query(item);
+        url.set_query((!query.is_empty()).then_some(query.as_str()));
+        client.get(url)
+    } else {
+        client
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body)
+    };
+    let response = request
         .header(reqwest::header::HOST, host)
         .bearer_auth(bearer)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(body)
         .send()
         .await?
         .error_for_status()?;

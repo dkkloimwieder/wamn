@@ -197,8 +197,10 @@ impl std::error::Error for ClientError {}
 /// One envelope item's outcome, correlated by `request_id`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemOutcome {
-    /// Echoes the request item's `request_id`.
-    pub request_id: String,
+    /// Echoes the request item's `request_id`. A read carries none, and its
+    /// outcomes match its items by position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     /// Present when the item succeeded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
@@ -336,7 +338,7 @@ mod tests {
     #[test]
     fn an_item_with_neither_value_nor_error_is_malformed() {
         let outcome = ItemOutcome {
-            request_id: "r1".to_owned(),
+            request_id: Some("r1".to_owned()),
             value: None,
             error: None,
         };

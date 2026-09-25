@@ -238,10 +238,13 @@ async fn request(
     let secret = caller["metadata"]["name"]
         .as_str()
         .context("route caller Secret has a name")?;
-    let request_id = format!("startup-{name}");
-    let body = serde_json::to_string(
-        &json!([{"request_id":request_id,"id":super::application::PALLET_ID}]),
-    )?;
+    // A get is a read: its one item travels in the query string, with no
+    // request identity.
+    let query = wamn_execution_contract::encode_read_query(
+        json!({"id":super::application::PALLET_ID})
+            .as_object()
+            .context("the get item is an object")?,
+    );
     let job = format!("startup-request-{name}");
     let manifest = request_job(
         cluster,
@@ -249,7 +252,7 @@ async fn request(
         secret,
         &job,
         (trace_id, parent_span),
-        &body,
+        &query,
     );
     let path = work.join(format!("{job}.json"));
     fs::write(&path, serde_json::to_vec_pretty(&manifest)?)?;
@@ -304,7 +307,7 @@ async fn request(
         status["state"]["terminated"]["exitCode"] == 0,
         "request probe failed"
     );
-    let total_ms = assert_response(&result, &request_id, name == "restart-first")?;
+    let total_ms = assert_response(&result, name == "restart-first")?;
     let response: Value = serde_json::from_slice(&hex::decode(
         result["body_hex"]
             .as_str()
@@ -328,7 +331,7 @@ fn request_job(
     secret: &str,
     job: &str,
     trace: (&str, &str),
-    body: &str,
+    query: &str,
 ) -> Value {
     let (trace_id, parent_span) = trace;
     // The mounted PAT stays inside the owned request pod. Results contain no credentials.
@@ -338,9 +341,9 @@ while :; do
   attempt=$((attempt + 1))
   metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \
     --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \
-    --header "Host: $ROUTE_HOST" --header 'Content-Type: application/json' \
+    --header "Host: $ROUTE_HOST" \
     --header "Authorization: Bearer $ROUTE_CALLER_PAT" --header "traceparent: $TRACEPARENT" \
-    --data "$REQUEST_BODY" "$ROUTE_URL") || metrics='000 0 0'
+    "$ROUTE_URL") || metrics='000 0 0'
   set -- $metrics
   elapsed=$(( $(date +%s) - probe_start ))
   printf '{"attempt":%s,"status":"%s","recovery_seconds":%s,"total_seconds":"%s"}\n' "$attempt" "$1" "$elapsed" "$3"
@@ -355,11 +358,11 @@ test "$1" = 200
     json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":HTTP_PROBE_IMAGE,"imagePullPolicy":"IfNotPresent","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
         {"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
         {"name":"ROUTE_HOST","value":route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
-        {"name":"REQUEST_BODY","value":body},{"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/pallet/get")}
+        {"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/pallet/get?{query}")}
     ]}]}}}})
 }
 
-fn assert_response(result: &Value, request_id: &str, restarted: bool) -> anyhow::Result<f64> {
+fn assert_response(result: &Value, restarted: bool) -> anyhow::Result<f64> {
     ensure!(
         result["status"] == "200",
         "startup request must return HTTP 200"
@@ -401,7 +404,7 @@ fn assert_response(result: &Value, request_id: &str, restarted: bool) -> anyhow:
     let rows = body.as_array().context("startup response is an array")?;
     ensure!(
         rows.len() == 1
-            && rows[0]["request_id"] == request_id
+            && rows[0].get("request_id").is_none()
             && rows[0].get("error").is_none()
             && rows[0]["value"]["id"] == super::application::PALLET_ID,
         "startup response must return the requested WMS pallet without an error"
@@ -780,14 +783,14 @@ mod tests {
     #[test]
     fn startup_job_reports_immediate_delayed_and_failed_responses() {
         use std::os::unix::fs::PermissionsExt as _;
-        let body = r#"[{"request_id":"startup-cold","id":"selected-pallet","note":"it's quoted"}]"#;
+        let query = "id=%22selected-pallet%22&note=%22it%27s%20quoted%22";
         let job = request_job(
             "selected-environment",
             "selected.example",
             "selected-pat",
             "selected-job",
             ("11111111111111111111111111111111", "1111111111111111"),
-            body,
+            query,
         );
         assert_eq!(
             job["metadata"],
@@ -817,12 +820,11 @@ mod tests {
             env[2],
             json!({"name":"TRACEPARENT","value":"00-11111111111111111111111111111111-1111111111111111-01"})
         );
-        assert_eq!(env[3], json!({"name":"REQUEST_BODY","value":body}));
         assert_eq!(
-            env[4],
-            json!({"name":"ROUTE_URL","value":"http://flow-http.selected-environment.svc.cluster.local/pallet/get"})
+            env[3],
+            json!({"name":"ROUTE_URL","value":format!("http://flow-http.selected-environment.svc.cluster.local/pallet/get?{query}")})
         );
-        assert_eq!(env.len(), 5);
+        assert_eq!(env.len(), 4);
         let script = container["args"][0].as_str().unwrap();
         assert!(script.contains("--connect-timeout 5 --max-time 60"));
         assert_eq!(script.matches("-ge 150").count(), 1);
@@ -950,18 +952,21 @@ printf '%s 0.001 0.002' "$status"
 
     #[test]
     fn startup_request_keeps_the_recovery_limit_and_pallet_identity() {
-        let body = json!([{"request_id":"startup-restart-first","value":{"id":super::super::application::PALLET_ID}}]);
+        let body = json!([{"value":{"id":super::super::application::PALLET_ID}}]);
         let mut result = json!({"status":"200","first_seconds":"0.010","total_seconds":"0.020","recovery_seconds":120,"body_hex":hex::encode(serde_json::to_vec(&body).unwrap())});
-        assert!(
-            (assert_response(&result, "startup-restart-first", true).unwrap() - 20.0).abs()
-                < f64::EPSILON
-        );
+        assert!((assert_response(&result, true).unwrap() - 20.0).abs() < f64::EPSILON);
         result["recovery_seconds"] = json!(121);
-        assert!(assert_response(&result, "startup-restart-first", true).is_err());
+        assert!(assert_response(&result, true).is_err());
         result["recovery_seconds"] = json!(120);
-        assert!(assert_response(&result, "another-request", true).is_err());
+        let keyed = json!([{"request_id":"startup-restart-first","value":{"id":super::super::application::PALLET_ID}}]);
+        let mut echoed = result.clone();
+        echoed["body_hex"] = json!(hex::encode(serde_json::to_vec(&keyed).unwrap()));
+        assert!(
+            assert_response(&echoed, true).is_err(),
+            "a read outcome carries no request identity"
+        );
         result["status"] = json!("503");
-        assert!(assert_response(&result, "startup-restart-first", true).is_err());
+        assert!(assert_response(&result, true).is_err());
     }
 
     #[test]

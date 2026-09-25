@@ -307,17 +307,20 @@ async fn application_request(
     http: &reqwest::Client,
     base: &str,
     token: &str,
-    id: &str,
 ) -> Result<Value> {
     let started = Instant::now();
-    let mut body = inputs.probe_body.clone();
-    body["request_id"] = json!(id);
+    // The probe is a get, a read: its one item travels in the query string,
+    // with no request identity.
+    let query = wamn_execution_contract::encode_read_query(
+        inputs
+            .probe_body
+            .as_object()
+            .context("the probe item is an object")?,
+    );
     let response = http
-        .post(format!("{base}{}", inputs.route_path))
+        .get(format!("{base}{}?{query}", inputs.route_path))
         .header("Host", &inputs.route_host)
-        .header("Content-Type", "application/json")
         .bearer_auth(token)
-        .body(serde_json::to_vec(&vec![body])?)
         .send()
         .await
         .map_err(|_| anyhow::anyhow!("application request failed"))?;
@@ -327,7 +330,7 @@ async fn application_request(
         let value: Value = serde_json::from_slice(&bytes)?;
         ensure!(
             value.as_array().is_some_and(|items| items.len() == 1)
-                && value[0]["request_id"] == id
+                && value[0].get("request_id").is_none()
                 && value[0].get("error").is_none()
                 && value[0]["value"]["id"] == inputs.probe_body["id"],
             "the production read did not return the requested record"
@@ -414,9 +417,7 @@ async fn burst(
                 let live = http.get(format!("{probe}/livez")).send().await?.status().as_u16();
                 let ready = http.get(format!("{probe}/readyz")).send().await?.status().as_u16();
                 ensure!(live == 200 && ready == 200, "native probes failed during starts");
-                let request_id = format!("{}-{phase}-{}", inputs.test_id,
-                    result["observations"].as_array().unwrap().len());
-                let response = application_request(inputs, http, base, token, &request_id).await?;
+                let response = application_request(inputs, http, base, token).await?;
                 let status = response["status"].as_u64().unwrap();
                 if phase == "warm" || first_success.is_some() {
                     ensure!(status == 200, "an already serving route failed during the burst");
@@ -436,14 +437,7 @@ async fn burst(
         }
     }
     result["all_running_seconds"] = json!(began.elapsed().as_secs_f64());
-    let after = application_request(
-        inputs,
-        http,
-        base,
-        token,
-        &format!("{}-{phase}-final", inputs.test_id),
-    )
-    .await?;
+    let after = application_request(inputs, http, base, token).await?;
     ensure!(
         after["status"] == 200,
         "route did not serve after all starts"

@@ -248,19 +248,46 @@ impl WamnClient {
             .map_err(|_| ClientError::Unauthenticated)?;
 
         let mut headers = BTreeMap::new();
-        headers.insert("content-type".to_owned(), "application/json".to_owned());
         headers.insert("authorization".to_owned(), format!("Bearer {bearer}"));
         if let Some(host) = &self.host {
             headers.insert("host".to_owned(), host.clone());
         }
+        let mut url = format!("{}{path}", self.base_url);
+        let body = if route.method == "GET" {
+            // A read carries its one item in the query string, and no body.
+            let query = read_query(&body).ok_or_else(|| ClientError::Operation {
+                literal: "invalid_input".to_owned(),
+                detail: serde_json::json!({ "detail": "a read sends exactly one request item" }),
+            })?;
+            if !query.is_empty() {
+                url.push('?');
+                url.push_str(&query);
+            }
+            Vec::new()
+        } else {
+            headers.insert("content-type".to_owned(), "application/json".to_owned());
+            body
+        };
 
         self.transport
             .send(HttpRequest {
-                url: format!("{}{path}", self.base_url),
+                url,
                 method: route.method.clone(),
                 headers,
                 body,
             })
             .await
     }
+}
+
+/// The query string of a read: the canonical encoding of the one item in the
+/// captured request array, or `None` when the array does not hold exactly one
+/// object.
+fn read_query(body: &[u8]) -> Option<String> {
+    let items: Vec<serde_json::Map<String, serde_json::Value>> =
+        serde_json::from_slice(body).ok()?;
+    let [item] = items.as_slice() else {
+        return None;
+    };
+    Some(wamn_execution_contract::encode_read_query(item))
 }

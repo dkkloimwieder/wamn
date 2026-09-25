@@ -330,7 +330,7 @@ mod tests {
             "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "registered-operation": operation,
             "definition": {
-                "route": {"method": "POST", "path": format!("/{id}")},
+                "route": {"path": format!("/{id}")},
                 "input-schema": {"type": "array"}
             },
             "auth-policy": {"modes": ["pat"]}

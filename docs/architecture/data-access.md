@@ -165,7 +165,7 @@ An absent row returns `not_found`, and a changed revision returns `concurrency_c
 A generated update increases the revision only when a supplied field differs from its current value.
 A successful update returns the current revision, so a true no-op returns outcome `updated` with its unchanged revision.
 
-Each outer item carries its `request_id`.
+Each outer item of a write carries its `request_id`. A read carries none, and its outcomes match its items by position.
 For `per_input` commands, each item owns one transaction on one PostgreSQL connection.
 The transaction resource never crosses a wiring edge, and separate outer items have no shared atomicity.
 A composed write followed by a projection is not one transaction.

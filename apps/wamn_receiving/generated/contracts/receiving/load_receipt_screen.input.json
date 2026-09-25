@@ -1,1 +1,1 @@
-{"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"label":"Purchase order","nullable":false,"path":"purchase_order_id","references":{"model":"purchase_order"},"type":"uuid","values":[]}]}
+{"fields":[{"label":"Purchase order","nullable":false,"path":"purchase_order_id","references":{"model":"purchase_order"},"type":"uuid","values":[]}]}

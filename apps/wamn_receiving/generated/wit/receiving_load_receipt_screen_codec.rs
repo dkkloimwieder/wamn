@@ -6,6 +6,12 @@ const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
+#[allow(dead_code)]
+pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
+    validate_count(input.len())?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
@@ -13,15 +19,15 @@ struct JsonRequest {
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::LoadReceiptScreenItem>, CodecError> {
-    decode_envelope(input)?
+    decode_read_envelope(input)?
         .into_iter()
-        .map(|(request_id, body)| {
+        .map(|body| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::LoadReceiptScreenRequest {
                     purchase_order_id: request.purchase_order_id,
                 })
                 .map_err(|_| invalid("input"));
-            Ok(contract::LoadReceiptScreenItem { request_id, input })
+            Ok(contract::LoadReceiptScreenItem { input })
         })
         .collect()
 }
@@ -37,7 +43,6 @@ pub(crate) fn encode(output: &[contract::LoadReceiptScreenOutcome]) -> String {
         .iter()
         .map(|item| match &item.outcome {
             Ok(value) => json!({
-                "request_id": item.request_id,
                 "value": { "rows": value.rows.iter().map(|row| json!({
                     "purchase_order_id": row.purchase_order_id,
                     "purchase_order_number": row.purchase_order_number,
@@ -54,7 +59,6 @@ pub(crate) fn encode(output: &[contract::LoadReceiptScreenOutcome]) -> String {
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
-                "request_id": item.request_id,
                 "error": error_value(error),
             }),
         })
@@ -122,10 +126,7 @@ where
             },
             Err(error) => Err(contract::LoadReceiptScreenError::InvalidInput(error)),
         };
-        output.push(contract::LoadReceiptScreenOutcome {
-            request_id: item.request_id,
-            outcome,
-        });
+        output.push(contract::LoadReceiptScreenOutcome { outcome });
     }
     output
 }

@@ -18,6 +18,15 @@ use super::{ReceivingCluster, resources};
 
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 
+/// The purchase order read is a GET that carries its one item in the query.
+fn purchase_order_get_target() -> String {
+    let item = serde_json::Map::from_iter([("id".to_owned(), json!(PURCHASE_ORDER_ID))]);
+    format!(
+        "/purchase_order/get?{}",
+        wamn_execution_contract::encode_read_query(&item)
+    )
+}
+
 fn kubectl(cluster: &str, work: &Path) -> Command {
     let mut command = Command::new("kubectl");
     command
@@ -154,7 +163,6 @@ async fn requests(
         state,
         &endpoint,
         "cold",
-        "startup-cold",
         service_token,
         "11111111111111111111111111111111",
         "1111111111111111",
@@ -221,7 +229,6 @@ async fn requests(
         state,
         &endpoint,
         "restart-first",
-        "startup-restart-first",
         service_token,
         "22222222222222222222222222222222",
         "2222222222222222",
@@ -231,7 +238,6 @@ async fn requests(
         state,
         &endpoint,
         "steady",
-        "startup-steady",
         service_token,
         "33333333333333333333333333333333",
         "3333333333333333",
@@ -245,7 +251,6 @@ async fn requests(
             state,
             &endpoint,
             &name,
-            &format!("startup-{name}"),
             service_token,
             &trace_id,
             &format!("333333333333000{sample}"),
@@ -319,14 +324,12 @@ async fn request(
     state: &ReceivingCluster,
     endpoint: &str,
     name: &str,
-    request_id: &str,
     token: &str,
     trace_id: &str,
     parent_span: &str,
 ) -> anyhow::Result<f64> {
     let resources = &state.resources;
     let evidence = &resources.evidence;
-    let body = serde_json::to_string(&json!([{"request_id":request_id,"id":PURCHASE_ORDER_ID}]))?;
     ensure!(
         !token.contains(['\r', '\n']) && !state.inputs.route_host.contains(['\r', '\n']),
         "request headers must not contain a line break"
@@ -334,11 +337,11 @@ async fn request(
     let quote = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
     // The credential crosses only curl's private stdin. Results never include its configuration.
     let configuration = format!(
-        "url = \"{}/purchase_order/get\"\nheader = \"Host: {}\"\nheader = \"Content-Type: application/json\"\nheader = \"Authorization: Bearer {}\"\nheader = \"traceparent: 00-{trace_id}-{parent_span}-01\"\ndata = \"{}\"\n",
+        "url = \"{}{}\"\nheader = \"Host: {}\"\nheader = \"Authorization: Bearer {}\"\nheader = \"traceparent: 00-{trace_id}-{parent_span}-01\"\n",
         quote(endpoint),
+        quote(&purchase_order_get_target()),
         quote(&state.inputs.route_host),
         quote(token),
-        quote(&body),
     );
     let response_path = resources
         .work
@@ -387,7 +390,7 @@ async fn request(
     }).await.context("request measurement exceeded its retained 200-second deadline")?;
     let result = measured?;
     write_result(evidence, &format!("first-request-{name}.json"), &result)?;
-    let total_ms = assert_response(&result, request_id, name == "restart-first")?;
+    let total_ms = assert_response(&result, name == "restart-first")?;
     let response: Value = serde_json::from_slice(&hex::decode(
         result["body_hex"]
             .as_str()
@@ -405,7 +408,7 @@ async fn request(
     Ok(total_ms)
 }
 
-fn assert_response(result: &Value, request_id: &str, restarted: bool) -> anyhow::Result<f64> {
+fn assert_response(result: &Value, restarted: bool) -> anyhow::Result<f64> {
     ensure!(
         result["status"] == "200",
         "startup request must return HTTP 200"
@@ -447,7 +450,7 @@ fn assert_response(result: &Value, request_id: &str, restarted: bool) -> anyhow:
     let rows = body.as_array().context("startup response is an array")?;
     ensure!(
         rows.len() == 1
-            && rows[0]["request_id"] == request_id
+            && rows[0].get("request_id").is_none()
             && rows[0].get("error").is_none()
             && rows[0]["value"]["id"] == PURCHASE_ORDER_ID,
         "startup response must return the requested Receiving purchase order without an error"
@@ -849,7 +852,6 @@ async fn human_runs(
             state,
             endpoint,
             &name,
-            &name,
             &human_token,
             &id,
             &format!("444444444444000{sample}"),
@@ -966,7 +968,7 @@ async fn throughput_sweep(
         schema:throughput_bench::INDEX_SCHEMA.to_owned(),source:resources.source.clone(),duration_seconds:10,
         concurrency:vec![1,4,8,16,32,64],
         layers:vec![
-            LayerSpec {layer:"route".to_owned(),driver:"oha".to_owned(),target:format!("POST /purchase_order/get through flow-http, {credential} PAT, repetition {repetition}"),expected_status:Some(200)},
+            LayerSpec {layer:"route".to_owned(),driver:"oha".to_owned(),target:format!("GET /purchase_order/get through flow-http, {credential} PAT, repetition {repetition}"),expected_status:Some(200)},
             LayerSpec {layer:"nodb".to_owned(),driver:"oha".to_owned(),target:"GET /no-such-route through flow-http: routed and answered 404 by the guest, no auth, no database".to_owned(),expected_status:Some(404)},
             LayerSpec {layer:"pg".to_owned(),driver:"pgbench".to_owned(),target:format!("pgbench -M prepared, the generated purchase_order/get read against {database} as postgres"),expected_status:None},
         ],steps:Vec::new(),
@@ -1122,7 +1124,7 @@ fn throughput_job(
     let container = match layer {
         "route" => json!({"name":"oha","image":oha,"imagePullPolicy":"IfNotPresent",
             "env":[{"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}}],"command":["/bin/oha"],
-            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","POST","-H",format!("Host: {host}"),"-H","Content-Type: application/json","-H","Authorization: Bearer $(ROUTE_CALLER_PAT)","-d",serde_json::to_string(&json!([{"request_id":"bench","id":PURCHASE_ORDER_ID}]))?,format!("http://flow-http.{namespace}.svc.cluster.local/purchase_order/get")]}),
+            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),"-H","Authorization: Bearer $(ROUTE_CALLER_PAT)",format!("http://flow-http.{namespace}.svc.cluster.local{}", purchase_order_get_target())]}),
         "nodb" => {
             json!({"name":"oha","image":oha,"imagePullPolicy":"IfNotPresent","command":["/bin/oha"],
             "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),format!("http://flow-http.{namespace}.svc.cluster.local/no-such-route")]})
@@ -1276,17 +1278,14 @@ mod tests {
         assert_eq!(value_after("-c"), "4");
         assert_eq!(value_after("-z"), "10s");
         assert_eq!(value_after("--output-format"), "json");
-        assert_eq!(value_after("-m"), "POST");
+        assert_eq!(value_after("-m"), "GET");
         assert!(args.contains(&json!("Host: selected.example")));
-        assert!(args.contains(&json!("Content-Type: application/json")));
+        assert!(!args.contains(&json!("Content-Type: application/json")));
         assert!(args.contains(&json!("Authorization: Bearer $(ROUTE_CALLER_PAT)")));
-        assert_eq!(
-            serde_json::from_str::<Value>(value_after("-d").as_str().unwrap()).unwrap(),
-            json!([{"request_id":"bench","id":"00000000-0000-0000-0000-000000000301"}])
-        );
+        assert!(!args.contains(&json!("-d")));
         assert_eq!(
             args.last().unwrap(),
-            "http://flow-http.selected-environment.svc.cluster.local/purchase_order/get"
+            "http://flow-http.selected-environment.svc.cluster.local/purchase_order/get?id=%2200000000-0000-0000-0000-000000000301%22"
         );
         assert!(!serde_json::to_string(&route).unwrap().contains("password"));
 
@@ -1456,17 +1455,18 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
 
     #[test]
     fn startup_request_keeps_the_recovery_limit_and_purchase_order_identity() {
-        let body = json!([{"request_id":"startup-restart-first","value":{"id":PURCHASE_ORDER_ID}}]);
+        let body = json!([{"value":{"id":PURCHASE_ORDER_ID}}]);
         let mut result = json!({"status":"200","first_seconds":"0.010","total_seconds":"0.020","recovery_seconds":120,"body_hex":hex::encode(serde_json::to_vec(&body).unwrap())});
-        assert!(
-            (assert_response(&result, "startup-restart-first", true).unwrap() - 20.0).abs()
-                < f64::EPSILON
-        );
+        assert!((assert_response(&result, true).unwrap() - 20.0).abs() < f64::EPSILON);
         result["recovery_seconds"] = json!(121);
-        assert!(assert_response(&result, "startup-restart-first", true).is_err());
+        assert!(assert_response(&result, true).is_err());
         result["recovery_seconds"] = json!(120);
-        assert!(assert_response(&result, "another-request", true).is_err());
+        let echoed =
+            json!([{"request_id":"startup-restart-first","value":{"id":PURCHASE_ORDER_ID}}]);
+        let mut echoed_result = result.clone();
+        echoed_result["body_hex"] = json!(hex::encode(serde_json::to_vec(&echoed).unwrap()));
+        assert!(assert_response(&echoed_result, true).is_err());
         result["status"] = json!("503");
-        assert!(assert_response(&result, "startup-restart-first", true).is_err());
+        assert!(assert_response(&result, true).is_err());
     }
 }

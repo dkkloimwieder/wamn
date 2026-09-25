@@ -90,14 +90,11 @@ export async function create(
 export interface ProductGetRequest {
   /** `uuid` */
   id: Uuid;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-wms:product/get@1.0.0` calls its input members. */
 export const PRODUCT_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
-  "request_id": "requestId",
 };
 
 /** Result of `wamn-wms:product/get@1.0.0`. */
@@ -128,7 +125,7 @@ export const PRODUCT_GET_RESULT_FIELDS: FieldMap = {
  */
 export const PRODUCT_GET_ROUTE: OperationRoute = {
   operation: "wamn-wms:product/get@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/product/get",
   freshOnly: false,
   contract: {
@@ -171,8 +168,6 @@ export interface ProductQueryRequest {
   filter?: ProductQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
 }
 
 export interface ProductQueryRequestFilter {
@@ -190,7 +185,6 @@ export const PRODUCT_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-wms:product/query@1.0.0`. */
@@ -235,7 +229,7 @@ export const PRODUCT_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const PRODUCT_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-wms:product/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/product/query",
   freshOnly: false,
   contract: {

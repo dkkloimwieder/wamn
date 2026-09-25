@@ -258,14 +258,13 @@ impl Login {
             "renewal moved absolute expiry"
         );
         let allowed = reqwest::Client::new()
-            .post(format!("{}/purchase_order/query", served.url))
+            .get(format!("{}/purchase_order/query", served.url))
             .header("Host", &served.host)
             .bearer_auth(
                 renewed["access_token"]
                     .as_str()
                     .context("renewed access token")?,
             )
-            .json(&json!([{"request_id":"renewed-reading"}]))
             .send()
             .await?;
         ensure!(
@@ -327,10 +326,9 @@ impl Login {
             .as_str()
             .context("password session token")?;
         let refused = reqwest::Client::new()
-            .post(format!("{}/purchase_order/query", served.url))
+            .get(format!("{}/purchase_order/query", served.url))
             .header("Host", &served.host)
             .bearer_auth(token)
-            .json(&json!([{"request_id":"password-permission-refusal"}]))
             .send()
             .await?;
         ensure!(

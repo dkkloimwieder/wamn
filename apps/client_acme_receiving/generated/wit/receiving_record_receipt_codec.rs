@@ -6,6 +6,17 @@ const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
+#[allow(dead_code)]
+pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
+    validate_count(input.len())?;
+    if input.iter().any(|item| item.request_id.is_empty()) {
+        return Err(CodecError(
+            "every operation item must carry a nonempty string request_id",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonLine {

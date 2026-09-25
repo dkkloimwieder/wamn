@@ -33,13 +33,9 @@ const RESULT: &[FieldSchema] = &[
     scalar("id", "uuid", true),
     scalar("row_version", "int64", true),
 ];
-const READ_INPUT: &[FieldSchema] = &[
-    scalar("request_id", "uuid", true),
-    scalar("id", "uuid", true),
-    scalar("locale", "text", true),
-];
+// A read carries no request identity.
+const READ_INPUT: &[FieldSchema] = &[scalar("id", "uuid", true), scalar("locale", "text", true)];
 const PAGE_INPUT: &[FieldSchema] = &[
-    scalar("request_id", "uuid", true),
     scalar("cursor", "text", false),
     FieldSchema {
         children: &[scalar("filter.name", "text", false)],
@@ -60,10 +56,6 @@ const COMMAND_INPUT: &[FieldSchema] = &[
         ..scalar("line[]", "array", true)
     },
 ];
-const SUPPLIED: &[SuppliedField] = &[SuppliedField {
-    path: "request_id",
-    kind: SuppliedKind::RequestId,
-}];
 const RECORD: RecordLink = RecordLink {
     relation: "inventory",
     key_field: "id",
@@ -93,7 +85,7 @@ const READ: ScreenSpec = ScreenSpec {
     revision: None,
     revision_inputs: &[],
     requires_composition: false,
-    supplied: SUPPLIED,
+    supplied: &[],
 };
 const PAGE: ScreenSpec = ScreenSpec {
     name: "query",
@@ -170,15 +162,22 @@ fn intent() -> IntentValues {
 fn result() -> Value {
     json!({"id":ID,"row_version":"7"})
 }
+/// The one outcome: a write echoes its `request_id`, and a read carries none.
 fn response(screen: &Screen, value: &Value) -> HttpResponse {
+    let mut outcome = serde_json::Map::from_iter([("value".to_owned(), value.clone())]);
+    if let Some(request_id) = screen
+        .submission()
+        .captured()
+        .expect("capture")
+        .item()
+        .get("request_id")
+    {
+        outcome.insert("request_id".to_owned(), request_id.clone());
+    }
     HttpResponse {
         actor_labels: std::collections::BTreeMap::new(),
         status: 200,
-        body: json!([{
-            "request_id":screen.submission().captured().expect("capture").item()["request_id"],
-            "value":value,
-        }])
-        .to_string(),
+        body: json!([outcome]).to_string(),
     }
 }
 fn read_record() -> Screen {
@@ -598,7 +597,7 @@ mod cursor_transport {
     use wamn_client_tui::screen::Screen;
     use wamn_client_tui::submission::State;
 
-    use super::{PAGE, REQUEST_ID, binding, intent, result, route};
+    use super::{PAGE, binding, intent, result, route};
 
     const CURSOR: &str = " {\"not\":\"a local token\"} +/%=\n";
 
@@ -621,7 +620,6 @@ mod cursor_transport {
                     actor_labels: std::collections::BTreeMap::new(),
                     status: 200,
                     body: json!([{
-                        "request_id":REQUEST_ID,
                         "value":{"item":[result()],"next_cursor":CURSOR}
                     }])
                     .to_string(),
@@ -662,13 +660,9 @@ mod cursor_transport {
             (
                 "/filter/name",
                 json!("new"),
-                br#"[{"filter":{"name":"new"},"request_id":"00000000-0000-0000-0000-000000000002"}]"#,
+                br#"[{"filter":{"name":"new"}}]"#,
             ),
-            (
-                "/sort",
-                json!("name_desc"),
-                br#"[{"request_id":"00000000-0000-0000-0000-000000000002","sort":"name_desc"}]"#,
-            ),
+            ("/sort", json!("name_desc"), br#"[{"sort":"name_desc"}]"#),
         ];
         for (path, value, reset_body) in resets {
             let transport = Arc::new(RecordingTransport::default());
@@ -691,11 +685,11 @@ mod cursor_transport {
 
             let requests = transport.0.lock().expect("read sent requests");
             assert_eq!(requests.len(), 3);
+            assert_eq!(requests[0].body, b"[{}]");
             assert_eq!(
-                requests[0].body,
-                br#"[{"request_id":"00000000-0000-0000-0000-000000000002"}]"#
+                requests[1].body,
+                br#"[{"cursor":" {\"not\":\"a local token\"} +/%=\n"}]"#
             );
-            assert_eq!(requests[1].body, br#"[{"cursor":" {\"not\":\"a local token\"} +/%=\n","request_id":"00000000-0000-0000-0000-000000000002"}]"#);
             assert_eq!(requests[2].body, reset_body, "query edit {path}");
             for request in requests.iter() {
                 assert_eq!(request.url, "http://localhost:8080/inventory");

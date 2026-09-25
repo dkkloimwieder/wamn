@@ -173,3 +173,47 @@ fn every_int64_leaves_the_codec_as_a_json_string() {
         );
     }
 }
+
+/// A read carries no request identity (`docs/plan/http-reads.md`): its one
+/// item travels in a GET query string, and its outcomes match its items by
+/// position. A write keeps the identity that its outcome echoes.
+#[test]
+fn a_read_contract_declares_no_request_id_and_a_write_still_does() {
+    let contracts = fixture::contracts(&fixture::generate_fixture());
+    let json = |path: &str| -> serde_json::Value {
+        serde_json::from_slice(&contracts[path]).unwrap_or_else(|_| panic!("{path} is JSON"))
+    };
+    let mut reads = 0;
+    let mut writes = 0;
+    for path in contracts
+        .keys()
+        .filter(|path| path.ends_with(".operation.json"))
+    {
+        let kind = json(path)["kind"].as_str().expect("kind").to_owned();
+        let input = json(&path.replace(".operation.json", ".input.json"));
+        let declares = input.get("request_id").is_some()
+            || input["fields"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field["path"] == "request_id"));
+        match kind.as_str() {
+            "get" | "query" | "projection" => {
+                assert!(!declares, "{path}: a read declares no request_id");
+                reads += 1;
+            }
+            "create" | "update" | "delete" => {
+                assert!(declares, "{path}: a generated write declares request_id");
+                writes += 1;
+            }
+            _ => {}
+        }
+    }
+    assert!(reads > 0 && writes > 0, "reads {reads}, writes {writes}");
+    assert!(
+        json("widget/record_batch.input.json")["fields"]
+            .as_array()
+            .expect("fields")
+            .iter()
+            .any(|field| field["path"] == "request_id"),
+        "a command keeps the request_id it declares"
+    );
+}

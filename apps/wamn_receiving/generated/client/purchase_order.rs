@@ -67,8 +67,6 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
 pub struct PurchaseOrderGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `string`
-    pub request_id: String,
 }
 
 /// Result of `wamn-receiving:purchase-order/get@1.0.0`.
@@ -95,20 +93,12 @@ pub struct PurchaseOrderGetResult {
 }
 
 /// Input descriptors for `wamn-receiving:purchase-order/get@1.0.0`.
-pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-receiving:purchase-order/get@1.0.0`.
 pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
@@ -168,8 +158,8 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
@@ -180,20 +170,7 @@ pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchem
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const PURCHASE_ORDER_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -331,7 +308,7 @@ pub const PURCHASE_ORDER_GET_ERRORS: &[&str] = &[
 #[must_use]
 pub fn get_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/purchase_order/get".to_owned(),
     }
 }
@@ -360,8 +337,6 @@ pub struct PurchaseOrderQueryRequest {
     pub filter: Option<PurchaseOrderQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `string`
-    pub request_id: String,
     /// `object`, omittable
     pub sort: Option<PurchaseOrderQueryRequestSort>,
 }
@@ -437,12 +412,6 @@ pub const PURCHASE_ORDER_QUERY_INPUT: &[FieldDescriptor] = &[
         path: "limit",
         type_name: "int32",
         nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "string",
-        nullable: false,
         values: &[],
     },
     FieldDescriptor {
@@ -626,18 +595,6 @@ pub const PURCHASE_ORDER_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSch
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "request_id",
-            type_name: "string",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
             path: "sort",
             type_name: "object",
             nullable: false,
@@ -810,7 +767,7 @@ pub const PURCHASE_ORDER_QUERY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn query_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/purchase_order/query".to_owned(),
     }
 }

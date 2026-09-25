@@ -4,13 +4,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:purchase-order/get@1.0.0",
-    "definition-hash": "sha256:e1f334c03f4ce032787259a51b0db04f3b9e0a41ca619384f5f0a651d7e711f1",
+    "definition-hash": "sha256:aa184320e54d32e43246026b317e290411262b0d573fd4a648faf30e4e347500",
     "definition": {
       "id": "purchase-order-get-http",
       "kind": "http",
       "route": {
-        "path": "/purchase_order/get",
-        "method": "POST"
+        "path": "/purchase_order/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -27,13 +26,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:purchase-order/query@1.0.0",
-    "definition-hash": "sha256:abb663ca9c585ce5bb17584276bbff16f5f2b5aa1dd0ae47ad7b7f7ae0190a89",
+    "definition-hash": "sha256:5bc13af4bb20415057b9d79d0c41b79e128c8f6fff8170969b9d543116fbf150",
     "definition": {
       "id": "purchase-order-query-http",
       "kind": "http",
       "route": {
-        "path": "/purchase_order/query",
-        "method": "POST"
+        "path": "/purchase_order/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -50,13 +48,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:purchase-order/update@1.0.0",
-    "definition-hash": "sha256:bd2d33f04911277fe31926ca2d790dca1ed00198036355fdf991c3334038b59a",
+    "definition-hash": "sha256:d260d2d28e8a2ae61e677f4564334d02ba421b4705ab221bd3a43e882ae8a0d5",
     "definition": {
       "id": "purchase-order-update-http",
       "kind": "http",
       "route": {
-        "path": "/purchase_order/update",
-        "method": "POST"
+        "path": "/purchase_order/update"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -73,13 +70,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receipt/get@1.0.0",
-    "definition-hash": "sha256:a7696b9816a9563ce914acb5ff01fd6788b94aed930f6ff603e7744b36080989",
+    "definition-hash": "sha256:3c16aeb0bbf7fa1b160b06ed8b6306d968776c7850d533299c767a43dd2db9a8",
     "definition": {
       "id": "receipt-get-http",
       "kind": "http",
       "route": {
-        "path": "/receipt/get",
-        "method": "POST"
+        "path": "/receipt/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -96,13 +92,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receipt/query@1.0.0",
-    "definition-hash": "sha256:aadbaf165264b221a4fce01f59cbc3b889aacd80ec6cd6a3209c53c157425245",
+    "definition-hash": "sha256:e7fdc14c92a44a6b2fbb2952d2bb83a692d0f242e2321e2828d0f0edba9e2144",
     "definition": {
       "id": "receipt-query-http",
       "kind": "http",
       "route": {
-        "path": "/receipt/query",
-        "method": "POST"
+        "path": "/receipt/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -119,13 +114,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
-    "definition-hash": "sha256:496de6b67604e420aaf924fea7b686ae817aa9954b7fcfa5b80f69d08544a825",
+    "definition-hash": "sha256:f6d4f629c6b9191c3ff89307333341c80f61707e71dbdc77d055aaba326299ee",
     "definition": {
       "id": "receiving-record-receipt-http",
       "kind": "http",
       "route": {
-        "path": "/receiving/record_receipt",
-        "method": "POST"
+        "path": "/receiving/record_receipt"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -212,13 +206,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receiving/load-receipt-screen@1.0.0",
-    "definition-hash": "sha256:0dd9f8c483a2b853dae53fc10a040f1410dd930144ef94487cf3f7abacdeb66a",
+    "definition-hash": "sha256:38d51aecff5261fbbb779f943646daf594d04c0e6b08923eedb81457b5d2f62b",
     "definition": {
       "id": "receiving-load-receipt-screen-http",
       "kind": "http",
       "route": {
-        "path": "/receiving/load_receipt_screen",
-        "method": "POST"
+        "path": "/receiving/load_receipt_screen"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -230,15 +223,10 @@
         "items": {
           "type": "object",
           "required": [
-            "request_id",
             "purchase_order_id"
           ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
             "purchase_order_id": {
               "type": "string",
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -257,13 +245,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
-    "definition-hash": "sha256:c503c1630f7313e08b5b597c6fed9ce98ae8d62296a74d18f1ef6556d21ba4b5",
+    "definition-hash": "sha256:fc7c98f7f5c8e395e8958390ec9f442df565dd35d8f598a9788b99cb73a493b1",
     "definition": {
       "id": "receiving-load-purchase-order-history-http",
       "kind": "http",
       "route": {
-        "path": "/receiving/load_purchase_order_history",
-        "method": "POST"
+        "path": "/receiving/load_purchase_order_history"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -275,16 +262,11 @@
         "items": {
           "type": "object",
           "required": [
-            "request_id",
             "id",
             "limit"
           ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            },
             "id": {
               "type": "string",
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -310,13 +292,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:location/list@1.0.0",
-    "definition-hash": "sha256:32c3d76d30f7ccc227867201f327d9855e5ebf159da7093fea835b05e9b8288a",
+    "definition-hash": "sha256:cba9f87b65409972344d2d56cef1b4fd559be03a34dc011bac4a14bcbf3c93e1",
     "definition": {
       "id": "location-list-http",
       "kind": "http",
       "route": {
-        "path": "/location/list",
-        "method": "POST"
+        "path": "/location/list"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -327,15 +308,9 @@
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": [
-            "request_id"
-          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {
-              "type": "string",
-              "minLength": 1
-            }
+            
           }
         }
       }
@@ -350,13 +325,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:supplier/query@1.0.0",
-    "definition-hash": "sha256:9f22642b029a2bb495d5e05f69c54c0c87a47e8f5666f6349e60b3a9d94857e8",
+    "definition-hash": "sha256:c96f1f82d32bb6550552045d451c5c10401c1575c9762fa97a8788615ec8eca6",
     "definition": {
       "id": "supplier-query-http",
       "kind": "http",
       "route": {
-        "path": "/supplier/query",
-        "method": "POST"
+        "path": "/supplier/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -373,13 +347,12 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:supplier/create@1.0.0",
-    "definition-hash": "sha256:be304627441907c3b99b34e3116c08f395d513b6956250936a594f3d17648a8a",
+    "definition-hash": "sha256:35d18f34045db340824622b0a011c586ffcea076b557b41014ccea01bf76ba41",
     "definition": {
       "id": "supplier-create-http",
       "kind": "http",
       "route": {
-        "path": "/supplier/create",
-        "method": "POST"
+        "path": "/supplier/create"
       },
       "raw-body-bytes": {
         "maximum": 1048576

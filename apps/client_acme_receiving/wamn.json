@@ -7,7 +7,7 @@
     "base_receiving": {
       "package": "wamn_receiving",
       "version": "1.0.0",
-      "digest": "sha256:9685e79887b821ce424360b52cc6e9e4ea850f652d72ebc9d6a0c7a7bed162e3",
+      "digest": "sha256:7e5c447653f259e8c330e9d3ff78a2a9290e6f23c70d640868e6bc127764b07e",
       "operations": [
         "receiving.record_receipt"
       ]
@@ -354,11 +354,6 @@
       "connection": "postgres",
       "input": {
         "fields": [
-          {
-            "path": "request_id",
-            "type": "text",
-            "nullable": false
-          },
           {
             "path": "purchase_order_id",
             "type": "uuid",

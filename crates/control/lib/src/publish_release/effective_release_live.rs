@@ -411,8 +411,9 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     };
     let mut authored_attachments = read(&inputs[0]);
     authored_attachments.extend(read(&inputs[1]));
-    let attachments = resolve_route_host_overlay(&authored_attachments, Some("fixture.localhost"))
-        .expect("bind the deployment-owned route hostname");
+    let attachments =
+        resolve_route_host_overlay(&authored_attachments, Some("fixture.localhost"), &kinds)
+            .expect("bind the deployment-owned route hostname");
     let request = MintReleaseManifest {
         tenant_id: TENANT,
         effective_release_id: RELEASE_ID,

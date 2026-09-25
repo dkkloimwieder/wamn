@@ -4,13 +4,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/archive@1.0.0",
-    "definition-hash": "sha256:412c8054caa4b1b57ce82a2d4850b450957e365e20c6a6d0330cc11cc89b29c4",
+    "definition-hash": "sha256:318e0ed97696b8fa54040bf7fdf8d44251ff7aa18acc475b6a7464d1cd5e3535",
     "definition": {
       "id": "widget-archive-http",
       "kind": "http",
       "route": {
-        "path": "/widget/archive",
-        "method": "POST"
+        "path": "/widget/archive"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -28,13 +27,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/create@1.0.0",
-    "definition-hash": "sha256:1538fdcbfb8cdc0ab8a97b0f584e707aaf663b9b3d8180ff2b02c65fbcf8ef12",
+    "definition-hash": "sha256:ea700541719bdb6495d51cbb2759d65a92f249420f24eebe9169d0a5fb1e7fb4",
     "definition": {
       "id": "widget-create-http",
       "kind": "http",
       "route": {
-        "path": "/widget/create",
-        "method": "POST"
+        "path": "/widget/create"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -53,13 +51,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/delete@1.0.0",
-    "definition-hash": "sha256:55dfdc7a31419ea2e12f90c787f459c6d4c4d6bef29a7396852cd83fd182d020",
+    "definition-hash": "sha256:0cc92b9c2fd986a623ce3da984719467fd0a097deaae1a9bf1f733633d85c2de",
     "definition": {
       "id": "widget-delete-http",
       "kind": "http",
       "route": {
-        "path": "/widget/delete",
-        "method": "POST"
+        "path": "/widget/delete"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -78,13 +75,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/get@1.0.0",
-    "definition-hash": "sha256:2624f2a6210cc21d47eb8f3dcd8bc51e647325cce352a88c73267763f61ec540",
+    "definition-hash": "sha256:8c09aaf457e40a132b9342d435e0dc1df202318666f45e2de646aa28ef8e75b6",
     "definition": {
       "id": "widget-get-http",
       "kind": "http",
       "route": {
-        "path": "/widget/get",
-        "method": "POST"
+        "path": "/widget/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -103,13 +99,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/list@1.0.0",
-    "definition-hash": "sha256:381ff33685c4ddff617218e4fc64ef40b0dbfda6c9fafb27ac7816ca509f4605",
+    "definition-hash": "sha256:e5905f348a94051788ffd9eece1c61e6716ea6864e56cf25dc3d2ac93041c6ed",
     "definition": {
       "id": "widget-list-http",
       "kind": "http",
       "route": {
-        "path": "/widget/list",
-        "method": "POST"
+        "path": "/widget/list"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -127,13 +122,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget-maker/get@1.0.0",
-    "definition-hash": "sha256:946dc8fb071b6127d693041505ea89c1d0d0509d0a630b959941795c668fc25f",
+    "definition-hash": "sha256:345fec7f45f998797ceb4d05ff39139d0a0f33d8759f8651c4c4acb925bd8f82",
     "definition": {
       "id": "widget-maker-get-http",
       "kind": "http",
       "route": {
-        "path": "/widget_maker/get",
-        "method": "POST"
+        "path": "/widget_maker/get"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -152,13 +146,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget-maker/list@1.0.0",
-    "definition-hash": "sha256:36f085bb670b3592ef5f7d5e5424b973a38c2f1447f123b77e6a042ad4ecb326",
+    "definition-hash": "sha256:45ff1b1784d3f7799fea1e777a960099d0c4589c94eec78220ad17579bcc094c",
     "definition": {
       "id": "widget-maker-list-http",
       "kind": "http",
       "route": {
-        "path": "/widget_maker/list",
-        "method": "POST"
+        "path": "/widget_maker/list"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -176,13 +169,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget-maker/query@1.0.0",
-    "definition-hash": "sha256:0431702a7ca19fb6620d0ea16caacfb66b63022ff59af51568276aa975c58d8f",
+    "definition-hash": "sha256:27cda9d7c4b15baec5806048db2242078ba6f6f8162d9f8122bf3c884e6245be",
     "definition": {
       "id": "widget-maker-query-http",
       "kind": "http",
       "route": {
-        "path": "/widget_maker/query",
-        "method": "POST"
+        "path": "/widget_maker/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -201,13 +193,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/query@1.0.0",
-    "definition-hash": "sha256:a7ff1f7911fadec5b24b197f269e2c19ed13e793deb9cd63f2402111c70d859e",
+    "definition-hash": "sha256:4be789dbe4d175c6259d7589af0ca575cac858298d07ebbd8194b3e94a89c9d6",
     "definition": {
       "id": "widget-query-http",
       "kind": "http",
       "route": {
-        "path": "/widget/query",
-        "method": "POST"
+        "path": "/widget/query"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -226,13 +217,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/record-batch@1.0.0",
-    "definition-hash": "sha256:f80b3df7166aaf192b4967c0d799d07f2cc605430d9be4f5e6d5579bbba699df",
+    "definition-hash": "sha256:c9617868c09c438f4e03634c9f21ccc5f21e6d6f870af592b691f0bf579d5d2b",
     "definition": {
       "id": "widget-record-batch-http",
       "kind": "http",
       "route": {
-        "path": "/widget/record_batch",
-        "method": "POST"
+        "path": "/widget/record_batch"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -337,13 +327,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget-tag/update@1.0.0",
-    "definition-hash": "sha256:91f63caf7068f30812d74b0ee0f9a3c927f5916854254e5f1a7b5e7b93189159",
+    "definition-hash": "sha256:6005cb92ebeee28621fa13f3d8b3c97c4771bd1f364dfaf8265051c947eeb09b",
     "definition": {
       "id": "widget-tag-update-http",
       "kind": "http",
       "route": {
-        "path": "/widget_tag/update",
-        "method": "POST"
+        "path": "/widget_tag/update"
       },
       "raw-body-bytes": {
         "maximum": 1048576
@@ -362,13 +351,12 @@
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/update@1.0.0",
-    "definition-hash": "sha256:5ede4c53187f5e352ab851915feb8798951fcd553e2972a3070f6eb6e029af67",
+    "definition-hash": "sha256:0c49db97329f9ff5bef1e04891a76ac66becc610ad362c38088a99b6f2d05e1f",
     "definition": {
       "id": "widget-update-http",
       "kind": "http",
       "route": {
-        "path": "/widget/update",
-        "method": "POST"
+        "path": "/widget/update"
       },
       "raw-body-bytes": {
         "maximum": 1048576

@@ -1057,14 +1057,18 @@ fn input_contract(
             declared
         })
         .collect::<Vec<_>>();
-    let common = json!({
-        "request_id": {"type": "string", "required": true},
+    let mut common = json!({
         "server_owned_fields": {
             "fields": server_owned_fields(model, table),
             "if_supplied": "invalid_input",
         },
         "writable_fields": writable,
     });
+    // A read carries no request identity: its one item travels in a GET query
+    // string, and its outcomes match its items by list position.
+    if !matches!(action, CrudAction::Get | CrudAction::Query) {
+        common["request_id"] = json!({"type": "string", "required": true});
+    }
     // The key input and a filter both name a model column, so both read that
     // column's text. The revision input names one too, and it is deliberately
     // left silent: no screen renders it, because the plan reserves it.

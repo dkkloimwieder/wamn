@@ -308,8 +308,6 @@ pub async fn approve_inspection(
 pub struct QualityLoadPurchaseOrderDetailRequest {
     /// `uuid`
     pub purchase_order_id: uuid::Uuid,
-    /// `text`
-    pub request_id: String,
 }
 
 /// Result of `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
@@ -332,20 +330,12 @@ pub struct QualityLoadPurchaseOrderDetailResult {
 }
 
 /// Input descriptors for `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
-pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "purchase_order_id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "purchase_order_id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT: &[FieldDescriptor] = &[
@@ -394,32 +384,18 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT: &[FieldDescriptor] = &[
 ];
 
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT_SCHEMA:
-    &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "purchase_order_id",
-            type_name: "uuid",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
+    &[wamn_client::descriptor::FieldSchema] = &[wamn_client::descriptor::FieldSchema {
+    field: FieldDescriptor {
+        path: "purchase_order_id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
     },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "text",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    required: true,
+    minimum: None,
+    maximum: None,
+    children: &[],
+}];
 
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT_SCHEMA:
     &[wamn_client::descriptor::FieldSchema] = &[
@@ -536,7 +512,7 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_ERRORS: &[&str] = &[
 #[must_use]
 pub fn load_purchase_order_detail_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/acme/quality/load_purchase_order_detail".to_owned(),
     }
 }

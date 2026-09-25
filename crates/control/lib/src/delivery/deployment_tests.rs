@@ -51,12 +51,37 @@ fn acceptance_route_requires_the_selected_pat_operation() {
         .unwrap();
     attachment.definition["route"] =
         json!({"path":"/orders","method":"POST","host":"fixture.localhost"});
-    require_released_route(
-        &manifest,
-        "http://127.0.0.1:1234/orders",
-        "fixture.localhost",
-    )
-    .unwrap();
+    assert_eq!(
+        require_released_route(
+            &manifest,
+            "http://127.0.0.1:1234/orders",
+            "fixture.localhost",
+        )
+        .unwrap(),
+        "POST",
+        "a wiring is a POST"
+    );
+    manifest
+        .workflow
+        .attachments
+        .get_mut("orders-http")
+        .unwrap()
+        .definition["route"]["method"] = json!("GET");
+    assert!(
+        require_released_route(
+            &manifest,
+            "http://127.0.0.1:1234/orders",
+            "fixture.localhost"
+        )
+        .is_err(),
+        "a method that the kind does not give refuses"
+    );
+    manifest
+        .workflow
+        .attachments
+        .get_mut("orders-http")
+        .unwrap()
+        .definition["route"]["method"] = json!("POST");
     assert!(
         require_released_route(
             &manifest,
@@ -94,16 +119,18 @@ async fn authenticated_acceptance_refuses_denial_redirect_and_wrong_result() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/orders", listener.local_addr().unwrap());
     let serving = tokio::spawn(async move {
-        for (status, body) in [
-            (401, "{}"),
-            (302, "{\"ok\":true}"),
-            (200, "{\"ok\":false}"),
-            (200, "{\"ok\":true}"),
+        for (status, body, line) in [
+            (401, "{}", "post /orders "),
+            (302, "{\"ok\":true}", "post /orders "),
+            (200, "{\"ok\":false}", "post /orders "),
+            (200, "{\"ok\":true}", "post /orders "),
+            (200, "{\"ok\":true}", "get /orders?id=%22a%22 "),
         ] {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = vec![0; 8192];
             let read = stream.read(&mut request).await.unwrap();
             let request = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
+            assert!(request.starts_with(line), "{request}");
             assert!(request.contains("authorization: bearer test-token"));
             assert!(request.contains("host: fixture.localhost"));
             stream.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
@@ -115,6 +142,7 @@ async fn authenticated_acceptance_refuses_denial_redirect_and_wrong_result() {
                 &url,
                 "fixture.localhost",
                 "test-token",
+                "POST",
                 b"{}".to_vec(),
                 json!({"ok":true})
             )
@@ -126,7 +154,18 @@ async fn authenticated_acceptance_refuses_denial_redirect_and_wrong_result() {
         &url,
         "fixture.localhost",
         "test-token",
+        "POST",
         b"{}".to_vec(),
+        json!({"ok":true}),
+    )
+    .await
+    .unwrap();
+    authenticated_interaction(
+        &url,
+        "fixture.localhost",
+        "test-token",
+        "GET",
+        br#"[{"id":"a"}]"#.to_vec(),
         json!({"ok":true}),
     )
     .await

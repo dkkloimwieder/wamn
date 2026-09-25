@@ -34,27 +34,52 @@ struct Paths {
 
 impl Paths {
     async fn post(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
-        let response = self
-            .client
-            .post(format!("{}{path}", self.endpoint))
+        self.send(
+            self.client
+                .post(format!("{}{path}", self.endpoint))
+                .json(body),
+            path,
+        )
+        .await
+    }
+
+    /// Send the one item of a read as a GET, as its route is published.
+    async fn get(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
+        let item = body[0]
+            .as_object()
+            .context("a read sends one object item")?;
+        let query = wamn_execution_contract::encode_read_query(item);
+        self.send(
+            self.client.get(format!("{}{path}?{query}", self.endpoint)),
+            path,
+        )
+        .await
+    }
+
+    async fn send(
+        &self,
+        request: reqwest::RequestBuilder,
+        path: &str,
+    ) -> anyhow::Result<(u16, Value)> {
+        let response = request
             .header("Host", &self.host)
             .bearer_auth(&self.bearer)
-            .json(body)
             .send()
             .await
-            .with_context(|| format!("POST {path}"))?;
+            .with_context(|| path.to_owned())?;
         let status = response.status().as_u16();
         let text = response.text().await?;
         let value = serde_json::from_str(&text)
-            .with_context(|| format!("POST {path} answered {status} with {text}"))?;
+            .with_context(|| format!("{path} answered {status} with {text}"))?;
         Ok((status, value))
     }
 
     /// Send one body through the wiring and then through the route, and
-    /// require the same status and the same answer.
+    /// require the same status and the same answer. A wiring is a POST. A
+    /// route to a read is a GET, and every other route is a POST.
     async fn alike(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let wiring = self.post(path, body).await?;
-        let route = self.post(&format!("{ROUTE_PREFIX}{path}"), body).await?;
+        let route = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
         anyhow::ensure!(
             wiring == route,
             "{path} answered differently\n wiring: {wiring:?}\n  route: {route:?}"
@@ -64,9 +89,21 @@ impl Paths {
 
     /// Send one body through the route only.
     async fn route(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        let (status, value) = self.post(&format!("{ROUTE_PREFIX}{path}"), body).await?;
+        let (status, value) = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
         anyhow::ensure!(status == 200, "route {path} answered {status}: {value}");
         Ok(value)
+    }
+}
+
+impl Paths {
+    /// A route to a read carries no request identity, so an item without
+    /// one is a read.
+    async fn by_kind(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
+        if body[0].get("request_id").is_none() {
+            self.get(path, body).await
+        } else {
+            self.post(path, body).await
+        }
     }
 }
 
@@ -215,28 +252,23 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     anyhow::ensure!(other != id, "a new key creates a new widget: {second}");
 
     // GET, QUERY and PROJECTION reads answer alike.
-    let got = paths
-        .alike("/widget/get", &json!([{"request_id": "get", "id": id}]))
-        .await?;
+    let got = paths.alike("/widget/get", &json!([{"id": id}])).await?;
     anyhow::ensure!(value(&got)?["id"] == id, "get reads the widget: {got}");
+    paths.alike("/widget/query", &json!([{}])).await?;
     paths
-        .alike("/widget/query", &json!([{"request_id": "query"}]))
-        .await?;
-    paths
-        .alike(
-            "/widget/list",
-            &json!([{"request_id": "list", "selector": {}}]),
-        )
+        .alike("/widget/list", &json!([{"selector": {}}]))
         .await?;
 
-    // A server-owned field is invalid input on both paths.
+    // A server-owned field is invalid input on both paths: the route input
+    // schema admits no member the caller does not own.
     let invalid = paths
-        .alike(
-            "/widget/get",
-            &json!([{"request_id": "invalid", "id": id, "edit_version": 1}]),
-        )
+        .alike("/widget/get", &json!([{"id": id, "edit_version": 1}]))
         .await?;
-    refusal(&invalid)?;
+    anyhow::ensure!(
+        invalid["error"]["code"] == "schema-invalid"
+            && invalid["error"]["data"]["pointer"] == "/0/edit_version",
+        "a server-owned field is refused by the route schema: {invalid}"
+    );
 
     // UPDATE. A stale revision is refused alike, and each path advances the
     // revision by one.
@@ -294,24 +326,11 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     let delete = |expected: i64| json!([{"request_id": "delete", "id": id, "expected_edit_version": expected.to_string()}]);
     refusal(&paths.alike("/widget/delete", &delete(version - 1)).await?)?;
     value(&paths.route("/widget/delete", &delete(version)).await?)?;
-    paths
-        .alike("/widget/get", &json!([{"request_id": "gone", "id": id}]))
-        .await?;
+    paths.alike("/widget/get", &json!([{"id": id}])).await?;
 
     // NO WALK. The projections have no wiring anywhere in this release.
-    value(
-        &paths
-            .route("/widget_maker/list", &json!([{"request_id": "makers"}]))
-            .await?,
-    )?;
-    value(
-        &paths
-            .route(
-                "/widget_maker/query",
-                &json!([{"request_id": "maker-query"}]),
-            )
-            .await?,
-    )?;
+    value(&paths.route("/widget_maker/list", &json!([{}])).await?)?;
+    value(&paths.route("/widget_maker/query", &json!([{}])).await?)?;
 
     application.shutdown().await?;
     Ok(())

@@ -6,6 +6,12 @@ const MINIMUM: usize = 1;
 const MAXIMUM: usize = 100;
 const COUNT_ERROR: &str = "operation input item count must be 1..=100";
 
+#[allow(dead_code)]
+pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
+    validate_count(input.len())?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRequest {
@@ -15,15 +21,15 @@ struct JsonRequest {
 pub(crate) fn decode(
     input: &str,
 ) -> Result<Vec<contract::LoadPurchaseOrderDetailItem>, CodecError> {
-    decode_envelope(input)?
+    decode_read_envelope(input)?
         .into_iter()
-        .map(|(request_id, body)| {
+        .map(|body| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::LoadPurchaseOrderDetailRequest {
                     purchase_order_id: request.purchase_order_id,
                 })
                 .map_err(|_| invalid("input"));
-            Ok(contract::LoadPurchaseOrderDetailItem { request_id, input })
+            Ok(contract::LoadPurchaseOrderDetailItem { input })
         })
         .collect()
 }
@@ -39,7 +45,6 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderDetailOutcome]) -> Str
         .iter()
         .map(|item| match &item.outcome {
             Ok(value) => json!({
-                "request_id": item.request_id,
                 "value": {
                     "id": value.id,
                     "purchase_order_number": value.purchase_order_number,
@@ -51,7 +56,6 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderDetailOutcome]) -> Str
                 }
             }),
             Err(error) => json!({
-                "request_id": item.request_id,
                 "error": error_value(error),
             }),
         })
@@ -121,10 +125,7 @@ where
             },
             Err(error) => Err(contract::LoadPurchaseOrderDetailError::InvalidInput(error)),
         };
-        output.push(contract::LoadPurchaseOrderDetailOutcome {
-            request_id: item.request_id,
-            outcome,
-        });
+        output.push(contract::LoadPurchaseOrderDetailOutcome { outcome });
     }
     output
 }

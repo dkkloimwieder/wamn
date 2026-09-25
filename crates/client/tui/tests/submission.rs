@@ -237,7 +237,7 @@ fn malformed_unknown_and_ambiguous_outcomes_never_become_editable_refusals() {
     ] {
         assert!(
             matches!(
-                classify(&contract, "intent-1", response(200, body.clone())),
+                classify(&contract, Some("intent-1"), response(200, body.clone())),
                 Evidence::Uncertain(_)
             ),
             "{body}"
@@ -246,7 +246,7 @@ fn malformed_unknown_and_ambiguous_outcomes_never_become_editable_refusals() {
     assert!(matches!(
         classify(
             &contract,
-            "intent-1",
+            Some("intent-1"),
             Ok(HttpResponse {
                 actor_labels: std::collections::BTreeMap::new(),
                 status: 200,
@@ -262,17 +262,17 @@ fn a_declared_transaction_refusal_requires_its_details_and_the_whole_route() {
     let body = json!([{"request_id":"intent-1", "error":{"code":"quantity_exceeds_remaining","detail":{"field":"quantity","id":"line-1"}}}]);
     let mut contract = contract(Replay::Claim);
     assert!(matches!(
-        classify(&contract, "intent-1", response(200, body.clone())),
+        classify(&contract, Some("intent-1"), response(200, body.clone())),
         Evidence::Refused(_)
     ));
     contract.direct = false;
     contract.replay = Replay::Unknown;
     assert!(matches!(
-        classify(&contract, "intent-1", response(200, body)),
+        classify(&contract, Some("intent-1"), response(200, body)),
         Evidence::Uncertain(_)
     ));
     assert!(matches!(
-        classify(&contract, "intent-1", denied()),
+        classify(&contract, Some("intent-1"), denied()),
         Evidence::Uncertain(_)
     ));
 }
@@ -347,7 +347,7 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
         assert!(matches!(
             classify(
                 &contract,
-                "intent-1",
+                Some("intent-1"),
                 response(status, json!({"error":{"code":code}}))
             ),
             Evidence::Refused(_)
@@ -355,7 +355,7 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
         assert!(matches!(
             classify(
                 &contract,
-                "intent-1",
+                Some("intent-1"),
                 response(
                     status,
                     json!({"error":{"code":code,"message":"downstream failure"}})
@@ -368,7 +368,7 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
         assert!(matches!(
             classify(
                 &contract,
-                "intent-1",
+                Some("intent-1"),
                 response(
                     400,
                     json!({"error":{"code":"schema-invalid","data":{"pointer":pointer}}})
@@ -386,7 +386,7 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
         assert!(matches!(
             classify(
                 &contract,
-                "intent-1",
+                Some("intent-1"),
                 response(400, json!({"error":{"code":"schema-invalid","data":data}}))
             ),
             Evidence::Uncertain(_)
@@ -395,7 +395,7 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
     assert!(matches!(
         classify(
             &contract,
-            "intent-1",
+            Some("intent-1"),
             response(
                 400,
                 json!({"error":{"code":"schema-invalid","message":"downstream failure","data":{"pointer":"/0"}}})
@@ -406,7 +406,7 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
     assert!(matches!(
         classify(
             &contract,
-            "intent-1",
+            Some("intent-1"),
             Ok(HttpResponse {
                 actor_labels: std::collections::BTreeMap::new(),
                 status: 413,
@@ -421,7 +421,7 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
 fn an_unknown_error_literal_remains_visible_without_becoming_a_refusal() {
     let evidence = classify(
         &contract(Replay::Claim),
-        "intent-1",
+        Some("intent-1"),
         response(
             200,
             json!([{"request_id":"intent-1","error":{"code":"new_literal","detail":{}}}]),
@@ -552,7 +552,7 @@ fn widget_update_validates_the_public_success_row_without_sql_bookkeeping_column
     assert!(matches!(
         classify(
             &contract,
-            "update-1",
+            Some("update-1"),
             response(
                 200,
                 json!([
@@ -570,7 +570,7 @@ fn widget_update_validates_the_public_success_row_without_sql_bookkeeping_column
     assert!(matches!(
         classify(
             &contract,
-            "update-1",
+            Some("update-1"),
             response(
                 200,
                 json!([
@@ -617,7 +617,7 @@ fn opaque_fields_preserve_rows_but_do_not_erase_known_result_cardinality() {
         assert_eq!(
             classify(
                 &contract,
-                "intent-1",
+                Some("intent-1"),
                 response(
                     200,
                     json!([
@@ -636,7 +636,7 @@ fn opaque_fields_preserve_rows_but_do_not_erase_known_result_cardinality() {
                 matches!(
                     classify(
                         &contract,
-                        "intent-1",
+                        Some("intent-1"),
                         response(
                             200,
                             json!([
@@ -657,7 +657,7 @@ fn opaque_fields_preserve_rows_but_do_not_erase_known_result_cardinality() {
         assert!(matches!(
             classify(
                 &contract,
-                "intent-1",
+                Some("intent-1"),
                 response(
                     200,
                     json!([
@@ -681,7 +681,7 @@ fn page_cursor_requires_its_declared_carrier_with_typed_or_opaque_rows() {
             assert_eq!(
                 classify(
                     &contract,
-                    "intent-1",
+                    Some("intent-1"),
                     response(
                         200,
                         json!([
@@ -705,7 +705,7 @@ fn page_cursor_requires_its_declared_carrier_with_typed_or_opaque_rows() {
             assert!(matches!(
                 classify(
                     &contract,
-                    "intent-1",
+                    Some("intent-1"),
                     response(
                         200,
                         json!([
@@ -728,7 +728,7 @@ fn unknown_cardinality_does_not_invent_object_or_collection_requirements() {
         assert_eq!(
             classify(
                 &contract,
-                "intent-1",
+                Some("intent-1"),
                 response(
                     200,
                     json!([
@@ -851,7 +851,11 @@ fn declared_partial_http_bytes_preserve_the_commit_and_disable_composed_replay()
     denied_after_commit["failed_outcome"] =
         json!({"code":"permission-denied","operation":"downstream"});
     assert!(matches!(
-        classify(&contract, "intent-1", response(403, denied_after_commit)),
+        classify(
+            &contract,
+            Some("intent-1"),
+            response(403, denied_after_commit)
+        ),
         Evidence::PartiallyCompleted { .. }
     ));
 }
@@ -907,28 +911,28 @@ fn partial_bytes_require_the_declared_shape_and_one_matching_successful_commit()
         let mut undeclared = contract;
         undeclared.partial_schema = schema;
         assert!(matches!(
-            classify(&undeclared, "intent-1", response(500, good.clone())),
+            classify(&undeclared, Some("intent-1"), response(500, good.clone())),
             Evidence::Uncertain(_)
         ));
     }
     for status in [200, 302] {
         assert!(matches!(
-            classify(&contract, "intent-1", response(status, good.clone())),
+            classify(&contract, Some("intent-1"), response(status, good.clone())),
             Evidence::Uncertain(_)
         ));
     }
     assert!(matches!(
-        classify(&contract, "", response(500, good)),
+        classify(&contract, Some(""), response(500, good)),
         Evidence::Uncertain(_)
     ));
     assert!(matches!(
-        classify(&contract, "intent-1", lost()),
+        classify(&contract, Some("intent-1"), lost()),
         Evidence::Uncertain(_)
     ));
     assert!(matches!(
         classify(
             &contract,
-            "intent-1",
+            Some("intent-1"),
             response(500, json!({"error":{"code":"timeout"}}))
         ),
         Evidence::Uncertain(_)
@@ -943,7 +947,7 @@ fn composed_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_un
     value["stored"] = json!({"container":"labels","key":"batch-label"});
     let body = json!([{"request_id":"intent-1","value":value}]);
     assert_eq!(
-        classify(&contract, "intent-1", response(200, body.clone())),
+        classify(&contract, Some("intent-1"), response(200, body.clone())),
         Evidence::Succeeded {
             value: value.clone(),
             opaque: false
@@ -958,7 +962,7 @@ fn composed_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_un
         *malformed.pointer_mut(path).unwrap() = json!(7);
         assert!(
             matches!(
-                classify(&contract, "intent-1", response(200, malformed)),
+                classify(&contract, Some("intent-1"), response(200, malformed)),
                 Evidence::Uncertain(_)
             ),
             "{path}"
@@ -968,14 +972,14 @@ fn composed_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_un
         let mut malformed = body.clone();
         malformed[0]["value"]["edit_version"] = revision;
         assert!(matches!(
-            classify(&contract, "intent-1", response(200, malformed)),
+            classify(&contract, Some("intent-1"), response(200, malformed)),
             Evidence::Uncertain(_)
         ));
     }
     assert!(matches!(
         classify(
             &contract,
-            "intent-1",
+            Some("intent-1"),
             response(
                 200,
                 json!([{
@@ -991,7 +995,7 @@ fn composed_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_un
     wamn_client::request::validate_schema(&schema, &refusal)
         .expect("palette error items pass through the declared normal envelope");
     assert!(matches!(
-        classify(&contract, "intent-1", response(200, refusal)),
+        classify(&contract, Some("intent-1"), response(200, refusal)),
         Evidence::Uncertain(_)
     ));
 }
@@ -1039,7 +1043,7 @@ fn malformed_conflict_detail_does_not_invent_revisions_or_render_arbitrary_field
     ] {
         let evidence = classify(
             &contract,
-            "intent-1",
+            Some("intent-1"),
             response(
                 200,
                 json!([{
@@ -1058,7 +1062,7 @@ fn malformed_conflict_detail_does_not_invent_revisions_or_render_arbitrary_field
     }
     let Evidence::Uncertain(reason) = classify(
         &contract,
-        "intent-1",
+        Some("intent-1"),
         response(
             200,
             json!([{

@@ -10,6 +10,7 @@
 
 export * from "./wire.js";
 export * from "./transport.js";
+export * from "./readQuery.js";
 export * from "./supplied.js";
 export * from "./page.js";
 export * from "./draft.js";

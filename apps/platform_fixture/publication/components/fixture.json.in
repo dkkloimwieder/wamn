@@ -85,10 +85,9 @@
           "maxItems": 100,
           "items": {
             "type": "object",
-            "required": ["request_id", "selector"],
+            "required": ["selector"],
             "additionalProperties": false,
             "properties": {
-              "request_id": {"type": "string", "minLength": 1},
               "selector": {},
               "maker_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
             }
@@ -174,10 +173,9 @@
           "maxItems": 100,
           "items": {
             "type": "object",
-            "required": ["request_id"],
             "additionalProperties": false,
             "properties": {
-              "request_id": {"type": "string", "minLength": 1}
+              
             }
           }
         }

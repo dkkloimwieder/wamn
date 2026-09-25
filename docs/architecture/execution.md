@@ -20,6 +20,14 @@ Component membership alone grants no permission to call an operation.
 An attachment with auth policy `none` has no principal, so it cannot write.
 If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release mint](../../crates/control/lib/src/publish_release/components.rs) refuses it.
 
+The method of a route follows from the kind of its operation, and no author writes it.
+Publish writes GET for a route to a `get`, `query` or `projection` operation, and POST for every other route and every wiring.
+A GET carries exactly one request item in its query string, and the router reads no body for it.
+Each top-level member is one parameter, and its value is the compact JSON text of the member.
+Parameters stand in byte order of their names, and every byte outside the RFC 3986 unreserved set is escaped.
+The router refuses any other spelling, and a request target longer than 8 KiB, with HTTP 400 and the code `invalid-target`.
+The [read query codec](../../apps/platform/execution/contract/src/read_query.rs) owns this encoding, and its fixture vectors bind the TypeScript encoder to it.
+
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 
@@ -145,7 +153,8 @@ That refusal carries SQLSTATE `55000` and the message `actor-required`, as the s
 ## Results and effects
 
 A wiring edge carries the declared route envelope.
-Items retain their `request_id` and contain either `value` or `error`.
+Items contain either `value` or `error`.
+A write item retains its `request_id`. A read item carries none, and its outcomes match its items by position.
 Each node consumes that envelope and emits its declared output port.
 Connected ports require identical canonical schema digests.
 A target with multiple input ports requires an explicit `to_port`.

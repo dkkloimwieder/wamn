@@ -985,11 +985,6 @@
       "input": {
         "fields": [
           {
-            "path": "request_id",
-            "type": "text",
-            "nullable": false
-          },
-          {
             "path": "purchase_order_id",
             "type": "uuid",
             "nullable": false,
@@ -1219,11 +1214,6 @@
       "input": {
         "fields": [
           {
-            "path": "request_id",
-            "type": "text",
-            "nullable": false
-          },
-          {
             "path": "id",
             "type": "uuid",
             "nullable": false,
@@ -1426,13 +1416,7 @@
       "permission": "location.list",
       "connection": "postgres",
       "input": {
-        "fields": [
-          {
-            "path": "request_id",
-            "type": "text",
-            "nullable": false
-          }
-        ]
+        "fields": []
       },
       "result": {
         "class": "bounded_list",

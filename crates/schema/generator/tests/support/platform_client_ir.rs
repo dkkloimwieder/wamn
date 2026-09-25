@@ -67,7 +67,7 @@ impl ReleaseFiles {
                         "wiring-id": format!("widget-{index}"), "wiring-version": 1,
                         "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "definition": {"id": format!("widget-{index}"), "kind": "http",
-                            "route": {"method": route.method, "path": route.template}},
+                            "route": {"path": route.template}},
                         "auth-policy": {"modes": ["pat"]},
                         "registered-operation": operation
                     }),
@@ -181,8 +181,10 @@ fn every_platform_operation_has_constructible_input_and_typed_result() {
     let ir = fixture::client_release();
     for model in &ir.models {
         for operation in &model.operations {
+            // A projection can have no input: a read carries no request
+            // identity, which was the only member of `widget_maker.list`.
             assert!(
-                !operation.input_fields.is_empty(),
+                !operation.input_fields.is_empty() || operation.kind == "projection",
                 "{}/{}",
                 model.name,
                 operation.name
@@ -209,8 +211,23 @@ fn every_platform_operation_has_constructible_input_and_typed_result() {
 fn platform_release_routes_are_exact_and_contracts_alone_invent_none() {
     let released = fixture::client_release();
     let get = operation(&released, "widget", "get");
-    assert_eq!(get.route.as_ref().unwrap().method, "POST");
+    assert_eq!(get.route.as_ref().unwrap().method, "GET");
     assert_eq!(get.route.as_ref().unwrap().template, "/widget/get");
+    let methods = released
+        .models
+        .iter()
+        .flat_map(|model| &model.operations)
+        .filter_map(|operation| {
+            let route = operation.route.as_ref()?;
+            let read = matches!(operation.kind.as_str(), "get" | "query" | "projection");
+            Some((operation.operation.as_str(), read, route.method.as_str()))
+        })
+        .collect::<Vec<_>>();
+    assert!(methods.iter().any(|(_, read, _)| *read));
+    assert!(methods.iter().any(|(_, read, _)| !*read));
+    for (operation, read, method) in methods {
+        assert_eq!(method, if read { "GET" } else { "POST" }, "{operation}");
+    }
     assert_eq!(
         released
             .models
@@ -235,7 +252,7 @@ fn platform_release_routes_are_exact_and_contracts_alone_invent_none() {
 }
 
 #[test]
-fn attachment_routes_refuse_ambiguity_and_unnormalized_methods() {
+fn attachment_routes_refuse_ambiguity_and_an_authored_method() {
     let mut files = ReleaseFiles::new();
     let (id, mut alias) = files
         .published
@@ -252,10 +269,10 @@ fn attachment_routes_refuse_ambiguity_and_unnormalized_methods() {
     assert!(refusal.to_string().contains("/v2/widget/get"), "{refusal}");
 
     files.published.remove(&format!("{id}-alias"));
-    files.published.get_mut(&id).unwrap()["definition"]["route"]["method"] = json!("post");
-    let refusal = files.project().expect_err("a lowercase method refuses");
+    files.published.get_mut(&id).unwrap()["definition"]["route"]["method"] = json!("GET");
+    let refusal = files.project().expect_err("an authored method refuses");
     assert_eq!(refusal.kind(), ClientIrErrorKind::UnnormalizedRoute);
-    assert!(refusal.to_string().contains("POST"), "{refusal}");
+    assert!(refusal.to_string().contains("route.method"), "{refusal}");
 }
 
 #[test]

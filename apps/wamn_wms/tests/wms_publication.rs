@@ -194,7 +194,8 @@ fn package_owned_inputs_declare_the_exact_shipped_route_closure() {
             attachment.auth_policy,
             serde_json::json!({"modes": ["pat", "session"]})
         );
-        assert_eq!(attachment.definition["route"]["method"], "POST");
+        // No author writes a method: publish derives it from the operation kind.
+        assert!(attachment.definition["route"].get("method").is_none());
         assert_eq!(attachment.definition["route"]["path"], operation.route);
         assert_eq!(
             attachment.definition["raw-body-bytes"]["maximum"],

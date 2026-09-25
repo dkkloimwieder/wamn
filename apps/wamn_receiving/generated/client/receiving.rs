@@ -143,8 +143,6 @@ pub struct ReceivingLoadPurchaseOrderHistoryRequest {
     pub id: uuid::Uuid,
     /// `int32`
     pub limit: i32,
-    /// `text`
-    pub request_id: String,
 }
 
 /// Result of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
@@ -185,12 +183,6 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "limit",
         type_name: "int32",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "text",
         nullable: false,
         values: &[],
     },
@@ -278,18 +270,6 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA:
         field: FieldDescriptor {
             path: "limit",
             type_name: "int32",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "text",
             nullable: false,
             values: &[],
         },
@@ -426,7 +406,7 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ERRORS: &[&str] = &[
 #[must_use]
 pub fn load_purchase_order_history_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/receiving/load_purchase_order_history".to_owned(),
     }
 }
@@ -455,8 +435,6 @@ pub async fn load_purchase_order_history(
 pub struct ReceivingLoadReceiptScreenRequest {
     /// `uuid`
     pub purchase_order_id: uuid::Uuid,
-    /// `text`
-    pub request_id: String,
 }
 
 /// Result of `wamn-receiving:receiving/load-receipt-screen@1.0.0`.
@@ -489,20 +467,12 @@ pub struct ReceivingLoadReceiptScreenResult {
 }
 
 /// Input descriptors for `wamn-receiving:receiving/load-receipt-screen@1.0.0`.
-pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT: &[FieldDescriptor] = &[
-    FieldDescriptor {
-        path: "purchase_order_id",
-        type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "request_id",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-];
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
+    path: "purchase_order_id",
+    type_name: "uuid",
+    nullable: false,
+    values: &[],
+}];
 
 /// Result descriptors for `wamn-receiving:receiving/load-receipt-screen@1.0.0`.
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT: &[FieldDescriptor] = &[
@@ -580,8 +550,8 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
-pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
-    wamn_client::descriptor::FieldSchema {
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
+    &[wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "purchase_order_id",
             type_name: "uuid",
@@ -592,20 +562,7 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT_SCHEMA: &[wamn_client::descriptor:
         minimum: None,
         maximum: None,
         children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "request_id",
-            type_name: "text",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-];
+    }];
 
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
@@ -781,7 +738,7 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_ERRORS: &[&str] = &[
 #[must_use]
 pub fn load_receipt_screen_route() -> RouteMetadata {
     RouteMetadata {
-        method: "POST".to_owned(),
+        method: "GET".to_owned(),
         template: "/receiving/load_receipt_screen".to_owned(),
     }
 }

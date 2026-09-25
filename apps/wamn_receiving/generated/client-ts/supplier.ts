@@ -89,15 +89,12 @@ export interface SupplierQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
-  /** `string` */
-  requestId: string;
 }
 
 /** What `wamn-receiving:supplier/query@1.0.0` calls its input members. */
 export const SUPPLIER_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
-  "request_id": "requestId",
 };
 
 /** One row of `wamn-receiving:supplier/query@1.0.0`. */
@@ -139,7 +136,7 @@ export const SUPPLIER_QUERY_RESULT_FIELDS: FieldMap = {
  */
 export const SUPPLIER_QUERY_ROUTE: OperationRoute = {
   operation: "wamn-receiving:supplier/query@1.0.0",
-  method: "POST",
+  method: "GET",
   template: "/supplier/query",
   freshOnly: false,
   contract: {
