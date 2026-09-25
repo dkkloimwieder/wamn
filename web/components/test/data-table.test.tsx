@@ -1,5 +1,5 @@
 /**
- * The DataTable renders the load state it is given (wamn-xtz2.1).
+ * The DataTable renders the load state it is given (wamn-xtz2.1, wamn-xtz2.2).
  *
  * The document has no layout, so the test gives the scroll box and each row
  * the height a browser would measure, as `window.test.tsx` does.
@@ -48,7 +48,14 @@ const rows = (count: number): Row[] =>
     code: `c${String(index).padStart(4, "0")}`,
   }));
 
-function table(state: { rows: Row[]; fullyRead: boolean; busy: boolean }, onCapChange = () => {}) {
+interface Shown {
+  readonly rows: Row[];
+  readonly fullyRead: boolean;
+  readonly busy: boolean;
+  readonly refusal?: string;
+}
+
+function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
   render(() => (
     <DataTable
       columns={COLUMNS}
@@ -58,6 +65,8 @@ function table(state: { rows: Row[]; fullyRead: boolean; busy: boolean }, onCapC
       busy={state.busy}
       cap={1000}
       onCapChange={onCapChange}
+      refusal={state.refusal ?? null}
+      onRefresh={onRefresh}
       startedAt={new Date(0)}
       endedAt={state.busy ? null : new Date(1000)}
     />
@@ -107,5 +116,21 @@ describe("the data table", () => {
     expect(screen.queryByText(MESSAGE)).toBeNull();
     expect(screen.getByText(/^started /)).toBeDefined();
     expect(screen.queryByText(/^ended /)).toBeNull();
+  });
+
+  it("calls onRefresh from its control, which is disabled while busy", () => {
+    const onRefresh = vi.fn();
+    table({ rows: rows(3), fullyRead: true, busy: false }, undefined, onRefresh);
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    cleanup();
+    table({ rows: [], fullyRead: false, busy: true });
+    expect(screen.getByRole("button", { name: "refresh" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows a refusal in place of the empty message, and not the message", () => {
+    table({ rows: [], fullyRead: false, busy: false, refusal: "You are not signed in." });
+    expect(screen.getByText("You are not signed in.")).toBeDefined();
+    expect(screen.queryByText(MESSAGE)).toBeNull();
   });
 });

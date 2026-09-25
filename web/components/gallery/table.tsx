@@ -1,16 +1,86 @@
 /**
- * The DataTable over rows generated in memory, at 100, 1000 and 10,000 rows.
+ * The DataTable over the load state of `@wamn/web-runtime`.
  *
- * Each state owns its load, as the load-state source will: a new cap starts a
- * new load, which regenerates the rows and sets the times. A set larger than
- * the cap loads the cap and is not fully read.
+ * The seam states read the fixture's widget query through a stub transport, at
+ * 3 and 100 rows. The stub refuses a limit above the page maximum, as the
+ * server does, so a load reads one page of at most that many rows. The 1000
+ * and 10,000 row states generate their rows in memory, because one page
+ * cannot hold them. Both sources hand their result to the same load state.
  */
 
 import { createSignal, For, type JSX } from "solid-js";
 
 import { DataTable, type DataTableColumn } from "@wamn/ui";
+import {
+  emptyLoad,
+  finishLoad,
+  loadLimit,
+  startLoad,
+  type LoadPage,
+  type LoadState,
+  type Outcome,
+  type Transport,
+} from "@wamn/web-runtime";
 
+import { query, type WidgetQueryRow } from "../fixture/widget.js";
+import { page } from "../stubs/index.js";
 import { Section, State } from "./section.js";
+
+/** The page maximum the fixture contract declares, passed by hand. */
+const PAGE_MAXIMUM = 100;
+
+/** The default cap of the platform table. */
+const DEFAULT_CAP = 1000;
+
+/** The time a generated load takes, so the loading state shows. */
+const LOAD_MS = 300;
+
+const WIDGET_COLUMNS: readonly DataTableColumn<WidgetQueryRow>[] = [
+  { field: "code", label: "code", type: "text" },
+  { field: "note", label: "note", type: "text" },
+  { field: "editVersion", label: "edit version", type: "int64" },
+  { field: "createdAt", label: "created at", type: "timestamptz" },
+  { field: "id", label: "id", type: "uuid" },
+];
+
+/** A transport that answers the widget query from a set of `size` widgets. */
+function widgetStub(size: number): Transport {
+  const ids = Array.from(
+    { length: size },
+    (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+  );
+  return {
+    invoke: (request) => {
+      const item = request.items[0] as { readonly limit?: number } | undefined;
+      const limit = item?.limit ?? PAGE_MAXIMUM;
+      if (limit < 1 || limit > PAGE_MAXIMUM) {
+        return Promise.resolve({ status: "refused", code: "invalid_input", detail: null });
+      }
+      return new Promise((resolve) =>
+        setTimeout(
+          () => resolve(page(ids.slice(0, limit), size > limit ? "more" : null)),
+          LOAD_MS,
+        ),
+      );
+    },
+  };
+}
+
+/** One table that loads the widget query through the stub, up to its cap. */
+function SeamTable(props: { size: number }): JSX.Element {
+  const transport = widgetStub(props.size);
+  const [state, setState] = createSignal<LoadState<WidgetQueryRow>>(emptyLoad(DEFAULT_CAP));
+
+  async function load(cap: number) {
+    const next = startLoad(state(), cap);
+    setState(next);
+    const outcome = await query(transport, [{ limit: loadLimit(next.cap, PAGE_MAXIMUM) }]);
+    setState((current) => finishLoad(current, next.generation, outcome, "id"));
+  }
+  void load(DEFAULT_CAP);
+
+  return <LoadedTable columns={WIDGET_COLUMNS} state={state()} load={load} />;
+}
 
 /** One generated pallet row. */
 interface PalletRow {
@@ -21,19 +91,13 @@ interface PalletRow {
   readonly createdAt: string;
 }
 
-const COLUMNS: readonly DataTableColumn<PalletRow>[] = [
+const PALLET_COLUMNS: readonly DataTableColumn<PalletRow>[] = [
   { field: "code", label: "code", type: "text" },
   { field: "quantity", label: "quantity", type: "int32" },
   { field: "weight", label: "weight", type: "numeric" },
   { field: "createdAt", label: "created at", type: "timestamptz" },
   { field: "id", label: "id", type: "uuid" },
 ];
-
-/** The time a generated load takes, so the loading state shows. */
-const LOAD_MS = 300;
-
-/** The default cap of the platform table. */
-const DEFAULT_CAP = 1000;
 
 function pallets(count: number): PalletRow[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -45,50 +109,67 @@ function pallets(count: number): PalletRow[] {
   }));
 }
 
-/** One table over a set of `size` rows, loaded up to its cap. */
-function GeneratedTable(props: { size: number }): JSX.Element {
-  const [cap, setCap] = createSignal(DEFAULT_CAP);
-  const [rows, setRows] = createSignal<readonly PalletRow[]>([]);
-  const [busy, setBusy] = createSignal(false);
-  const [startedAt, setStartedAt] = createSignal<Date | null>(null);
-  const [endedAt, setEndedAt] = createSignal<Date | null>(null);
+/** One table over a set of `size` rows generated in memory, loaded up to its cap. */
+function MemoryTable(props: { size: number }): JSX.Element {
+  const [state, setState] = createSignal<LoadState<PalletRow>>(emptyLoad(DEFAULT_CAP));
 
-  function load(next: number) {
-    setCap(next);
-    setBusy(true);
-    setStartedAt(new Date());
-    setEndedAt(null);
+  function load(cap: number) {
+    const next = startLoad(state(), cap);
+    setState(next);
     setTimeout(() => {
-      setRows(pallets(Math.min(props.size, next)));
-      setEndedAt(new Date());
-      setBusy(false);
+      const outcome: Outcome<LoadPage<PalletRow>> = {
+        status: "completed",
+        value: {
+          item: pallets(Math.min(props.size, next.cap)),
+          nextCursor: props.size > next.cap ? "more" : null,
+        },
+      };
+      setState((current) => finishLoad(current, next.generation, outcome, "id"));
     }, LOAD_MS);
   }
   load(DEFAULT_CAP);
 
+  return <LoadedTable columns={PALLET_COLUMNS} state={state()} load={load} />;
+}
+
+/** The DataTable over one load state. A refresh loads again at the cap in force. */
+function LoadedTable<Row extends { readonly id: string }>(props: {
+  columns: readonly DataTableColumn<Row>[];
+  state: LoadState<Row>;
+  load: (cap: number) => void;
+}): JSX.Element {
   return (
     <DataTable
-      columns={COLUMNS}
+      columns={props.columns}
       rowId="id"
-      rows={rows()}
-      fullyRead={props.size <= cap()}
-      busy={busy()}
-      cap={cap()}
-      onCapChange={load}
-      startedAt={startedAt()}
-      endedAt={endedAt()}
+      rows={props.state.rows}
+      fullyRead={props.state.fullyRead}
+      busy={props.state.busy}
+      refusal={props.state.refusal}
+      cap={props.state.cap}
+      onCapChange={props.load}
+      onRefresh={() => props.load(props.state.cap)}
+      startedAt={props.state.startedAt}
+      endedAt={props.state.endedAt}
     />
   );
 }
 
 export function TableSections(): JSX.Element {
   return (
-    <Section title="Data table" name="DataTable">
+    <Section title="Data table" name="DataTable, LoadState">
       <div class="flex flex-col gap-6">
-        <For each={[100, 1000, 10000]}>
+        <For each={[3, 100]}>
           {(size) => (
-            <State name={`${size} rows`}>
-              <GeneratedTable size={size} />
+            <State name={`${size} rows through the load state, over the stub transport`}>
+              <SeamTable size={size} />
+            </State>
+          )}
+        </For>
+        <For each={[1000, 10000]}>
+          {(size) => (
+            <State name={`${size} rows generated in memory`}>
+              <MemoryTable size={size} />
             </State>
           )}
         </For>

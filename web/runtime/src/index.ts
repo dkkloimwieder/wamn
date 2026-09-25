@@ -13,6 +13,7 @@ export * from "./transport.js";
 export * from "./readQuery.js";
 export * from "./supplied.js";
 export * from "./page.js";
+export * from "./load.js";
 export * from "./draft.js";
 export * from "./group.js";
 export * from "./cell.js";

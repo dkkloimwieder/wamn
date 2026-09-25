@@ -14,6 +14,7 @@ import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { type JSX, Show } from "solid-js";
 
 import { DataGrid, DataGridContainer } from "../blocks/data-grid";
+import { Button } from "../components/ui/button";
 import { TextField } from "../fields";
 import { gridFeatures, type GridFeatures } from "../grid";
 import { WindowedTable } from "../windowed-table";
@@ -56,6 +57,10 @@ export interface DataTableProps<TRow extends object> {
   readonly startedAt: Date | null;
   /** When the load ended, or null while it runs. */
   readonly endedAt: Date | null;
+  /** Why the last load did not complete, or null. */
+  readonly refusal: string | null;
+  /** Called when the operator asks for a new load of the same scope. */
+  readonly onRefresh: () => void;
 }
 
 export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX.Element {
@@ -80,19 +85,24 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   return (
     <section data-slot="data-table" class="flex min-w-0 flex-col gap-4">
       <div data-slot="data-table-toolbar" class="flex flex-wrap items-end justify-between gap-4">
-        <div class="w-32">
-          <TextField
-            label="cap"
-            type="number"
-            min={1}
-            value={String(props.cap)}
-            onChange={(value) => {
-              const cap = Number(value);
-              if (Number.isInteger(cap) && cap > 0) {
-                props.onCapChange(cap);
-              }
-            }}
-          />
+        <div class="flex items-end gap-2">
+          <div class="w-32">
+            <TextField
+              label="cap"
+              type="number"
+              min={1}
+              value={String(props.cap)}
+              onChange={(value) => {
+                const cap = Number(value);
+                if (Number.isInteger(cap) && cap > 0) {
+                  props.onCapChange(cap);
+                }
+              }}
+            />
+          </div>
+          <Button type="button" variant="outline" disabled={props.busy} onClick={() => props.onRefresh()}>
+            refresh
+          </Button>
         </div>
         <div role="status" class="flex flex-col items-end gap-1 text-sm text-muted-foreground">
           <Show when={props.startedAt}>
@@ -102,12 +112,17 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           <Show when={props.busy}>
             <p>Loading...</p>
           </Show>
-          <Show when={!props.busy && !props.fullyRead}>
+          <Show when={!props.busy && !props.fullyRead && props.refusal === null}>
             <p class="text-foreground">Full dataset cannot be loaded</p>
           </Show>
         </div>
       </div>
-      <DataGrid table={table} recordCount={props.rows.length} isLoading={props.busy}>
+      <DataGrid
+        table={table}
+        recordCount={props.rows.length}
+        isLoading={props.busy}
+        emptyMessage={props.refusal}
+      >
         <DataGridContainer>
           <WindowedTable />
         </DataGridContainer>
