@@ -73,15 +73,15 @@ The demo writes the environment into the address fragment, so a reload renews th
 
 ## 5. Issues
 
-Issues 1 to 3 are filed. Each next issue is scoped after the owner reviews the one before it.
+Epic 18 (`wamn-d0zc`) closed after issue 3, by owner ruling of 2026-09-25, with WMS usable on the shell. Issues 4 and 5 remain open as their own issues. Each next issue is scoped after the owner reviews the one before it.
 
 1. `wamn-d0zc.1`: the shell package and the WMS application. Sign in and sign out, the layout with a sidebar and a header, one route for each WMS table screen, a not-found route, and the `/api` prefix. Component tests on a stub transport.
 2. `wamn-d0zc.2`: WMS record pages. A table row opens `/<path>/<id>`, and the page mounts the get detail from the key in the address.
 3. `wamn-d0zc.3`: WMS command forms on their own routes, opened from a table action, a row or a record page, and returning to the opener when they complete.
-4. Receiving on the shell.
-5. Delete `web/demo`, and move its run instructions and seed notes to the applications.
+4. `wamn-xvb5`: Receiving on the shell.
+5. `wamn-defe`: delete `web/demo`, and move its run instructions and seed notes to the applications.
 
-The epic is done when WMS and Receiving run every generated component from the shell against a local stack at the 1000 seed, and `web/demo` is gone.
+The plan is done when WMS and Receiving run every generated component from the shell against a local stack at the 1000 seed, and `web/demo` is gone.
 
 ## 6. Out
 
