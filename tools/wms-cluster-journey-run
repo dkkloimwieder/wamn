@@ -97,15 +97,19 @@ case "$action" in
     fi
     ;;
   remove)
-    work=${3:?work directory}
+    # Without the work directory, as after a killed run, this removes the
+    # cluster and its containers, and skips the kubeconfig and the registry.
+    work=${3:-}
     status=0
-    kind delete cluster --name "$cluster" --kubeconfig "$work/kubeconfig" || status=$?
+    kubeconfig=()
+    [[ -z $work ]] || kubeconfig=(--kubeconfig "$work/kubeconfig")
+    kind delete cluster --name "$cluster" "${kubeconfig[@]}" || status=$?
     for suffix in postgres registry nats minio demo-proxy; do
       if docker container inspect "$cluster-$suffix" >/dev/null 2>&1; then
         docker rm --force --volumes "$cluster-$suffix" || status=$?
       fi
     done
-    if [[ -f $work/native-registry-owned ]]; then
+    if [[ -n $work && -f $work/native-registry-owned ]]; then
       "$(dirname -- "${BASH_SOURCE[0]}")/delivery-owned" remove-native "$cluster" "$work" || status=$?
     fi
     if [[ -n ${4:-} ]] && docker image inspect "$4" >/dev/null 2>&1; then

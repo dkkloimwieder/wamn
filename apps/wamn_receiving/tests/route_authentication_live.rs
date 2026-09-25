@@ -1,5 +1,6 @@
 //! Receiving application scenarios over real platform adapters.
 
+#[cfg(feature = "cluster")]
 mod cluster;
 #[path = "receiving_command_histories_live.rs"]
 mod command_histories;

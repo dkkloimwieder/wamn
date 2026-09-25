@@ -25,11 +25,12 @@ It runs the ignored tests whose full names contain `<test>`, one test at a time,
 Each command below runs its case only for a change set that selects the package of that case.
 If the selected packages hold no matching ignored test, the command fails and names the filter.
 On an unchanged tree, add `--base <revision>` with a revision before a change to the package.
+The cluster tests compile only with the `cluster` feature of their package, and `tools/test-changes --cluster` turns it on.
 You can also run the case through Cargo:
 
 ```bash
-cargo test --locked --offline -p wamn-receiving-tests --lib <test> -- --ignored --test-threads=1
-cargo test --locked --offline -p wamn-wms-tests --lib <test> -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib <test> -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-wms-tests --features cluster --lib <test> -- --ignored --test-threads=1
 ```
 
 ### `[RECEIVING-CLUSTER-JOURNEY]` Receiving application tests
@@ -50,7 +51,7 @@ A stage that fails runs again in minutes, without a new build or cluster.
 Run the setup stage first. It prints `WAMN_RECEIVING_CLUSTER=<name>` and keeps the cluster:
 
 ```bash
-cargo test --locked --offline -p wamn-receiving-tests --lib \
+cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
   route_authentication_live::cluster::stages::setup_stage -- --exact --ignored --nocapture
 ```
 
@@ -58,11 +59,11 @@ Then run the materializer, startup, and outage stages in any order, each as ofte
 
 ```bash
 export WAMN_RECEIVING_CLUSTER=<name>
-cargo test --locked --offline -p wamn-receiving-tests --lib \
+cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
   route_authentication_live::cluster::stages::materializer_stage -- --exact --ignored
-cargo test --locked --offline -p wamn-receiving-tests --lib \
+cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
   route_authentication_live::cluster::stages::startup_stage -- --exact --ignored
-cargo test --locked --offline -p wamn-receiving-tests --lib \
+cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
   route_authentication_live::cluster::stages::outage_stage -- --exact --ignored
 ```
 
@@ -77,7 +78,7 @@ It refuses when a production path changed since the setup stage.
 Remove the cluster, its containers, its private files, and its image tags with the teardown stage:
 
 ```bash
-cargo test --locked --offline -p wamn-receiving-tests --lib \
+cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
   route_authentication_live::cluster::stages::teardown_stage -- --exact --ignored
 ```
 
@@ -102,7 +103,7 @@ Build the web files first, then pass their directory:
 ```bash
 pnpm --dir apps/wamn_receiving/web run build
 WAMN_EDGE_WEB_DIST=$PWD/apps/wamn_receiving/web/dist \
-  cargo test --locked --offline -p wamn-receiving-tests --lib \
+  cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
   route_authentication_live::cluster::edge_case::receiving_through_the_edge -- --exact --ignored --nocapture
 ```
 
@@ -134,7 +135,7 @@ To use the WMS routes from a browser, set `WAMN_JOURNEY_HOLD_SECONDS` on the rel
 This exact command runs only that case:
 
 ```bash
-WAMN_JOURNEY_HOLD_SECONDS=3600 cargo test --locked --offline -p wamn-wms-tests --lib \
+WAMN_JOURNEY_HOLD_SECONDS=3600 cargo test --locked --offline -p wamn-wms-tests --features cluster --lib \
   cluster::released_wms_routes -- --exact --ignored --nocapture
 ```
 

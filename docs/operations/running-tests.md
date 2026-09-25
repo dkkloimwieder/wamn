@@ -266,12 +266,10 @@ No permanent archive or result-only commit is required, except the sweep log of 
 
 Workspace sweeps require an explicit user request.
 Do not restart a stopped sweep or start broad runs at cleanup boundaries.
-If the user requests a workspace sweep, use the retained command.
-It excludes the three crates that hold the cluster tests (owner rule, `wamn-e5in.10`):
+If the user requests a workspace sweep, use the retained command:
 
 ```bash
-cargo test --workspace --exclude wamn-receiving-tests --exclude wamn-wms-tests \
-  --exclude wamn-integration-tests --locked --offline --features wamn-ctl/ops \
+cargo test --workspace --locked --offline --features wamn-ctl/ops \
   --no-fail-fast -- --include-ignored --nocapture --test-threads=1 \
   > "$WAMN_RESULTS/workspace.log" 2>&1
 ```
@@ -279,9 +277,8 @@ cargo test --workspace --exclude wamn-receiving-tests --exclude wamn-wms-tests \
 Record its exit status before running another command.
 Do not pipe the command through `tail` or another output filter.
 `--workspace` selects all root members, including members outside Cargo's defaults.
-`--exclude` skips `wamn-receiving-tests`, `wamn-wms-tests` and `wamn-integration-tests`, which hold the cluster tests.
-Their other tests do not run either, until `wamn-idmi` lets a cluster test run only when a caller names it.
 `--features wamn-ctl/ops` builds the targets that require the `ops` feature.
+The command does not turn on the `cluster` feature of `wamn-receiving-tests` and `wamn-wms-tests`, so it compiles no kind cluster test and starts no cluster.
 `--no-fail-fast` retains later binary results after a failure.
 
 `--include-ignored` also selects the [ignored tests](#ignored-tests), and each one fails when a declared prerequisite is missing.
@@ -290,6 +287,17 @@ Their other tests do not run either, until `wamn-idmi` lets a cluster test run o
 A cluster stage runs alone, and only when the epic changed a file under the cluster tests.
 Before a cluster stage starts, tell the other sessions on the machine.
 Two cluster runs at the same time overload the machine, and both fail.
+The cluster stage command is:
+
+```bash
+cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
+  --features wamn-receiving-tests/cluster,wamn-wms-tests/cluster --lib cluster:: \
+  -- --include-ignored --skip stages:: --nocapture --test-threads=1 \
+  > "$WAMN_RESULTS/cluster.log" 2>&1
+```
+
+The filter `cluster::` selects the cluster journeys and the plain tests of the cluster modules, which also compile only with the feature.
+`--skip stages::` leaves out the five [staged Receiving tests](cluster-tests.md#receiving-cluster-journey-receiving-application-tests), because their setup stage keeps its cluster for a person to remove.
 
 Record the start and end time of each run, and time its build apart from its tests.
 
@@ -690,6 +698,19 @@ cd apps/wamn_receiving/web && pnpm run check
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.
 Inspect their recorded cleanup result and remaining resource names before reporting completion.
 For manual fixtures, remove only the exact container, cluster, image, volume, and private directory that your run created.
+
+A killed cluster test (SIGKILL) does not run its cleanup, so its cluster and containers stay.
+After a killed run, find the cluster that your run created with `kind get clusters`.
+Its name starts with `wamn-receiving-` or `wamn-wms-`.
+Remove it with the script of its application:
+
+```bash
+tools/receiving-cluster-journey-run remove <cluster>
+tools/wms-cluster-journey-run remove <cluster>
+```
+
+The script deletes the kind cluster and its `<cluster>-postgres`, `-registry`, `-nats` and `-minio` containers.
+Never remove a cluster that another session created.
 
 The cluster journeys keep their built images between runs.
 Each image is named for the source it contains, and a later run of the same source reuses it.

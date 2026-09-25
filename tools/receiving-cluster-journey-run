@@ -103,15 +103,19 @@ case "$action" in
         mc mb edge/web && mc cp --recursive /dist/ edge/web/ && mc anonymous set download edge/web'
     ;;
   remove)
-    work=${3:?work directory}; shift 3
+    # Without the work directory, as after a killed run, this removes the
+    # cluster and its containers, and skips the kubeconfig and the registry.
+    work=${3:-}; shift $(($# < 3 ? $# : 3))
     status=0
-    kind delete cluster --name "$cluster" --kubeconfig "$work/kubeconfig" || status=$?
+    kubeconfig=()
+    [[ -z $work ]] || kubeconfig=(--kubeconfig "$work/kubeconfig")
+    kind delete cluster --name "$cluster" "${kubeconfig[@]}" || status=$?
     for suffix in postgres registry nats minio; do
       if docker container inspect "$cluster-$suffix" >/dev/null 2>&1; then
         docker rm --force --volumes "$cluster-$suffix" || status=$?
       fi
     done
-    if [[ -f $work/native-registry-owned ]]; then
+    if [[ -n $work && -f $work/native-registry-owned ]]; then
       "$(dirname -- "${BASH_SOURCE[0]}")/delivery-owned" remove-native "$cluster" "$work" || status=$?
     fi
     for image in "$@"; do

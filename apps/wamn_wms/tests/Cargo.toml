@@ -10,6 +10,10 @@ autotests = false
 [lib]
 path = "lib.rs"
 
+[features]
+# Compiles the kind cluster tests. A plain workspace run leaves them out.
+cluster = []
+
 [dev-dependencies]
 wamn-schema-generator = { workspace = true }
 anyhow = { workspace = true }

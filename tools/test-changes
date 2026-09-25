@@ -118,7 +118,8 @@ readonly WAMN_METADATA
 # that forced a full run as JSON, and the selected packages and features.
 # A package selects its dependents in every workspace that resolves it: normal
 # and build edges transitively, then one dev edge. With --cluster only the root
-# workspace has work. Guest ignored tests need their separate workspace command.
+# workspace has work, and each selected package that declares a cluster feature
+# gets it. Guest ignored tests need their separate workspace command.
 # Shared WIT paths have direct bindgen readers outside Cargo dependency edges.
 readonly WAMN_SELECTION='
 def rel($root): ltrimstr($root + "/");
@@ -176,7 +177,10 @@ $metadata[0].workspace_root as $root
 | select($selected != [])
 | [$index, ($full != null), ($full | tojson),
    ([$selected[].name] | sort | join(" ")),
-   ([$selected[] | features(.)[]] | unique | join(" "))]
+   ([$selected[] | features(.)[]]
+      + [$selected[] | select($cluster and (.features // {} | has("cluster")))
+          | "\(.name)/cluster"]
+      | unique | join(" "))]
 | @tsv
 '
 
@@ -204,7 +208,11 @@ while IFS=$'\t' read -r index full trigger packages features; do
     label="$label (full: $trigger)"
     argv+=(--workspace)
     if ((index == 0)); then
-      features="${WAMN_ROOT_FULL_FEATURES[*]}"
+      cluster_features=''
+      for feature in $features; do
+        [[ "$feature" != */cluster ]] || cluster_features+=" $feature"
+      done
+      features="${WAMN_ROOT_FULL_FEATURES[*]}$cluster_features"
     fi
   else
     for package in $packages; do

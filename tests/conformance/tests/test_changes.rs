@@ -156,7 +156,8 @@ impl Fixture {
         let user = self.package("crates/user", "user", &["ops"]);
         let checker = self.package("crates/checker", "checker", &[]);
         let far = self.package("crates/far", "far", &[]);
-        let demo_tests = self.package("apps/demo/tests", "demo-tests", &[]);
+        let mut demo_tests = self.package("apps/demo/tests", "demo-tests", &[]);
+        demo_tests["features"] = json!({"cluster": []});
         let wire = self.package("apps/platform/wire", "wire", &[]);
         let demo_data = self.package("apps/demo/data", "demo-data", &[]);
         let component = self.package("apps/demo/component", "demo-component", &[]);
@@ -494,11 +495,11 @@ fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
     for (arguments, ending) in [
         (
             &["--cluster", "dry-run"][..],
-            " --no-fail-fast -p demo-tests -- --ignored --test-threads=1",
+            " --no-fail-fast -p demo-tests --features demo-tests/cluster -- --ignored --test-threads=1",
         ),
         (
             &["--cluster", "--name", "journey", "dry-run"][..],
-            " --no-fail-fast -p demo-tests journey -- --ignored --test-threads=1",
+            " --no-fail-fast -p demo-tests --features demo-tests/cluster journey -- --ignored --test-threads=1",
         ),
     ] {
         let output = fixture.tool(arguments);
@@ -511,6 +512,17 @@ fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
             "{stdout}"
         );
     }
+    // A full root run keeps the cluster feature beside the root features.
+    fixture.write("Cargo.lock", "changed\n");
+    let output = fixture.tool(&["--cluster", "dry-run"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.lines().nth(2).is_some_and(|line| line.ends_with(
+            " --workspace --features wamn-ctl/ops\\,demo-tests/cluster -- --ignored --test-threads=1"
+        )),
+        "{stdout}"
+    );
     assert!(!fixture.directory.join("cargo calls").exists());
 }
 
