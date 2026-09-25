@@ -2,7 +2,9 @@
 //!
 //! This crate exports [`SqliteIntentStore`]. It depends on `wamn-run-state` for
 //! the trait, so `wamn-run-state` stays adapter-free and the cloud links no
-//! SQLite.
+//! SQLite. [`SqliteIntentStore::transact`] and [`finish_in`] let the owner of
+//! the file keep its own tables beside the intents, and write them in the
+//! transaction that finishes an intent.
 //!
 //! The file runs in WAL mode with `synchronous=FULL`, so a committed `begin` is
 //! on disk before the export runs. `locking_mode=EXCLUSIVE` holds the file for
@@ -14,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{
     Begun, Intent, IntentId, StoreError, StoreErrorKind, StoredOutcome, UncertainIntent,
@@ -107,6 +109,25 @@ impl SqliteIntentStore {
         .await
         .map_err(|error| StoreError::new(StoreErrorKind::Storage, operation, error.to_string()))?
     }
+
+    /// Run `call` in one immediate transaction on the writer connection, and
+    /// commit it when `call` succeeds.
+    pub async fn transact<T: Send + 'static>(
+        &self,
+        operation: &'static str,
+        call: impl FnOnce(&Transaction<'_>) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<T, StoreError> {
+        self.run(operation, move |connection| {
+            let storage = storage(operation);
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(&storage)?;
+            let value = call(&transaction)?;
+            transaction.commit().map_err(&storage)?;
+            Ok(value)
+        })
+        .await
+    }
 }
 
 #[async_trait]
@@ -132,25 +153,9 @@ impl IntentStore for SqliteIntentStore {
     }
 
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
-        let id = row_id("finish", id)?;
-        let (kind, value) = match outcome {
-            StoredOutcome::Completed(value) => ("completed", value),
-            StoredOutcome::Failed(value) => ("failed", value),
-        };
-        let value = serde_json::to_string(value)
-            .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
-        self.run("finish", move |connection| {
-            let changed = connection
-                .execute(
-                    "UPDATE intents SET finished_at = ?1, outcome_kind = ?2, outcome = ?3 \
-                     WHERE id = ?4 AND finished_at IS NULL AND resolved_at IS NULL",
-                    params![now_ms("finish")?, kind, value, id],
-                )
-                .map_err(storage("finish"))?;
-            if changed == 0 {
-                return Err(contract("finish", format!("intent {id} is not open")));
-            }
-            Ok(())
+        let (id, outcome) = (id.clone(), outcome.clone());
+        self.transact("finish", move |transaction| {
+            finish_in(transaction, &id, &outcome)
         })
         .await
     }
@@ -199,6 +204,36 @@ impl IntentStore for SqliteIntentStore {
         })
         .await
     }
+}
+
+/// Record the outcome of the open intent `id` in `transaction`.
+///
+/// [`IntentStore::finish`] runs this alone in its own transaction. The owner of
+/// the file runs it through [`SqliteIntentStore::transact`] to write its own
+/// rows in the same commit.
+pub fn finish_in(
+    transaction: &Transaction<'_>,
+    id: &IntentId,
+    outcome: &StoredOutcome,
+) -> Result<(), StoreError> {
+    let id = row_id("finish", id)?;
+    let (kind, value) = match outcome {
+        StoredOutcome::Completed(value) => ("completed", value),
+        StoredOutcome::Failed(value) => ("failed", value),
+    };
+    let value = serde_json::to_string(value)
+        .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
+    let changed = transaction
+        .execute(
+            "UPDATE intents SET finished_at = ?1, outcome_kind = ?2, outcome = ?3 \
+             WHERE id = ?4 AND finished_at IS NULL AND resolved_at IS NULL",
+            params![now_ms("finish")?, kind, value, id],
+        )
+        .map_err(storage("finish"))?;
+    if changed == 0 {
+        return Err(contract("finish", format!("intent {id} is not open")));
+    }
+    Ok(())
 }
 
 /// The owned fields of one [`Intent`], moved to the blocking pool.

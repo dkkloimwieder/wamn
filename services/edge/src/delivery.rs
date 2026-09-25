@@ -3,14 +3,15 @@
 //! A route target calls [`invoke_operation`] once and settles its result with
 //! the engine's lowering, so the box and the cloud answer a route alike. The
 //! call carries the intent context of its route, so a write logs one intent
-//! for each item in the SQLite store and runs only new items. A
+//! for each item in the SQLite store and runs only new items. The device loop
+//! calls through the same path with its own intent log. A
 //! wiring or registration target has no runner on the box and fails as
 //! `execution-failed`. The box has no model versions, so a read carries no
 //! ETag and ignores `If-None-Match`. The box keeps no tap and no actor labels.
 
 use std::sync::Arc;
 
-use wamn_catalog::AttachmentTarget;
+use wamn_catalog::{AttachmentTarget, ServingRoute};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::operation::{
     IntentContext, OperationCall, OperationClosure, invoke_operation, node_types,
@@ -20,6 +21,7 @@ use wamn_engine::router_delivery::{
     RouteDelivery, Source, SourceRef, bounded_node_deadline_ms, lower_operation_refusal,
     resolve_authorized_target, route_component, settle_route,
 };
+use wamn_run_state::IntentStore;
 use wamn_run_state_sqlite::SqliteIntentStore;
 
 use crate::application::EdgeApplication;
@@ -94,6 +96,53 @@ impl EdgeDelivery {
             Some(trace) => (Some(trace.traceparent), trace.tracestate),
             None => (None, None),
         };
+        self.call(
+            source,
+            caller,
+            delivery_id,
+            &payload,
+            (traceparent, tracestate),
+            &self.intents,
+        )
+        .await
+    }
+
+    /// The route of the attachment `attachment` under `caller`, for the device
+    /// loop at start.
+    pub(crate) fn device_route(
+        &self,
+        attachment: &str,
+        caller: &AuthenticatedCaller,
+    ) -> anyhow::Result<&ServingRoute> {
+        let manifest = self.release.release().manifest();
+        let target =
+            resolve_authorized_target(manifest, SourceRef::Attachment(attachment), Some(caller))
+                .map_err(|error| {
+                    anyhow::anyhow!("the device role cannot call {attachment}: {error:?}")
+                })?;
+        let AttachmentTarget::Route {
+            component,
+            operation,
+        } = &target.target
+        else {
+            anyhow::bail!("{attachment} targets a wiring, and the edge has no wiring layer");
+        };
+        manifest
+            .route(&target.package_id, component, operation)
+            .ok_or_else(|| anyhow::anyhow!("{attachment} has no route in the release"))
+    }
+
+    /// Call the operation of `source` once, with the intents of the call in
+    /// `intents`.
+    pub(crate) async fn call(
+        &self,
+        source: SourceRef<'_>,
+        caller: Option<AuthenticatedCaller>,
+        delivery_id: String,
+        payload: &serde_json::Value,
+        (traceparent, tracestate): (Option<String>, Option<String>),
+        intents: &dyn IntentStore,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
         let manifest = self.release.release().manifest();
         let target = resolve_authorized_target(manifest, source, caller.as_ref())?;
         let AttachmentTarget::Route {
@@ -112,7 +161,7 @@ impl EdgeDelivery {
         let intent = manifest
             .route(&target.package_id, component, operation)
             .map(|route| IntentContext {
-                store: &self.intents,
+                store: intents,
                 tenant: &self.tenant,
                 release: &release,
                 package: &target.package_id,
@@ -141,7 +190,7 @@ impl EdgeDelivery {
                     component: fact,
                     operation,
                     context,
-                    input: &payload,
+                    input: payload,
                     deadline_ms,
                     facts: EdgeFacts::entry(caller),
                 },

@@ -18,6 +18,16 @@ wamn-session = { workspace = true }
 wamn-catalog = { workspace = true }
 # The plain host, its ingress and the route guest's workload. No `oci`.
 wash-runtime = { workspace = true }
+# The samples table lives in the run-state file beside the intents.
+rusqlite = { workspace = true }
+# The host owns the serial port: raw mode and the baud rate, with no serial
+# crate.
+rustix = { workspace = true, features = ["termios"] }
+# The configuration file.
+toml = { workspace = true }
+# The sample key and the capture time of each frame.
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true, features = ["clock"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -36,6 +46,8 @@ wamn-catalog = { workspace = true, features = ["test-util"] }
 wat = "=1.254.0"
 base64 = { workspace = true }
 ring = { workspace = true }
+# The device test writes frames into a pseudo-terminal pair.
+rustix = { workspace = true, features = ["pty"] }
 
 [lints]
 workspace = true

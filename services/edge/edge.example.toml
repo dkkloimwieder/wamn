@@ -1,0 +1,45 @@
+# The wamn-edge configuration. Run `wamn-edge --config <path>`, or set
+# WAMN_EDGE_CONFIG to the path. Each key has one WAMN_EDGE_* variable that
+# replaces it, named in services/edge/src/config.rs.
+
+[release]
+# The release bundle directory, and the pinned digest of its edge-release.json.
+dir = "/var/lib/wamn-edge/release"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[session]
+# The session key file that the release installs, and the scope that a
+# session must name. The organization is also the tenant of every intent.
+keys = "/var/lib/wamn-edge/release/session-keys.json"
+issuer = "https://identity.example.test"
+org = "org-a"
+audience = "tenant-a/edge"
+
+[store]
+# The SQLite file of intents and samples. One edge process holds it.
+db = "/var/lib/wamn-edge/edge.db"
+
+[http]
+route_host = "edge.localhost"
+listen = "0.0.0.0:8080"
+
+# The device loop. Leave out this section to serve routes only.
+[device]
+# The attachment whose operation the loop calls once for each frame. Its route
+# must change records and must name no idempotency key.
+attachment = "record-weight"
+# The fixed local principal of every device call, and the role in grants.json
+# whose permissions it holds.
+principal = "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b"
+role = "device"
+
+# The scale on the serial port. Set the scale to send one line on print or on
+# stable weight, never as a continuous stream. Each frame is one call, one
+# intent and one sample, so a continuous stream writes the SD card on every
+# frame and wears it out.
+[device.serial]
+path = "/dev/ttyUSB0"
+baud = 9600
+# The most bytes in one frame before its newline. The loop drops and logs a
+# longer frame.
+max_frame = 256

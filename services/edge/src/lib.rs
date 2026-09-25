@@ -4,10 +4,14 @@
 //!
 //! - [`release`]: [`EdgeRelease`](release::EdgeRelease), a platform-published
 //!   release loaded from a local directory and pinned by one bundle digest.
+//! - [`config`]: [`EdgeConfig`](config::EdgeConfig), the configuration file
+//!   and its environment overrides.
 //! - [`grants`]: [`Grants`](grants::Grants), the permissions of each role on
 //!   the box.
-//! - [`serve`]: [`serve`](serve::serve), which loads the release and serves
-//!   its routes behind a local ingress.
+//! - [`serve`]: [`serve`](serve::serve), which loads the release, serves its
+//!   routes behind a local ingress, and runs the device loop.
+//! - [`device`], [`serial`] and [`samples`]: the device loop, its serial
+//!   source, and the samples it stores.
 //! - [`authenticator`], [`delivery`], [`policy`] and [`application`]: the
 //!   edge side of the engine's route and operation traits.
 //! - [`intents`]: the `wamn-edge intents` commands, which list and resolve
@@ -32,9 +36,13 @@
 
 pub mod application;
 pub mod authenticator;
+pub mod config;
 pub mod delivery;
+pub mod device;
 pub mod grants;
 pub mod intents;
 pub mod policy;
 pub mod release;
+pub mod samples;
+pub mod serial;
 pub mod serve;

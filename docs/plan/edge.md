@@ -71,6 +71,8 @@ Option A keeps one meaning for the import: `wamn:postgres` is Postgres. The samp
 
 The owner ruled that the generator emits imports from what the contract uses, not from a fixed set. The change is correct for the cloud too. A model-free fixture application tests it.
 
+The first device shape (owner ruling, `wamn-e5in.8`): the host owns the serial port and gives each frame to the device operation as its input, with no new WIT. A device that the host must drive (write, poll, or handshake) needs a host plugin with a WIT import. A read-only serial device does not. One frame is one call, one intent and one sample. The scale is set to send on print or on stable weight, because a continuous stream writes the SD card on every frame.
+
 ### 4.3 Local routes
 
 | Option | Rule | Cost |
@@ -108,7 +110,7 @@ A session grants operations through permissions that the platform reads from Pos
 
 The edge trusts the roles of a verified token until the token expires, which is 930 seconds at most. The box keeps no session state and reads no user roles, so a revoked login keeps working on the box until its token expires. For an operator who must cut a login sooner, a revoked-list file can ship with the bundle. It is named here and not built.
 
-Local routes admit sessions only. A PAT needs the identity database. The device loop calls its operation as a fixed local principal that the edge configuration names.
+Local routes admit sessions only. A PAT needs the identity database. The device loop calls its operation as a fixed local principal that the edge configuration names. That caller has the credential kind `QueuedService` and the permissions of the configured role in `grants.json`, so a `fresh_only` operation refuses it.
 
 The edge configuration names the key file, the issuer, the organization and the audience (the project-environment identity) that a session must carry.
 
@@ -119,7 +121,9 @@ The edge configuration names the key file, the issuer, the organization and the 
 | A (ruled) | One crate `services/edge`, package `wamn-edge`, a library and a binary. Modules: configuration, release loading, routes, session keys, the SQLite store, samples and forward, and `plugins/serial`. | One crate grows. It has one user. |
 | B | The SQLite `IntentStore` as its own crate under `crates/execution`. | A second crate for one user. |
 
-The owner later placed the SQLite adapter in its own crate, `wamn-run-state-sqlite` (`wamn-e5in.2`), beside `wamn-run-state`. The dependency test is `services/edge/tests/dependency_boundary.rs`, in the engine test's form.
+The owner later placed the SQLite adapter in its own crate, `wamn-run-state-sqlite` (`wamn-e5in.2`), beside `wamn-run-state`. The dependency test is `services/edge/tests/dependency_boundary.rs`, in the engine test's form. The serial source is the module `serial`, not a plugin, because the host owns the port (section 4.2).
+
+The configuration is one TOML file, which `wamn-edge --config <path>` or `WAMN_EDGE_CONFIG` names. It has the sections `release`, `session`, `store`, `http`, and an optional `device` with `device.serial`. Each key has one `WAMN_EDGE_*` variable that replaces it, and an unknown key is refused. [`edge.example.toml`](../../services/edge/edge.example.toml) shows every key.
 
 ### 4.6 How a release reaches the box
 
@@ -154,6 +158,13 @@ Option A lets one transaction record the intent outcome and insert the sample. T
 - `intents`: `id`, `tenant`, `release`, `package`, `operation`, `idempotency_key`, `input_hash`, `deadline_ms`, `begun_at`, `finished_at`, `outcome`, `resolved_basis`. The pair `(tenant, idempotency_key)` is unique.
 - `samples`: `id`, `sample_key` (unique, the idempotency key of the forward), `intent_id`, `captured_at`, `body`, `forwarded_at`, `attempts`, `last_error`.
 
+The samples, as issue `wamn-e5in.8` built them in [`samples.rs`](../../services/edge/src/samples.rs):
+
+- The device loop gives each frame a new UUID v4 as its `sample_key`. It sends one item, `{"request_id": sample_key, "value": {"frame", "captured_at"}}`, so the sample key is also the intent key.
+- A completed item stores its `value` as `body`, in the transaction that finishes its intent. A failed item stores no sample. `SqliteIntentStore::transact` and `finish_in` let the edge write its table in that transaction.
+- The device route must change records and must name no idempotency key, and the edge refuses to start otherwise.
+- The serial reader drops a trailing carriage return, an empty frame, a frame that is not UTF-8, and a frame longer than `max_frame`, and logs each drop.
+
 `begin` commits before the export runs. After a power loss, a begun intent with no outcome is uncertain, and the edge never runs it again. The reading of that intent is lost, and the next reading replaces it. The promise holds only if the SD card honors a flush. The closeout records the card that the test used.
 
 The logging decision by operation kind belongs in `wamn-engine`, beside `invoke_operation`, so that the edge and `wamn-an24` share it. Epic `wamn-an24` then adds only the Postgres adapter.
@@ -185,7 +196,7 @@ The forward calls a command route with `request_id` set to `sample_key`, so the 
 | A (ruled) | Starting ceilings, measured in issue 2: a stripped binary of 64 MiB or less, 256 MiB resident or less with the fixture release loaded, 60 seconds or less for the first component compile, and 5 seconds or less for a restart with a warm compile cache. | The numbers can move after the first measurement. |
 | B | Set no number until the first measurement. | Nothing refuses growth. |
 
-The edge sets its own memory budgets: 8 core instances and the 256 MiB memory cap. Components compile on the box, and Wasmtime's disk cache keeps the result. Build components ahead of time for aarch64 only if the first compile misses its ceiling. The owner has no Pi 3B. Issue 2 measures on an aarch64 emulator or builder, and the closeout records the target as not measured on hardware. New crates are few: `rusqlite` with its bundled SQLite, and one serial crate with its default features off. The box artifact is a release build, because a debug Wasmtime is too slow for the box. Tests use debug builds.
+The edge sets its own memory budgets: 8 core instances and the 256 MiB memory cap. Components compile on the box, and Wasmtime's disk cache keeps the result. Build components ahead of time for aarch64 only if the first compile misses its ceiling. The owner has no Pi 3B. Issue 2 measures on an aarch64 emulator or builder, and the closeout records the target as not measured on hardware. New crates are few: `rusqlite` with its bundled SQLite. The serial port uses `rustix` termios, which the tree links already, so the edge adds no serial crate (owner ruling, `wamn-e5in.8`). The box artifact is a release build, because a debug Wasmtime is too slow for the box. Tests use debug builds.
 
 ### 4.10 Cross-compile and test
 

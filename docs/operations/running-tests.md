@@ -117,14 +117,15 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
-Run the edge route test.
-It needs only the `http-route` guest: it encodes its own application component and signs its own sessions.
+Run the edge route and device tests.
+They need only the `http-route` guest: they encode their own application component and sign their own sessions.
+The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.
 
 ```bash
 cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p http-route
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
-  cargo test --locked --offline -p wamn-edge --test route -- --ignored
+  cargo test --locked --offline -p wamn-edge --test route --test device -- --ignored
 ```
 
 Run the prior-commit fixture admission and exact forwarding assertions.
