@@ -145,7 +145,7 @@ The [assessment](../../apps/wamn_receiving/formal/assessment.md) distinguishes m
 
 Use the same Kani 0.68.0 installation described for [Receiving](#receiving-formal-model).
 The [WMS contract](../../apps/wamn_wms/formal/README.md) defines its finite domain and original-result replay rule.
-From the repository root, run its three native examples and seven proofs:
+From the repository root, run its four native examples and seven proofs:
 
 ```bash
 wms_formal_run=$(mktemp -d "${TMPDIR:-/tmp}/wamn-wms-formal.XXXXXX")
@@ -155,7 +155,8 @@ rustc --edition 2024 --test "$wms_formal_run/model.rs" -o "$wms_formal_run/examp
 kani "$wms_formal_run/model.rs" --output-format terse
 ```
 
-Require seven successful harnesses and twelve satisfied cover properties.
+Require seven successful harnesses and fourteen satisfied cover properties.
+The cover properties include mixed active pallet statuses in both merge directions.
 The loop bound is four. Keep unwinding assertions enabled to detect insufficient bounds.
 
 After the correct model passes, run the deliberate missing-transaction defect:

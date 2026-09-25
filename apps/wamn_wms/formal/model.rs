@@ -3,7 +3,7 @@
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Status {
+enum PalletStatus {
     Available,
     Held,
     Closed,
@@ -15,8 +15,37 @@ struct Inventory {
     id: bool,
     product_id: bool,
     location_id: bool,
-    quantity: u8,
-    status: Status,
+    quantities: Quantities,
+    pallet_status: PalletStatus,
+}
+
+// Quantity status is independent of the pallet lifecycle.
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QuantityStatus {
+    Available,
+    Held,
+}
+
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Quantities {
+    available: u8,
+    held: u8,
+}
+
+fn quantity(quantities: Quantities, status: QuantityStatus) -> u8 {
+    match status {
+        QuantityStatus::Available => quantities.available,
+        QuantityStatus::Held => quantities.held,
+    }
+}
+
+fn set_quantity(quantities: &mut Quantities, status: QuantityStatus, value: u8) {
+    match status {
+        QuantityStatus::Available => quantities.available = value,
+        QuantityStatus::Held => quantities.held = value,
+    }
 }
 
 type Inventories = [Option<Inventory>; 2];
@@ -39,11 +68,13 @@ enum Action {
     },
     Adjust {
         inventory_id: bool,
+        quantity_status: QuantityStatus,
         to_quantity: u8,
         reason_present: bool,
     },
     Split {
         from_inventory_id: bool,
+        quantity_status: QuantityStatus,
         quantity: u8,
         to_location_id: bool,
     },
@@ -73,10 +104,10 @@ struct InventoryTransaction {
     to_product_id: bool,
     from_location_id: Option<bool>,
     to_location_id: bool,
-    from_quantity: u8,
-    to_quantity: u8,
-    from_status: Option<Status>,
-    to_status: Status,
+    from_quantities: Quantities,
+    to_quantities: Quantities,
+    from_pallet_status: Option<PalletStatus>,
+    to_pallet_status: PalletStatus,
     occurred_at: bool,
 }
 
@@ -118,27 +149,32 @@ enum Outcome {
     Refused(Refusal),
 }
 
-fn total(inventory: Inventories) -> u16 {
+fn total_for_status(inventory: Inventories, status: QuantityStatus) -> u16 {
     inventory
         .iter()
         .flatten()
-        .map(|item| u16::from(item.quantity))
+        .map(|item| u16::from(quantity(item.quantities, status)))
         .sum()
+}
+
+fn total(inventory: Inventories) -> u16 {
+    total_for_status(inventory, QuantityStatus::Available)
+        + total_for_status(inventory, QuantityStatus::Held)
 }
 
 fn valid_inventory(inventory: Inventories) -> bool {
     for (id, item) in inventory.iter().enumerate() {
         if item.is_some_and(|item| {
             usize::from(item.id) != id
-                || item.quantity > 6
-                || (item.status == Status::Closed) != (item.quantity == 0)
+                || item.quantities.available > 6
+                || item.quantities.held > 6
+                || (item.pallet_status == PalletStatus::Closed)
+                    != (item.quantities == Quantities::default())
         }) {
             return false;
         }
     }
-    if matches!(inventory, [Some(first), Some(second)] if first.product_id != second.product_id
-        || (first.status != Status::Closed && second.status != Status::Closed && first.status != second.status))
-    {
+    if matches!(inventory, [Some(first), Some(second)] if first.product_id != second.product_id) {
         return false;
     }
     total(inventory) <= 6
@@ -181,15 +217,14 @@ fn command_domain(state: State, command: Command) -> bool {
     match command.action {
         Action::Adjust {
             inventory_id,
+            quantity_status,
             to_quantity,
             ..
         } => {
+            let current = state.inventory[usize::from(inventory_id)]
+                .map_or(0, |item| quantity(item.quantities, quantity_status));
             to_quantity <= 6
-                && u16::from(to_quantity)
-                    + u16::from(
-                        state.inventory[usize::from(!inventory_id)].map_or(0, |item| item.quantity),
-                    )
-                    <= 6
+                && total(state.inventory) - u16::from(current) + u16::from(to_quantity) <= 6
         }
         Action::Split {
             from_inventory_id,
@@ -235,7 +270,7 @@ fn prepared(command: Command) -> bool {
 
 fn active(inventory: Inventories, id: bool) -> Result<Inventory, Refusal> {
     let item = inventory[usize::from(id)].ok_or(Refusal::Missing)?;
-    if item.status == Status::Closed {
+    if item.pallet_status == PalletStatus::Closed {
         return Err(Refusal::Closed);
     }
     Ok(item)
@@ -257,27 +292,38 @@ fn change(from_inventory: Inventories, action: Action) -> Result<Inventories, Re
         }
         Action::Adjust {
             inventory_id,
+            quantity_status,
             to_quantity,
             ..
         } => {
             let mut item = active(from_inventory, inventory_id)?;
-            item.quantity = to_quantity;
+            if quantity(item.quantities, quantity_status) == 0 {
+                return Err(Refusal::Missing);
+            }
+            set_quantity(&mut item.quantities, quantity_status, to_quantity);
             to_inventory[usize::from(inventory_id)] = Some(item);
         }
         Action::Split {
             from_inventory_id,
-            quantity,
+            quantity_status,
+            quantity: requested,
             to_location_id,
         } => {
             let mut item = active(from_inventory, from_inventory_id)?;
-            if quantity >= item.quantity {
+            let current = quantity(item.quantities, quantity_status);
+            if current == 0 {
+                return Err(Refusal::Missing);
+            }
+            if requested >= current {
                 return Err(Refusal::Quantity);
             }
-            item.quantity -= quantity;
+            set_quantity(&mut item.quantities, quantity_status, current - requested);
             to_inventory[usize::from(from_inventory_id)] = Some(item);
+            let mut quantities = Quantities::default();
+            set_quantity(&mut quantities, quantity_status, requested);
             to_inventory[usize::from(!from_inventory_id)] = Some(Inventory {
                 id: !from_inventory_id,
-                quantity,
+                quantities,
                 location_id: to_location_id,
                 ..item
             });
@@ -288,9 +334,10 @@ fn change(from_inventory: Inventories, action: Action) -> Result<Inventories, Re
         } => {
             let mut from_item = active(from_inventory, from_inventory_id)?;
             let mut to_item = active(from_inventory, to_inventory_id)?;
-            to_item.quantity += from_item.quantity;
-            from_item.quantity = 0;
-            from_item.status = Status::Closed;
+            to_item.quantities.available += from_item.quantities.available;
+            to_item.quantities.held += from_item.quantities.held;
+            from_item.quantities = Quantities::default();
+            from_item.pallet_status = PalletStatus::Closed;
             to_inventory[usize::from(from_inventory_id)] = Some(from_item);
             to_inventory[usize::from(to_inventory_id)] = Some(to_item);
         }
@@ -339,10 +386,10 @@ fn transactions(
             to_product_id: to_item.product_id,
             from_location_id: from_item.map(|item| item.location_id),
             to_location_id: to_item.location_id,
-            from_quantity: from_item.map_or(0, |item| item.quantity),
-            to_quantity: to_item.quantity,
-            from_status: from_item.map(|item| item.status),
-            to_status: to_item.status,
+            from_quantities: from_item.map_or(Quantities::default(), |item| item.quantities),
+            to_quantities: to_item.quantities,
+            from_pallet_status: from_item.map(|item| item.pallet_status),
+            to_pallet_status: to_item.pallet_status,
             occurred_at: command.occurred_at,
         });
     }

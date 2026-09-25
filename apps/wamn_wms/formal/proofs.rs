@@ -56,8 +56,9 @@ fn explains(from_inventory: Inventories, operation: Operation) -> bool {
             || row.to_inventory_id != expected_to_id
             || row.from_product_id != from_item.map(|item| item.product_id)
             || row.from_location_id != from_item.map(|item| item.location_id)
-            || row.from_quantity != from_item.map_or(0, |item| item.quantity)
-            || row.from_status != from_item.map(|item| item.status)
+            || row.from_quantities
+                != from_item.map_or(Quantities::default(), |item| item.quantities)
+            || row.from_pallet_status != from_item.map(|item| item.pallet_status)
         {
             return false;
         }
@@ -65,8 +66,8 @@ fn explains(from_inventory: Inventories, operation: Operation) -> bool {
             id,
             product_id: row.to_product_id,
             location_id: row.to_location_id,
-            quantity: row.to_quantity,
-            status: row.to_status,
+            quantities: row.to_quantities,
+            pallet_status: row.to_pallet_status,
         });
     }
     reconstructed == operation.result.inventory
@@ -158,33 +159,45 @@ fn quantities_and_closed_inventory() {
             } => id == from_inventory_id,
             Action::Merge { .. } => true,
         };
-        if item.is_some_and(|item| item.status == Status::Closed) && touched {
+        if item.is_some_and(|item| item.pallet_status == PalletStatus::Closed) && touched {
             assert!(!matches!(outcome, Outcome::Accepted(_)));
         }
     }
     if let Outcome::Accepted(_) = outcome {
+        if !matches!(command.action, Action::Adjust { .. }) {
+            assert!(total(to_state.inventory) == total(from_state.inventory));
+            for status in [QuantityStatus::Available, QuantityStatus::Held] {
+                assert!(
+                    total_for_status(to_state.inventory, status)
+                        == total_for_status(from_state.inventory, status)
+                );
+            }
+        }
         match command.action {
             Action::Adjust {
                 inventory_id,
+                quantity_status,
                 to_quantity,
                 reason_present,
             } => {
                 assert!(reason_present && to_quantity > 0);
                 let id = usize::from(inventory_id);
-                assert!(to_state.inventory[id].unwrap().quantity == to_quantity);
+                let from_item = from_state.inventory[id].unwrap();
+                assert!(quantity(from_item.quantities, quantity_status) > 0);
+                let mut expected = from_item;
+                match quantity_status {
+                    QuantityStatus::Available => expected.quantities.available = to_quantity,
+                    QuantityStatus::Held => expected.quantities.held = to_quantity,
+                }
+                assert!(to_state.inventory[id] == Some(expected));
                 assert!(to_state.inventory[1 - id] == from_state.inventory[1 - id]);
                 assert!(
                     total(to_state.inventory)
                         == total(from_state.inventory)
-                            - u16::from(from_state.inventory[id].unwrap().quantity)
+                            - u16::from(quantity(from_item.quantities, quantity_status))
                             + u16::from(to_quantity)
                 );
             }
-            _ => {
-                assert!(total(to_state.inventory) == total(from_state.inventory));
-            }
-        }
-        match command.action {
             Action::Move {
                 inventory_id,
                 to_location_id,
@@ -198,17 +211,39 @@ fn quantities_and_closed_inventory() {
             }
             Action::Split {
                 from_inventory_id,
-                quantity,
-                ..
+                quantity_status,
+                quantity: requested,
+                to_location_id,
             } => {
                 let from_item = from_state.inventory[usize::from(from_inventory_id)].unwrap();
                 let retained = to_state.inventory[usize::from(from_inventory_id)].unwrap();
                 let created = to_state.inventory[usize::from(!from_inventory_id)].unwrap();
-                assert!(retained.quantity > 0);
-                assert!(created.quantity == quantity);
-                assert!(retained.quantity + created.quantity == from_item.quantity);
-                assert!(created.status == from_item.status);
-                assert!(retained.status == from_item.status);
+                assert!(
+                    requested > 0 && requested < quantity(from_item.quantities, quantity_status)
+                );
+                for status in [QuantityStatus::Available, QuantityStatus::Held] {
+                    let transferred = if status == quantity_status {
+                        requested
+                    } else {
+                        0
+                    };
+                    assert!(quantity(created.quantities, status) == transferred);
+                    assert!(
+                        quantity(retained.quantities, status)
+                            == quantity(from_item.quantities, status) - transferred
+                    );
+                }
+                assert!(
+                    retained
+                        == Inventory {
+                            quantities: retained.quantities,
+                            ..from_item
+                        }
+                );
+                assert!(created.id == !from_inventory_id);
+                assert!(created.product_id == from_item.product_id);
+                assert!(created.location_id == to_location_id);
+                assert!(created.pallet_status == from_item.pallet_status);
             }
             Action::Merge {
                 from_inventory_id,
@@ -216,15 +251,43 @@ fn quantities_and_closed_inventory() {
             } => {
                 let from_id = usize::from(from_inventory_id);
                 let to_id = usize::from(to_inventory_id);
-                assert!(to_state.inventory[from_id].unwrap().status == Status::Closed);
-                assert!(to_state.inventory[from_id].unwrap().quantity == 0);
+                let source = from_state.inventory[from_id].unwrap();
+                let target = from_state.inventory[to_id].unwrap();
+                let merged = to_state.inventory[to_id].unwrap();
                 assert!(
-                    to_state.inventory[to_id].unwrap().quantity
-                        == from_state.inventory[from_id].unwrap().quantity
-                            + from_state.inventory[to_id].unwrap().quantity
+                    to_state.inventory[from_id]
+                        == Some(Inventory {
+                            quantities: Quantities::default(),
+                            pallet_status: PalletStatus::Closed,
+                            ..source
+                        })
+                );
+                assert!(
+                    merged
+                        == Inventory {
+                            quantities: Quantities {
+                                available: source.quantities.available
+                                    + target.quantities.available,
+                                held: source.quantities.held + target.quantities.held,
+                            },
+                            ..target
+                        }
+                );
+                kani::cover!(
+                    source.pallet_status == PalletStatus::Held
+                        && target.pallet_status == PalletStatus::Available
+                        && source.quantities.held > 0
+                        && target.quantities.available > 0,
+                    "held source merges into available target with both stock statuses"
+                );
+                kani::cover!(
+                    source.pallet_status == PalletStatus::Available
+                        && target.pallet_status == PalletStatus::Held
+                        && source.quantities.available > 0
+                        && target.quantities.held > 0,
+                    "available source merges into held target with both stock statuses"
                 );
             }
-            _ => (),
         }
     }
     kani::cover!(
@@ -277,8 +340,11 @@ fn split_history_is_complete() {
             id: false,
             product_id: false,
             location_id: false,
-            quantity,
-            status: Status::Available,
+            quantities: Quantities {
+                available: quantity,
+                held: 0,
+            },
+            pallet_status: PalletStatus::Available,
         }),
         None,
     ];
@@ -288,6 +354,7 @@ fn split_history_is_complete() {
         occurred_at: false,
         action: Action::Split {
             from_inventory_id: false,
+            quantity_status: QuantityStatus::Available,
             quantity: 1,
             to_location_id: true,
         },
@@ -305,17 +372,20 @@ fn split_history_is_complete() {
 #[kani::unwind(4)]
 fn later_merge_cannot_change_split_history_or_replay() {
     let status = if kani::any() {
-        Status::Held
+        PalletStatus::Held
     } else {
-        Status::Available
+        PalletStatus::Available
     };
     let mut state = initial([
         Some(Inventory {
             id: false,
             product_id: false,
             location_id: false,
-            quantity: 3,
-            status,
+            quantities: Quantities {
+                available: 2,
+                held: 1,
+            },
+            pallet_status: status,
         }),
         None,
     ]);
@@ -324,6 +394,7 @@ fn later_merge_cannot_change_split_history_or_replay() {
         occurred_at: false,
         action: Action::Split {
             from_inventory_id: false,
+            quantity_status: QuantityStatus::Available,
             quantity: 1,
             to_location_id: true,
         },
@@ -341,11 +412,11 @@ fn later_merge_cannot_change_split_history_or_replay() {
         },
     };
     assert!(matches!(execute(&mut state, merge), Outcome::Accepted(_)));
-    assert!(state.inventory[0].unwrap().status == Status::Closed);
+    assert!(state.inventory[0].unwrap().pallet_status == PalletStatus::Closed);
     assert!(state.operations[0] == first_operation);
     let from_state = state;
     assert!(execute(&mut state, split) == Outcome::Replayed(result));
     assert!(state == from_state);
-    assert!(result.inventory[0].unwrap().status == status);
+    assert!(result.inventory[0].unwrap().pallet_status == status);
     assert!(valid(state));
 }

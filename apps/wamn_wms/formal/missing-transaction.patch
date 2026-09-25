@@ -1,12 +1,12 @@
 --- a/model.rs
 +++ b/model.rs
-@@ -318,6 +318,9 @@
+@@ -363,6 +363,9 @@
+     let mut rows = [None; 2];
+     for id in [false, true] {
          if !affected(command.action, id) {
-             continue;
-         }
-+        if matches!(command.action, Action::Split { from_inventory_id, .. } if id != from_inventory_id) {
 +            continue;
 +        }
++        if matches!(command.action, Action::Split { from_inventory_id, .. } if id != from_inventory_id) {
+             continue;
+         }
          let from_item = from_inventory[usize::from(id)];
-         let to_item = to_inventory[usize::from(id)].unwrap();
-         let (from_inventory_id, to_inventory_id) = match command.action {
