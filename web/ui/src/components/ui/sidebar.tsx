@@ -451,8 +451,6 @@ const SidebarMenuButton = <T extends ValidComponent = "button">(
       <Tooltip placement="right">
         <TooltipTrigger as={MenuButton} class="w-full" />
         <TooltipContent
-          side="right"
-          align="center"
           hidden={state() !== "collapsed" || isMobile()}
           {...tooltipProps()}
         />

@@ -30,7 +30,8 @@ The copy changed these things:
 
 - Every `@/` import became a relative path, so the package compiles inside any consumer.
 - Twenty optional props gained `| undefined`, so the source passes `exactOptionalPropertyTypes`. The virtual table also states the type of the options it hands to `createVirtualizer`, for the same reason.
-- For the same reason, the mobile sidebar states the type of the props it spreads onto `Sheet`. The tooltip passes `false` for an unset `disabled` or `triggerOnFocusOnly`, and it drops an explicit `defaultOpen={undefined}`.
+- For the same reason, the mobile sidebar states the type of the props it spreads onto `Sheet`.
+- `tooltip` is a thin wrapper over the Kobalte tooltip, in place of the registry item, which rebuilt Base UI's tooltip on top of Kobalte. It keeps the item's classes, its 600 ms open delay and its padding of 5 pixels, and it carries the side Kobalte settled on as `data-side`.
 - `ComboboxContent` gained a `footer` slot below the list, for a next page control.
 - A body row hands itself to the virtualizer one microtask after its ref runs. Solid runs the ref before it sets `data-index`, and the virtualizer cannot measure a row with no index.
 - `Toaster` gives every toast the `z-toast` class, which the registry item leaves out. `src/styles.css` sets the toast corner through `--border-radius`, because solid-sonner draws it from that variable in CSS outside every layer.
