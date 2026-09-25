@@ -45,6 +45,8 @@ function loaded(cap: number, ids: string[], cursor: string | null) {
       sortFields={definition.sortFields}
       sortMaxFields={definition.sortMaxFields}
       onSortChange={() => {}}
+      scopeFilters={definition.scopeFilters}
+      onScopeChange={() => {}}
     />
   ));
   return sent;
@@ -75,7 +77,8 @@ describe("the table definition of the widget query", () => {
   it("renders its column labels and reads one page of the page maximum at the default cap", async () => {
     const sent = loaded(1000, ["w1", "w2"], null);
     await waitFor(() => expect(screen.getByText("w1")).toBeDefined());
-    expect(screen.getByText("Widget code")).toBeDefined();
+    // The scope bar shows the label too, so this reads the column header's menu.
+    expect(screen.getByLabelText("menu Widget code")).toBeDefined();
     expect(sent[0]?.items[0]).toMatchObject({ limit: definition.pageMaximum });
     expect(screen.queryByText("Full dataset cannot be loaded")).toBeNull();
   });

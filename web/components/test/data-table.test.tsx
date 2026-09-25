@@ -85,6 +85,8 @@ function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
       sortFields={state.sortFields ?? []}
       sortMaxFields={state.sortMaxFields ?? 1}
       onSortChange={state.onSortChange ?? (() => {})}
+      scopeFilters={[]}
+      onScopeChange={() => {}}
     />
   ));
 }

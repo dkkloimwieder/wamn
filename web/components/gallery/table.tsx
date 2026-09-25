@@ -4,7 +4,8 @@
  * The seam states render the fixture's emitted table definition for the widget
  * query and read it through a stub transport. The stub refuses a limit above
  * the page maximum, as the server does, so a load reads one page of at most
- * that many rows. The stub sorts by the sort of the request. A set of 3 rows is
+ * that many rows. The stub keeps the codes of the request's scope filter and
+ * sorts by the request's sort. A scope change in the table reads again. A set of 3 rows is
  * fully read, so the table sorts it. A set of 150 rows is not, so a sort starts
  * a new load in the new order. The 1000 and 10,000 row states generate
  * their rows in memory, because one page cannot hold them. Both sources hand
@@ -13,7 +14,7 @@
 
 import { createSignal, For, type JSX } from "solid-js";
 
-import { DataTable, type DataTableColumn, type DataTableSort } from "@wamn/ui";
+import { DataTable, type DataTableColumn, type DataTableScopeFilter, type DataTableSort } from "@wamn/ui";
 import {
   emptyLoad,
   finishLoad,
@@ -26,7 +27,12 @@ import {
 } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
-import { query, type WidgetQueryRequestSort, type WidgetQueryRow } from "../fixture/widget.js";
+import {
+  query,
+  type WidgetQueryRequestFilter,
+  type WidgetQueryRequestSort,
+  type WidgetQueryRow,
+} from "../fixture/widget.js";
 import { Section, State } from "./section.js";
 
 /** The page maximum the fixture contract declares. */
@@ -51,20 +57,26 @@ function widgetStub(size: number): Transport {
   return {
     invoke: (request) => {
       const item = request.items[0] as
-        | { readonly limit?: number; readonly sort?: { field: string; direction: string } }
+        | {
+            readonly limit?: number;
+            readonly filter?: { readonly code?: readonly string[] };
+            readonly sort?: { field: string; direction: string };
+          }
         | undefined;
       const limit = item?.limit ?? PAGE_MAXIMUM;
       if (limit < 1 || limit > PAGE_MAXIMUM) {
         return Promise.resolve({ status: "refused", code: "invalid_input", detail: null });
       }
+      const codes = item?.filter?.code;
+      const kept = codes === undefined ? widgets : widgets.filter((widget) => codes.includes(widget.code));
       const sign = item?.sort?.direction === "descending" ? -1 : 1;
       const ordered =
         item?.sort === undefined
-          ? widgets
-          : [...widgets].sort((a, b) => sign * a.created_at.localeCompare(b.created_at));
+          ? kept
+          : [...kept].sort((a, b) => sign * a.created_at.localeCompare(b.created_at));
       return Promise.resolve({
         status: "completed",
-        value: { item: ordered.slice(0, limit), next_cursor: size > limit ? "more" : null },
+        value: { item: ordered.slice(0, limit), next_cursor: ordered.length > limit ? "more" : null },
       });
     },
   };
@@ -76,15 +88,18 @@ function SeamTable(props: { size: number }): JSX.Element {
   const transport = widgetStub(props.size);
   const [state, setState] = createSignal<LoadState<WidgetQueryRow>>(emptyLoad(DEFAULT_CAP));
   const [sort, setSort] = createSignal<WidgetQueryRequestSort>();
+  const [filter, setFilter] = createSignal<WidgetQueryRequestFilter>();
 
   async function load(cap: number) {
     const next = startLoad(state(), cap);
     setState(next);
     const order = sort();
+    const scope = filter();
     const outcome = await query(transport, [
       {
         limit: loadLimit(next.cap, definition.pageMaximum),
         ...(order === undefined ? {} : { sort: order }),
+        ...(scope === undefined ? {} : { filter: scope }),
       },
     ]);
     setState((current) => finishLoad(current, next.generation, outcome, definition.rowId));
@@ -102,6 +117,13 @@ function SeamTable(props: { size: number }): JSX.Element {
     }
   }
 
+  // The one scope filter is the widget code, which the request sends as a list.
+  function scopeBy(filters: readonly DataTableScopeFilter<keyof WidgetQueryRow & string>[]) {
+    const codes = filters.find((scope) => scope.field === "code")?.values;
+    setFilter(codes === undefined ? undefined : { code: [...codes] });
+    void load(state().cap);
+  }
+
   return (
     <LoadedTable
       name="widget"
@@ -112,6 +134,8 @@ function SeamTable(props: { size: number }): JSX.Element {
       sortFields={definition.sortFields}
       sortMaxFields={definition.sortMaxFields}
       onSortChange={sortBy}
+      scopeFilters={definition.scopeFilters}
+      onScopeChange={scopeBy}
     />
   );
 }
@@ -179,6 +203,8 @@ function MemoryTable(props: {
       sortFields={[]}
       sortMaxFields={2}
       onSortChange={() => {}}
+      scopeFilters={[]}
+      onScopeChange={() => {}}
       groupedFields={props.groupedFields}
     />
   );
@@ -194,6 +220,8 @@ function LoadedTable<Row extends object>(props: {
   sortFields: readonly { readonly field: keyof Row & string }[];
   sortMaxFields: number;
   onSortChange: (sort: readonly DataTableSort<Row>[]) => void;
+  scopeFilters: readonly (keyof Row & string)[];
+  onScopeChange: (filters: readonly DataTableScopeFilter<keyof Row & string>[]) => void;
   groupedFields?: readonly (keyof Row & string)[] | undefined;
 }): JSX.Element {
   return (
@@ -213,6 +241,8 @@ function LoadedTable<Row extends object>(props: {
       sortFields={props.sortFields}
       sortMaxFields={props.sortMaxFields}
       onSortChange={props.onSortChange}
+      scopeFilters={props.scopeFilters}
+      onScopeChange={props.onScopeChange}
       groupedFields={props.groupedFields}
     />
   );

@@ -61,6 +61,8 @@ function table(fullyRead: () => boolean = () => true) {
       sortFields={[]}
       sortMaxFields={1}
       onSortChange={() => {}}
+      scopeFilters={[]}
+      onScopeChange={() => {}}
       hiddenFields={["secret"]}
     />
   ));

@@ -9,9 +9,6 @@
  *
  * A filter runs in the table, so it applies only to a fully read set. On a set
  * that is not fully read, the control says why and changes nothing.
- *
- * The same popover chooses the column's aggregate, from the ones its type
- * allows, when it allows more than one.
  */
 
 import type { Column } from "@tanstack/solid-table";
@@ -22,7 +19,6 @@ import { Button } from "../components/ui/button";
 import { Field, FieldLabel } from "../components/ui/field";
 import { Input } from "../components/ui/input";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "../components/ui/popover";
-import type { DataTableAggregate } from "./aggregate";
 import type { DataTableColumnType, DataTableFeatures } from "./data-table";
 
 /** The filter of one column, as the table state holds it. */
@@ -151,10 +147,6 @@ export function ColumnFilter<TRow extends object>(props: {
   label: string;
   /** False when the set is not fully read. */
   enabled: boolean;
-  /** The aggregates the column allows, and the one it shows. */
-  aggregates: readonly DataTableAggregate[];
-  aggregate: DataTableAggregate;
-  onAggregate: (aggregate: DataTableAggregate) => void;
 }): JSX.Element {
   const current = () => props.column.getFilterValue() as DataTableFilter | undefined;
   const set = (filter: DataTableFilter | undefined) => props.column.setFilterValue(filter);
@@ -273,24 +265,6 @@ export function ColumnFilter<TRow extends object>(props: {
             clear
           </Button>
         </div>
-        <Show when={props.aggregates.length > 1}>
-          <div role="group" aria-label={`aggregate ${props.label}`} class="flex flex-wrap gap-2">
-            <For each={props.aggregates}>
-              {(aggregate) => (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={props.aggregate === aggregate ? "default" : "outline"}
-                  aria-pressed={props.aggregate === aggregate}
-                  disabled={disabled()}
-                  onClick={() => props.onAggregate(aggregate)}
-                >
-                  {aggregate}
-                </Button>
-              )}
-            </For>
-          </div>
-        </Show>
       </PopoverContent>
     </Popover>
   );

@@ -90,6 +90,8 @@ function table(shape: { fullyRead?: () => boolean; groupedFields?: readonly (key
       sortFields={[]}
       sortMaxFields={1}
       onSortChange={() => {}}
+      scopeFilters={[]}
+      onScopeChange={() => {}}
       hiddenFields={["secret"]}
       groupedFields={shape.groupedFields}
     />

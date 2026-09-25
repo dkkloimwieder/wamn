@@ -54,3 +54,4 @@ export { type DataTableFilter } from "./table/column-filter";
 export { DataTable, type DataTableColumn, type DataTableColumnRole, type DataTableColumnType, type DataTableProps, type DataTableSort, type DataTableSortDirection } from "./table/data-table";
 export { type DataTableAggregate, type DataTableBucket } from "./table/aggregate";
 export { type DataTableGroupSort } from "./table/group-bar";
+export { type DataTableScopeFilter } from "./table/scope-bar";

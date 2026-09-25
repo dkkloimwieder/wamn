@@ -40,6 +40,13 @@
  * shown text. Group rows and the footer are not exported. On a set that is
  * not fully read, the button is disabled and says why.
  *
+ * Each header has a menu that sorts, hides, pins and unpins its column and
+ * chooses its aggregate. The column panel shows and hides columns and orders
+ * them, and a header edge drag sets a width. The arrangement works in every
+ * mode. The scope bar holds the server part of a load: each declared scope
+ * filter with its values, and the current sort as a chip. A scope change calls
+ * `onScopeChange`, and the source reads again. The table applies no scope.
+ *
  * The table fills the height of its container, which the app sizes. The
  * toolbar stays above the grid, and the grid body is the only element that
  * scrolls, so it is the element the windowing measures against.
@@ -66,14 +73,17 @@ import {
 } from "@tanstack/solid-table";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from "lucide-solid";
 import {
+  createEffect,
   createMemo,
   createSignal,
   createUniqueId,
   For,
   type JSX,
   Match,
+  on,
   Show,
   Switch,
+  untrack,
 } from "solid-js";
 
 import {
@@ -110,7 +120,10 @@ import {
   filterText,
 } from "./column-filter";
 import { csvFileName, csvText, downloadCsv, EXPORT_NEEDS_FULL_SET } from "./csv";
+import { ColumnMenu } from "./column-menu";
+import { ColumnPanel } from "./column-panel";
 import { type DataTableGroupSort, GroupBar, VALUE_SORT } from "./group-bar";
+import { type DataTableScopeFilter, ScopeBar } from "./scope-bar";
 
 /** The type of a column, as the frozen `wamn:postgres/types.sql-value` names it. */
 export type DataTableColumnType =
@@ -179,6 +192,10 @@ export interface DataTableProps<TRow extends object> {
   readonly sortMaxFields: number;
   /** Called with the whole new sort after a click, when the set is not fully read. */
   readonly onSortChange: (sort: readonly DataTableSort<TRow>[]) => void;
+  /** The declared scope filters: the fields the source can read by a list of values. */
+  readonly scopeFilters: readonly (keyof TRow & string)[];
+  /** Called with every scope filter that holds a value, after the scope bar changes one. */
+  readonly onScopeChange: (filters: readonly DataTableScopeFilter<keyof TRow & string>[]) => void;
   /** The fields hidden when the table first draws. A view replaces them later. */
   readonly hiddenFields?: readonly (keyof TRow & string)[] | undefined;
   /** The fields grouped when the table first draws, in nesting order. A view replaces them later. */
@@ -376,25 +393,17 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         id: definition.field,
         header: (context) => (
           <div class="flex items-center gap-1">
-            <SortHeader
-              column={context.column}
-              label={definition.label}
-              onSort={() => {
-                if (!props.fullyRead) {
-                  props.onSortChange(
-                    (table.atoms.sorting?.get() ?? []).map((sort) => ({
-                      field: sort.id as keyof TRow & string,
-                      direction: sort.desc ? "descending" : "ascending",
-                    })),
-                  );
-                }
-              }}
-            />
+            <SortHeader column={context.column} label={definition.label} onSort={sortChanged} />
             <ColumnFilter
               column={context.column}
               type={definition.type}
               label={definition.label}
               enabled={props.fullyRead}
+            />
+            <ColumnMenu
+              column={context.column}
+              label={definition.label}
+              onSort={sortChanged}
               aggregates={allowedAggregates(definition.type)}
               aggregate={aggregateOf(definition.field)}
               onAggregate={(aggregate) => {
@@ -415,6 +424,8 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           />
         ),
         accessorFn: (row) => row[definition.field],
+        // The starting width, before a drag sets one: a whole id or time fits.
+        size: definition.type === "uuid" ? 300 : definition.type === "timestamptz" ? 240 : 150,
         sortFn: (a: Row<DataTableFeatures, TRow>, b: Row<DataTableFeatures, TRow>) =>
           // Group rows keep the order the group bar sets.
           a.getIsGrouped()
@@ -516,10 +527,66 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     get maxMultiSortColCount() {
       return props.sortMaxFields;
     },
+    columnResizeMode: "onChange",
     // A click turns ascending, then descending, and never clears the sort.
     sortDescFirst: false,
     enableSortingRemoval: false,
   });
+
+  /** After a header or menu sort: a set that is not fully read asks for a new load. */
+  function sortChanged() {
+    if (!props.fullyRead) {
+      props.onSortChange(
+        (table.atoms.sorting?.get() ?? []).map((sort) => ({
+          field: sort.id as keyof TRow & string,
+          direction: sort.desc ? "descending" : "ascending",
+        })),
+      );
+    }
+  }
+
+  // TanStack filters again only when the data or the filters change, and the
+  // search reads the visible columns, so a change of visibility filters again
+  // while a search is active. A new copy of the rows also groups them again.
+  createEffect(
+    on(
+      () => table.atoms.columnVisibility?.get(),
+      () => {
+        if (untrack(search) !== "") {
+          setGeneration((value) => value + 1);
+        }
+      },
+      { defer: true },
+    ),
+  );
+
+  /** The values of each scope filter. The source reads them, and the table applies none. */
+  const [scope, setScope] = createSignal<Record<string, readonly string[]>>({});
+  function changeScope(field: string, values: readonly string[]) {
+    const next = { ...scope(), [field]: values };
+    setScope(next);
+    props.onScopeChange(
+      props.scopeFilters
+        .filter((declared) => (next[declared] ?? []).length > 0)
+        .map((declared) => ({ field: declared, values: next[declared]! })),
+    );
+  }
+
+  /** The current sort, as the scope bar shows it. */
+  const sortChips = () =>
+    (table.atoms.sorting?.get() ?? []).map(
+      (sort) => `${column(sort.id).label} ${sort.desc ? "descending" : "ascending"}`,
+    );
+
+  /** Every column in the table's order, as the column panel lists it. */
+  const panelColumns = () => {
+    table.atoms.columnVisibility?.get();
+    const order = table.atoms.columnOrder?.get() ?? [];
+    const fields = props.columns.map((candidate) => candidate.field as string);
+    return [...order.filter((id) => fields.includes(id)), ...fields.filter((id) => !order.includes(id))].map(
+      (id) => ({ id, label: column(id).label, visible: table.getColumn(id)?.getIsVisible() ?? true }),
+    );
+  };
 
   const search = () => (table.atoms.globalFilter?.get() as string | undefined) ?? "";
   const searchId = createUniqueId();
@@ -596,6 +663,17 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
 
   return (
     <section data-slot="data-table" class="flex h-full min-h-0 min-w-0 flex-col gap-4">
+      <Show when={props.scopeFilters.length > 0 || sortChips().length > 0}>
+        <ScopeBar
+          filters={props.scopeFilters.map((field) => ({
+            field,
+            label: column(field).label,
+            values: scope()[field] ?? [],
+          }))}
+          sort={sortChips()}
+          onChange={changeScope}
+        />
+      </Show>
       <div
         data-slot="data-table-toolbar"
         class="flex shrink-0 flex-wrap items-end justify-between gap-4"
@@ -626,6 +704,15 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
               <FieldDescription>{EXPORT_NEEDS_FULL_SET}</FieldDescription>
             </Show>
           </Field>
+          <ColumnPanel
+            columns={panelColumns()}
+            onVisible={(id, visible) => table.getColumn(id)?.toggleVisibility(visible)}
+            onOrder={(order) => table.setColumnOrder([...order])}
+            onShowAll={() =>
+              table.setColumnVisibility(Object.fromEntries(props.columns.map((shown) => [shown.field, true])))
+            }
+            onReset={() => table.setColumnOrder(props.columns.map((shown) => shown.field as string))}
+          />
           <Field class="w-64">
             <FieldLabel for={searchId}>search</FieldLabel>
             <Input
@@ -714,6 +801,10 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         table={table}
         recordCount={props.rows.length}
         isLoading={props.busy}
+        // A header edge drag sets the width, which the table state keeps. A pinned column sticks.
+        // The resize mode is a table option: a tableLayout mode would reset the options, which
+        // reads each getter above once and keeps its value.
+        tableLayout={{ columnsResizable: true, columnsPinnable: true }}
         emptyMessage={
           props.refusal ??
           (filters().length > 0 || search() !== "" ? "No row matches the search and filters." : null)

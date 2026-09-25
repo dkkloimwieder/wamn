@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DataTable, type DataTableColumn } from "@wamn/ui";
 
-import { bodyRows, theButton } from "./dom.js";
+import { bodyRows, pickMenu, theButton } from "./dom.js";
 
 afterEach(cleanup);
 
@@ -76,6 +76,8 @@ function table(shape: Shape = {}) {
       sortFields={[]}
       sortMaxFields={1}
       onSortChange={() => {}}
+      scopeFilters={[]}
+      onScopeChange={() => {}}
       groupedFields={shape.groupedFields}
       timeZone="UTC"
       weekStart={shape.weekStart}
@@ -102,18 +104,8 @@ const press = (name: string) => fireEvent.click(theButton(name));
 const total = (field: string) =>
   document.querySelector(`[data-slot="data-table-total"][data-field="${field}"]`)?.textContent;
 
-/** Choose one column's aggregate in its open header popover. */
-function choose(field: string, name: string) {
-  const buttons = document.querySelector(`[aria-label="aggregate ${field}"]`)!.querySelectorAll("button");
-  fireEvent.click(Array.from(buttons).find((button) => button.textContent === name)!);
-}
-
-/** Open one column's header popover, choose its aggregate, and close it. */
-function aggregate(field: string, name: string) {
-  press(`filter ${field}`);
-  choose(field, name);
-  press(`filter ${field}`);
-}
+/** Choose one column's aggregate in its header menu. */
+const aggregate = (field: string, name: string) => pickMenu(field, name);
 
 /** Pick one option of a choice field. */
 async function pick(label: string | RegExp, name: string) {
@@ -256,9 +248,9 @@ describe("the aggregates and the totals row", () => {
     }
     aggregate("at", "min");
     expect(total("at")).toBe("min 2026-09-21T10:00:00.000000Z");
-    press("filter version");
-    expect(document.querySelector('[aria-label="aggregate version"]')).toBeNull();
-    // Sixteen popovers open and close; on a loaded machine this takes more than 5 s.
+    // The revision column allows only count, so its menu offers no choice.
+    expect(() => pickMenu("version", "count")).toThrow();
+    // Sixteen menus open and close; on a loaded machine this takes more than 5 s.
   }, 20_000);
 
   it("sum and average decimals exactly, rounding an average half away from zero", () => {
