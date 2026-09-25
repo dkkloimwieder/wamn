@@ -163,7 +163,7 @@ The samples, as issue `wamn-e5in.8` built them in [`samples.rs`](../../services/
 - The device loop gives each frame a new UUID v4 as its `sample_key`. It sends one item, `{"request_id": sample_key, "value": {"frame", "captured_at"}}`, so the sample key is also the intent key.
 - A completed item stores its `value` as `body`, in the transaction that finishes its intent. A failed item stores no sample. `SqliteIntentStore::transact` and `finish_in` let the edge write its table in that transaction.
 - The device route must change records and must name no idempotency key, and the edge refuses to start otherwise.
-- The serial reader drops a trailing carriage return, an empty frame, a frame that is not UTF-8, and a frame longer than `max_frame`, and logs each drop.
+- The serial reader drops a trailing carriage return. It drops an empty frame, a frame that is not UTF-8, and a frame longer than `max_frame`. It counts each dropped frame for the diagnostics, because drops show a misconfigured scale, and logs the first drop only (owner ruling).
 
 `begin` commits before the export runs. After a power loss, a begun intent with no outcome is uncertain, and the edge never runs it again. The reading of that intent is lost, and the next reading replaces it. The promise holds only if the SD card honors a flush. The closeout records the card that the test used.
 

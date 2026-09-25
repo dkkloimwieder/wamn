@@ -57,6 +57,11 @@ impl EdgeHost {
         &self.samples
     }
 
+    /// The device loop, when the configuration names a device.
+    pub fn device(&self) -> Option<&DeviceLoop> {
+        self.device.as_ref()
+    }
+
     /// Refuse new requests and frames, let the device call in flight finish,
     /// then stop the host and its workloads.
     pub async fn stop(self) -> anyhow::Result<()> {

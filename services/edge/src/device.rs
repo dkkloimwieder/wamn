@@ -9,6 +9,7 @@
 //! `value` as the sample, in the transaction that finishes its intent.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use chrono::{SecondsFormat, Utc};
@@ -29,9 +30,17 @@ use crate::serial;
 #[derive(Debug)]
 pub struct DeviceLoop {
     task: JoinHandle<()>,
+    dropped: Arc<AtomicU64>,
 }
 
 impl DeviceLoop {
+    /// The frames that the loop dropped since start: empty, not UTF-8, or
+    /// longer than `max_frame`. A count above zero shows a misconfigured
+    /// device.
+    pub fn dropped_frames(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
     /// Wait for the loop to end. A call in flight finishes first.
     pub async fn join(self) {
         if let Err(error) = self.task.await {
@@ -77,10 +86,20 @@ pub fn start(
             config.attachment
         );
     }
-    let frames = serial::open(&config.serial).context("open the device")?;
+    let port = serial::open(&config.serial).context("open the device")?;
     let attachment = config.attachment.clone();
-    let task = tokio::spawn(run(attachment, caller, delivery, samples, frames, stopped));
-    Ok(DeviceLoop { task })
+    let task = tokio::spawn(run(
+        attachment,
+        caller,
+        delivery,
+        samples,
+        port.frames,
+        stopped,
+    ));
+    Ok(DeviceLoop {
+        task,
+        dropped: port.dropped,
+    })
 }
 
 async fn run(

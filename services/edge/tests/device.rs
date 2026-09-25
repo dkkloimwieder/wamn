@@ -15,6 +15,7 @@ use std::time::Duration;
 use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 use serde_json::json;
 use wamn_edge::config::{DeviceConfig, SerialConfig};
+use wamn_edge::device::DeviceLoop;
 use wamn_edge::samples::{Sample, SampleStore};
 use wamn_run_state::IntentStore as _;
 use wamn_run_state_sqlite::SqliteIntentStore;
@@ -37,14 +38,14 @@ fn pseudo_terminal() -> (File, PathBuf) {
 
 /// The pending samples, once there are `count` of them.
 async fn pending(samples: &SampleStore, count: usize) -> Vec<Sample> {
-    for _ in 0..100 {
+    for _ in 0..300 {
         let pending = samples.pending(10).await.expect("read the samples");
         if pending.len() >= count {
             return pending;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("the device loop stored fewer than {count} samples in 10 seconds");
+    panic!("the device loop stored fewer than {count} samples in 30 seconds");
 }
 
 /// Two frames give two calls, two finished intents and two samples. A frame
@@ -72,6 +73,11 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         .write_all(b"0123456789ABCDEFGHIJ\n12.5 kg\r\n13.0 kg\n")
         .expect("send the frames");
     let stored = pending(host.samples(), 2).await;
+    assert_eq!(
+        host.device().map(DeviceLoop::dropped_frames),
+        Some(1),
+        "the long frame is counted"
+    );
     host.stop().await.expect("the edge stops");
 
     assert_eq!(

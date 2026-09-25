@@ -1,14 +1,17 @@
 //! The serial source of the device loop: the host owns the port.
 //!
 //! The host opens the tty read-only, sets raw mode and the baud rate, and
-//! reads frames that end in a newline. It drops a trailing carriage return, an
-//! empty frame, a frame that is not UTF-8, and a frame longer than
-//! `max_frame`, and logs each drop. The device operation sees only the frame
-//! text. A device that the host must drive (write, poll, handshake) needs a
+//! reads frames that end in a newline. It drops a trailing carriage return. It
+//! drops an empty frame, a frame that is not UTF-8, and a frame longer than
+//! `max_frame`, and counts each dropped frame, because drops show a
+//! misconfigured device. It logs the first drop only. The device operation
+//! sees only the frame text. A device that the host must drive (write, poll, handshake) needs a
 //! host plugin with a WIT import instead (docs/plan/edge.md 4.2).
 
 use std::fs::File;
 use std::io::Read;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use rustix::fs::{Mode, OFlags};
@@ -21,21 +24,33 @@ use crate::config::SerialConfig;
 /// reader looks whether the loop still wants frames.
 const READ_WAIT_DECISECONDS: u8 = 1;
 
+/// The frames of an open serial port, and the count of frames it dropped.
+#[derive(Debug)]
+pub struct SerialFrames {
+    pub frames: mpsc::Receiver<String>,
+    pub dropped: Arc<AtomicU64>,
+}
+
 /// Open the port of `config` and read its frames on a thread. The thread ends
 /// when the receiver closes or the port fails.
 ///
 /// The channel holds one frame, so frames that arrive during a call wait in
 /// the tty buffer.
-pub fn open(config: &SerialConfig) -> anyhow::Result<mpsc::Receiver<String>> {
+pub fn open(config: &SerialConfig) -> anyhow::Result<SerialFrames> {
     let port = open_raw(config)
         .with_context(|| format!("open the serial port {}", config.path.display()))?;
     let (frames, received) = mpsc::channel(1);
+    let dropped = Arc::new(AtomicU64::new(0));
+    let counter = Arc::clone(&dropped);
     let max_frame = config.max_frame;
     std::thread::Builder::new()
         .name("wamn-edge-serial".to_owned())
-        .spawn(move || read_frames(port, max_frame, &frames))
+        .spawn(move || read_frames(port, max_frame, &frames, &counter))
         .context("start the serial reader")?;
-    Ok(received)
+    Ok(SerialFrames {
+        frames: received,
+        dropped,
+    })
 }
 
 /// Open the tty without making it the controlling terminal, and set raw mode,
@@ -63,8 +78,14 @@ fn open_raw(config: &SerialConfig) -> anyhow::Result<File> {
 }
 
 /// Send each frame of `port` to `frames` until the receiver closes or a read
-/// fails. A read that returns no byte is a read wait that ended.
-fn read_frames(mut port: impl Read, max_frame: usize, frames: &mpsc::Sender<String>) {
+/// fails, and count each dropped frame in `dropped`. A read that returns no
+/// byte is a read wait that ended.
+fn read_frames(
+    mut port: impl Read,
+    max_frame: usize,
+    frames: &mpsc::Sender<String>,
+    dropped: &AtomicU64,
+) {
     let mut frame = Vec::with_capacity(max_frame);
     let mut too_long = false;
     let mut buffer = [0; 256];
@@ -86,12 +107,18 @@ fn read_frames(mut port: impl Read, max_frame: usize, frames: &mpsc::Sender<Stri
                 }
                 continue;
             }
-            if too_long {
-                tracing::warn!(max_frame, "a frame is longer than max_frame; it is dropped");
-            } else if let Some(text) = frame_text(&frame)
-                && frames.blocking_send(text).is_err()
-            {
-                return;
+            let text = if too_long {
+                Err("longer than max_frame")
+            } else {
+                frame_text(&frame)
+            };
+            match text {
+                Ok(text) => {
+                    if frames.blocking_send(text).is_err() {
+                        return;
+                    }
+                }
+                Err(reason) => drop_frame(dropped, reason),
             }
             frame.clear();
             too_long = false;
@@ -99,22 +126,32 @@ fn read_frames(mut port: impl Read, max_frame: usize, frames: &mpsc::Sender<Stri
     }
 }
 
-/// The text of one frame without its carriage return, or `None` to drop it.
-fn frame_text(frame: &[u8]) -> Option<String> {
+/// The text of one frame without its carriage return, or why it is dropped.
+fn frame_text(frame: &[u8]) -> Result<String, &'static str> {
     let frame = frame.strip_suffix(b"\r").unwrap_or(frame);
     if frame.is_empty() {
-        return None;
+        return Err("empty");
     }
-    let text = std::str::from_utf8(frame).ok();
-    if text.is_none() {
-        tracing::warn!(bytes = frame.len(), "a frame is not UTF-8; it is dropped");
+    std::str::from_utf8(frame)
+        .map(str::to_owned)
+        .map_err(|_| "not UTF-8")
+}
+
+/// Count one dropped frame, and log it when it is the first.
+fn drop_frame(dropped: &AtomicU64, reason: &'static str) {
+    if dropped.fetch_add(1, Ordering::Relaxed) == 0 {
+        tracing::warn!(
+            reason,
+            "the device sent a frame that the loop drops; the loop counts later drops and \
+             does not log them"
+        );
     }
-    text.map(str::to_owned)
 }
 
 #[cfg(test)]
 mod tests {
     use std::io::Read;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use tokio::sync::mpsc;
 
@@ -144,12 +181,18 @@ mod tests {
             b"0123456789ABC\nshort\n",
             b"\xff\n7\n",
         ]);
-        read_frames(port, 8, &sender);
+        let dropped = AtomicU64::new(0);
+        read_frames(port, 8, &sender, &dropped);
         drop(sender);
         let mut frames = Vec::new();
         while let Some(frame) = receiver.blocking_recv() {
             frames.push(frame);
         }
         assert_eq!(frames, ["12.5 kg", "short", "7"]);
+        assert_eq!(
+            dropped.load(Ordering::Relaxed),
+            3,
+            "the empty, long and non-UTF-8 frames"
+        );
     }
 }
