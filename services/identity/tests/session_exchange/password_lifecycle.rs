@@ -388,7 +388,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     wait_for_blocked_issuer(&fixture.system.client, &fixture.issuer_role).await;
     let pending = request(&https, &fixture, "/password/logout-all", &first);
     let logout = tokio::spawn(async move { pending.send().await });
-    tokio::time::timeout(Duration::from_secs(2),async{
+    tokio::time::timeout(HANG_GUARD,async{
         loop {
             fixture.system.client.query_one("SELECT pg_stat_clear_snapshot()",&[]).await.unwrap();
             let waiting:i64=fixture.system.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE usename=$1 AND cardinality(pg_blocking_pids(pid))>0",&[&fixture.issuer_role]).await.unwrap().get(0);

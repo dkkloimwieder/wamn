@@ -16,9 +16,14 @@ pub const PROJECTION_CONTENT_CONFLICT: &str =
     "effective-release-identity-projection-content-conflict";
 
 /// Insert one release identity without replacing an existing row.
+///
+/// The statement names no conflict target, so every unique constraint is an
+/// arbiter. Two identical concurrent inserts can meet on
+/// `effective_releases_environment_key` before the primary key, and that
+/// conflict must also leave the winner in place.
 pub fn project_effective_release_identity_sql() -> &'static str {
     "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
-     VALUES ($1, $2, $3) ON CONFLICT (tenant_id, effective_release_id) DO NOTHING"
+     VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"
 }
 
 /// Read the winning identity after the insert finishes.

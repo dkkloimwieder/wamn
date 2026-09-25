@@ -51,6 +51,10 @@ const SUFFIX: &str = "s3ss10n2";
 /// The test principal that each environment fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 const SCOPES: [(&str, &str); 3] = [("demo", "dev"), ("demo", "prod"), ("other", "dev")];
+/// Bounds a wait for an observed backend state. A wait ends when PostgreSQL
+/// shows that state, never after a fixed delay. This bound only stops a test
+/// that would otherwise hang because of a defect, so machine load cannot reach it.
+const HANG_GUARD: Duration = Duration::from_secs(120);
 
 // A failing fixture or mutated response must not append upstream error Debug:
 // PostgreSQL DETAIL and deserialization errors can contain secret input values.
@@ -759,7 +763,7 @@ async fn original_validation_time_and_timeout(
 }
 
 async fn wait_for_blocked_issuer(system: &Client, issuer_role: &str) {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(HANG_GUARD, async {
         loop {
             system.query_one("SELECT pg_stat_clear_snapshot()", &[]).await.expect_redacted("refresh backend observation");
             let blocked: bool = system.query_one("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE usename=$1 AND pg_backend_pid()=ANY(pg_blocking_pids(pid)))", &[&issuer_role])
@@ -798,7 +802,7 @@ async fn only_reader_pid(observer: &Client, target: &SessionTarget) -> i32 {
 }
 
 async fn wait_reader_closed(observer: &Client, target: &SessionTarget) {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(HANG_GUARD, async {
         loop {
             let pids = reader_pids(observer, target).await;
             assert!(
