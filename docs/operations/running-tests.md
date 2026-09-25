@@ -638,6 +638,32 @@ To see the components after that command, run `npm run gallery` in `web/componen
 The gallery shows every `@wamn/ui` export and every fixture screen over the test stubs, with no network.
 Its [README](../../web/components/README.md#gallery) names the port option.
 
+### App shell
+
+`web/shell` resolves `@wamn/ui` from `web/ui` and the runtime from `web/runtime`, so install all three:
+
+```bash
+cd web/shell && npm install
+cd ../ui && npm install
+cd ../runtime && npm ci
+```
+
+To type-check the shell and run its tests, run:
+
+```bash
+cd web/shell && npm run check && npm test
+```
+
+The tests render the shell with two stub screens and a stub identity service, and read the document.
+They need no browser and no server.
+
+An application web page, such as `apps/wamn_wms/web`, installs its own libraries.
+To type-check it, run:
+
+```bash
+cd apps/wamn_wms/web && npm install && npm run check
+```
+
 ## Cleanup
 
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.

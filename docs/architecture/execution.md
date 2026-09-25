@@ -474,6 +474,12 @@ An operation whose shape has no role gets no component, and the emitted index na
 A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
 Components state no route and no navigation: a row link is a callback, and the application decides what to open.
 
+The [app shell](../../web/shell/README.md) places the components on routes, and the generator does not write it.
+An application web page in `apps/<app>/web/` gives the shell a hand-written route table of screens, grouped by model.
+The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
+A screen address with no session asks for the password on that address, and it shows the screen after sign in.
+The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.
+
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
 A user cannot type a revision or obtain a guessed read route.

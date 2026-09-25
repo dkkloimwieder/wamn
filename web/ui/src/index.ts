@@ -45,6 +45,15 @@ export {
   type ChoiceFieldProps,
   type TextFieldProps,
 } from "./fields";
+export {
+  AppFrame,
+  CardPage,
+  type AppFrameProps,
+  type CardPageProps,
+  type FrameItem,
+  type FrameLink,
+  type FrameSection,
+} from "./frame";
 export { gridFeatures, type GridFeatures } from "./grid";
 export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";

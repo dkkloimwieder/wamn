@@ -14,20 +14,23 @@ The copy was taken on 2026-09-22 from the registry `https://zaidan.carere.dev/r/
 On 2026-09-23 the design system moved from vega to the preset `buIovdQ`, through `shadcn@latest add @zaidan/preset-buIovdQ`.
 That preset replaced `src/styles/base.css`, changed the primary, secondary and sidebar colors, and added the Inter font.
 It changed no component source.
+On 2026-09-25 the app shell added `sidebar` from the same registry, with the items it needs that the copy lacked: `sheet`, `tooltip` and `use-mobile`.
 By owner direction the font is Fira Code, over the system monospace font, in place of the preset's Inter.
 Labels, column headers, buttons, card titles and detail terms read in capitals, and values and descriptions keep their case.
 
 | Kind | Items |
 | --- | --- |
 | Block | `data-grid`, trimmed to `data-grid.tsx`, `data-grid-table.tsx`, `data-grid-table-virtual.tsx`, and an index of those three |
-| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `field`, `input`, `input-group`, `label`, `select`, `separator`, `skeleton`, `spinner`, `textarea`, `toast` |
+| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `field`, `input`, `input-group`, `label`, `select`, `separator`, `sheet`, `sidebar`, `skeleton`, `spinner`, `textarea`, `toast`, `tooltip` |
+| Hook | `use-mobile` |
 | Shared | `color-mode` |
 | Design system | `preset-buIovdQ`: `style-lyra`, `neutral`, the indigo theme, `font-inter`, the default radius |
 
 The copy changed these things:
 
 - Every `@/` import became a relative path, so the package compiles inside any consumer.
-- Seventeen optional props gained `| undefined`, so the source passes `exactOptionalPropertyTypes`. The virtual table also states the type of the options it hands to `createVirtualizer`, for the same reason.
+- Twenty optional props gained `| undefined`, so the source passes `exactOptionalPropertyTypes`. The virtual table also states the type of the options it hands to `createVirtualizer`, for the same reason.
+- For the same reason, the mobile sidebar states the type of the props it spreads onto `Sheet`. The tooltip passes `false` for an unset `disabled` or `triggerOnFocusOnly`, and it drops an explicit `defaultOpen={undefined}`.
 - `ComboboxContent` gained a `footer` slot below the list, for a next page control.
 - A body row hands itself to the virtualizer one microtask after its ref runs. Solid runs the ref before it sets `data-index`, and the virtualizer cannot measure a row with no index.
 - `Toaster` gives every toast the `z-toast` class, which the registry item leaves out. `src/styles.css` sets the toast corner through `--border-radius`, because solid-sonner draws it from that variable in CSS outside every layer.
@@ -55,6 +58,8 @@ Add an item only when an emitter target, or a page that places the generated com
 | `FormDone` | The line a form shows beside its buttons after its command completes |
 | `WindowedTable` | The rows of a generated table, windowed above `WINDOW_FROM` rows inside the fixed-height box, and in full below it |
 | `TableScreen` | One table screen: its filter form, its rows and its next page, stacked with one gap |
+| `AppFrame` | The signed-in page of an application: the sidebar with its navigation, a header, and the screen |
+| `CardPage` | One card in the middle of an empty page, for signing in and for an address with no page |
 
 `RecordSelect` filters nothing itself, so its options are exactly the rows the release sent.
 A search matches a value in full, because a declared filter compares with `IN`.
@@ -73,6 +78,7 @@ Map `solid-js` and `@tanstack/solid-table` to one copy, because two copies of `s
 
 The color mode is stored in the cookie `zaidan-color-mode`.
 It holds `light` or `dark` and nothing else.
+The sidebar stores whether it is open in the cookie `sidebar_state`, which holds `true` or `false`.
 
 ## Check it
 

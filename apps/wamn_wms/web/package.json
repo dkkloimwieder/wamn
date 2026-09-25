@@ -1,0 +1,26 @@
+{
+  "name": "@wamn/wms-web",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@solidjs/router": "^1.0.0",
+    "@tanstack/solid-form": "^1.33.5",
+    "@tanstack/solid-table": "^9.2.4",
+    "solid-js": "^1.9.15",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7",
+    "vite-plugin-solid": "^2.11.14"
+  }
+}

@@ -69,7 +69,7 @@ A record route carries the key in the path, for example `/pallets/<id>`, and mou
 
 ### 4.6 The environment in the address
 
-The demo writes the environment into the address fragment, so a reload renews the session with no browser storage. The shell keeps that rule. Issue 1 decides the exact form of the address.
+The demo writes the environment into the address fragment, so a reload renews the session with no browser storage. The shell keeps that rule. Issue 1 made the audience the first path segment, for example `/urn:wamn:project-env:acme:widgets:dev:k3m9x2p7/pallets`.
 
 ## 5. Issues
 
