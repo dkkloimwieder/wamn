@@ -109,6 +109,7 @@ fn routes() -> BTreeSet<ServingRoute> {
         kind: OperationKind::Get,
         reads: BTreeSet::new(),
         revision: None,
+        idempotency: None,
     }])
 }
 

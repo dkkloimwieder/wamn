@@ -51,6 +51,10 @@ A read without a revision field, or with no declared relations, has no ETag, and
 A `get` tag follows `row_version`, so a row that is deleted and created again under the same natural key can match an old tag.
 [`read_cache`](../../crates/execution/host/src/read_cache.rs) owns the tags.
 
+`invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
+The cloud route passes none. The edge passes one for each route, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
+Publish writes the input field of the idempotency key into the serving manifest route (`idempotency`) from the generated input contract.
+
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 

@@ -214,7 +214,7 @@ struct OwnedIntent {
 
 /// Read the key and insert it when it is new, in one committed transaction.
 ///
-/// A resolved intent stays uncertain for `begin`, so its call never runs again.
+/// A resolved intent answers its basis, so its call never runs again.
 fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, StoreError> {
     let storage = storage("begin");
     let transaction = connection
@@ -222,7 +222,7 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
         .map_err(&storage)?;
     let existing = transaction
         .query_row(
-            "SELECT id, input_hash, outcome_kind, outcome FROM intents \
+            "SELECT id, input_hash, outcome_kind, outcome, resolved_basis FROM intents \
              WHERE tenant = ?1 AND idempotency_key = ?2",
             params![intent.tenant, intent.idempotency_key],
             |row| {
@@ -231,25 +231,26 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
         .optional()
         .map_err(&storage)?;
     let begun = match existing {
-        Some((_, input_hash, _, _)) if input_hash != intent.input_hash => {
-            return Err(contract(
-                "begin",
-                format!(
-                    "idempotency key {} of tenant {} repeats with a different input",
-                    intent.idempotency_key, intent.tenant
-                ),
-            ));
+        Some((id, input_hash, ..)) if input_hash != intent.input_hash => {
+            Begun::Conflict(IntentId(id.to_string()))
         }
-        Some((_, _, Some(kind), Some(outcome))) => {
+        Some((_, _, Some(kind), Some(outcome), _)) => {
             Begun::Finished(stored_outcome(&kind, &outcome)?)
         }
-        Some((id, _, _, _)) => Begun::Uncertain(IntentId(id.to_string())),
+        Some((id, _, _, _, Some(basis))) => Begun::Resolved {
+            id: IntentId(id.to_string()),
+            basis: basis
+                .parse()
+                .map_err(|error| contract("begin", format!("stored basis: {error}")))?,
+        },
+        Some((id, ..)) => Begun::Uncertain(IntentId(id.to_string())),
         None => {
             transaction
                 .execute(

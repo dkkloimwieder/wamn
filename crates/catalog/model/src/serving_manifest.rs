@@ -398,6 +398,11 @@ pub struct ServingRoute {
     /// `record.revision_field` of its generated contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    /// The input item field that carries the idempotency key, such as
+    /// `value.idempotency_key`, from the generated input contract. A route
+    /// without one keys its intents by the item `request_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency: Option<String>,
 }
 
 /// One relation of a project database, by schema and name.
@@ -825,6 +830,20 @@ impl ServingManifest {
             .get(id)
             .map(AttachmentRef::Route)
             .or_else(|| self.workflow.attachments.get(id).map(AttachmentRef::Wiring))
+    }
+
+    /// The route that calls `operation` of `component` in package `package_id`.
+    pub fn route(
+        &self,
+        package_id: &str,
+        component: &str,
+        operation: &str,
+    ) -> Option<&ServingRoute> {
+        self.routes.iter().find(|route| {
+            route.package_id == package_id
+                && route.component == component
+                && route.operation == operation
+        })
     }
 
     /// Every attachment of the release: the route attachments, then the
@@ -1416,6 +1435,7 @@ mod tests {
             kind: OperationKind::Get,
             reads: BTreeSet::new(),
             revision: None,
+            idempotency: None,
         }])
     }
 

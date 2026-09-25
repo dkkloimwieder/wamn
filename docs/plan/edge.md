@@ -92,7 +92,7 @@ Issue `wamn-e5in.6` built the edge side, and it moved two more checks into the e
 - `route_credential` selects the one credential that a request presents: a session cookie, a bearer session, or a PAT by its prefix. `PAT_TOKEN_PREFIX` moved into `wamn-session` so that the engine can read it.
 - `authorize_released_operation` checks the entry's own grant, then every permission that publish folded into it.
 
-On the edge, `EdgeAuthenticator` verifies a session over the key file and maps its roles through `grants.json`, and a PAT route answers 503, as an empty cloud authenticator does. `EdgeDelivery` calls `invoke_operation` for a route target and passes it the SQLite store, which it does not write yet (issue `wamn-e5in.7`). A wiring or registration target fails as `execution-failed`. A read carries no ETag, because the box has no model versions. `EdgePolicy` admits an application that imports `wamn:node/types` only. `serve` starts a plain wash-runtime host with no NATS, and it runs the route guest from the bundle bytes.
+On the edge, `EdgeAuthenticator` verifies a session over the key file and maps its roles through `grants.json`, and a PAT route answers 503, as an empty cloud authenticator does. `EdgeDelivery` calls `invoke_operation` for a route target and passes it the intent context of the route (section 4.7). A wiring or registration target fails as `execution-failed`. A read carries no ETag, because the box has no model versions. `EdgePolicy` admits an application that imports `wamn:node/types` only. `serve` starts a plain wash-runtime host with no NATS, and it runs the route guest from the bundle bytes.
 
 ### 4.4 Session verification and grants
 
@@ -157,6 +157,16 @@ Option A lets one transaction record the intent outcome and insert the sample. T
 `begin` commits before the export runs. After a power loss, a begun intent with no outcome is uncertain, and the edge never runs it again. The reading of that intent is lost, and the next reading replaces it. The promise holds only if the SD card honors a flush. The closeout records the card that the test used.
 
 The logging decision by operation kind belongs in `wamn-engine`, beside `invoke_operation`, so that the edge and `wamn-an24` share it. Epic `wamn-an24` then adds only the Postgres adapter.
+
+The intent rules, as issue `wamn-e5in.7` built them in the [engine](../../crates/platform/engine/src/operation/intent.rs):
+
+- A create, update, delete, or command logs. A get, query, projection, or event handler never logs.
+- Each input item is one intent. Its key is the item field that the route names in its `idempotency` member, or else the item's `request_id`. Publish writes that member from the generated input contract, as it writes `reads` and `revision`.
+- The input hash is the canonical JSON SHA-256 of the item without its `request_id`. A key that repeats with another input answers the item error `idempotency_conflict`.
+- Only new items run. A finished key answers its stored item outcome, and the answers merge into one item list in the order of the input.
+- A begun key with no outcome answers the item error `intent-uncertain`, which names the intent. A trap, a missed deadline, or a host failure leaves the new items of a call in that state.
+- An operator resolves an uncertain intent with `wamn-edge intents resolve <id> <basis>` while the edge is stopped, and lists them with `wamn-edge intents list`. A resolved key answers `intent-resolved` with the basis and is never uncertain again, so the client sends a new key.
+- An input that is not an item list with a `request_id` and a key on each item fails as `invalid_input`, and nothing runs.
 
 ### 4.8 Forward credential
 

@@ -128,14 +128,16 @@ pub fn package_route(
         kind: contract.kind,
         reads: contract.reads,
         revision: contract.revision,
+        idempotency: contract.idempotency,
     })
 }
 
 /// The route facts of every generated contract `operation.json` under the package.
 ///
 /// The generated contract is the only source of an operation kind, of the
-/// relations a read reads, and of the revision field of a `get`. A package
-/// that generates no contract has no operation a route can call.
+/// relations a read reads, of the revision field of a `get`, and of the item
+/// field that carries an idempotency key. A package that generates no contract
+/// has no operation a route can call.
 fn read_operation_contracts(
     root: &Path,
 ) -> Result<Vec<(String, RouteContract)>, MintManifestError> {
@@ -218,17 +220,58 @@ fn read_operation_contracts(
                 .record
                 .and_then(|record| record.revision_field)
                 .filter(|_| contract.kind == OperationKind::Get);
+            let idempotency = if contract.kind.is_read() {
+                None
+            } else {
+                read_idempotency_field(&path)?
+            };
             kinds.push((
                 contract.operation,
                 RouteContract {
                     kind: contract.kind,
                     reads,
                     revision,
+                    idempotency,
                 },
             ));
         }
     }
     Ok(kinds)
+}
+
+/// The idempotency key field of the input contract beside `operation_path`.
+///
+/// An operation with no input contract declares no key.
+fn read_idempotency_field(operation_path: &Path) -> Result<Option<String>, MintManifestError> {
+    let name = operation_path.to_string_lossy();
+    let input_path = std::path::PathBuf::from(format!(
+        "{}.input.json",
+        &name[..name.len() - ".operation.json".len()]
+    ));
+    let bytes = match std::fs::read(&input_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(MintManifestError::with_source(
+                MintManifestErrorKind::GeneratedPackageMetadata,
+                format!("read generated contract {}", input_path.display()),
+                error,
+            ));
+        }
+    };
+    let contract = serde_json::from_slice(&bytes).map_err(|error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::GeneratedPackageMetadata,
+            format!(
+                "generated contract {} is not JSON; regenerate the package evidence",
+                input_path.display()
+            ),
+            error,
+        )
+    })?;
+    Ok(wamn_schema_generator::client_plan::idempotency_field(
+        &contract,
+    ))
 }
 
 pub(super) fn validate_package_metadata(
@@ -325,5 +368,36 @@ mod tests {
         let write = package_route(&wms, "wamn_wms", "wms", "wamn-wms:inventory/move@1.0.0")
             .expect("the move command has a contract");
         assert_eq!((write.reads, write.revision), (BTreeSet::new(), None));
+    }
+
+    /// A write route names the input field of its idempotency key, from the
+    /// generated input contract. A read and a keyless write name none.
+    #[test]
+    fn a_write_route_names_its_idempotency_field() {
+        let wms = app("wamn_wms");
+        let route = |operation| {
+            package_route(&wms, "wamn_wms", "wms", operation)
+                .expect("the operation has a contract")
+                .idempotency
+        };
+        assert_eq!(
+            route("wamn-wms:inventory/move@1.0.0").as_deref(),
+            Some("value.idempotency_key")
+        );
+        assert_eq!(
+            route("wamn-wms:pallet/create@1.0.0").as_deref(),
+            Some("idempotency_key")
+        );
+        assert_eq!(route("wamn-wms:pallet/get@1.0.0"), None);
+        let archive = package_route(
+            &app("platform_fixture"),
+            "platform_fixture",
+            "widget",
+            "platform-fixture:widget/archive@1.0.0",
+        );
+        assert_eq!(
+            archive.expect("the archive has a contract").idempotency,
+            None
+        );
     }
 }

@@ -969,13 +969,11 @@ fn route_kind(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> Opti
         return None;
     };
     manifest
-        .routes
-        .iter()
-        .find(|route| {
-            route.package_id == attachment.package_id
-                && route.component == attachment.component
-                && route.operation == attachment.operation
-        })
+        .route(
+            &attachment.package_id,
+            &attachment.component,
+            &attachment.operation,
+        )
         .map(|route| route.kind)
 }
 
@@ -1428,6 +1426,7 @@ mod tests {
                     kind,
                     reads: BTreeSet::new(),
                     revision: None,
+                    idempotency: None,
                 }]),
                 BTreeMap::from([("route".to_string(), route)]),
             );

@@ -13,7 +13,8 @@ use crate::operator_action::OperatorActionBasis;
 /// replays a call whose intent began and never finished.
 #[async_trait]
 pub trait IntentStore: Send + Sync {
-    /// Write the intent before the export runs. A repeated key returns the stored record.
+    /// Write the intent before the export runs. A repeated key returns the
+    /// stored record, and a repeated key with a different input conflicts.
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError>;
     /// Record the outcome of a begun intent.
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError>;
@@ -51,6 +52,14 @@ pub enum Begun {
     Finished(StoredOutcome),
     /// The key began and never finished. The export must not run again.
     Uncertain(IntentId),
+    /// An operator resolved the uncertain key. It is never uncertain again, and
+    /// the export never runs for it. The caller sends a new key.
+    Resolved {
+        id: IntentId,
+        basis: OperatorActionBasis,
+    },
+    /// The key repeats with a different input. The stored intent is unchanged.
+    Conflict(IntentId),
 }
 
 /// The recorded outcome of a finished intent.

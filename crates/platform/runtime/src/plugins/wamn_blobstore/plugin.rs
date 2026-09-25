@@ -832,6 +832,7 @@ mod tests {
             kind: wamn_catalog::OperationKind::Command,
             reads: BTreeSet::new(),
             revision: None,
+            idempotency: None,
         });
         assert_eq!(
             authorize_closure(&route, Some(&manifest), None, &snapshot),

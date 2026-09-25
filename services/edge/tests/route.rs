@@ -1,6 +1,7 @@
-//! The edge serves one route of its bundle through the http-route guest.
+//! The edge serves one route of its bundle through the http-route guest, and
+//! logs one intent for each item of a write.
 //!
-//! The test needs the built guest, the same input that `route_interface_live`
+//! The tests need the built guest, the same input that `route_interface_live`
 //! takes: `WAMN_FLOW_HTTP_COMPONENT` names `http-route` built for
 //! `wasm32-wasip2` (docs/operations/running-tests.md).
 
@@ -21,8 +22,14 @@ use wamn_catalog::{
     ServingManifest, ServingRelease, ServingRoute,
 };
 use wamn_edge::grants::GRANTS_FILE_NAME;
+use wamn_edge::intents;
 use wamn_edge::release::{BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, INGRESS_FILE_NAME, file_digest};
-use wamn_edge::serve::{EdgeConfig, serve};
+use wamn_edge::serve::{EdgeConfig, EdgeHost, serve};
+use wamn_engine::operation::intent::item_input_hash;
+use wamn_run_state::IntentStore as _;
+use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
+use wamn_run_state::operator_action::OperatorActionBasis;
+use wamn_run_state_sqlite::SqliteIntentStore;
 use wamn_session::keys::PublicSessionKey;
 use wamn_session::token::{SessionAuthority, SessionClaims, SessionHeader};
 
@@ -146,6 +153,7 @@ fn manifest(guest: &[u8]) -> ServingManifest {
             kind: OperationKind::Command,
             reads: BTreeSet::new(),
             revision: None,
+            idempotency: None,
         }]),
         BTreeSet::new(),
         BTreeMap::from([(
@@ -246,11 +254,11 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
     std::fs::write(directory.join(name), bytes).expect("write a bundle file");
 }
 
-/// Write the bundle, the key file and nothing else, and return the directory
-/// with the bundle digest.
-fn bundle(ingress: &[u8], public: &PublicSessionKey) -> (PathBuf, String) {
+/// Write the bundle, the key file and nothing else into a directory named for
+/// the test, and return the directory with the bundle digest.
+fn bundle(test: &str, ingress: &[u8], public: &PublicSessionKey) -> (PathBuf, String) {
     let directory = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("edge-route-{}", std::process::id()));
+        .join(format!("edge-{test}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("create the bundle directory");
     let guest = echo_guest();
@@ -336,19 +344,17 @@ fn dechunk(mut body: &str) -> String {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
-async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
-    let ingress = std::fs::read(
+fn ingress() -> Vec<u8> {
+    std::fs::read(
         std::env::var("WAMN_FLOW_HTTP_COMPONENT")
             .expect("WAMN_FLOW_HTTP_COMPONENT names the guest"),
     )
-    .expect("read the http-route guest");
-    let (known, public) = key("key-one", 1);
-    let (unknown, _) = key("key-other", 2);
-    let (directory, digest) = bundle(&ingress, &public);
-    let host = serve(EdgeConfig {
-        bundle_dir: directory.clone(),
+    .expect("read the http-route guest")
+}
+
+async fn start(directory: &Path, digest: String) -> EdgeHost {
+    serve(EdgeConfig {
+        bundle_dir: directory.to_owned(),
         bundle_digest: digest,
         session_keys: directory.join("session-keys.json"),
         session_issuer: ISSUER.into(),
@@ -359,9 +365,18 @@ async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
         listen: "127.0.0.1:0".parse().expect("address"),
     })
     .await
-    .expect("the edge serves its bundle");
+    .expect("the edge serves its bundle")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
+    let (known, public) = key("key-one", 1);
+    let (unknown, _) = key("key-other", 2);
+    let (directory, digest) = bundle("route", &ingress(), &public);
+    let host = start(&directory, digest).await;
     let addr = host.addr();
-    let body = r#"{"weight":12.5}"#;
+    let body = r#"[{"request_id":"r-1","value":{"weight":12.5}}]"#;
 
     let (status, echoed) = post(addr, Some(&session(&known, "key-one", &["operator"])), body).await;
     assert_eq!(status, 200, "{echoed}");
@@ -389,4 +404,119 @@ async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
         "a role without the permission"
     );
     host.stop().await.expect("the edge stops");
+}
+
+/// An item of the route's input, keyed by its request id.
+fn item(request_id: &str, n: u32) -> Value {
+    json!({"request_id": request_id, "value": {"n": n}})
+}
+
+/// Begin the intent of `item` as the edge would, for a store seeded before the
+/// edge starts.
+async fn begin(store: &SqliteIntentStore, release: &str, item: &Value) -> IntentId {
+    let begun = store
+        .begin(&Intent {
+            tenant: ORG,
+            release,
+            package: PACKAGE,
+            operation: OPERATION,
+            idempotency_key: item["request_id"].as_str().expect("a request id"),
+            input_hash: &item_input_hash(item),
+            deadline_ms: 1_000,
+        })
+        .await
+        .expect("begin");
+    let Begun::New(id) = begun else {
+        panic!("expected a new intent, got {begun:?}");
+    };
+    id
+}
+
+/// A command route logs one intent for each item. A finished key answers its
+/// stored outcome without running, an unfinished key answers intent-uncertain,
+/// a resolved key answers intent-resolved with its basis, and only the new item
+/// runs. The operator lists and resolves the uncertain intent with the edge
+/// stopped.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+async fn a_write_logs_one_intent_per_item_and_runs_only_new_items() {
+    let (pair, public) = key("key-one", 1);
+    let (directory, digest) = bundle("intents", &ingress(), &public);
+    let db = directory.join("edge.db");
+    let release = manifest(&echo_guest()).digest().to_string();
+    let (stored, open, resolved) = (
+        item("r-stored", 1),
+        item("r-open", 2),
+        item("r-resolved", 3),
+    );
+    let open_id = {
+        let store = SqliteIntentStore::open(&db).expect("open the store before the edge");
+        let id = begin(&store, &release, &stored).await;
+        // The echo guest would answer {"n":1}, so this answer shows no run.
+        store
+            .finish(
+                &id,
+                &StoredOutcome::Completed(json!({"value": {"n": "stored"}})),
+            )
+            .await
+            .expect("finish");
+        let open_id = begin(&store, &release, &open).await;
+        let id = begin(&store, &release, &resolved).await;
+        store
+            .resolve(&id, OperatorActionBasis::OperatorJudgment)
+            .await
+            .expect("resolve");
+        open_id
+    };
+
+    let host = start(&directory, digest).await;
+    let addr = host.addr();
+    let token = session(&pair, "key-one", &["operator"]);
+    let batch = json!([item("r-new", 4), stored, open, resolved]).to_string();
+    let (status, answer) = post(addr, Some(&token), &batch).await;
+    assert_eq!(status, 200, "{answer}");
+    let answer: Value = serde_json::from_str(&answer).expect("a JSON body");
+    assert_eq!(answer[0], item("r-new", 4), "the new item runs");
+    assert_eq!(
+        answer[1],
+        json!({"request_id": "r-stored", "value": {"n": "stored"}}),
+        "a finished key answers its stored outcome"
+    );
+    assert_eq!(answer[2]["error"]["code"], "intent-uncertain");
+    assert_eq!(answer[2]["error"]["detail"]["intent"], open_id.0.as_str());
+    assert_eq!(answer[3]["error"]["code"], "intent-resolved");
+    assert_eq!(answer[3]["error"]["detail"]["basis"], "operator-judgment");
+
+    let replay = json!([item("r-new", 4)]).to_string();
+    let (status, again) = post(addr, Some(&token), &replay).await;
+    assert_eq!(
+        (status, again.as_str()),
+        (200, r#"[{"request_id":"r-new","value":{"n":4}}]"#)
+    );
+    let changed = json!([item("r-new", 5)]).to_string();
+    let (status, conflict) = post(addr, Some(&token), &changed).await;
+    assert_eq!(status, 200, "{conflict}");
+    let conflict: Value = serde_json::from_str(&conflict).expect("a JSON body");
+    assert_eq!(conflict[0]["error"]["code"], "idempotency_conflict");
+    host.stop().await.expect("the edge stops");
+
+    let command = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+    let listed = intents::run(&command(&["list"]), &db)
+        .await
+        .expect("list with the edge stopped");
+    assert_eq!(
+        listed
+            .lines()
+            .map(|line| line.split('\t').next())
+            .collect::<Vec<_>>(),
+        [Some(open_id.0.as_str())],
+        "only the unfinished intent is uncertain: {listed}"
+    );
+    intents::run(&command(&["resolve", &open_id.0, "external-evidence"]), &db)
+        .await
+        .expect("resolve with the edge stopped");
+    assert_eq!(
+        intents::run(&command(&["list"]), &db).await.expect("list"),
+        ""
+    );
 }

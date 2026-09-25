@@ -356,6 +356,7 @@ struct RouteContract {
     kind: OperationKind,
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
+    idempotency: Option<String>,
 }
 
 #[cfg(test)]
@@ -365,6 +366,7 @@ impl From<OperationKind> for RouteContract {
             kind,
             reads: BTreeSet::new(),
             revision: None,
+            idempotency: None,
         }
     }
 }
@@ -1184,6 +1186,7 @@ pub async fn mint_promoted_release_manifest(
                     kind: route.kind,
                     reads: route.reads.clone(),
                     revision: route.revision.clone(),
+                    idempotency: route.idempotency.clone(),
                 },
             )
         })
@@ -1920,6 +1923,7 @@ fn project_routes(
             kind: contract.kind,
             reads: contract.reads.clone(),
             revision: contract.revision.clone(),
+            idempotency: contract.idempotency.clone(),
         });
     }
     Ok(routes)

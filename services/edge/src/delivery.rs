@@ -1,7 +1,9 @@
 //! The edge's delivery: a route calls its one operation, and nothing else runs.
 //!
 //! A route target calls [`invoke_operation`] once and settles its result with
-//! the engine's lowering, so the box and the cloud answer a route alike. A
+//! the engine's lowering, so the box and the cloud answer a route alike. The
+//! call carries the intent context of its route, so a write logs one intent
+//! for each item in the SQLite store and runs only new items. A
 //! wiring or registration target has no runner on the box and fails as
 //! `execution-failed`. The box has no model versions, so a read carries no
 //! ETag and ignores `If-None-Match`. The box keeps no tap and no actor labels.
@@ -10,7 +12,9 @@ use std::sync::Arc;
 
 use wamn_catalog::AttachmentTarget;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use wamn_engine::operation::{
+    IntentContext, OperationCall, OperationClosure, invoke_operation, node_types,
+};
 use wamn_engine::router_delivery::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, OperationRefusal,
     RouteDelivery, Source, SourceRef, bounded_node_deadline_ms, lower_operation_refusal,
@@ -26,9 +30,10 @@ use crate::release::EdgeRelease;
 pub struct EdgeDelivery {
     release: Arc<EdgeRelease>,
     application: EdgeApplication,
-    /// The intent store that `invoke_operation` receives. The rules that write
-    /// to it are issue `wamn-e5in.7`.
+    /// The intent log of every route write.
     intents: SqliteIntentStore,
+    /// The tenant of every intent: the organization the box serves.
+    tenant: String,
 }
 
 impl std::fmt::Debug for EdgeDelivery {
@@ -41,16 +46,19 @@ impl std::fmt::Debug for EdgeDelivery {
 }
 
 impl EdgeDelivery {
-    /// Deliver routes of `release` to `application`, with `intents` as its store.
+    /// Deliver routes of `release` to `application`, and log the intents of
+    /// `tenant` in `intents`.
     pub fn new(
         release: Arc<EdgeRelease>,
         application: EdgeApplication,
         intents: SqliteIntentStore,
+        tenant: String,
     ) -> Self {
         Self {
             release,
             application,
             intents,
+            tenant,
         }
     }
 
@@ -100,6 +108,17 @@ impl EdgeDelivery {
             return Err(DeliveryError::ExecutionFailed);
         };
         let components = self.release.components();
+        let release = self.release.release().release().manifest_digest.to_string();
+        let intent = manifest
+            .route(&target.package_id, component, operation)
+            .map(|route| IntentContext {
+                store: &self.intents,
+                tenant: &self.tenant,
+                release: &release,
+                package: &target.package_id,
+                kind: route.kind,
+                key_field: route.idempotency.as_deref(),
+            });
         let result = async {
             let fact = route_component(components, &target.package_id, component, operation)?;
             let deadline_ms = bounded_node_deadline_ms(None);
@@ -126,7 +145,7 @@ impl EdgeDelivery {
                     deadline_ms,
                     facts: EdgeFacts::entry(caller),
                 },
-                Some(&self.intents),
+                intent,
             )
             .await?;
             settle_route(outcome)

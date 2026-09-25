@@ -1337,6 +1337,7 @@ mod tests {
             kind: OperationKind::Command,
             reads: BTreeSet::new(),
             revision: None,
+            idempotency: None,
         });
         authorize_release_closure(&manifest, &invocation, &snapshot)
             .expect("a released route authorizes its origin export");

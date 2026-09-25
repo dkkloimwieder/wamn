@@ -126,6 +126,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         Arc::clone(&release),
         application,
         intents,
+        config.session_org.clone(),
     )));
 
     let (stopping, stopped) = tokio::sync::watch::channel(false);

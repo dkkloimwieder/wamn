@@ -15,10 +15,12 @@ use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
 use wash_runtime::plugin::HostPlugin as _;
 
+pub mod intent;
 pub mod invocation_policy;
 pub mod native_call;
 pub mod native_workload;
 
+pub use intent::{IntentContext, logs_intent};
 pub use invocation_policy::{ApplicationHost, InvocationPolicy};
 use native_call::{NativeInvocation, invoke_native};
 pub use native_workload::NativeApplication;
@@ -88,14 +90,24 @@ impl<P: InvocationPolicy> fmt::Debug for OperationCall<'_, P> {
 
 /// Call one export once, under the call's deadline, and return what the
 /// component returned. The caller lowers the result for its own entry.
+///
+/// With an [`IntentContext`] of a kind that [`logs_intent`], the call logs one
+/// intent for each input item and runs only the new items ([`intent`]).
 pub async fn invoke_operation<H: ApplicationHost>(
     host: &H,
     call: OperationCall<'_, H::Policy>,
-    #[expect(
-        unused_variables,
-        reason = "route intent logging is a later epic; every caller passes None"
-    )]
-    intent: Option<&dyn wamn_run_state::IntentStore>,
+    intent: Option<IntentContext<'_>>,
+) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+    match intent.filter(|intent| logs_intent(intent.kind)) {
+        Some(intent) => intent::invoke_logged(host, call, intent).await,
+        None => run_export(host, call).await,
+    }
+}
+
+/// Run one export under the call's deadline.
+async fn run_export<H: ApplicationHost>(
+    host: &H,
+    call: OperationCall<'_, H::Policy>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
     tokio::time::timeout_at(deadline, async {

@@ -80,14 +80,21 @@ async fn a_begun_key_is_uncertain_and_never_new_again() {
 }
 
 #[tokio::test]
-async fn a_repeated_key_with_another_input_is_a_contract_error() {
+async fn a_repeated_key_with_another_input_conflicts() {
     let store = SqliteIntentStore::open(database("conflict")).expect("open");
-    store.begin(&intent("k1", "h1")).await.expect("begin");
-    let error = store
-        .begin(&intent("k1", "h2"))
-        .await
-        .expect_err("a different input under one key is refused");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    let id = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
+    assert_eq!(
+        store.begin(&intent("k1", "h2")).await.expect("begin again"),
+        Begun::Conflict(id.clone())
+    );
+    assert_eq!(
+        store
+            .begin(&intent("k1", "h1"))
+            .await
+            .expect("begin a third time"),
+        Begun::Uncertain(id),
+        "a conflict leaves the stored intent unchanged"
+    );
 }
 
 #[tokio::test]
@@ -152,7 +159,7 @@ async fn uncertain_lists_open_intents_oldest_first_up_to_the_limit() {
 }
 
 #[tokio::test]
-async fn a_resolved_intent_leaves_the_list_and_never_runs_again() {
+async fn a_resolved_intent_leaves_the_list_and_answers_its_basis() {
     let store = SqliteIntentStore::open(database("resolve")).expect("open");
     let id = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
     store
@@ -162,7 +169,10 @@ async fn a_resolved_intent_leaves_the_list_and_never_runs_again() {
     assert!(store.uncertain(10).await.expect("uncertain").is_empty());
     assert_eq!(
         store.begin(&intent("k1", "h1")).await.expect("begin again"),
-        Begun::Uncertain(id.clone())
+        Begun::Resolved {
+            id: id.clone(),
+            basis: OperatorActionBasis::OperatorJudgment
+        }
     );
     let error = store
         .resolve(&id, OperatorActionBasis::OperatorJudgment)

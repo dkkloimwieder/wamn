@@ -87,6 +87,24 @@ impl core::fmt::Display for NoRole {
     }
 }
 
+/// The item field that carries the idempotency key of one operation, from its
+/// generated input contract, or `None` when the contract declares no key.
+///
+/// Publish writes it into the operation's route, so the route host and a
+/// session driver read the same reserved path.
+#[must_use]
+pub fn idempotency_field(input_contract: &serde_json::Value) -> Option<String> {
+    let fields = crate::client_fields::input_fields_of(input_contract);
+    leaf_fields(&fields)
+        .into_iter()
+        .find(|field| {
+            SUPPLIED_PATHS
+                .iter()
+                .any(|(path, kind)| *kind == SuppliedKind::IdempotencyKey && *path == field.path)
+        })
+        .map(|field| field.path.clone())
+}
+
 /// The platform value that a session driver writes into a reserved input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuppliedKind {

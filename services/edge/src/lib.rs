@@ -10,6 +10,8 @@
 //!   its routes behind a local ingress.
 //! - [`authenticator`], [`delivery`], [`policy`] and [`application`]: the
 //!   edge side of the engine's route and operation traits.
+//! - [`intents`]: the `wamn-edge intents` commands, which list and resolve
+//!   uncertain intents while the edge is stopped.
 //!
 //! This crate refuses to depend on:
 //!
@@ -32,8 +34,7 @@ pub mod application;
 pub mod authenticator;
 pub mod delivery;
 pub mod grants;
+pub mod intents;
 pub mod policy;
 pub mod release;
 pub mod serve;
-
-use wamn_run_state as _;
