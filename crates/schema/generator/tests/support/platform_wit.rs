@@ -174,7 +174,7 @@ fn every_int64_leaves_the_codec_as_a_json_string() {
     }
 }
 
-/// A read carries no request identity (`docs/plan/http-reads.md`): its one
+/// A read carries no request identity (`docs/architecture/execution.md`): its one
 /// item travels in a GET query string, and its outcomes match its items by
 /// position. A write keeps the identity that its outcome echoes.
 #[test]

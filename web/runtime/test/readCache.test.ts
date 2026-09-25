@@ -2,7 +2,7 @@
  * The read store of the transport, against a fake fetch.
  *
  * Each case states the requests that reach the fetch, because the store is
- * there to send fewer of them. `docs/plan/http-reads.md` section 4.5 states
+ * there to send fewer of them. `docs/architecture/execution.md` states
  * the rules.
  */
 
@@ -147,7 +147,21 @@ describe("the read store", () => {
     expect(seen).toHaveLength(1);
     expect(outcomes[0]).toEqual(outcomes[1]);
     expect(outcomes[0]).toEqual({ status: "completed", value: { id: "a", row_version: 1 } });
-    expect(seen[0]?.cache).toBe("no-store");
+  });
+
+  it("lets the browser revalidate a read it does not hold, as after a reload", async () => {
+    const { transport, replies, seen } = harness();
+    replies.push({ status: 200, body: WIDGET, cacheControl: GET, etag: '"t1"' });
+    replies.push({ status: 304, cacheControl: GET, etag: '"t1"' });
+    await transport.invoke(get("a"));
+    await transport.invoke(get("a"));
+    // The first read has no stored entry, so the browser may answer it from its
+    // own copy after a 304. The second sends the store's tag, and its 304 must
+    // reach the store, so the browser cache stays out.
+    expect(seen.map((call) => [call.cache, call.ifNoneMatch])).toEqual([
+      ["no-cache", undefined],
+      ["no-store", '"t1"'],
+    ]);
   });
 
   it("answers a fresh list without a request, and revalidates it when stale", async () => {

@@ -3,7 +3,7 @@
  *
  * The transport tells each listener when a write settles. A detail and a
  * table that read show what the write changed, and a table the operator
- * never read stays unread (`docs/plan/http-reads.md` section 4.5).
+ * never read stays unread (`docs/architecture/execution.md`).
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";

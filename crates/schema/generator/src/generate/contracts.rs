@@ -843,7 +843,7 @@ fn emit_operation_contracts(
     }
     // A read states the relations it reads, whoever wrote it, in the member an
     // authored read declares. The host keys a list ETag on their versions and
-    // never guesses them (docs/plan/http-reads.md section 4.3).
+    // never guesses them (docs/architecture/execution.md).
     if matches!(action, CrudAction::Get | CrudAction::Query) {
         let mut select_fields = table
             .columns()

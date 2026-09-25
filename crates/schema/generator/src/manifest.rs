@@ -967,7 +967,7 @@ fn validate_custom_operation_kind(
                     format!("projection {operation_name} must not declare a registration"),
                 ));
             }
-            // A read carries no request identity (docs/plan/http-reads.md).
+            // A read carries no request identity (docs/architecture/execution.md).
             if operation
                 .input
                 .fields

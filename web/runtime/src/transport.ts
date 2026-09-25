@@ -467,15 +467,21 @@ export function createTransport(options: TransportOptions): Transport {
       let reply: HttpReply;
       try {
         if (read) {
-          // The store is the only client cache, so the browser cache never
-          // answers under it, and a 304 always reaches it.
-          init.cache = "no-store";
+          // A read the store holds sends the store's tag with cache
+          // "no-store", so its 304 reaches the store. A read the store does
+          // not hold, as after a reload, uses "no-cache": the browser
+          // revalidates its own copy, and a 304 saves the body.
           const stored = (outcome: Outcome<JsonValue>) =>
             outcome.status === "completed" || outcome.status === "refused";
           reply = await reads.read(
             `${request.operation} ${target}`,
             (tag) =>
-              send(target, tag === null ? init : { ...init, headers: { ...headers, "if-none-match": tag } }),
+              send(
+                target,
+                tag === null
+                  ? { ...init, cache: "no-cache" }
+                  : { ...init, cache: "no-store", headers: { ...headers, "if-none-match": tag } },
+              ),
             (candidate) => stored(classify(request.contract, null, candidate)),
           );
         } else {

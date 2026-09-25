@@ -731,7 +731,7 @@ fn a_component_states_no_deployment_fact_and_no_supplied_input() {
     }
 }
 
-/// A read carries no `request_id` (`docs/plan/http-reads.md` section 4.4), so
+/// A read carries no `request_id` (`docs/architecture/execution.md`), so
 /// the only request identity a component writes is the one of a write.
 #[test]
 fn a_component_builds_a_read_request_with_no_request_identity() {

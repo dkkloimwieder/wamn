@@ -958,7 +958,7 @@ fn codec_prelude(item: &str, minimum: u32, maximum: u32, keyed: bool) -> String 
 
 /// Whether the items of a generated CRUD operation carry a `request_id`.
 ///
-/// A read carries none (`docs/plan/http-reads.md`): its one item travels in a
+/// A read carries none (`docs/architecture/execution.md`): its one item travels in a
 /// GET query string, and its outcomes match its items by list position.
 fn crud_is_keyed(action: CrudAction) -> bool {
     !matches!(action, CrudAction::Get | CrudAction::Query)

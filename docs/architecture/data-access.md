@@ -604,8 +604,9 @@ The system database has two more limits:
 ## Model versions
 
 A model version is a counter that changes with every committed write to a model relation.
-A read of a query or a projection will take its weak ETag from the versions of the relations that it reads, as [HTTP reads](../plan/http-reads.md) plans.
+A read of a query or a projection takes its weak ETag from the versions of the relations that it reads, as [execution](execution.md) describes.
 [`deploy/sql/model-versions.sql`](../../deploy/sql/model-versions.sql) defines the table, the functions and the grants, and `CATALOG_SCHEMA_SQL` carries it into each project database.
+A project database created before `e8360c3e6` has no `wamn_cache` schema. Recreate it before you run apply-package.
 
 `wamn_cache.model_versions` holds one row for each relation that a transaction changed, keyed by schema and relation name.
 A relation with no row has version 0.

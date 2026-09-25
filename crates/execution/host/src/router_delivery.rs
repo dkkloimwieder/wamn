@@ -294,8 +294,7 @@ impl RouterDeliveryBridge {
             .await
     }
 
-    /// Call one route, with the ETag of a read (`docs/plan/http-reads.md`
-    /// section 4.3).
+    /// Call one route, with the ETag of a read (`docs/architecture/execution.md`).
     ///
     /// A list reads the model versions of its relations before it runs, and a
     /// match with If-None-Match answers not-modified without running it. The

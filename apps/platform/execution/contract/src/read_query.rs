@@ -1,7 +1,7 @@
 //! The one query-string encoding of a read request item.
 //!
 //! A read route is an HTTP GET, so its one request item travels in the query
-//! string (`docs/plan/http-reads.md` section 4.1). Each top-level member is one
+//! string (`docs/architecture/execution.md`). Each top-level member is one
 //! parameter. Its value is the canonical JSON text of the member, strings
 //! included, so a decoder needs no schema. Parameters stand in byte order of
 //! their names, and every byte outside the RFC 3986 unreserved set is escaped

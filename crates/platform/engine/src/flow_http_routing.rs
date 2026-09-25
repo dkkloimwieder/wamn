@@ -796,7 +796,7 @@ fn route_definition(
 }
 
 /// The Cache-Control value of a successful read response
-/// (`docs/plan/http-reads.md` section 4.6), or `None` for a kind that is not
+/// (`docs/architecture/execution.md`), or `None` for a kind that is not
 /// a read. A read is private unless its route admits anonymous callers.
 fn read_cache_control(kind: OperationKind, policy: Option<AttachmentAuthPolicy>) -> Option<String> {
     let scope = if policy == Some(AttachmentAuthPolicy::None) {
@@ -1362,7 +1362,7 @@ mod tests {
         }
     }
 
-    /// Each kind's Cache-Control value (docs/plan/http-reads.md section 4.6).
+    /// Each kind's Cache-Control value (docs/architecture/execution.md).
     /// A read is private unless its route admits anonymous callers, and a
     /// route that is not a read, or a wiring, carries none.
     #[test]

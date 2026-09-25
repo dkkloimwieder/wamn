@@ -382,7 +382,7 @@ async fn try_handle(
 
     let body_json = if method == "GET" && matched.definition.mappings.is_empty() {
         // A read carries its one request item in the query string, in the one
-        // canonical encoding, and has no body to read (docs/plan/http-reads.md).
+        // canonical encoding, and has no body to read (docs/architecture/execution.md).
         read_query_item(&head.target)?
     } else {
         let body_limit = matched.definition.body_limit.min(limits.body_bytes);
@@ -413,8 +413,8 @@ async fn try_handle(
         return Err(error_response(413, "mapped-payload-too-large"));
     }
 
-    // A request that carries the CSRF header is not cached (docs/plan/http-reads.md
-    // section 4.6), and neither is any response but a success.
+    // A request that carries the CSRF header is not cached
+    // (docs/architecture/execution.md), and neither is any response but a success.
     let cache_control = matched
         .definition
         .cache_control

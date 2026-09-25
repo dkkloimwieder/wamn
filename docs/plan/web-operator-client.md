@@ -157,6 +157,7 @@ Epic 10, Beads `wamn-ut5e`, then gave the components a UI base. CLOSED on 2026-0
 6. **Application UIs:** Receiving, WMS. These wait for 2 and 3.
 Epic 15, Beads `wamn-nq1b`, gave WMS a web client. BUILT on 2026-09-24, and the epic waits for the owner review. WMS went from 7 served operations to 20, and all 20 generated components ran in a browser through a cookie session at one thousand pallets. The run found nine defects, filed by layer. `wamn-yzy7` is P1: the generated update form fetches the revision again at submit, so a concurrent change is lost. `wamn-iowb` holds the cost of a generated operation: 13 of them took about 1,400 lines of Rust and 690 lines of attachment JSON by hand.
 7. **CDN bucket, edge proxy, first real deployment.** On GCP this is a load balancer URL map with a storage bucket and Cloud CDN (assumed, not tested).
+Since Epic 16, every authenticated read is `private`, and only a route whose auth policy is `none` is `public`. A shared cache does not run the router, so it cannot check the grant of each caller. This epic decides whether a shared cache serves authenticated reads. That needs a cache key that includes the grant, or a platform cache behind the permission check. It also revisits the provisional list values `max-age=10, stale-while-revalidate=60`.
 8. **TUI matches:** generated screens from the plan, and `crates/client/tui` shrinks to helpers.
 9. **Authoring support:** generated docs, skills for agent and human authors, the app spec format.
 

@@ -1,5 +1,5 @@
 /**
- * The read store of one transport (`docs/plan/http-reads.md` section 4.5).
+ * The read store of one transport (`docs/architecture/execution.md`).
  *
  * It holds the last reply of each read, keyed by the operation and the
  * canonical target, so equal reads on one page send one request. The response

@@ -5,7 +5,7 @@
 //! the model versions of the relations it reads (`deploy/sql/model-versions.sql`).
 //! A new release changes every tag, because it can change the response bytes.
 //! The host compares If-None-Match with the tag and answers not-modified on a
-//! match (`docs/plan/http-reads.md` section 4.3).
+//! match (`docs/architecture/execution.md`).
 
 use serde_json::{Value, json};
 use wamn_catalog::ServingRelation;

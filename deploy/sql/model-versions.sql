@@ -7,7 +7,7 @@
 -- wamn_cache.model_versions holds one row for each relation that a write
 -- changed. A relation with no row has version 0. A read of a query or a
 -- projection takes its weak ETag from the versions of the relations that it
--- reads (docs/plan/http-reads.md section 4.3).
+-- reads (docs/architecture/execution.md).
 --
 -- apply-package installs two triggers on each relation that a package owns.
 -- The statement trigger wamn_cache_note records the changed relation in the

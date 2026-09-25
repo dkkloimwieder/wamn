@@ -243,7 +243,8 @@ A request that carries both refuses with 401, and so does a repeated session coo
 The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF check.
 A cookie token without the `csrf` claim refuses with 401.
 The CSRF check needs one `x-wamn-csrf` header whose SHA-256 hex equals the claim.
-Today every route requires the header. `wamn-glgg` exempts read routes when the route kind reaches the serving manifest.
+A read route (kind `get`, `query` or `projection`) needs no header, because a read changes nothing.
+Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` claim on every route.
 
 The token lifetime is at most 900 seconds, with 30 seconds of time tolerance.
 Minting anchors expiry to the start of credential validation and records the actual signing time in `iat`.
@@ -471,7 +472,9 @@ The runtime also holds what a generated component calls: the state of one read, 
 Each transport holds a [read store](../../web/runtime/src/readCache.ts), keyed by the operation and the canonical GET target.
 Equal reads in flight share one request, and a list stays fresh for its `max-age`.
 A stale entry with an ETag sends `If-None-Match`, and a 304 reuses the stored reply.
-The store keeps only a 200 reply that classifies as completed or refused, and it calls fetch with `cache: "no-store"`, so the browser HTTP cache never answers under it.
+The store keeps only a 200 reply that classifies as completed or refused.
+A read that sends the store's tag calls fetch with `cache: "no-store"`, so its 304 reaches the store.
+A read that the store does not hold, as after a reload, calls fetch with `cache: "no-cache"`. The browser revalidates its own copy, and a 304 saves the body.
 Any write marks every stored read stale, because the browser cannot tell which models a write changed.
 A new CSRF cookie empties the store, so one session's reads never answer the next session.
 The transport also calls each `onWrite` listener after a write settles.
