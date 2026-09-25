@@ -23,11 +23,12 @@ api: ""
 identity: ""
 identityCaConfigMap: ""
 
-# The bucket that holds the output of pnpm run build, readable without
-# credentials. endpoint is the object store origin, bucket the bucket name.
+# The bucket path that `wamn web upload` wrote, readable without credentials:
+# <bucket>/<prefix>/<package>/<release digest hex>. endpoint is the object store
+# origin. Each object carries its own Cache-Control, which the edge passes on.
 bucket:
   endpoint: ""
-  name: ""
+  path: ""
 
 service:
   type: ClusterIP

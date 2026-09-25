@@ -2,7 +2,7 @@
 {{- $api := required "Set api to the route ingress URL." .Values.api -}}
 {{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
 {{- $endpoint := required "Set bucket.endpoint to the object store origin." .Values.bucket.endpoint -}}
-{{- $bucket := required "Set bucket.name to the bucket of the web files." .Values.bucket.name -}}
+{{- $bucket := required "Set bucket.path to the path that wamn web upload wrote." .Values.bucket.path | trimAll "/" -}}
 {{- if not (hasPrefix "https://" $identity) -}}
 {{- fail "identity must use HTTPS." -}}
 {{- end -}}
@@ -54,13 +54,11 @@ data:
           proxy_ssl_trusted_certificate /etc/wamn-edge/identity-ca/ca.crt;
         }
 
-        # A built file name carries its content hash.
+        # The upload wrote each object with its Cache-Control, which passes on.
         location /assets/ {
           limit_except GET { deny all; }
           rewrite ^/assets/(.*)$ /{{ $bucket }}/assets/$1? break;
           proxy_pass {{ trimSuffix "/" $endpoint }};
-          proxy_hide_header Cache-Control;
-          add_header Cache-Control "public, max-age=31536000, immutable" always;
         }
 
         # Every other path is a page of the application, which the client
@@ -69,8 +67,6 @@ data:
           limit_except GET { deny all; }
           rewrite ^ /{{ $bucket }}/index.html? break;
           proxy_pass {{ trimSuffix "/" $endpoint }};
-          proxy_hide_header Cache-Control;
-          add_header Cache-Control "no-cache" always;
         }
       }
     }

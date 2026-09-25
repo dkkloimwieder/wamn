@@ -171,6 +171,23 @@ It does not apply migrations to the target.
 The [repository delivery commands](delivery.md) serialize activation against the existing selected release.
 A CI completion order does not set deployment precedence.
 
+## Web client files
+
+`wamn web upload` builds an application's web client with Vite and writes it to a bucket.
+Pass the manifest digest of the release that the client belongs to:
+
+```bash
+AWS_ENDPOINT=<object store URL> AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret> \
+  wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket s3://<bucket>/<prefix>
+```
+
+The files go to `<prefix>/<package id>/<digest hex>/`, so each release keeps its own path.
+Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` is `no-cache`.
+The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
+The bucket must allow reads without credentials.
+The edge chart in `deploy/platform/edge` serves one such path with `bucket.path`, and passes each object's headers on.
+In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
+
 ## Identity password configuration
 
 `wamn-identity` loads `.env` from its working directory before it starts the runtime.

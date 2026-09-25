@@ -5822,6 +5822,7 @@ dependencies = [
  "clap",
  "crossterm",
  "futures-util",
+ "object_store",
  "ratatui",
  "reqwest",
  "rustix",

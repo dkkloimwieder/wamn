@@ -97,13 +97,11 @@ The adjacent `route_cases`, `session_cases`, and `measurement_cases` modules own
 Pass their full test names to `--name`.
 
 The `edge_case` module runs Receiving through the [kind edge](../plan/web-deployment.md) in `deploy/platform/edge`.
-The edge is one HTTPS host. It serves the built web files from a MinIO bucket and sends `/password` to identity and `/api` to the route ingress.
-Build the web files first, then pass their directory:
+The edge is one HTTPS host. It sends `/password` to identity and `/api` to the route ingress, and serves the web files from a MinIO bucket.
+The case writes those files with [`wamn web upload`](deployment.md#web-client-files), so it needs `pnpm` and an installed workspace:
 
 ```bash
-pnpm --dir apps/wamn_receiving/web run build
-WAMN_EDGE_WEB_DIST=$PWD/apps/wamn_receiving/web/dist \
-  cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
+cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
   route_authentication_live::cluster::edge_case::receiving_through_the_edge -- --exact --ignored --nocapture
 ```
 

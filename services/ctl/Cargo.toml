@@ -57,6 +57,8 @@ futures-util = { workspace = true }
 crossterm = { workspace = true }
 ratatui = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
+# `wamn web upload` writes the web client files through the workspace S3 client.
+object_store = { workspace = true }
 # The shared terminal driver behind `wamn dev --tui` (wamn-10yt.5.9).
 wamn-client-terminal = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity

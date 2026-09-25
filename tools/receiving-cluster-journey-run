@@ -88,19 +88,18 @@ case "$action" in
   node-cri-images) docker exec "$cluster" crictl images -o json ;;
   node-containerd-images) docker exec "$cluster" ctr --namespace k8s.io images ls ;;
   edge-bucket)
-    # The object store of the kind edge holds one build, readable without
+    # The object store of the kind edge: one bucket, readable without
     # credentials. minio.env names MINIO_ROOT_USER and MINIO_ROOT_PASSWORD.
-    work=${3:?work directory}; dist=${4:?build directory}
+    work=${3:?work directory}
     docker run --detach --name "$cluster-minio" --network kind --env-file "$work/minio.env" \
       minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
-    docker run --rm --network "container:$cluster-minio" --env-file "$work/minio.env" \
-      --volume "$dist:/dist:ro" --entrypoint sh \
+    docker run --rm --network "container:$cluster-minio" --env-file "$work/minio.env" --entrypoint sh \
       minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727 -c '
         for attempt in $(seq 60); do
           mc alias set edge http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && break
           sleep 1
         done
-        mc mb edge/web && mc cp --recursive /dist/ edge/web/ && mc anonymous set download edge/web'
+        mc mb edge/web && mc anonymous set download edge/web'
     ;;
   remove)
     # Without the work directory, as after a killed run, this removes the

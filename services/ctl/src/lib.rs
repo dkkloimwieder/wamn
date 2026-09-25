@@ -21,3 +21,4 @@ pub mod provisioning_verbs;
 pub mod release_verbs;
 #[cfg(target_os = "linux")]
 pub mod ui;
+pub mod web;

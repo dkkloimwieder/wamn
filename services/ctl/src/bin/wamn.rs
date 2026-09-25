@@ -21,6 +21,8 @@ enum Command {
     Dev(Box<DevArgs>),
     /// Copy generated operator screens into developer-owned Rust.
     Ui(wamn_ctl::ui::UiArgs),
+    /// Build a web client and write it to a bucket.
+    Web(wamn_ctl::web::WebArgs),
 }
 
 /// `wamn dev` either runs the loop from its own flags or takes `up` and stands
@@ -71,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
     }
     match Cli::parse().command {
         Command::Ui(args) => wamn_ctl::ui::run(args).await,
+        Command::Web(args) => wamn_ctl::web::run(args).await,
         Command::Dev(dev) => match dev.environment {
             Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(*args).await,
             Some(DevEnvironmentCommand::Down(args)) => wamn_ctl::dev::up::down(args).await,

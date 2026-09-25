@@ -25,30 +25,21 @@ const EDGE: &str = "wamn-edge";
 const IDENTITY: &str = "host-session-identity";
 const EMAIL: &str = "edge-operator@example.test";
 const PASSWORD: &str = "edge-disposable-fixture-password";
-/// The build that `pnpm run build` writes in `apps/wamn_receiving/web`.
-const WEB_DIST: &str = "WAMN_EDGE_WEB_DIST";
 /// When set, the case keeps the cluster for a browser run until `edge.done`
 /// appears in its results directory.
 const BY_HAND: &str = "WAMN_EDGE_BY_HAND";
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl, WAMN_EDGE_WEB_DIST"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl, pnpm"]
 async fn receiving_through_the_edge() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl", "pnpm",
     ]);
-    let dist = PathBuf::from(std::env::var(WEB_DIST).with_context(|| {
-        format!("{WEB_DIST} names the output of pnpm run build in apps/wamn_receiving/web")
-    })?);
-    ensure!(
-        dist.is_absolute() && dist.join("index.html").is_file(),
-        "{WEB_DIST} must be an absolute build directory with index.html"
-    );
     let evidence = super::evidence_directory()?;
-    Box::pin(super::with_signals(&evidence, run(&evidence, &dist))).await
+    Box::pin(super::with_signals(&evidence, run(&evidence))).await
 }
 
-async fn run(evidence: &Path, dist: &Path) -> anyhow::Result<()> {
+async fn run(evidence: &Path) -> anyhow::Result<()> {
     let mut cluster = start(evidence, true).await?;
     let result = async {
         // The session case setup: the session release, identity and two
@@ -113,7 +104,7 @@ async fn run(evidence: &Path, dist: &Path) -> anyhow::Result<()> {
         activate_session_key(&cluster, &issuer).await?;
         serve_passwords(&cluster).await?;
         let account = account(&cluster, &route.database_url).await?;
-        let edge = install_edge(&cluster, dist).await?;
+        let edge = install_edge(&cluster, &carrier.manifest_digest.to_string()).await?;
         check_edge(&cluster, &edge, &account, &audience).await?;
         if std::env::var_os(BY_HAND).is_some() {
             hold(&cluster, &edge, &audience).await?;
@@ -291,26 +282,39 @@ struct Edge {
     ca: PathBuf,
 }
 
-/// The build in a bucket, and the edge chart in front of it.
-async fn install_edge(cluster: &ReceivingCluster, dist: &Path) -> anyhow::Result<Edge> {
+/// The release's web client in a bucket, written by `wamn web upload`, and
+/// the edge chart in front of it.
+async fn install_edge(cluster: &ReceivingCluster, release: &str) -> anyhow::Result<Edge> {
     let resources = &cluster.resources;
+    let secret = uuid::Uuid::new_v4().simple().to_string();
     write_private(
         &resources.work.join("minio.env"),
-        format!(
-            "MINIO_ROOT_USER=edge\nMINIO_ROOT_PASSWORD={}\n",
-            uuid::Uuid::new_v4().simple()
-        )
-        .as_bytes(),
+        format!("MINIO_ROOT_USER=edge\nMINIO_ROOT_PASSWORD={secret}\n").as_bytes(),
     )?;
     checked(
         Command::new(&resources.lifecycle)
             .arg("edge-bucket")
             .arg(&resources.name)
-            .arg(&resources.work)
-            .arg(dist),
+            .arg(&resources.work),
     )
     .await?;
     let minio = resources::kind_address(&resources::inspect(resources, "minio").await?)?;
+    let output = checked(
+        Command::new(cluster.artifacts.target.join("debug/wamn"))
+            .current_dir(&resources.repository)
+            .args(["web", "upload", "apps/wamn_receiving", "--release", release])
+            .args(["--bucket", "s3://web/clients"])
+            .env("AWS_ENDPOINT", format!("http://{minio}:9000"))
+            .env("AWS_ALLOW_HTTP", "true")
+            .env("AWS_REGION", "us-east-1")
+            .env("AWS_ACCESS_KEY_ID", "edge")
+            .env("AWS_SECRET_ACCESS_KEY", &secret),
+    )
+    .await?;
+    fs::write(resources.evidence.join("edge-upload.log"), &output)?;
+    let digest = release
+        .strip_prefix("sha256:")
+        .context("the release is a sha256 digest")?;
     let namespace = &resources.name;
     let values = [
         format!("host={}", cluster.inputs.route_host),
@@ -320,7 +324,7 @@ async fn install_edge(cluster: &ReceivingCluster, dist: &Path) -> anyhow::Result
         format!("identity=https://{IDENTITY}.{namespace}.svc.cluster.local"),
         "identityCaConfigMap=host-session-public-ca".to_owned(),
         format!("bucket.endpoint=http://{minio}:9000"),
-        "bucket.name=web".to_owned(),
+        format!("bucket.path=web/clients/wamn_receiving/{digest}"),
         "service.type=NodePort".to_owned(),
     ];
     let mut command = Command::new("helm");
