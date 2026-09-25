@@ -84,12 +84,12 @@ Option A keeps one path matcher and one lowering, by the uniformity rule. The pu
 
 The owner ruled in Epic 12 that the edge verifier is a second implementation of the same trait, not a move. No trait exists, and the pure check sits in a crate that links Postgres.
 
-- Ruled: a new pure crate `wamn-session` holds `verify_session_token`, `PublicSessionKey`, a `SessionKeySource` trait, and `SessionVerifier` over that trait. `wamn-session` links no `tokio-postgres`. The cloud and the edge both link it. `IssuerKeys` stays in `wamn-runtime` and implements the trait. The edge implements it over a key file. `wamn-platform-identity` uses the new crate.
+- Ruled: a new pure crate `wamn-session` holds `verify_session_token`, `PublicSessionKey`, a `KeySource` trait, and `SessionVerifier` over that trait. It links no `tokio-postgres` and no HTTPS client. The cloud and the edge both link it. `IssuerKeys` stays in `wamn-runtime`, fetches the issuer's keys over HTTPS, and implements the trait. `FileKeys` in `wamn-session` reads the edge key file. `wamn-platform-identity` uses the new crate. Built by `wamn-e5in.3`.
 - Other option: a feature in `wamn-platform-identity` that turns off Postgres. Epic 12 chose crate splits over features.
 
 A session grants operations through permissions that the platform reads from Postgres. The edge has no tenant database.
 
-- Ruled: a grants file installed with the release maps each role to its permissions. It is signed with the release, so authorization at publish holds on the box. The edge reads it once at start. The platform signs no release today, so issue 4 scopes how the grants file is bound to the release.
+- Ruled: a grants file installed with the release maps each role to its permissions, so authorization at publish holds on the box. The edge reads it once at start. The platform signs no release today. `wamn-e5in.4` binds the file to the release by digest, and its scope names the options.
 - Other option: edge tokens carry their permissions as claims. That changes the token profile.
 
 Local routes admit sessions only. A PAT needs the identity database. The device loop calls its operation as a fixed local principal that the edge configuration names.
@@ -101,7 +101,7 @@ Local routes admit sessions only. A PAT needs the identity database. The device 
 | A (ruled) | One crate `services/edge`, package `wamn-edge`, a library and a binary. Modules: configuration, release loading, routes, session keys, the SQLite store, samples and forward, and `plugins/serial`. | One crate grows. It has one user. |
 | B | The SQLite `IntentStore` as its own crate under `crates/execution`. | A second crate for one user. |
 
-Split the SQLite adapter out when a second user appears. The dependency test is `services/edge/tests/dependency_boundary.rs`, in the engine test's form.
+The owner later placed the SQLite adapter in its own crate, `wamn-run-state-sqlite` (`wamn-e5in.2`), beside `wamn-run-state`. The dependency test is `services/edge/tests/dependency_boundary.rs`, in the engine test's form.
 
 ### 4.6 How a release reaches the box
 
@@ -160,7 +160,7 @@ Tests run on the x86_64 host, because the edge logic does not depend on the targ
 
 ## 5. Issues
 
-The owner scopes each issue after the one before it closes and is reviewed. Only issue 1 is filed.
+The owner scopes each issue after the one before it closes and is reviewed, and can change this order. Beads holds the filed issues and their status.
 
 1. The `wamn-edge` crate with its dependency test, and nothing else (`wamn-e5in.1`).
 2. The aarch64 build: the Dockerfile target and the first size, memory, and crate count.
