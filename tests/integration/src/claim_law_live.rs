@@ -52,7 +52,7 @@ impl CommandFixture for MoveFixture {
                 Ok(Box::new(claim.try_get::<_, Uuid>("movement_id")?))
             }
             ("finalize_command", "pallet_status") => Ok(Box::new("available".to_owned())),
-            ("finalize_command", "row_version") => Ok(Box::new(2_i64)),
+            ("finalize_command", "row_version") => Ok(Box::new(2_i32)),
             _ => bail!("the fixture has no value for {statement}.{bind}"),
         }
     }

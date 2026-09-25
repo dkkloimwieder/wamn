@@ -777,7 +777,8 @@ mod shape {
         ] {
             assert!(value.get(key).is_some(), "value carries {key}");
         }
-        assert_eq!(value["expected_row_version"], "1");
+        // The WMS revision is int32, which JSON carries as a number.
+        assert_eq!(value["expected_row_version"], 1);
         assert_eq!(
             value.as_object().expect("object").len(),
             5,
