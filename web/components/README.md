@@ -4,15 +4,10 @@ The harness that type checks and tests generated components.
 It is hand-written, private, and it ships nothing.
 
 The generated components import SolidJS, TanStack Table, TanStack Form, zod, and `@wamn/ui`.
-This package installs those libraries once, so a check needs no network.
+This package installs those libraries, so a check needs no network.
 It resolves `@wamn/ui` from `web/ui`, and it maps `solid-js` and the table package to its own copy, because two copies break reactivity.
 
-Install the dependencies here and in `web/ui`:
-
-```bash
-cd web/components && npm install
-cd ../ui && npm install
-```
+Install the web packages once with `pnpm install` at the repository root, as [running tests](../../docs/operations/running-tests.md#web-packages) describes.
 
 Write the fixture bindings and components, then check them:
 
@@ -21,7 +16,7 @@ cargo run --locked --offline -p wamn-schema-generator --example check_client_com
 ```
 
 The command writes into `fixture/`, which Git ignores, and then runs the check in this package.
-`npm run check` and `npm test` read what the command wrote, so run the command first.
+`pnpm run check` and `pnpm test` read what the command wrote, so run the command first.
 
 ## Gallery
 
@@ -34,7 +29,7 @@ Write the fixture, then serve the page on a port that you choose:
 
 ```bash
 cargo run --locked --offline -p wamn-schema-generator --example check_client_components
-cd web/components && npm run gallery -- --port 5191
+cd web/components && pnpm run gallery --port 5191
 ```
 
 If `fixture/` is absent, the command exits and names the fixture command.

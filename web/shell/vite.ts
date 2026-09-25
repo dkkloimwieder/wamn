@@ -85,6 +85,7 @@ function proxy(): Record<string, Proxy> {
 export function applicationConfig(options: ApplicationOptions): ApplicationConfig {
   const at = (path: string) => fileURLToPath(new URL(path, options.root));
   const web = fileURLToPath(new URL("..", import.meta.url));
+  const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const installed = (name: string) => at(`node_modules/${name}`);
   return {
     // The shell, the runtime, the UI and the generated client live outside the
@@ -111,8 +112,9 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
       port: options.port,
       ...(options.command === "serve" ? { proxy: proxy() } : {}),
       // The web/ui stylesheet names its font files by path, and a path outside
-      // the application is refused unless it is allowed here.
-      fs: { allow: [at("."), web, at(options.client.path)] },
+      // the application is refused unless it is allowed here. pnpm keeps each
+      // installed package once, under the repository root's node_modules.
+      fs: { allow: [at("."), web, at(options.client.path), store] },
     },
   };
 }

@@ -116,7 +116,7 @@ fn tsc_version() -> Result<String> {
         .map_err(|error| {
             anyhow::anyhow!(
                 "tsc must be on PATH, version {MINIMUM_TSC} or later: {error}. \
-             Install it with `npm install --global typescript`."
+             Install it with `pnpm add --global typescript`."
             )
         })?;
     if !output.status.success() {

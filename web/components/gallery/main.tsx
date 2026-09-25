@@ -3,7 +3,7 @@
  * dark mode, with no stack and no network.
  *
  * It exists so that people and agents can see the components before they
- * reuse them. `npm run gallery` serves it.
+ * reuse them. `pnpm run gallery` serves it.
  */
 
 import "@wamn/ui/styles.css";

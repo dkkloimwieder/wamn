@@ -18,11 +18,10 @@ The receiving screen and location rows do not open it yet, because their generat
 
 Stand up a local stack that serves the Receiving release first. The notes of Beads `wamn-78or.6` hold the exact commands.
 The stack prints a base URL. Keep it.
-Install `web/ui` and `web/runtime` once, as [running tests](../../../docs/operations/running-tests.md#app-shell) describes.
+Install the web packages once with `pnpm install` at the repository root, as [running tests](../../../docs/operations/running-tests.md#web-packages) describes.
 
 ```bash
 cd apps/wamn_receiving/web
-pnpm install
 WAMN_DEV_ENV_DIR=<the environment directory that holds dev.json> \
 WAMN_ROUTE_URL=<the base URL the loop printed> \
   pnpm run dev

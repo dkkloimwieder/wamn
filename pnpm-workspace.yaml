@@ -1,0 +1,16 @@
+# The web packages. One `pnpm install` here installs all of them against one
+# lock file. No package depends on another: an application reaches the shell,
+# the runtime, the UI and its generated client through path aliases.
+packages:
+  - web/runtime
+  - web/components
+  - web/ui
+  - web/shell
+  - apps/wamn_wms/web
+  - apps/wamn_receiving/web
+
+# Install scripts that pnpm may run. esbuild places its platform binary for
+# Vite, and @parcel/watcher builds the file watcher of the Tailwind CLI.
+allowBuilds:
+  esbuild: true
+  "@parcel/watcher": true

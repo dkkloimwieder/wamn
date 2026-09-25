@@ -580,25 +580,32 @@ The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and
 It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
 The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
 
+### Web packages
+
+The web packages form one pnpm workspace, which `pnpm-workspace.yaml` at the repository root lists.
+They are `web/runtime`, `web/components`, `web/ui`, `web/shell`, `apps/wamn_wms/web` and `apps/wamn_receiving/web`.
+Use pnpm for every command of these packages, not npm.
+Install all of them once, at the repository root:
+
+```bash
+pnpm install
+```
+
+The workspace has one lock file, `pnpm-lock.yaml`, at the repository root.
+
 ### Web runtime
 
 The runtime is hand-written TypeScript, and its own tests run under Node.
-Install its dependencies once:
-
-```bash
-cd web/runtime && npm install
-```
-
 To type-check the runtime and its tests, run:
 
 ```bash
-cd web/runtime && npm run check
+cd web/runtime && pnpm run check
 ```
 
 To run its tests, run:
 
 ```bash
-cd web/runtime && npm test
+cd web/runtime && pnpm test
 ```
 
 The tests read the shared case table at `crates/client/tui/tests/data/classification-cases.json`.
@@ -608,16 +615,10 @@ If you change the table, run both.
 ### Platform UI
 
 `web/ui` holds the copied Zaidan components and the one stylesheet that generated components render through.
-Install its dependencies once:
-
-```bash
-cd web/ui && npm install
-```
-
 To type-check the package and build its stylesheet once, run:
 
 ```bash
-cd web/ui && npm run check
+cd web/ui && pnpm run check
 ```
 
 The stylesheet build writes into `node_modules/.cache/wamn-ui`, and nothing reads that file.
@@ -626,13 +627,8 @@ It shows that the CSS entry compiles.
 ### Generated components
 
 A generated component imports SolidJS, TanStack Table, TanStack Form, zod, and `@wamn/ui`.
-`web/components` installs those libraries once and holds the harness that checks the components.
-The harness resolves `@wamn/ui` from `web/ui`, so install both:
-
-```bash
-cd web/components && npm install
-cd ../ui && npm install
-```
+`web/components` installs those libraries and holds the harness that checks the components.
+The harness resolves `@wamn/ui` from `web/ui`.
 
 To write the fixture components, type-check them, and run their tests, run:
 
@@ -645,35 +641,28 @@ It then runs the package's own check and tests.
 If the dependencies are absent, the command refuses and names the directory.
 The one example component test renders the fixture page table with a stub transport and reads the document.
 
-To see the components after that command, run `npm run gallery` in `web/components`.
+To see the components after that command, run `pnpm run gallery` in `web/components`.
 The gallery shows every `@wamn/ui` export and every fixture screen over the test stubs, with no network.
 Its [README](../../web/components/README.md#gallery) names the port option.
 
 ### App shell
 
-`web/shell` resolves `@wamn/ui` from `web/ui` and the runtime from `web/runtime`, so install all three:
-
-```bash
-cd web/shell && npm install
-cd ../ui && npm install
-cd ../runtime && npm ci
-```
-
+`web/shell` resolves `@wamn/ui` from `web/ui` and the runtime from `web/runtime`.
 To type-check the shell and run its tests, run:
 
 ```bash
-cd web/shell && npm run check && npm test
+cd web/shell && pnpm run check && pnpm test
 ```
 
-The tests render the shell with two stub screens and a stub identity service, and read the document.
+The tests render the shell with stub screens and a stub identity service, and read the document.
 They need no browser and no server.
 
-An application web page, such as `apps/wamn_wms/web` or `apps/wamn_receiving/web`, installs its own libraries.
+An application web page, such as `apps/wamn_wms/web` or `apps/wamn_receiving/web`, is a package of the same workspace.
 To type-check it, run:
 
 ```bash
-cd apps/wamn_wms/web && npm install && npm run check
-cd apps/wamn_receiving/web && pnpm install && pnpm run check
+cd apps/wamn_wms/web && pnpm run check
+cd apps/wamn_receiving/web && pnpm run check
 ```
 
 ## Cleanup

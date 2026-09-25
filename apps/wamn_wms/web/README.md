@@ -8,19 +8,18 @@ This directory is owned code, and the generator never writes it.
 
 Stand up a local stack that serves the WMS release first. The notes of Beads `wamn-78or.6` hold the exact commands.
 The stack prints a base URL. Keep it.
-Install `web/ui` and `web/runtime` once, as [running tests](../../../docs/operations/running-tests.md#app-shell) describes.
+Install the web packages once with `pnpm install` at the repository root, as [running tests](../../../docs/operations/running-tests.md#web-packages) describes.
 
 ```bash
 cd apps/wamn_wms/web
-npm install
 WAMN_DEV_ENV_DIR=<the environment directory that holds dev.json> \
 WAMN_ROUTE_URL=<the base URL the loop printed> \
-  npm run dev
+  pnpm run dev
 ```
 
 Open the address that Vite prints, and sign in with an account of that environment.
 
-`npm run build` writes the static files to `dist/`. Nothing serves them yet.
+`pnpm run build` writes the static files to `dist/`. Nothing serves them yet.
 
 ## The account and the seed
 

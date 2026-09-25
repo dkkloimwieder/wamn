@@ -7,7 +7,8 @@
 //! ```
 //!
 //! A component imports SolidJS, TanStack Table, TanStack Form, and zod, so the
-//! check runs inside `web/components`, which installs those libraries once.
+//! check runs inside `web/components`. One `pnpm install` at the repository
+//! root installs those libraries for every web package.
 //! The command writes the fixture output into `web/components/fixture`, which
 //! Git ignores, and then runs the package's own check and tests.
 //!
@@ -29,7 +30,7 @@ fn main() -> Result<()> {
     let harness = repository_root()?.join("web/components");
     if !harness.join("node_modules").is_dir() {
         bail!(
-            "{} has no installed dependencies. Run `npm install` there first.",
+            "{} has no installed dependencies. Run `pnpm install` at the repository root first.",
             harness.display()
         );
     }
@@ -75,13 +76,13 @@ fn write_fixture(
 
 /// Run one script of the harness package.
 fn run(harness: &Path, script: &str) -> Result<()> {
-    let status = Command::new("npm")
+    let status = Command::new("pnpm")
         .current_dir(harness)
-        .args(["run", script, "--silent"])
+        .args(["--silent", "run", script])
         .status()
-        .with_context(|| format!("running `npm run {script}` in {}", harness.display()))?;
+        .with_context(|| format!("running `pnpm run {script}` in {}", harness.display()))?;
     if !status.success() {
-        bail!("`npm run {script}` failed in {}", harness.display());
+        bail!("`pnpm run {script}` failed in {}", harness.display());
     }
     Ok(())
 }
