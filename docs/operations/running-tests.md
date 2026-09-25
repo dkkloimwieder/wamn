@@ -667,11 +667,12 @@ cd web/shell && npm run check && npm test
 The tests render the shell with two stub screens and a stub identity service, and read the document.
 They need no browser and no server.
 
-An application web page, such as `apps/wamn_wms/web`, installs its own libraries.
+An application web page, such as `apps/wamn_wms/web` or `apps/wamn_receiving/web`, installs its own libraries.
 To type-check it, run:
 
 ```bash
 cd apps/wamn_wms/web && npm install && npm run check
+cd apps/wamn_receiving/web && pnpm install && pnpm run check
 ```
 
 ## Cleanup

@@ -8,6 +8,7 @@ Receiving owns package `wamn_receiving`, its SQL, guest, generated code, operato
 [Generated output](generated/): Derived contracts, SQL, and client code.
 [Component](component/): Application guest.
 [Operator application](ui/): Application-specific client composition.
+[Web application](web/README.md): The browser page, with its route table.
 [Tests](tests/): Application assertions and SQLx metadata.
 [Change walkthrough](tests/field-change-walkthrough.md): A Rust-only change through the development loop and its executed test.
 [Running tests](../../docs/operations/running-tests.md): Commands and required inputs.

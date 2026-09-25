@@ -17,3 +17,4 @@ export {
   type ShellScreen,
   type ShellSection,
 } from "./shell";
+export { fillPath, filledValues } from "./fill";

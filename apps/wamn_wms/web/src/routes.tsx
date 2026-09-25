@@ -19,7 +19,7 @@
 
 import { createResource, Show, type JSX } from "solid-js";
 
-import type { ScreenProps, ShellSection } from "@wamn/shell";
+import { fillPath, filledValues, type ScreenProps, type ShellSection } from "@wamn/shell";
 import type { Transport } from "@wamn/web-runtime";
 import {
   InventoryAdjustForm,
@@ -62,41 +62,6 @@ const record = (path: string, row: { readonly id: string }) => `${path}/${encode
 
 /** The key of the record page, from the address. The route path always holds it. */
 const key = (props: ScreenProps) => ({ id: props.params.id ?? "" });
-
-/** The path of a form with the values a row fills, one query value for each member, such as `value.palletId`. */
-function filled(path: string, initial: object): string {
-  const query = new URLSearchParams();
-  const walk = (value: unknown, name: string) => {
-    if (typeof value === "object" && value !== null) {
-      for (const [member, inner] of Object.entries(value)) {
-        walk(inner, name === "" ? member : `${name}.${member}`);
-      }
-    } else if (value !== undefined) {
-      query.set(name, String(value));
-    }
-  };
-  walk(initial, "");
-  const text = query.toString();
-  return text === "" ? path : `${path}?${text}`;
-}
-
-/** The values a form starts with, from the query that `filled` wrote. */
-function initial<T>(props: ScreenProps): T {
-  const value: Record<string, unknown> = {};
-  for (const [name, text] of Object.entries(props.search)) {
-    const members = name.split(".");
-    const last = members.pop();
-    if (text === undefined || last === undefined) {
-      continue;
-    }
-    let inner = value;
-    for (const member of members) {
-      inner = (inner[member] ??= {}) as Record<string, unknown>;
-    }
-    inner[last] = text;
-  }
-  return value as T;
-}
 
 /** Returns to the page that opened the form once a submission completes. A refusal stays on the form. */
 const done = (props: ScreenProps) => (outcome: { readonly status: string }) => {
@@ -146,9 +111,9 @@ export const SECTIONS: readonly ShellSection[] = [
           <PalletQueryTable
             transport={props.transport}
             onOpenPalletGet={(row) => props.open(record("pallets", row))}
-            onFillInventoryMove={(fill) => props.open(filled("inventory/move", fill))}
-            onFillInventoryAdjust={(fill) => props.open(filled("inventory/adjust", fill))}
-            onFillInventorySplit={(fill) => props.open(filled("inventory/split", fill))}
+            onFillInventoryMove={(fill) => props.open(fillPath("inventory/move", fill))}
+            onFillInventoryAdjust={(fill) => props.open(fillPath("inventory/adjust", fill))}
+            onFillInventorySplit={(fill) => props.open(fillPath("inventory/split", fill))}
           />
         ),
       },
@@ -157,7 +122,7 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "pallets/new",
         component: (props) => (
-          <PalletCreateForm transport={props.transport} initial={initial(props)} onSubmitted={done(props)} />
+          <PalletCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
         ),
       },
       {
@@ -205,7 +170,7 @@ export const SECTIONS: readonly ShellSection[] = [
             {(rowVersion) => (
               <InventoryMoveForm
                 transport={props.transport}
-                initial={initial(props)}
+                initial={filledValues(props.search)}
                 valueExpectedRowVersion={rowVersion}
                 onSubmitted={done(props)}
               />
@@ -220,7 +185,7 @@ export const SECTIONS: readonly ShellSection[] = [
             {(rowVersion) => (
               <InventoryAdjustForm
                 transport={props.transport}
-                initial={initial(props)}
+                initial={filledValues(props.search)}
                 valueExpectedRowVersion={rowVersion}
                 onSubmitted={done(props)}
               />
@@ -235,7 +200,7 @@ export const SECTIONS: readonly ShellSection[] = [
             {(rowVersion) => (
               <InventorySplitForm
                 transport={props.transport}
-                initial={initial(props)}
+                initial={filledValues(props.search)}
                 valueExpectedRowVersion={rowVersion}
                 onSubmitted={done(props)}
               />
@@ -281,7 +246,7 @@ export const SECTIONS: readonly ShellSection[] = [
           <LocationQueryTable
             transport={props.transport}
             onOpenLocationGet={(row) => props.open(record("locations", row))}
-            onFillPalletCreate={(fill) => props.open(filled("pallets/new", fill))}
+            onFillPalletCreate={(fill) => props.open(fillPath("pallets/new", fill))}
           />
         ),
       },
@@ -290,7 +255,7 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "locations/new",
         component: (props) => (
-          <LocationCreateForm transport={props.transport} initial={initial(props)} onSubmitted={done(props)} />
+          <LocationCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
         ),
       },
       {
@@ -325,7 +290,7 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "products/new",
         component: (props) => (
-          <ProductCreateForm transport={props.transport} initial={initial(props)} onSubmitted={done(props)} />
+          <ProductCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
         ),
       },
       {

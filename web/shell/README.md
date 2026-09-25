@@ -66,6 +66,8 @@ If a model has one screen, the navigation shows one entry with the model name.
 If a model has more than one screen, the navigation shows the model name with the screen labels below it.
 A record page or a form has no navigation entry.
 A table row opens a record page or a form through a row callback of the generated table.
+A row that fills a form opens it with `fillPath(path, values)`, which writes each filled member into the query, such as `value.palletId`.
+The form route reads them back with `filledValues(props.search)`, so a reload keeps them.
 A route can list `actions`, which the shell shows as buttons above the route.
 An action path can name a route parameter, such as `:id` in `locations/:id/update`, and the shell fills it from the address.
 
