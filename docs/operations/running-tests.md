@@ -266,29 +266,41 @@ No permanent archive or result-only commit is required, except the sweep log of 
 
 Workspace sweeps require an explicit user request.
 Do not restart a stopped sweep or start broad runs at cleanup boundaries.
-If the user requests a workspace sweep, use the retained complete command:
+If the user requests a workspace sweep, use the retained command.
+It excludes the three crates that hold the cluster tests (owner rule, `wamn-e5in.10`):
 
 ```bash
-cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast -- \
-  --include-ignored --nocapture --test-threads=1 \
+cargo test --workspace --exclude wamn-receiving-tests --exclude wamn-wms-tests \
+  --exclude wamn-integration-tests --locked --offline --features wamn-ctl/ops \
+  --no-fail-fast -- --include-ignored --nocapture --test-threads=1 \
   > "$WAMN_RESULTS/workspace.log" 2>&1
 ```
 
 Record its exit status before running another command.
-
-Keep one sweep log per epic closeout in the repository, at `tests/sweeps/<epic>-<commit>.log`.
-`<epic>` is the Beads id of the epic, and `<commit>` is the short hash of the commit that the sweep ran on.
-Set `WAMN_RESULTS` outside the checkout, because a cluster test refuses a tree with untracked files.
-After the sweep ends, copy `$WAMN_RESULTS/workspace.log` to that path.
-Commit the log with the closeout.
-The next closeout compares its failures with the last log by name.
 Do not pipe the command through `tail` or another output filter.
 `--workspace` selects all root members, including members outside Cargo's defaults.
+`--exclude` skips `wamn-receiving-tests`, `wamn-wms-tests` and `wamn-integration-tests`, which hold the cluster tests.
+Their other tests do not run either, until `wamn-idmi` lets a cluster test run only when a caller names it.
 `--features wamn-ctl/ops` builds the targets that require the `ops` feature.
 `--no-fail-fast` retains later binary results after a failure.
 
 `--include-ignored` also selects the [ignored tests](#ignored-tests), and each one fails when a declared prerequisite is missing.
 `--nocapture` shows the output of each test.
+
+A cluster stage runs alone, and only when the epic changed a file under the cluster tests.
+Before a cluster stage starts, tell the other sessions on the machine.
+Two cluster runs at the same time overload the machine, and both fail.
+
+Record the start and end time of each run, and time its build apart from its tests.
+
+Keep one sweep log per epic closeout in the repository, at `tests/sweeps/<epic>-<commit>.log`.
+`<epic>` is the Beads id of the epic, and `<commit>` is the short hash of the commit that the sweep ran on.
+Set `WAMN_RESULTS` outside the checkout, so that the run writes nothing into the tree.
+After the sweep ends, copy `$WAMN_RESULTS/workspace.log` to that path.
+Commit the log with the closeout.
+If the sweep has failures, run the same command once on the base commit of the branch.
+Then list the failures that differ by name.
+Do not compare with the log of an earlier closeout, because the commits of other chains between them add failures that the epic did not cause.
 
 If the user requests the separate contract command, run it after the sweep, including when the sweep fails:
 
