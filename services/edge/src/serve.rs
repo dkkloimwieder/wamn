@@ -65,6 +65,11 @@ impl EdgeHost {
         self.device.as_ref()
     }
 
+    /// The forward, when the configuration names one.
+    pub fn forward(&self) -> Option<&Forward> {
+        self.forward.as_ref()
+    }
+
     /// Refuse new requests and frames, let the device call in flight finish,
     /// drop a forward in flight, then stop the host and its workloads. The
     /// platform key makes the repeat of a dropped forward harmless.

@@ -12,13 +12,19 @@
 //! - An item error or another 4xx status: the sample is refused with the
 //!   platform's reason, and the forward never sends it again. An operator
 //!   resolves it (owner ruling, `wamn-e5in.9`).
-//! - No answer, a timeout, a 5xx status, or a 401, 403, 408 or 429 status:
-//!   the sample stays pending, and the forward waits a backoff before the next
-//!   attempt. Those statuses concern the credential or the moment, not the
-//!   sample.
+//! - No answer, a timeout, a 5xx status, or a 408 or 429 status: the sample
+//!   stays pending, and the forward waits a backoff before the next attempt.
+//!   Those answers concern the moment, not the sample.
+//! - A 401 or 403 status: a credential failure. The sample stays pending and
+//!   the forward waits a backoff, as above. The forward counts each credential
+//!   failure and logs the first. After `CREDENTIAL_BOUND` failures in a row it
+//!   stops sending until the edge restarts, because an expired or revoked PAT
+//!   needs an operator, and the edge reads the PAT only at start (owner
+//!   ruling, `wamn-e5in.9`).
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -49,14 +55,24 @@ const LAST_BACKOFF: Duration = Duration::from_mins(15);
 const PASS_SIZE: u32 = 16;
 /// The most bytes of a platform answer that a refusal keeps.
 const REASON_BYTES: usize = 1024;
+/// The credential failures in a row after which the forward stops sending.
+/// With the backoff, the fifth failure comes about 75 seconds after the first.
+const CREDENTIAL_BOUND: u32 = 5;
 
 /// A running forward.
 #[derive(Debug)]
 pub struct Forward {
     task: JoinHandle<()>,
+    credential_failures: Arc<AtomicU64>,
 }
 
 impl Forward {
+    /// The answers with status 401 or 403 since start. A count above zero
+    /// shows a PAT that the platform does not accept.
+    pub fn credential_failures(&self) -> u64 {
+        self.credential_failures.load(Ordering::Relaxed)
+    }
+
     /// Wait for the forward to end.
     pub async fn join(self) {
         if let Err(error) = self.task.await {
@@ -71,6 +87,18 @@ enum Answer {
     Accepted,
     Refused(String),
     Unreachable(String),
+    Credential(String),
+}
+
+/// How a pass over the pending samples ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Pass {
+    /// No sample is pending.
+    Done,
+    /// The platform or the store could not be reached.
+    Unreachable,
+    /// The platform did not accept the PAT.
+    Credential,
 }
 
 /// The client and the request parts of every forward.
@@ -100,8 +128,17 @@ pub fn start(
         authorization: format!("Bearer {}", read_token(&config.token_file)?),
         key_field: config.key_field.clone(),
     };
-    let task = tokio::spawn(run(forwarder, samples, stopped));
-    Ok(Forward { task })
+    let credential_failures = Arc::new(AtomicU64::new(0));
+    let task = tokio::spawn(run(
+        forwarder,
+        samples,
+        Arc::clone(&credential_failures),
+        stopped,
+    ));
+    Ok(Forward {
+        task,
+        credential_failures,
+    })
 }
 
 /// Read the PAT, and refuse a file that anyone but its owner can read.
@@ -159,13 +196,36 @@ fn connector(config: &ForwardConfig) -> anyhow::Result<HttpsConnector<HttpConnec
         .build())
 }
 
-async fn run(forwarder: Forwarder, samples: SampleStore, mut stopped: watch::Receiver<bool>) {
+async fn run(
+    forwarder: Forwarder,
+    samples: SampleStore,
+    credential_failures: Arc<AtomicU64>,
+    mut stopped: watch::Receiver<bool>,
+) {
     let mut backoff = FIRST_BACKOFF;
+    let mut in_a_row = 0;
     loop {
-        let reached = tokio::select! {
-            reached = forward_pending(&forwarder, &samples) => reached,
+        let pass = tokio::select! {
+            pass = forward_pending(&forwarder, &samples, &credential_failures) => pass,
             _ = stopped.wait_for(|stopped| *stopped) => return,
         };
+        match pass {
+            Pass::Done => in_a_row = 0,
+            Pass::Unreachable => {}
+            Pass::Credential => {
+                in_a_row += 1;
+                if in_a_row >= CREDENTIAL_BOUND {
+                    tracing::error!(
+                        failures = in_a_row,
+                        "the forward stopped: the platform refused the PAT; \
+                         renew the token file and restart the edge"
+                    );
+                    let _ = stopped.wait_for(|stopped| *stopped).await;
+                    return;
+                }
+            }
+        }
+        let reached = pass == Pass::Done;
         let wait = async {
             if reached {
                 samples.wait_stored().await;
@@ -185,19 +245,23 @@ async fn run(forwarder: Forwarder, samples: SampleStore, mut stopped: watch::Rec
     }
 }
 
-/// Send every pending sample in order. Returns false when the platform or the
-/// store could not be reached, which ends the pass.
-async fn forward_pending(forwarder: &Forwarder, samples: &SampleStore) -> bool {
+/// Send every pending sample in order. A sample that does not reach the
+/// platform, or a store error, ends the pass.
+async fn forward_pending(
+    forwarder: &Forwarder,
+    samples: &SampleStore,
+    credential_failures: &AtomicU64,
+) -> Pass {
     loop {
         let pending = match samples.pending(PASS_SIZE).await {
             Ok(pending) => pending,
             Err(error) => {
                 tracing::warn!(%error, "the forward cannot read the samples");
-                return false;
+                return Pass::Unreachable;
             }
         };
         if pending.is_empty() {
-            return true;
+            return Pass::Done;
         }
         for sample in &pending {
             let key = sample.sample_key.as_str();
@@ -219,12 +283,23 @@ async fn forward_pending(forwarder: &Forwarder, samples: &SampleStore) -> bool {
                     if let Err(error) = samples.attempt_failed(key, &error).await {
                         tracing::warn!(%error, "the forward cannot record an attempt");
                     }
-                    return false;
+                    return Pass::Unreachable;
+                }
+                Answer::Credential(error) => {
+                    if credential_failures.fetch_add(1, Ordering::Relaxed) == 0 {
+                        tracing::warn!(sample_key = key, %error, "the platform refused the forward's PAT");
+                    } else {
+                        tracing::debug!(sample_key = key, %error, "the platform refused the forward's PAT");
+                    }
+                    if let Err(error) = samples.attempt_failed(key, &error).await {
+                        tracing::warn!(%error, "the forward cannot record an attempt");
+                    }
+                    return Pass::Credential;
                 }
             };
             if let Err(error) = recorded {
                 tracing::warn!(sample_key = key, %error, "the forward cannot record an answer");
-                return false;
+                return Pass::Unreachable;
             }
         }
     }
@@ -293,13 +368,13 @@ fn answer(status: StatusCode, body: &[u8], key: &str) -> Answer {
         let end = text.floor_char_boundary(REASON_BYTES);
         format!("status {}: {}", status.as_u16(), &text[..end])
     };
+    if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+        return Answer::Credential(text());
+    }
     if status.is_server_error()
         || matches!(
             status,
-            StatusCode::UNAUTHORIZED
-                | StatusCode::FORBIDDEN
-                | StatusCode::REQUEST_TIMEOUT
-                | StatusCode::TOO_MANY_REQUESTS
+            StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_MANY_REQUESTS
         )
     {
         return Answer::Unreachable(text());
@@ -355,11 +430,13 @@ mod tests {
         ));
         for status in [
             StatusCode::SERVICE_UNAVAILABLE,
-            StatusCode::UNAUTHORIZED,
-            StatusCode::FORBIDDEN,
+            StatusCode::REQUEST_TIMEOUT,
             StatusCode::TOO_MANY_REQUESTS,
         ] {
             assert!(matches!(answer(status, b"", "k"), Answer::Unreachable(_)));
+        }
+        for status in [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN] {
+            assert!(matches!(answer(status, b"", "k"), Answer::Credential(_)));
         }
         assert!(matches!(
             answer(StatusCode::OK, b"not json", "k"),

@@ -49,7 +49,8 @@ max_frame = 256
 [forward]
 # The platform command route that receives the samples. Only https is allowed.
 url = "https://routes.example.test/scale/samples"
-# The device PAT. Only its owner may read the file (mode 0600).
+# The device PAT. Only its owner may read the file (mode 0600). The edge reads
+# the file once at start, so you must restart the edge after you replace the PAT.
 token_file = "/etc/wamn-edge/device.pat"
 # PEM certificates to trust beside the system roots, for a private platform
 # certificate authority. Leave it out to trust the system roots only.
