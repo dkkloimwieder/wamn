@@ -1,0 +1,177 @@
+# Edge
+
+Epic 19 builds `wamn-edge`, a service that runs one application on a small box beside a device. Beads epic `wamn-e5in` holds the issues and their status. This page is a scope for owner review. No code exists yet.
+
+## 1. Goal
+
+`wamn-edge` is one service crate. It links the engine, run-state with a SQLite adapter, and an edge plugin set. It runs the operations of one application behind local routes, and one device loop.
+
+The first target reads a serial scale, stores each sample in SQLite, and forwards it to the platform. The box is a Raspberry Pi 3B class computer: four Cortex-A53 cores, 1 GiB of memory, an SD card, and aarch64 Linux.
+
+## 2. Fixed rules
+
+The owner set these rules in the epic brief.
+
+- The edge links no `wamn-runtime`, `wamn-workflow`, Postgres, NATS, OCI, or OTLP gRPC. A dependency test asserts it.
+- Wasm isolation stays. Device logic runs as components under the engine.
+- The edge application is a release that the platform published. The edge loads it from a local file path. It uses the same contract, the same generated component, and the same `invoke_operation`.
+- Authorization happens at publish, and the edge trusts the loaded release. Session verification uses a local key file.
+- Run-state uses SQLite with a single writer. Bypass follows the operation kind: get, query, and list bypass, and create, update, delete, and command log. The intent log promises that no call runs again after a power loss.
+- Store and forward: a sample persists before any forward, and a failed forward retries from the log. A forward is outbound HTTPS to a platform route. NATS comes only if a later cloud-to-edge path needs it.
+- Device plugins are `HostPlugin` implementations in the edge crate. Serial comes first. MQTT, Modbus, OPC UA, and raw TCP are named here and not built.
+- The epic edits nothing under `web/`, and Node is not part of the build. A diagnostics UI is out of scope and is the next candidate.
+- The router stays out (routes-router rule 7). Workflows on the edge are a later question.
+
+## 3. Current state
+
+Measured on main at `4e63fb9a2` on 2026-09-24.
+
+| Place | Today |
+| --- | --- |
+| `wamn-engine` (`crates/platform/engine`) | Exports `invoke_operation`, the engine builder, admission, `LoadedRelease`, and the local file `ArtifactSource`. `cargo tree -e normal` lists 326 crate names for x86_64 and 325 for aarch64. |
+| wash-runtime 2.10.1 | Links `async-nats`, `redis`, `tonic`, `opentelemetry-otlp`, `hyper-util`, and `hyper-rustls` with every feature off. The engine dependency test pins this list (finding `wamn-qt1t`). The owner ruled that no upstream issue or PR is made, and that a fork or a different host crate is decided when the list costs the edge something. |
+| `invoke_operation` | Takes `Option<&dyn IntentStore>` and ignores it. Every caller passes `None`. |
+| `wamn-run-state` | Defines `IntentStore` (`begin`, `finish`, `uncertain`, `resolve`). No implementation exists. The Postgres one is epic `wamn-an24`, which is open and not scoped. |
+| Route layer | Four parts. The `http-route` ingress guest (`apps/platform/ingress/http-route`, about 1,270 lines) matches paths and lowers outcomes to HTTP. It uses no `wamn-runtime` code. The `FlowHttpRouting` plugin in `wamn-runtime` (about 1,340 lines) holds the route table, authentication, and the grant read. `wamn-execution-host` holds delivery, the grant check, and settlement, and it depends on `wamn-runtime`. |
+| Grants | A session's operation permissions come from Postgres (`session_operation_permissions`). The active-session check reads the identity database. |
+| Session verification | `SessionVerifier` is a struct in `wamn-runtime` over `IssuerKeys`, which fetches the issuer keys over HTTPS. No key-source trait exists. The pure check `verify_session_token` is in `wamn-platform-identity`, which links `tokio-postgres` unconditionally. |
+| Generated components | Every generated application component imports `wamn:postgres/types` and `wamn:postgres/statements`, the platform fixture included. The only components without SQL are platform node components, such as `label-render` and `http-request`. |
+| Release identity | `LoadedRelease::load_from(dir)` derives the manifest digest from the canonical bytes. `LocalComponentSource` reads `<dir>/<sha256>.wasm` and checks its digest. A release has no signature: its identity is its digest. |
+| Engine memory | The pooling allocator defaults to 512 core instances and a 256 MiB memory cap. `build_engine_with_host_memory` takes other budgets. |
+| TLS | rustls uses aws-lc-rs, and `aws-lc-sys` is C code. `wamn-platform-identity` uses ring for Ed25519. |
+| Toolchain | Rust 1.98.1 with the `wasm32-wasip2` target. The repository has no aarch64 target and no aarch64 linker. |
+
+## 4. Decisions
+
+Each decision lists the options and a pick. The owner rules on each pick.
+
+### 4.1 The wash-runtime list
+
+The brief refuses NATS and OTLP gRPC. The engine brings both through wash-runtime.
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | The edge test uses the engine rule. It refuses every listed crate outside wash-runtime, and it pins the accepted wash-runtime list exactly. | NATS and OTLP gRPC code sits in the binary, unused. Issue 2 measures its size on aarch64. |
+| B | Fork wash-runtime and put the six crates behind features. | A fork to keep. The repository removed its last wasmCloud fork. |
+| C | A different host crate, with Wasmtime directly and no wash-runtime. | The edge cannot use the engine, `NativeApplication`, or the `HostPlugin` trait. It becomes a second engine. |
+
+Option A keeps one engine and turns the cost into a measured number. If the number is too high, the owner chooses B or C then, as the `wamn-qt1t` ruling says.
+
+### 4.2 What the edge application stores
+
+Every generated component imports `wamn:postgres`. The edge has no Postgres.
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | An edge application declares no SQL. The generator emits no `wamn:postgres` import for an application with no statements. The device operation returns the sample as its outcome, and the edge host writes it to the sample store. | A generator change. The edge application has no tables of its own. |
+| B | The edge serves `wamn:postgres` over SQLite and runs the published statements. | Two SQL dialects. Row security, types, and functions such as `gen_random_uuid()` differ. Publish needs a second checker. |
+| C | The edge links the import to a stub that refuses every call. | A component links, and any SQL call fails at run time. |
+
+Option A keeps one meaning for the import: `wamn:postgres` is Postgres. The sample store belongs to the edge host, as the intent log does.
+
+### 4.3 Local routes
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | The edge serves the same `http-route` ingress guest. The edge crate implements its two imports, `wamn:flow-http-routing/routing` and `wamn:router-delivery/delivery`, over the loaded release and the local grants. | The edge writes the routing and delivery host side again, without Postgres and JetStream. |
+| B | A native Rust route layer in the edge. | A second path matcher and a second outcome lowering. Two readers of one fact. |
+
+Option A keeps one path matcher and one lowering, by the uniformity rule. The pure parts of settlement move down into `wamn-engine`, so that the cloud host and the edge share them. Issue 4 names each moved function.
+
+### 4.4 Session verification and grants
+
+The owner ruled in Epic 12 that the edge verifier is a second implementation of the same trait, not a move. No trait exists, and the pure check sits in a crate that links Postgres.
+
+- Pick: a new pure crate `wamn-session` holds `verify_session_token`, `PublicSessionKey`, a `SessionKeySource` trait, and `SessionVerifier` over that trait. `IssuerKeys` stays in `wamn-runtime` and implements the trait. The edge implements it over a key file. `wamn-platform-identity` uses the new crate.
+- Other option: a feature in `wamn-platform-identity` that turns off Postgres. Epic 12 chose crate splits over features.
+
+A session grants operations through permissions that the platform reads from Postgres. The edge has no tenant database.
+
+- Pick: a grants file beside the release maps each role to its permissions. The install writes it from the tenant's grants. The edge reads it once at start.
+- Other option: edge tokens carry their permissions as claims. That changes the token profile.
+
+Local routes admit sessions only. A PAT needs the identity database. The device loop calls its operation as a fixed local principal that the edge configuration names.
+
+### 4.5 Crate layout
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | One crate `services/edge`, package `wamn-edge`, a library and a binary. Modules: configuration, release loading, routes, session keys, the SQLite store, samples and forward, and `plugins/serial`. | One crate grows. It has one user. |
+| B | The SQLite `IntentStore` as its own crate under `crates/execution`. | A second crate for one user. |
+
+Split the SQLite adapter out when a second user appears. The dependency test is `services/edge/tests/dependency_boundary.rs`, in the engine test's form.
+
+### 4.6 How a release reaches the box
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | The operator copies a release directory: the canonical serving manifest, `<sha256>.wasm` for each component, and the grants file. The edge configuration names the manifest digest. The edge refuses a different digest, and `LocalComponentSource` checks each component. | A manual copy. A `wamn-ctl` verb writes the directory from a published release. |
+| B | The edge pulls the release by digest from the platform over HTTPS. | A new platform endpoint, and the box needs a network path to the platform at start. |
+| C | A signed bundle. | New signing machinery. The platform signs no release today. |
+
+Option A has the same trust as a cloud pod. There, the pod template names the digest and the loader checks the bytes against it. Here, the edge configuration names it.
+
+### 4.7 SQLite schema
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | One file `edge.db` in WAL mode with `synchronous=FULL`. One task owns the only writing connection. | One file grows for both tables. |
+| B | Two files, one for intents and one for samples. | SQLite in WAL mode does not commit across two files atomically. |
+
+Option A lets one transaction record the intent outcome and insert the sample. The tables:
+
+- `intents`: `id`, `tenant`, `release`, `package`, `operation`, `idempotency_key`, `input_hash`, `deadline_ms`, `begun_at`, `finished_at`, `outcome`, `resolved_basis`. The pair `(tenant, idempotency_key)` is unique.
+- `samples`: `id`, `sample_key` (unique, the idempotency key of the forward), `intent_id`, `captured_at`, `body`, `forwarded_at`, `attempts`, `last_error`.
+
+`begin` commits before the export runs. After a power loss, a begun intent with no outcome is uncertain, and the edge never runs it again. The reading of that intent is lost, and the next reading replaces it. The promise holds only if the SD card honors a flush. The closeout records the card that the test used.
+
+The logging decision by operation kind belongs in `wamn-engine`, beside `invoke_operation`, so that the edge and `wamn-an24` share it. Epic `wamn-an24` then adds only the Postgres adapter.
+
+### 4.8 Forward credential
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | A device PAT over HTTPS. The platform mints a PAT for a device principal, and the box keeps it in a file with mode 0600. The forward sends it as a bearer token. | Revocation happens on the platform. The token lives on the SD card. |
+| B | A TLS client certificate. | Platform ingress has no client certificate check. |
+| C | A token signed by an edge key. | The platform trusts a new key per box. |
+
+The forward calls a command route with `request_id` set to `sample_key`, so the platform's idempotency makes a repeated forward harmless. The client is `hyper-util` with `hyper-rustls`, which wash-runtime links already, so the forward adds no crate.
+
+### 4.9 Size and dependency budget
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | Starting ceilings, measured in issue 2: a stripped binary of 64 MiB or less, 256 MiB resident or less with the fixture release loaded, 60 seconds or less for the first component compile, and 5 seconds or less for a restart with a warm compile cache. | The numbers can move after the first measurement. |
+| B | Set no number until the first measurement. | Nothing refuses growth. |
+
+The edge sets its own memory budgets: 8 core instances and the 256 MiB memory cap. Components compile on the box, and Wasmtime's disk cache keeps the result. Build components ahead of time for aarch64 only if the first compile misses its ceiling. New crates are few: `rusqlite` with its bundled SQLite, and one serial crate with its default features off. The box artifact is a release build, because a debug Wasmtime is too slow for the box. Tests use debug builds.
+
+### 4.10 Cross-compile and test
+
+| Option | Rule | Cost |
+| --- | --- | --- |
+| A (pick) | A Dockerfile target `edge` builds `aarch64-unknown-linux-gnu` with the Debian bookworm cross compiler. | A new image stage. The C code in `aws-lc-sys` and `libsqlite3-sys` needs that compiler. |
+| B | `cargo-zigbuild` on the workstation. | A tool outside the repository, and a result that depends on the workstation. |
+| C | Build on the Pi. | 1 GiB of memory does not compile Wasmtime. |
+
+Tests run on the x86_64 host, because the edge logic does not depend on the target. The dependency test reads `cargo tree` for both targets. A test opens a pseudo-terminal pair as the virtual serial port and writes scale frames into it, so the test needs no `socat`. The power-loss test runs the edge binary as a child process, kills it with SIGKILL between the store and the forward, and starts it again. It then asserts one forward per sample and no second export call. A run on a real Pi 3B is manual, and the closeout records it.
+
+## 5. Issues
+
+The owner scopes each issue after the one before it closes and is reviewed. Only issue 1 is filed.
+
+1. The `wamn-edge` crate with its dependency test, and nothing else (`wamn-e5in.1`).
+2. The aarch64 build: the Dockerfile target and the first size, memory, and crate count.
+3. The shared logging decision by operation kind, and the SQLite `IntentStore`.
+4. A fixture release loads from a file and serves one route: release loading, the grants file, `wamn-session`, and the routing and delivery host side.
+5. The generator emits no `wamn:postgres` import for an application with no SQL, and an edge fixture application.
+6. The serial plugin, the device loop, and the sample store.
+7. The forward with a device PAT, the retry from the log, and the power-loss test against a local stack.
+8. The closeout, the sweep log, and the section 7 line in `routes-router.md`.
+
+## 6. Done when
+
+- `wamn-edge` builds for aarch64, and the dependency test passes.
+- On a host with a virtual serial port, a sample is read, logged, stored, and forwarded to a local stack. It survives a kill between the store and the forward.
+- A fixture release loads from a file and serves one route.
+- The closeout, the sweep log, and a section 7 line in `routes-router.md` exist.
