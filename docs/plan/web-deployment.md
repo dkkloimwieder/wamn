@@ -1,11 +1,11 @@
 # Web deployment
 
-Epic 20 serves the generated web clients from one public host: static files from a bucket behind a CDN, and an edge proxy that sends API paths to the platform. It is item 7 of section 7 in the [web operator client](web-operator-client.md) plan. Beads epic `wamn-xyxj` holds the issues and their status. This scope waits for the owner review.
+Epic 20 serves the generated web clients from one public host: static files from a bucket behind a CDN, and an edge proxy that sends API paths to the platform. It is item 7 of section 7 in the [web operator client](web-operator-client.md) plan. Beads epic `wamn-xyxj` holds the issues and their status. The owner reviewed this scope on 2026-09-25.
 
 ## 1. Goal
 
 1. A production build of a web application is one set of static files, and a command puts it in a bucket.
-2. One public HTTPS host serves the page, `/password` and `/api` of one application. The edge proxy sends `/password` to the identity service and `/api` to the route ingress, and the bucket serves everything else.
+2. One public HTTPS host serves the pages, `/password` and `/api` of every application. The edge proxy sends `/password` to the identity service and `/api` to the route ingress, and the bucket serves everything else.
 3. A CDN caches the static files. It caches no authenticated read.
 4. The first real deployment runs Receiving through that host, and a person signs in and completes a supplier change in a browser.
 
@@ -36,7 +36,7 @@ Measured on main at `f73453046` on 2026-09-25.
 
 ## 4. Decisions
 
-Each decision lists the options and a recommendation. The owner rules on each one.
+Each decision lists the options and the owner ruling of 2026-09-25.
 
 ### 4.1 Where the edge runs
 
@@ -44,7 +44,7 @@ Each decision lists the options and a recommendation. The owner rules on each on
 | --- | --- | --- |
 | A | A cloud load balancer. On GCP, a URL map sends `/api/*` and `/password/*` to the cluster and the rest to a backend bucket with Cloud CDN. | A cloud project, a domain and a certificate. It cannot run in kind. |
 | B | One edge proxy in the cluster serves the files and forwards the two paths. A CDN can sit in front later. | The platform owns one more deployment. |
-| C (recommended) | B first, tested in kind with MinIO as the bucket. Then A for the first real deployment, with the same path rules. | Two configurations of one rule set. |
+| C (ruled) | B first, tested in kind with MinIO as the bucket. Then A for the first real deployment, with the same path rules. | Two configurations of one rule set. |
 
 Option C gives a tested shape before any cloud cost. The GCP shape is assumed and not tested until the real deployment.
 
@@ -52,14 +52,16 @@ Option C gives a tested shape before any cloud cost. The GCP shape is assumed an
 
 | Option | Shape | Cost |
 | --- | --- | --- |
-| A (recommended) | One public host per application, for example `receiving.<domain>`. | One certificate name per application. |
-| B | One host, with each application under a path. | The cookies have `Path=/`, so every application on the host receives every session. The router also selects a release by host, not by path. |
+| A | One public host per application, for example `receiving.<domain>`. | One certificate name and one cookie scope per application. |
+| B (ruled) | One public host for every application. | One certificate and one cookie scope. |
+
+The shell already routes under one origin: `/api` for the platform and the environment as the first page segment. A second host is a later choice, when a tenant needs one. Receiving and WMS share no route path today.
 
 ### 4.3 A shared cache for authenticated reads
 
 | Option | Shape | Cost |
 | --- | --- | --- |
-| A (recommended) | None. The CDN caches static files and `public` reads only. | Each browser keeps its own read cache, as today. |
+| A (ruled) | None. The CDN caches static files and `public` reads only. | Each browser keeps its own read cache, as today. |
 | B | A cache key that includes the grant of the caller. | A CDN cannot read a grant from a cookie, so the edge needs code. |
 | C | A platform cache behind the permission check. | A new cache in the host. |
 
@@ -67,24 +69,25 @@ Option A needs no new code. B or C starts only after a measurement shows the nee
 
 ### 4.4 The list cache values
 
-Keep `max-age=10, stale-while-revalidate=60`, because no shared cache stores an authenticated list under option 4.3 A. Revisit them with a measurement from the real deployment.
+Ruled: keep `max-age=10, stale-while-revalidate=60`, because no shared cache stores an authenticated list under option 4.3 A. Revisit them with a measurement from the real deployment.
 
 ### 4.5 Static file headers
 
-The files under `assets/` carry a content hash in their names, so they are `public, max-age=31536000, immutable`. `index.html` is `no-cache`, so a new release reaches the browser at the next load.
+Ruled: the files under `assets/` carry a content hash in their names, so they are `public, max-age=31536000, immutable`. `index.html` is `no-cache`, so a new release reaches the browser at the next load.
 
 ## 5. Owner input
 
-The real deployment needs a cloud project, a domain for the public hosts, and the way to issue their certificate. The epic cannot supply them.
+The real deployment needs a cloud project, a domain for the public host, and a certificate issuer. The owner names them when the GCP issue is scoped. The kind issue needs none of them, because it uses the local issuer of the cluster.
 
 ## 6. Issues
 
-1. The edge in kind: one HTTPS host serves the built Receiving files from MinIO, and forwards `/password` and `/api`. A browser signs in and completes a supplier change through it.
+1. The edge in kind: one HTTPS host serves the built Receiving files from MinIO with a certificate from the local cluster issuer, and forwards `/password` and `/api`. A browser signs in and completes a supplier change through it.
 
 The owner review decides the later issues: the bucket upload command, the GCP configuration and the first real deployment, and the closeout.
 
 ## 7. Out
 
-- A shared cache for authenticated reads, unless 4.3 rules otherwise.
+- A shared cache for authenticated reads.
+- A second public host.
 - The platform admin UI and its host.
 - OIDC, SSR and live updates.
