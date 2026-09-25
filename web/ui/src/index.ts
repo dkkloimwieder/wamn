@@ -50,6 +50,7 @@ export {
   CardPage,
   type AppFrameProps,
   type CardPageProps,
+  type FrameEntry,
   type FrameItem,
   type FrameLink,
   type FrameSection,

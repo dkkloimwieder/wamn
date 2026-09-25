@@ -1,9 +1,10 @@
 /**
  * The route table of the WMS web application: one screen for each table.
  *
- * A group label names the model, and an entry label is the screen label the
- * generated module exports. Each screen hands its component the transport of
- * the signed-in session, which the shell hands it as a prop.
+ * A section label names the model, and a screen label is the label the
+ * generated module exports. The navigation shows the screen label only for a
+ * model with more than one screen. Each screen hands its component the
+ * transport of the signed-in session, which the shell hands it as a prop.
  */
 
 import type { ShellSection } from "@wamn/shell";

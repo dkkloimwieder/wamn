@@ -61,7 +61,7 @@ The edge proxy of the CDN epic does the same. One rule holds in the dev loop and
 
 ### 4.4 Navigation
 
-Each application writes its navigation by hand in its route table, grouped by model. The labels come from the exported label constants, so no label is written twice. The generated component index is what a developer or an agent reads to write that table. The generator emits no navigation until an application needs it.
+Each application writes its navigation by hand in its route table, grouped by model. The labels come from the exported label constants, so no label is written twice. The shell shows a model with one screen as one entry with the model name. It shows the screen labels only below a model with more than one screen, for example "Pallets" with "query" and "aggregate" below it. The generated component index is what a developer or an agent reads to write that table. The generator emits no navigation until an application needs it.
 
 ### 4.5 Record and command screens
 

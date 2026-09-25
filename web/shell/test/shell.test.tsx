@@ -1,7 +1,7 @@
 /**
  * The shell on a stub identity service.
  *
- * Each test sets the address, renders the shell with two stub screens, and
+ * Each test sets the address, renders the shell with three stub screens, and
  * reads what an operator sees. The stub answers the four password paths the
  * way the identity service does for a cookie session.
  */
@@ -38,8 +38,14 @@ function stubScreen(name: string) {
 }
 
 const SECTIONS: readonly ShellSection[] = [
-  { label: "Pallets", screens: [{ path: "pallets", label: "pallet query", component: stubScreen("pallets") }] },
-  { label: "Products", screens: [{ path: "products", label: "product query", component: stubScreen("products") }] },
+  { label: "Pallets", screens: [{ path: "pallets", label: "query", component: stubScreen("pallets") }] },
+  {
+    label: "Products",
+    screens: [
+      { path: "products", label: "query", component: stubScreen("products") },
+      { path: "product-totals", label: "aggregate", component: stubScreen("product totals") },
+    ],
+  },
 ];
 
 /** The identity service, holding one session cookie or none. */
@@ -148,18 +154,22 @@ describe("the app shell", () => {
     expect(window.location.pathname).toBe(`/${AUD}/pallets`);
   });
 
-  it("lists every screen by section, and a navigation entry opens its screen", async () => {
+  it("names a model with one screen by the model, and lists the screens of a model with more", async () => {
     const { fetch } = identity(true);
     open(`/${AUD}/pallets`, fetch);
     await screen.findByText("pallets screen");
-    expect(screen.getByText("Pallets")).toBeDefined();
-    expect(screen.getByText("Products")).toBeDefined();
-    expect(screen.getByText("pallet query").closest("a")?.getAttribute("data-active")).toBe("true");
-    fireEvent.click(screen.getByText("product query"));
+    const link = (text: string) => screen.getByText(text).closest("a");
+    expect(link("Pallets")?.getAttribute("data-active")).toBe("true");
+    expect(link("Products")).toBeNull();
+    expect(screen.getAllByText("query").length).toBe(1);
+    fireEvent.click(screen.getByText("aggregate"));
+    expect(await screen.findByText("product totals screen")).toBeDefined();
+    expect(window.location.pathname).toBe(`/${AUD}/product-totals`);
+    expect(link("aggregate")?.getAttribute("data-active")).toBe("true");
+    expect(link("Pallets")?.getAttribute("data-active")).toBeNull();
+    fireEvent.click(screen.getByText("query"));
     expect(await screen.findByText("products screen")).toBeDefined();
     expect(window.location.pathname).toBe(`/${AUD}/products`);
-    expect(screen.getByText("product query").closest("a")?.getAttribute("data-active")).toBe("true");
-    expect(screen.getByText("pallet query").closest("a")?.getAttribute("data-active")).toBeNull();
   });
 
   it("shows no page for an address that names none", async () => {

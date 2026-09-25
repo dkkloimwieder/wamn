@@ -35,6 +35,8 @@ const SECTIONS: readonly ShellSection[] = [
 
 A section label names the model and is written by hand.
 A screen label is the label constant that the generated module exports, so no label is written twice.
+If a model has one screen, the navigation shows one entry with the model name.
+If a model has more than one screen, the navigation shows the model name with the screen labels below it.
 The shell renders a screen with one prop, `transport`, the transport of the signed-in session.
 That transport sends every API call under `/api`.
 

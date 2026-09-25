@@ -40,7 +40,8 @@ import {
   FieldLabel,
   Input,
   useColorMode,
-  type FrameSection,
+  type FrameEntry,
+  type FrameItem,
 } from "@wamn/ui";
 import {
   createTransport,
@@ -74,8 +75,13 @@ export interface ShellScreen {
   readonly component: Component<ScreenProps>;
 }
 
-/** One labeled group of screens in the navigation. */
+/**
+ * The screens of one model. The navigation names a model with one screen by
+ * the model alone, and lists the screen labels below the model only when it
+ * has more than one screen.
+ */
 export interface ShellSection {
+  /** The model name, such as `Pallets`. */
   readonly label: string;
   readonly screens: readonly ShellScreen[];
 }
@@ -284,21 +290,24 @@ function Layout(props: {
 }): JSX.Element {
   const location = useLocation();
   const { colorMode, toggleColorMode } = useColorMode();
-  const sections: FrameSection[] = props.sections.map((section) => ({
-    label: section.label,
-    items: section.screens.map((screen) => ({
-      label: screen.label,
-      href: screen.path,
-      active: () => {
-        const own = `/${props.aud}/${screen.path}`;
-        return location.pathname === own || location.pathname.startsWith(`${own}/`);
-      },
-    })),
-  }));
+  const item = (label: string, screen: ShellScreen): FrameItem => ({
+    label,
+    href: screen.path,
+    active: () => {
+      const own = `/${props.aud}/${screen.path}`;
+      return location.pathname === own || location.pathname.startsWith(`${own}/`);
+    },
+  });
+  const navigation: FrameEntry[] = props.sections.map((section) => {
+    const only = section.screens.length === 1 ? section.screens[0] : undefined;
+    return only === undefined
+      ? { label: section.label, items: section.screens.map((screen) => item(screen.label, screen)) }
+      : item(section.label, only);
+  });
   return (
     <AppFrame
       title={props.title}
-      sections={sections}
+      navigation={navigation}
       link={A}
       context={props.aud}
       actions={
