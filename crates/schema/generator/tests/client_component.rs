@@ -251,7 +251,7 @@ fn a_table_renders_through_the_data_grid_and_states_no_class() {
         "ChoiceField",
         "DataGrid",
         "DataGridContainer",
-        "DataGridTable",
+        "WindowedTable",
     ] {
         assert!(
             ui.contains(&format!("  {name},\n")),
@@ -262,6 +262,15 @@ fn a_table_renders_through_the_data_grid_and_states_no_class() {
         widget.contains("      <DataGrid\n        table={table}\n"),
         "the grid renders the instance the component creates"
     );
+    // The UI package decides which rows reach the page, so a long table
+    // renders only a window of them (wamn-ly11.1).
+    assert!(
+        widget.contains(
+            "        <DataGridContainer>\n          <WindowedTable />\n        </DataGridContainer>\n"
+        ),
+        "the grid renders its rows through the windowed table"
+    );
+    assert!(!ui.contains("  DataGridTable,\n"));
     assert!(
         widget.contains("onRowClick={(row) => props.onRowSelect?.(row)}"),
         "picking a row still reaches the page"

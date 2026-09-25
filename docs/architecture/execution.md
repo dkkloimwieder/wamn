@@ -443,6 +443,7 @@ The runtime also holds what a generated component calls: the state of one read, 
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
 A table renders the plan's columns over TanStack Table, with one control for each page control the plan names.
 It appends the next page while the last reply carried a cursor.
+A table that holds more than 100 rows renders only the rows in view of its fixed-height box. Paging does not change, and the table still holds every row it read.
 A detail reads one record and shows its fields.
 A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.
 It writes the reserved inputs from the runtime at submit time.

@@ -36,7 +36,6 @@ import {
   Button,
   DataGrid,
   DataGridContainer,
-  DataGridTable,
   FieldError,
   FieldGroup,
   FieldLegend,
@@ -46,6 +45,7 @@ import {
   RecordSelect,
   TableScreen,
   TextField,
+  WindowedTable,
   announceOutcome,
   gridFeatures,
   type GridFeatures,
@@ -213,7 +213,7 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
     </TableScreen>
@@ -391,7 +391,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
     </TableScreen>

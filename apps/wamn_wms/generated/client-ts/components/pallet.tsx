@@ -37,7 +37,6 @@ import {
   ChoiceField,
   DataGrid,
   DataGridContainer,
-  DataGridTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -47,6 +46,7 @@ import {
   RecordSelect,
   TableScreen,
   TextField,
+  WindowedTable,
   announceOutcome,
   createRecordLabels,
   gridFeatures,
@@ -571,7 +571,7 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
       <FormActions>

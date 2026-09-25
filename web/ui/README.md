@@ -19,7 +19,7 @@ Labels, column headers, buttons, card titles and detail terms read in capitals, 
 
 | Kind | Items |
 | --- | --- |
-| Block | `data-grid`, trimmed to `data-grid.tsx`, `data-grid-table.tsx`, and an index of those two |
+| Block | `data-grid`, trimmed to `data-grid.tsx`, `data-grid-table.tsx`, `data-grid-table-virtual.tsx`, and an index of those three |
 | Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `field`, `input`, `input-group`, `label`, `select`, `separator`, `skeleton`, `spinner`, `textarea`, `toast` |
 | Shared | `color-mode` |
 | Design system | `preset-buIovdQ`: `style-lyra`, `neutral`, the indigo theme, `font-inter`, the default radius |
@@ -27,8 +27,9 @@ Labels, column headers, buttons, card titles and detail terms read in capitals, 
 The copy changed these things:
 
 - Every `@/` import became a relative path, so the package compiles inside any consumer.
-- Seven optional props gained `| undefined`, so the source passes `exactOptionalPropertyTypes`.
+- Seventeen optional props gained `| undefined`, so the source passes `exactOptionalPropertyTypes`. The virtual table also states the type of the options it hands to `createVirtualizer`, for the same reason.
 - `ComboboxContent` gained a `footer` slot below the list, for a next page control.
+- A body row hands itself to the virtualizer one microtask after its ref runs. Solid runs the ref before it sets `data-index`, and the virtualizer cannot measure a row with no index.
 - `Toaster` gives every toast the `z-toast` class, which the registry item leaves out. `src/styles.css` sets the toast corner through `--border-radius`, because solid-sonner draws it from that variable in CSS outside every layer.
 - `DataGridContainer` has a fixed height of 32rem and scrolls in both directions, and the header row is sticky by default. A read never changes the height of the page.
 - `src/lib/utils.ts` is the usual `cn`, because the CLI writes it only at `init`.
@@ -46,11 +47,13 @@ Add an item only when an emitter target, or a page that places the generated com
 | `gridFeatures`, `GridFeatures` | The TanStack Table features every generated table declares |
 | `RecordSelect` | The selector: the rows a list returned, a search after a pause in typing, a next page button, and the one record a stored value names when the list did not return it. It reports the row that carries the stored value, so a form reads that row's revision |
 | `createRecordLabels` | The text of the records a table column names by key, read once for each key |
-| `announceOutcome` | Shows one runtime outcome as a toast || `TextField`, `ChoiceField`, `CheckField` | One labeled control and the refusal that marks it |
+| `announceOutcome` | Shows one runtime outcome as a toast |
+| `TextField`, `ChoiceField`, `CheckField` | One labeled control and the refusal that marks it |
 | `DetailList`, `DetailItem` | The fields of one record, with a skeleton while it is read |
 | `ConfirmAction` | One action the operator confirms first, in an alert dialog |
 | `FormActions` | The buttons that close a form or a table, in one full-width row aligned right |
 | `FormDone` | The line a form shows beside its buttons after its command completes |
+| `WindowedTable` | The rows of a generated table, windowed above `WINDOW_FROM` rows inside the fixed-height box, and in full below it |
 | `TableScreen` | One table screen: its filter form, its rows and its next page, stacked with one gap |
 
 `RecordSelect` filters nothing itself, so its options are exactly the rows the release sent.

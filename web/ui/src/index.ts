@@ -49,3 +49,4 @@ export { gridFeatures, type GridFeatures } from "./grid";
 export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";
 export { RecordSelect, SEARCH_PAUSE_MS, type RecordSelectProps } from "./record-select";
+export { WINDOW_FROM, WindowedTable } from "./windowed-table";

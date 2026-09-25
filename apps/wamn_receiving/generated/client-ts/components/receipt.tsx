@@ -27,7 +27,6 @@ import {
   Button,
   DataGrid,
   DataGridContainer,
-  DataGridTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -35,6 +34,7 @@ import {
   FormActions,
   TableScreen,
   TextField,
+  WindowedTable,
   announceOutcome,
   createRecordLabels,
   gridFeatures,
@@ -278,7 +278,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
       <FormActions>

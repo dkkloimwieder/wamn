@@ -584,9 +584,9 @@ function DataGridTableBase(props: { children: JSX.Element }) {
 
 function DataGridTableViewport(props: {
   children: JSX.Element;
-  class?: string;
-  viewportRef?: DataGridRefCallback<HTMLDivElement>;
-  style?: JSX.CSSProperties;
+  class?: string | undefined;
+  viewportRef?: DataGridRefCallback<HTMLDivElement> | undefined;
+  style?: JSX.CSSProperties | undefined;
 }) {
   const grid = useDataGrid();
   const isColumnsResizable = () => !!grid.props.tableLayout?.columnsResizable;
@@ -1136,7 +1136,13 @@ function DataGridTableBodyRow<TData extends object>(props: {
   return (
     <tr
       ref={(node) => {
-        assignRef(props.rowRef, node);
+        // Solid runs the ref before it sets the attributes below, and the
+        // virtualizer reads the row's index from `data-index` when it
+        // measures the node. The row reaches it once the render is done.
+        const rowRef = props.rowRef;
+        if (rowRef !== undefined) {
+          queueMicrotask(() => assignRef(rowRef, node));
+        }
         assignRef(props.dndRef, node);
       }}
       style={{ ...props.dndStyle }}
@@ -1263,9 +1269,9 @@ function DataGridTableBodyRowCell<TData extends object>(props: {
 function DataGridTableRenderedRow<TData extends object>(props: {
   row: Row<DataGridFeatures, TData>;
   pinnedBoundary?: DataGridTablePinnedBoundary | undefined;
-  rowRef?: DataGridRefCallback<HTMLTableRowElement>;
+  rowRef?: DataGridRefCallback<HTMLTableRowElement> | undefined;
   /** Virtualized list index, rendered as data-index for measureElement. */
-  rowIndex?: number;
+  rowIndex?: number | undefined;
 }) {
   const grid = useDataGrid<TData>();
   const startVisibleCells = () => props.row.getStartVisibleCells();

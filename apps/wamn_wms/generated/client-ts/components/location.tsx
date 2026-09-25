@@ -34,7 +34,6 @@ import {
   Button,
   DataGrid,
   DataGridContainer,
-  DataGridTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -43,6 +42,7 @@ import {
   FormDone,
   TableScreen,
   TextField,
+  WindowedTable,
   announceOutcome,
   gridFeatures,
   type GridFeatures,
@@ -427,7 +427,7 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
       <FormActions>

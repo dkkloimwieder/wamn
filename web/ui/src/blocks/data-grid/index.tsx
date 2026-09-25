@@ -55,3 +55,10 @@ export {
   getPinningStyles,
   hasDataGridTableRightPinnedColumns,
 } from "./data-grid-table";
+export type {
+  DataGridTableVirtualizerOptions,
+  DataGridTableVirtualProps,
+  DataGridTableVirtualScrollAlignment,
+  DataGridTableVirtualScrollElements,
+} from "./data-grid-table-virtual";
+export { DataGridTableVirtual } from "./data-grid-table-virtual";

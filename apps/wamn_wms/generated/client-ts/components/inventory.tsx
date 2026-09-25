@@ -36,7 +36,6 @@ import {
   ChoiceField,
   DataGrid,
   DataGridContainer,
-  DataGridTable,
   FieldError,
   FieldGroup,
   FormActions,
@@ -44,6 +43,7 @@ import {
   RecordSelect,
   TableScreen,
   TextField,
+  WindowedTable,
   announceOutcome,
   gridFeatures,
   type GridFeatures,
@@ -445,7 +445,7 @@ export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
     </TableScreen>

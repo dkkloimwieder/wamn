@@ -36,7 +36,6 @@ import {
   ChoiceField,
   DataGrid,
   DataGridContainer,
-  DataGridTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -46,6 +45,7 @@ import {
   RecordSelect,
   TableScreen,
   TextField,
+  WindowedTable,
   announceOutcome,
   gridFeatures,
   type GridFeatures,
@@ -362,7 +362,7 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
       <FormActions>

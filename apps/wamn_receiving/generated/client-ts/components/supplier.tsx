@@ -32,13 +32,13 @@ import {
   Button,
   DataGrid,
   DataGridContainer,
-  DataGridTable,
   FieldError,
   FieldGroup,
   FormActions,
   FormDone,
   TableScreen,
   TextField,
+  WindowedTable,
   announceOutcome,
   gridFeatures,
   type GridFeatures,
@@ -289,7 +289,7 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
         onRowClick={(row) => props.onRowSelect?.(row)}
       >
         <DataGridContainer>
-          <DataGridTable />
+          <WindowedTable />
         </DataGridContainer>
       </DataGrid>
       <FormActions>
