@@ -832,6 +832,24 @@ async fn receiving_release_journey(
         denied_nested.status()
     );
 
+    // The probe writes /purchase_order/update, so it runs before the next
+    // step removes that permission.
+    wamn_integration_tests::p3_shell::assert_p3_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        &route.token,
+        &wamn_integration_tests::p3_shell::BodyProbe {
+            path: "/purchase_order/update",
+            payload: P3_PAYLOAD,
+            body_limit: RAW_BODY_LIMIT,
+            validate_response: validate_p3_refusal,
+        },
+    )
+    .await?;
+
     assert_unauthorized_no_op_refuses(
         &engine,
         &flow_http,
@@ -892,22 +910,6 @@ async fn receiving_release_journey(
         oversized.status(),
         String::from_utf8_lossy(oversized.body())
     );
-
-    wamn_integration_tests::p3_shell::assert_p3_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
-        &inputs.route_host,
-        &route.token,
-        &wamn_integration_tests::p3_shell::BodyProbe {
-            path: "/purchase_order/update",
-            payload: P3_PAYLOAD,
-            body_limit: RAW_BODY_LIMIT,
-            validate_response: validate_p3_refusal,
-        },
-    )
-    .await?;
 
     let spans = traces.spans();
     for (trace_id, wiring_id, operation, package_id) in expected_direct_traces {
