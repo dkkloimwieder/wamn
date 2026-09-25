@@ -113,6 +113,8 @@ Every read response also sends `Vary: Authorization, Cookie`, so a browser does 
 
 This table uses `private` for every generated read, as section 5 states.
 
+The list values `max-age=10, stale-while-revalidate=60` are a provisional first pick. The owner revisits them with the CDN epic.
+
 The `Cache-Control` and `Vary` rows landed with `wamn-rst8.2`, and [execution](../architecture/execution.md) describes them. The ETag columns wait for `wamn-rst8.4`.
 
 ## 5. Shared caches
