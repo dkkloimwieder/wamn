@@ -1,0 +1,21 @@
+[package]
+name = "wamn-run-state-sqlite"
+description = "The SQLite IntentStore adapter: one file, one writer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The trait and its types. wamn-run-state stays adapter-free.
+wamn-run-state = { workspace = true }
+async-trait = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+# Each trait call runs the blocking SQLite call on tokio's blocking pool.
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true
