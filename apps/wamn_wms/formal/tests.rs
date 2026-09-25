@@ -6,6 +6,7 @@ fn fixture() -> State {
                 id: false,
                 product_id: false,
                 packaging_id: false,
+                location_id: false,
                 quantity: 3,
                 disposition: Disposition::Held,
                 lifecycle: Lifecycle::Open,
@@ -47,6 +48,7 @@ fn split_merge_retains_lineage_history_and_replay() {
             from_inventory_id: false,
             quantity: 1,
             to_packaging_id: true,
+            to_location_id: true,
         },
     );
     assert!(command_domain(state, split));
@@ -103,6 +105,7 @@ fn different_dispositions_refuse_merge_without_mutation() {
     state.inventory[1] = Some(Inventory {
         id: true,
         packaging_id: false,
+        location_id: false,
         quantity: 2,
         disposition: Disposition::Available,
         ..state.inventory[0].unwrap()
@@ -132,6 +135,7 @@ fn move_records_packaging_location_and_original_result() {
         Action::Move {
             inventory_id: false,
             to_packaging_id: true,
+            to_location_id: true,
         },
     );
     let Outcome::Accepted(result) = execute(&mut state, movement) else {
@@ -197,11 +201,13 @@ fn packaging_closure_requires_empty_and_refuses_receipt() {
         Action::Move {
             inventory_id: false,
             to_packaging_id: true,
+            to_location_id: true,
         },
         Action::Split {
             from_inventory_id: false,
             quantity: 1,
             to_packaging_id: true,
+            to_location_id: true,
         },
     ] {
         assert_eq!(
@@ -254,4 +260,53 @@ fn adjustment_records_reason_and_refuses_changed_intent() {
         Outcome::Refused(Refusal::InvalidInput)
     );
     assert_eq!(state, from);
+}
+
+#[test]
+fn inventory_location_is_independent_and_destination_must_be_colocated() {
+    let mut metadata_only = fixture();
+    let inventory = metadata_only.inventory;
+    metadata_only.packaging[0].location_id = true;
+    assert_eq!(metadata_only.inventory, inventory);
+    assert!(!metadata_only.inventory[0].unwrap().location_id);
+    assert!(!valid_business(metadata_only));
+
+    let mut state = fixture();
+    let original = state;
+    for action in [
+        Action::Move {
+            inventory_id: false,
+            to_packaging_id: true,
+            to_location_id: false,
+        },
+        Action::Split {
+            from_inventory_id: false,
+            quantity: 1,
+            to_packaging_id: true,
+            to_location_id: false,
+        },
+    ] {
+        assert_eq!(
+            execute(&mut state, command(false, action)),
+            Outcome::Refused(Refusal::InvalidInput)
+        );
+        assert_eq!(state, original);
+    }
+    assert!(matches!(
+        execute(
+            &mut state,
+            command(
+                false,
+                Action::Move {
+                    inventory_id: false,
+                    to_packaging_id: true,
+                    to_location_id: true,
+                }
+            )
+        ),
+        Outcome::Accepted(_)
+    ));
+    assert!(state.inventory[0].unwrap().location_id);
+    assert_eq!(state.packaging, original.packaging);
+    assert!(valid_business(state));
 }

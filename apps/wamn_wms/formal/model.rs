@@ -38,6 +38,7 @@ struct Inventory {
     id: bool,
     product_id: bool,
     packaging_id: bool,
+    location_id: bool,
     quantity: u8,
     disposition: Disposition,
     lifecycle: Lifecycle,
@@ -60,6 +61,7 @@ enum Action {
     Move {
         inventory_id: bool,
         to_packaging_id: bool,
+        to_location_id: bool,
     },
     Adjust {
         inventory_id: bool,
@@ -69,6 +71,7 @@ enum Action {
         from_inventory_id: bool,
         quantity: u8,
         to_packaging_id: bool,
+        to_location_id: bool,
     },
     Merge {
         from_inventory_id: bool,
@@ -183,6 +186,9 @@ fn valid_business(state: State) -> bool {
         if state.inventory[usize::from(id)].is_some_and(|item| {
             item.id != id
                 || item.quantity > 6
+                || (item.lifecycle == Lifecycle::Open
+                    && item.location_id
+                        != state.packaging[usize::from(item.packaging_id)].location_id)
                 || (item.lifecycle == Lifecycle::Closed) != (item.quantity == 0)
         }) {
             return false;
@@ -297,10 +303,15 @@ fn change(state: &mut State, action: Action) -> Result<(), Refusal> {
         Action::Move {
             inventory_id,
             to_packaging_id,
+            to_location_id,
         } => {
             let mut item = active(state.inventory, inventory_id)?;
             open_packaging(state.packaging, to_packaging_id)?;
+            if to_location_id != state.packaging[usize::from(to_packaging_id)].location_id {
+                return Err(Refusal::InvalidInput);
+            }
             item.packaging_id = to_packaging_id;
+            item.location_id = to_location_id;
             state.inventory[usize::from(inventory_id)] = Some(item);
         }
         Action::Adjust {
@@ -315,9 +326,13 @@ fn change(state: &mut State, action: Action) -> Result<(), Refusal> {
             from_inventory_id,
             quantity,
             to_packaging_id,
+            to_location_id,
         } => {
             let mut item = active(state.inventory, from_inventory_id)?;
             open_packaging(state.packaging, to_packaging_id)?;
+            if to_location_id != state.packaging[usize::from(to_packaging_id)].location_id {
+                return Err(Refusal::InvalidInput);
+            }
             if quantity >= item.quantity {
                 return Err(Refusal::Quantity);
             }
@@ -326,6 +341,7 @@ fn change(state: &mut State, action: Action) -> Result<(), Refusal> {
             state.inventory[usize::from(!from_inventory_id)] = Some(Inventory {
                 id: !from_inventory_id,
                 packaging_id: to_packaging_id,
+                location_id: to_location_id,
                 quantity,
                 ..item
             });
@@ -402,9 +418,8 @@ fn transactions(
             to_product_id: to_item.product_id,
             from_packaging_id: from_item.map(|item| item.packaging_id),
             to_packaging_id: to_item.packaging_id,
-            from_location_id: from_item
-                .map(|item| from_state.packaging[usize::from(item.packaging_id)].location_id),
-            to_location_id: to_state.packaging[usize::from(to_item.packaging_id)].location_id,
+            from_location_id: from_item.map(|item| item.location_id),
+            to_location_id: to_item.location_id,
             from_quantity: from_item.map_or(0, |item| item.quantity),
             to_quantity: to_item.quantity,
             from_disposition: from_item.map(|item| item.disposition),

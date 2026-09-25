@@ -2,9 +2,9 @@
 
 The prototype remains useful within its finite domain.
 The revised model separates inventory disposition, inventory lifecycle, and packaging lifecycle.
-It follows the owner's target business rules, including equal-disposition merge and packaging-derived location.
+It follows the owner's target business rules, including equal-disposition merge and explicit inventory location with a co-location invariant.
 The [contract](README.md) records all thirteen requested properties and the finite domain.
-Task `wamn-s43x.9` owns this revision. Production alignment remains separate in `wamn-s43x.10`.
+Task `wamn-s43x.11` owns this correction. Production alignment remains separate in `wamn-s43x.10`.
 
 ## Evidence and execution
 
@@ -23,30 +23,33 @@ No business assertion, reachable unsupported construct, or loop-bound assertion 
 
 | Harness | Covers satisfied | Solver time |
 | --- | --- | --- |
-| `packaging_closure_preserves_history_and_replay` | 0 | 177.29 seconds |
-| `later_merge_cannot_change_split_history_or_replay` | 0 | 157.44 seconds |
-| `split_history_is_complete` | 0 | 32.55 seconds |
-| `original_result_and_changed_intent` | 1 | 171.10 seconds |
-| `quantities_and_closed_inventory` | 8 | 366.00 seconds |
-| `complete_transactions` | 5 | 210.13 seconds |
-| `state_and_history_preservation` | 3 | 278.53 seconds |
-| `initialization` | 1 | 15.26 seconds |
+| `packaging_closure_preserves_history_and_replay` | 0 | 93.94 seconds |
+| `later_merge_cannot_change_split_history_or_replay` | 0 | 81.71 seconds |
+| `split_history_is_complete` | 0 | 24.76 seconds |
+| `original_result_and_changed_intent` | 1 | 167.76 seconds |
+| `quantities_and_closed_inventory` | 8 | 398.70 seconds |
+| `complete_transactions` | 5 | 197.28 seconds |
+| `state_and_history_preservation` | 3 | 215.81 seconds |
+| `initialization` | 1 | 5.54 seconds |
 
-The successful solver times total 1408.30 seconds, about 23.5 minutes on this host.
+The successful solver times total 1185.49 seconds, about 19.8 minutes on this host.
 These are host observations, not a controlled benchmark.
-The total covers only the final successful suite, excluding compilation, interrupted exploratory runs, and the separate mutation experiment.
-Five native examples passed. Standalone Clippy with warnings denied and Rust formatting also passed.
+The total covers the final suite and excludes compilation and the separate mutation experiment.
+Six native examples passed. Standalone Clippy with warnings denied and Rust formatting also passed.
 Kani emitted configuration, edition-compatibility, and unreachable-construct warnings.
 No unintended business counterexample appeared within the declared domain.
 
 The source hashes identify the measured model, proofs, and native examples:
 
-- `model.rs`: `a00144dd5bf03b24ec9b35a2e1aa4b2ffbc9ae5f3807a4b4cf0aa358c0adddcf`
-- `proofs.rs`: `6202bcd6b61d829bdb2bdcff99001b6ca7b8e607dd8a92328b915aebf279b754`
-- `tests.rs`: `9fa70b5e87a169fb6e6fb0ebf29b8fc49581d3361922a0099508b97570037e49`
+- `model.rs`: `3fdd28f4514b12532c93a78ea03c8e0bdba331b99ebf064680253528a8de04b9`
+- `proofs.rs`: `fb1c863d633b472915abf69086cdd9ab6580457a4fcd98f0d7858fa70d0af517`
+- `tests.rs`: `1e526718e1b414d55a8c92c4beb1a5773ac310b65e4b181d8f7cafffd4ae99cd`
 
-Raw final logs remain in `/tmp/wamn-wms-inventory-final/` and `/tmp/wamn-wms-inventory-mutant/` on this host.
+Raw logs remain in `/tmp/wamn-explicit-location-final/` and `/tmp/wamn-explicit-location-mutant/` on this host.
 This assessment preserves the results because temporary directories are not durable project storage.
+
+The previous run at `2b7c68c1a` used derived inventory location.
+Its recorded results do not establish the corrected explicit-location model.
 
 ## Deliberate defect
 
@@ -55,12 +58,20 @@ The command still creates stock, and total quantity remains unchanged.
 The `split_history_is_complete` harness requires a transaction for the new inventory.
 Kani found a source with three units and a request to split one unit.
 The result contains two units in the source and one in the new inventory.
-The new inventory lacks its transaction row, so conservation passes but history completeness fails.
-The failing assertion is `created inventory lacks its transaction`.
-The defective run exited with status one after 79.94 seconds of solver time.
-Kani printed the concrete input `3`. No overflow or loop-bound failure caused this result.
-After reversing the patch, the affected proof passed in 47.55 seconds and exited with status zero.
+The new inventory lacks its transaction row, so conservation holds but history completeness fails.
+The assertion `created inventory lacks its transaction` fails, and Kani prints the concrete input `3`.
+The defective run exited with status one after 79.81 seconds of solver time.
+After reversing the patch, the affected proof passed in 33.19 seconds and exited with status zero.
 The patch affected only an owned temporary copy.
+
+## Location correction
+
+The previous model derived inventory location from packaging. The owner explicitly replaces that rule.
+Inventory now stores its own current physical location, separate from packaging location.
+Open inventory must be co-located with its packaging, but equality is an invariant rather than a derived field.
+Move and split accept explicit destination locations and record direct inventory location snapshots.
+The transaction observer reconstructs location from transaction rows without reading packaging location.
+The bounds and command set remain unchanged. Packaging relocation remains outside this correction.
 
 ## Target versus production
 
@@ -78,7 +89,7 @@ The [quantity update](../command/inventory_merge/add_to_target.sql) and [inserti
 Current production can therefore retain both available and held stock on one target pallet.
 This is not a target inventory merge between unequal dispositions.
 
-Current move relocates a whole pallet. The target move changes one inventory's packaging reference.
+Current move relocates a whole pallet. The target move explicitly changes one inventory's packaging reference and physical location.
 Current split creates a pallet. The target split creates inventory inside existing open packaging.
 Current merge retires the source pallet. The target merge closes source inventory and leaves packaging lifecycle unchanged.
 The current schema has no separate generic packaging lifecycle with the owner's empty-closure invariant.
@@ -131,8 +142,11 @@ They do not claim equivalence between pallet commands and the new inventory comm
 | 13. Packaging/location snapshots | `complete_transactions` | Current move tests inspect location, but no generic packaging transition exists. See `wamn-s43x.10`. |
 | Equal dispositions and packaging lifecycle | `quantities_and_closed_inventory`, `state_and_history_preservation` | New target rules have no direct current-production equivalents. |
 
-The five native examples test held-stock split and merge, mismatched dispositions, packaging/location snapshots, empty closure, and closed-packaging refusal.
+The six native examples test held-stock split and merge, mismatched dispositions, packaging/location snapshots, empty closure, and closed-packaging refusal.
 They also compare immutable history, original replay results, adjustment reasons, and changed intent.
+The location regression changes packaging metadata alone and confirms that inventory location remains unchanged.
+That divergent open-inventory state violates the co-location invariant.
+Move and split refuse mismatched destination locations without mutation.
 Beads `wamn-s43x.3` retains the older application gaps for held splitting and complete refusal snapshots.
 
 ## Practicality and limits
@@ -140,7 +154,7 @@ Beads `wamn-s43x.3` retains the older application gaps for held splitting and co
 The model keeps two inventory identities, two claims, two operations, and a six-unit total.
 Two packaging identities make packaging references and lifecycle explicit without modeling infrastructure.
 It remains smaller than the four production command files alone, excluding SQL and generated code.
-The business model contains 458 lines, with 490 lines of proofs and 257 lines of native examples.
+The business model contains 473 lines, with 496 lines of proofs and 312 lines of native examples.
 The four production command files contain 1,296 lines before their SQL and generated dependencies.
 The transaction observer tests history completeness independently of quantity conservation.
 The measured solver cost appears in the execution record above. Routine CI cost remains unmeasured.

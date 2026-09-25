@@ -1,6 +1,6 @@
 --- a/model.rs
 +++ b/model.rs
-@@ -377,6 +377,9 @@
+@@ -393,6 +393,9 @@
      };
      for id in [false, true] {
          if !affected(command.action, id) {

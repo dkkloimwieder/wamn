@@ -55,13 +55,10 @@ fn explains(from: State, operation: Operation) -> bool {
             || row.to_inventory_id != target
             || row.from_product_id != item.map(|x| x.product_id)
             || row.from_packaging_id != item.map(|x| x.packaging_id)
-            || row.from_location_id
-                != item.map(|x| from.packaging[usize::from(x.packaging_id)].location_id)
+            || row.from_location_id != item.map(|x| x.location_id)
             || row.from_quantity != item.map_or(0, |x| x.quantity)
             || row.from_disposition != item.map(|x| x.disposition)
             || row.from_lifecycle != item.map(|x| x.lifecycle)
-            || row.to_location_id
-                != operation.result.packaging[usize::from(row.to_packaging_id)].location_id
         {
             return false;
         }
@@ -69,6 +66,7 @@ fn explains(from: State, operation: Operation) -> bool {
             id,
             product_id: row.to_product_id,
             packaging_id: row.to_packaging_id,
+            location_id: row.to_location_id,
             quantity: row.to_quantity,
             disposition: row.to_disposition,
             lifecycle: row.to_lifecycle,
@@ -196,24 +194,26 @@ fn quantities_and_closed_inventory() {
             Action::Move {
                 inventory_id,
                 to_packaging_id,
+                to_location_id,
             } => {
                 let mut expected = from.inventory;
                 expected[usize::from(inventory_id)]
                     .as_mut()
                     .unwrap()
                     .packaging_id = to_packaging_id;
+                expected[usize::from(inventory_id)]
+                    .as_mut()
+                    .unwrap()
+                    .location_id = to_location_id;
                 assert!(to.inventory == expected);
                 assert!(to.packaging[usize::from(to_packaging_id)].lifecycle == Lifecycle::Open);
                 let old = from.inventory[usize::from(inventory_id)].unwrap();
                 kani::cover!(
-                    from.packaging[usize::from(old.packaging_id)].location_id
-                        != to.packaging[usize::from(to_packaging_id)].location_id,
+                    old.location_id != to_location_id,
                     "move changes packaging and location"
                 );
                 kani::cover!(
-                    old.packaging_id != to_packaging_id
-                        && from.packaging[usize::from(old.packaging_id)].location_id
-                            == to.packaging[usize::from(to_packaging_id)].location_id,
+                    old.packaging_id != to_packaging_id && old.location_id == to_location_id,
                     "move changes packaging at same location"
                 );
             }
@@ -241,6 +241,7 @@ fn quantities_and_closed_inventory() {
                 from_inventory_id,
                 quantity,
                 to_packaging_id,
+                to_location_id,
             } => {
                 let source = from.inventory[usize::from(from_inventory_id)].unwrap();
                 assert!(quantity > 0 && quantity < source.quantity);
@@ -256,6 +257,7 @@ fn quantities_and_closed_inventory() {
                         == Some(Inventory {
                             id: !from_inventory_id,
                             packaging_id: to_packaging_id,
+                            location_id: to_location_id,
                             quantity,
                             ..source
                         })
@@ -355,6 +357,7 @@ fn fixture(quantity: u8, disposition: Disposition) -> State {
                 id: false,
                 product_id: false,
                 packaging_id: false,
+                location_id: false,
                 quantity,
                 disposition,
                 lifecycle: Lifecycle::Open,
@@ -403,7 +406,8 @@ fn split_history_is_complete() {
                 Action::Split {
                     from_inventory_id: false,
                     quantity: 1,
-                    to_packaging_id: true
+                    to_packaging_id: true,
+                    to_location_id: true
                 }
             )
         ),
@@ -427,6 +431,7 @@ fn later_merge_cannot_change_split_history_or_replay() {
             from_inventory_id: false,
             quantity: 1,
             to_packaging_id: true,
+            to_location_id: true,
         },
     );
     let Outcome::Accepted(result) = execute(&mut state, split) else {
@@ -463,6 +468,7 @@ fn packaging_closure_preserves_history_and_replay() {
         Action::Move {
             inventory_id: false,
             to_packaging_id: true,
+            to_location_id: true,
         },
     );
     let Outcome::Accepted(result) = execute(&mut state, movement) else {

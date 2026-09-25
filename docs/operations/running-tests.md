@@ -145,7 +145,7 @@ The [assessment](../../apps/wamn_receiving/formal/assessment.md) distinguishes m
 
 Use the same Kani 0.68.0 installation described for [Receiving](#receiving-formal-model).
 The [WMS contract](../../apps/wamn_wms/formal/README.md) defines its finite domain and original-result replay rule.
-From the repository root, run its five native examples and eight proofs:
+From the repository root, run its six native examples and eight proofs:
 
 ```bash
 wms_formal_run=$(mktemp -d "${TMPDIR:-/tmp}/wamn-wms-formal.XXXXXX")

@@ -1,14 +1,14 @@
 # WMS inventory model
 
 This independent Rust model studies inventory transitions, immutable transactions, and stored command results.
-Beads task `wamn-s43x.9` owns this revision.
+Beads task `wamn-s43x.11` owns the explicit-location correction.
 The owner defines the target business rules below.
 Production differences remain explicit in the [assessment](assessment.md).
 
 ## Business state
 
 An inventory identity identifies stock with one product and disposition.
-`Inventory` has an identity, product, packaging reference, quantity, disposition, and lifecycle.
+`Inventory` has an identity, product, packaging reference, explicit physical location, quantity, disposition, and lifecycle.
 Disposition describes stock availability: `available` or `held`.
 Lifecycle describes whether an identity remains usable: `open` or `closed`.
 Merge requires equal dispositions and closes only the source inventory identity.
@@ -19,7 +19,12 @@ Separate available and held inventory identities can share packaging without mer
 It has an identity, `type`, code, location, and lifecycle.
 `Pallet` and `Tote` represent two packaging types without different command rules.
 All modeled inventory references packaging.
-Inventory location comes only from that packaging, so no separate inventory location can disagree with it.
+`Inventory.location_id` always stores current physical location.
+`Packaging.location_id` is separate state and never supplies an implicit inventory location.
+The co-location invariant requires open inventory to have the same location as its referenced packaging.
+Move and split take an explicit destination location and refuse a mismatch with destination packaging.
+They explicitly write inventory location and record its transition.
+Changing packaging metadata alone cannot move inventory.
 
 Closed packaging has no open inventory references and refuses incoming inventory.
 `ClosePackaging` refuses while any open inventory references the packaging.
@@ -36,7 +41,7 @@ These are target properties, not claims that production already implements them.
 
 | Property | Category | Modeled rule and source |
 | --- | --- | --- |
-| 1. Move conservation | Postcondition | Move changes one inventory packaging reference and preserves quantity. The owner defines the new command unit. |
+| 1. Move conservation | Postcondition | Move explicitly changes one inventory packaging reference and physical location, while preserving quantity. The owner defines the new command unit. |
 | 2. Split conservation | Postcondition | Split transfers a positive quantity into a new inventory identity. Current [split](../data/src/inventory_split.rs) requires a positive remainder. |
 | 3. Merge conservation | Postcondition | Merge transfers all source quantity into the target and closes the source. The owner separates inventory from packaging. |
 | 4. Adjustment exception | Postcondition | Only adjustment changes total quantity. Current [adjustment](../data/src/inventory_adjust.rs) requires a positive resulting quantity and a reason. |
@@ -48,21 +53,21 @@ These are target properties, not claims that production already implements them.
 | 10. Later changes | History | Later inventory or packaging changes preserve earlier history and replay results. |
 | 11. Changed intent | Refusal | A changed command under an existing claim refuses without mutation. Invalid input also refuses. |
 | 12. Closed inventory | Refusal | Ordinary inventory commands refuse closed source or target inventory. The owner defines this rule for all commands. |
-| 13. Packaging/location history | History | Rows record exact packaging and derived location values for each transition. |
+| 13. Packaging/location history | History | Rows record exact packaging and explicit inventory location values for each transition. |
 | Equal disposition | Precondition | Merge requires matching inventory dispositions. The owner explicitly resolves this rule. |
-| Packaging location | Invariant | Inventory derives its location from packaging. There is no independent inventory location field. |
+| Packaging location | Invariant | Open inventory and its referenced packaging must have equal explicit location values. |
 | Packaging lifecycle | Invariant and refusal | Closed packaging has no open inventory. It cannot receive inventory, and occupied packaging cannot close. |
 
 Disposition changes, packaging relocation, and packaging reopening are outside this experiment.
-Move can keep its current packaging, as current production move has no same-destination refusal.
-The experiment does not infer an additional no-op refusal.
+Move retains the prototype's existing no-op acceptance.
+Production instead requires distinct locations in its movement-table constraint.
 Moving between different packaging at the same location is also permitted.
 
 ## Transactions and replay
 
 Each `InventoryTransaction` describes one affected inventory identity.
 Rows include `id`, `operation_id`, `type`, `inventory_id`, source lineage, timestamp, and reason.
-Paired `from_*` and `to_*` fields record product, packaging, derived location, quantity, disposition, and lifecycle.
+Paired `from_*` and `to_*` fields record product, packaging, inventory location, quantity, disposition, and lifecycle.
 Move and adjustment create one row. Split and merge create two rows under one `operation_id`.
 
 For split A to B, the source row records A to A, and the new inventory row records A to B.
@@ -73,7 +78,8 @@ Their `inventory_id` values distinguish A's transition from B's transition.
 
 The proof reads each row through its explicit `inventory_id` and rejects duplicate or missing identities.
 It reconstructs the resulting inventory from the starting inventory and row values.
-It also compares source values, lineage, grouping, type, reason, timestamp, and derived locations.
+It also compares source values, lineage, grouping, type, reason, timestamp, and explicit inventory locations.
+The observer reconstructs inventory location from each transaction row, without looking up packaging location.
 This observer does not call the transaction constructor.
 
 The stored result includes complete inventory and packaging snapshots within the finite model.
