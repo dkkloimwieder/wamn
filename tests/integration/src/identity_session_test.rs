@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, decode_public_key};
-use wamn_platform_identity::session_token::{
+use wamn_platform_identity::{create_human, create_service, issue_pat};
+use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_session::token::{
     MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
 };
-use wamn_platform_identity::{create_human, create_service, issue_pat};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);

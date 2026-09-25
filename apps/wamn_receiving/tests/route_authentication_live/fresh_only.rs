@@ -25,7 +25,8 @@ use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
-use wamn_runtime::session_verifier::SessionVerifier;
+use wamn_runtime::session_keys::IssuerKeys;
+use wamn_session::verifier::SessionVerifier;
 
 use super::{
     BASE_PACKAGE_ID, BASE_PACKAGE_VERSION, BASE_RECORD_RECEIPT, JOURNEY_PACKAGES, JourneyDocument,
@@ -57,7 +58,7 @@ pub(super) struct PriorCommitTest<'a> {
     pub project: &'a Client,
     pub control: &'a Client,
     pub publisher: &'a str,
-    pub verifier: SessionVerifier,
+    pub verifier: SessionVerifier<IssuerKeys>,
     pub session: &'a str,
     pub pat: &'a str,
     pub body: Bytes,

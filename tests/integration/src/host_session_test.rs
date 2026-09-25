@@ -16,8 +16,8 @@ use serde_json::Value;
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
 use wamn_control_provision::session_target::{session_audience, validate_session_tenant_id};
-use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, decode_public_key};
-use wamn_platform_identity::session_token::{
+use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_session::token::{
     MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
 };
 

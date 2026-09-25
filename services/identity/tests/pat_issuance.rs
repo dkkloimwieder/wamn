@@ -31,10 +31,11 @@ use wamn_control_registry::Triple;
 use wamn_identity::tls_config_with_operator_ca;
 use wamn_pg_core::quote_ident;
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
-use wamn_platform_identity::session_token::{SessionClaims, sign_session_token};
+use wamn_platform_identity::session_token::sign_session_token;
 use wamn_platform_identity::{
     PrincipalId, authenticate_pat, create_human, create_service, disable_principal, revoke_pat,
 };
+use wamn_session::token::SessionClaims;
 
 const ISSUER: &str = "https://identity.pat-test.internal";
 const PASSWORD: &str = "operator-pat-disposable-fixture-password";
@@ -246,7 +247,7 @@ async fn operator_pat_issuance_over_https() {
             exp: 0,
             iat: 0,
             jti: "operator-denial-control".to_owned(),
-            authority: wamn_platform_identity::session_token::SessionAuthority::Login(
+            authority: wamn_session::token::SessionAuthority::Login(
                 "ed7056a9-5639-455f-9640-4678458794c0".into(),
             ),
             csrf: None,

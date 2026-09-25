@@ -229,7 +229,8 @@ A session that otherwise has permission receives `fresh-credential-required`.
 The client does not replay that operation or silently replace its credential.
 Authentication deadlines bound new admission and do not cancel work already accepted.
 
-The [session token owner](../../crates/identity/platform/src/session_token.rs) defines the token and time rules.
+The [session token owner](../../crates/identity/session/src/token.rs) defines the token and time rules.
+The [session verifier](../../crates/identity/session/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
 PAT exchange keeps no login record or renewal credential.
 The current terminal client retains its session token only in memory.
 The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.

@@ -405,9 +405,7 @@ async fn handle(
                 Ok(None) => return session::unauthorized(),
                 Err(_) => return unavailable(),
             };
-            let authority = wamn_platform_identity::session_token::SessionAuthority::Login(
-                renewal.login.id.clone(),
-            );
+            let authority = wamn_session::token::SessionAuthority::Login(renewal.login.id.clone());
             let claims =
                 match session::claims_for_principal(inner, &principal, target, authority).await {
                     Ok(claims) => claims,
@@ -556,9 +554,7 @@ async fn handle(
                     }
                     Err(_) => return unavailable(),
                 };
-            let authority = wamn_platform_identity::session_token::SessionAuthority::Login(
-                renewal.login.id.clone(),
-            );
+            let authority = wamn_session::token::SessionAuthority::Login(renewal.login.id.clone());
             let claims =
                 match session::claims_for_principal(inner, &principal, target, authority).await {
                     Ok(claims) => claims,
@@ -579,7 +575,7 @@ fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> 
 
 async fn finish_session(
     tx: tokio_postgres::Transaction<'_>,
-    mut claims: wamn_platform_identity::session_token::SessionClaims,
+    mut claims: wamn_session::token::SessionClaims,
     renewal: password_login::Renewal,
     started_at: i64,
     carrier: Carrier,

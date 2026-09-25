@@ -13,4 +13,3 @@ mod registry_transport;
 pub mod release_manifest_artifact;
 pub mod release_manifest_source;
 pub mod session_keys;
-pub mod session_verifier;

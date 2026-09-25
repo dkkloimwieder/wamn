@@ -10,6 +10,8 @@ license.workspace = true
 # dependency test measures what these two bring.
 wamn-engine = { workspace = true }
 wamn-run-state = { workspace = true }
+# Local routes verify sessions over a key file.
+wamn-session = { workspace = true }
 
 [lints]
 workspace = true

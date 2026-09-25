@@ -1,4 +1,4 @@
-//! Session verification binds signed claims to the host's configured issuer and scope.
+//! Session verification binds signed claims to a configured issuer and scope.
 //!
 //! The host resolves tenant permissions from the verified roles, then checks
 //! admission immediately before creating its caller. Key and token deadlines
@@ -9,32 +9,56 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use wamn_platform_identity::IdentityError;
-use wamn_platform_identity::session_token::{
+use async_trait::async_trait;
+
+use crate::SessionError;
+use crate::keys::PublicSessionKey;
+use crate::token::{
     SessionClaims, SessionScope, session_key_id, validate_session_age, verify_session_token,
 };
 
-use crate::session_keys::{IssuerKeys, KeyEvidence, SessionKeyError};
+/// Where a verifier gets the issuer's public keys.
+///
+/// The cloud source fetches them over HTTPS (`IssuerKeys` in `wamn-runtime`).
+/// The edge source reads them from a file ([`FileKeys`](crate::file_keys::FileKeys)).
+#[async_trait]
+pub trait KeySource: Send + Sync {
+    /// The key and its freshness.
+    type Evidence: KeyEvidence;
+    /// A refused key lookup.
+    type Error: std::error::Error + Send + Sync + 'static;
 
-/// Host-owned token verifier; clones share the configured issuer's cache and budget.
+    /// The exact configured issuer. A key ID selects only within its keys.
+    fn issuer(&self) -> &str;
+
+    /// The key with this untrusted key ID, from the issuer's complete key set.
+    async fn key(&self, kid: &str) -> Result<Self::Evidence, Self::Error>;
+}
+
+/// A public key and whether it may still admit a new request.
+pub trait KeyEvidence: Send + Sync {
+    /// Public-only JWK. Possession does not by itself authorize admission.
+    fn public_key(&self) -> &PublicSessionKey;
+
+    /// Recheck immediately at final admission.
+    fn is_fresh(&self) -> bool;
+}
+
+/// Host-owned token verifier; clones share the key source's cache and budget.
 #[derive(Clone, Debug)]
-pub struct SessionVerifier {
-    keys: IssuerKeys,
+pub struct SessionVerifier<K> {
+    keys: K,
     org: Arc<str>,
     audience: Arc<str>,
     clock: Clock,
 }
 
-impl SessionVerifier {
-    /// Bind an existing issuer cache to a trusted organization and exact audience.
+impl<K: KeySource> SessionVerifier<K> {
+    /// Bind a key source to a trusted organization and exact audience.
     ///
     /// The host supplies both scope values from its own loaded configuration.
     /// Neither value comes from a bearer token or request parameter.
-    pub fn new(
-        keys: IssuerKeys,
-        org: &str,
-        audience: &str,
-    ) -> Result<Self, SessionVerificationError> {
+    pub fn new(keys: K, org: &str, audience: &str) -> Result<Self, SessionVerificationError> {
         if org.trim().is_empty() || audience.trim().is_empty() {
             return Err(SessionVerificationError::new("host session scope is empty"));
         }
@@ -49,11 +73,15 @@ impl SessionVerifier {
     /// Authenticate the fixed JWT profile without any identity database read.
     ///
     /// The untrusted key ID selects only within the configured issuer's keys.
-    /// A cold or expired key cache can perform its bounded HTTPS refresh.
     /// The returned roles still require the host's fresh tenant permission read.
-    pub async fn verify(&self, token: &str) -> Result<VerifiedSession, SessionVerificationError> {
+    pub async fn verify(
+        &self,
+        token: &str,
+    ) -> Result<VerifiedSession<K::Evidence>, SessionVerificationError> {
         let kid = session_key_id(token)?;
-        let evidence = self.keys.key(&kid).await?;
+        let evidence = self.keys.key(&kid).await.map_err(|source| {
+            SessionVerificationError::caused("issuer key evidence refused", source)
+        })?;
         let claims = verify_session_token(
             token,
             evidence.public_key(),
@@ -73,10 +101,10 @@ impl SessionVerifier {
         Ok(session)
     }
 
-    /// Bind a deterministic token clock for tests, without changing cache time.
+    /// Bind a deterministic token clock for tests, without changing key time.
     #[cfg(feature = "test-util")]
     pub fn with_test_clock(
-        keys: IssuerKeys,
+        keys: K,
         org: &str,
         audience: &str,
         now: i64,
@@ -91,13 +119,13 @@ impl SessionVerifier {
 }
 
 /// Signed claims with key evidence, before the host's final request admission.
-pub struct VerifiedSession {
+pub struct VerifiedSession<E> {
     claims: SessionClaims,
-    evidence: KeyEvidence,
+    evidence: E,
     clock: Clock,
 }
 
-impl VerifiedSession {
+impl<E: KeyEvidence> VerifiedSession<E> {
     /// Borrow the authenticated principal and roles for fresh permission resolution.
     pub fn claims(&self) -> &SessionClaims {
         &self.claims
@@ -116,7 +144,7 @@ impl VerifiedSession {
     }
 }
 
-impl fmt::Debug for VerifiedSession {
+impl<E> fmt::Debug for VerifiedSession<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("VerifiedSession")
@@ -146,7 +174,7 @@ impl Clock {
     }
 }
 
-/// Explicit token time for tests; the JWKS cache keeps its own evidence clock.
+/// Explicit token time for tests; the key source keeps its own evidence clock.
 #[cfg(feature = "test-util")]
 #[derive(Clone, Debug)]
 pub struct SessionTestClock {
@@ -190,15 +218,9 @@ impl SessionVerificationError {
     }
 }
 
-impl From<IdentityError> for SessionVerificationError {
-    fn from(source: IdentityError) -> Self {
+impl From<SessionError> for SessionVerificationError {
+    fn from(source: SessionError) -> Self {
         Self::caused("session profile refused", source)
-    }
-}
-
-impl From<SessionKeyError> for SessionVerificationError {
-    fn from(source: SessionKeyError) -> Self {
-        Self::caused("issuer key evidence refused", source)
     }
 }
 

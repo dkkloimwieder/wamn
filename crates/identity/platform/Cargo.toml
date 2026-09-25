@@ -17,6 +17,8 @@ sha2 = { workspace = true }
 subtle = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tokio-postgres = { workspace = true }
+# The token profile and its verification.
+wamn-session = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }

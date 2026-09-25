@@ -75,7 +75,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
-use wamn_runtime::session_verifier::SessionVerifier;
+use wamn_session::verifier::SessionVerifier;
 use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::wasmtime::component::Component;

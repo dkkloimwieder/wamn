@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use serde_json::json;
-use wamn_runtime::session_verifier::SessionVerifier;
+use wamn_session::verifier::SessionVerifier;
 
 #[path = "support/session_fixture.rs"]
 #[expect(

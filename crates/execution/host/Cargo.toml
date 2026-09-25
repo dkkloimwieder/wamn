@@ -35,6 +35,7 @@ wamn-control = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-session = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio-postgres = { workspace = true }

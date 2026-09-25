@@ -313,7 +313,7 @@ pub(super) async fn build_journey_runtime(
     inputs: &JourneyDocument,
     credentials: &JourneyCredentials,
     release: Arc<LoadedRelease>,
-    session_verifier: Option<SessionVerifier>,
+    session_verifier: Option<SessionVerifier<IssuerKeys>>,
 ) -> anyhow::Result<(
     Arc<wash_runtime::engine::Engine>,
     Component,

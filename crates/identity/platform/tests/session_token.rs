@@ -3,13 +3,11 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::{Value, json};
-use wamn_platform_identity::{
-    IdentityErrorKind,
-    session_keys::{PublicSessionKey, SessionJwks, decode_public_key},
-    session_token::{
-        SessionClaims, SessionScope, minting_times, session_key_id, validate_session_age,
-        verify_session_token,
-    },
+use wamn_platform_identity::session_token::minting_times;
+use wamn_session::SessionErrorKind;
+use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_session::token::{
+    SessionClaims, SessionScope, session_key_id, validate_session_age, verify_session_token,
 };
 
 fn fixture() -> (Ed25519KeyPair, PublicSessionKey, Value, Value) {
@@ -204,7 +202,7 @@ fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
         let error = verify_session_token(&signed(&pair, &malformed, &claims), &key, scope(), 1000)
             .unwrap_err();
         assert_eq!(error.to_string(), "session token refused");
-        assert_eq!(error.kind(), IdentityErrorKind::InvalidInput);
+        assert_eq!(error.kind(), SessionErrorKind::Refused);
     }
     for field in ["jku", "jwk", "b64", "crit"] {
         let mut malformed = header.clone();

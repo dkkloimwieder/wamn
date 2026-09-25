@@ -20,7 +20,7 @@ use wamn_runtime::plugins::flow_http_routing::{
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_runtime::session_verifier::SessionVerifier;
+use wamn_session::verifier::SessionVerifier;
 
 use super::trace::TraceCapture;
 use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, PARTICIPANT, ROOT};

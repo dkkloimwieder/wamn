@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use reqwest::header::{ACCEPT, AGE};
-use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 
 // Owner-approved policy: wamn-ctc8.24–28 and JWT proposal §3–4.
 const MAX_AGE: Duration = Duration::from_secs(300);
@@ -319,6 +319,21 @@ impl IssuerKeys {
     }
 }
 
+/// The cloud key source: the configured issuer's keys over HTTPS.
+#[async_trait::async_trait]
+impl wamn_session::verifier::KeySource for IssuerKeys {
+    type Evidence = KeyEvidence;
+    type Error = SessionKeyError;
+
+    fn issuer(&self) -> &str {
+        IssuerKeys::issuer(self)
+    }
+
+    async fn key(&self, kid: &str) -> Result<KeyEvidence, SessionKeyError> {
+        IssuerKeys::key(self, kid).await
+    }
+}
+
 /// Public key and its original evidence deadline, bound to the configured issuer.
 #[derive(Clone, Debug)]
 pub struct KeyEvidence {
@@ -347,6 +362,16 @@ impl KeyEvidence {
     /// Recheck immediately at final admission; equality is expired.
     pub fn is_fresh(&self) -> bool {
         self.clock.now() < self.deadline
+    }
+}
+
+impl wamn_session::verifier::KeyEvidence for KeyEvidence {
+    fn public_key(&self) -> &PublicSessionKey {
+        KeyEvidence::public_key(self)
+    }
+
+    fn is_fresh(&self) -> bool {
+        KeyEvidence::is_fresh(self)
     }
 }
 

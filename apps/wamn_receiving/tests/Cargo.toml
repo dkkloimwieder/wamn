@@ -49,6 +49,7 @@ wamn-integration-tests = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wamn-platform-identity = { workspace = true }
+wamn-session = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true, features = ["test-util"] }
 wamn-workflow = { workspace = true }

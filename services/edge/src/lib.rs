@@ -21,3 +21,4 @@
 
 use wamn_engine as _;
 use wamn_run_state as _;
+use wamn_session as _;

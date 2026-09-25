@@ -5858,6 +5858,7 @@ version = "0.1.0"
 dependencies = [
  "wamn-engine",
  "wamn-run-state",
+ "wamn-session",
 ]
 
 [[package]]
@@ -5949,6 +5950,7 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
+ "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6081,6 +6083,7 @@ dependencies = [
  "wamn-execution-host",
  "wamn-platform-identity",
  "wamn-runtime",
+ "wamn-session",
  "wamn-test-postgres",
  "wamn-workflow",
  "wash-runtime",
@@ -6113,6 +6116,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-pg-core",
  "wamn-platform-identity",
+ "wamn-session",
  "wamn-test-postgres",
  "zeroize",
 ]
@@ -6169,6 +6173,7 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-schema-introspection",
+ "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6199,6 +6204,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "wamn-control-provision",
+ "wamn-session",
  "wamn-test-postgres",
  "zeroize",
 ]
@@ -6271,6 +6277,7 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-schema-introspection",
+ "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6387,6 +6394,7 @@ dependencies = [
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-run-state",
+ "wamn-session",
  "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
@@ -6474,6 +6482,18 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-record-history",
  "wamn-test-postgres",
+]
+
+[[package]]
+name = "wamn-session"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

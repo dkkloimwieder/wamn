@@ -113,9 +113,6 @@ pub const MAX_SUBJECT_LEN: usize = 254;
 /// Maximum accepted display-name length.
 pub const MAX_DISPLAY_NAME_LEN: usize = 200;
 
-/// Maximum accepted role-slug length.
-pub const MAX_ROLE_LEN: usize = 64;
-
 /// Maximum accepted personal-access-token label length.
 pub const MAX_PAT_LABEL_LEN: usize = 200;
 
@@ -244,21 +241,14 @@ impl std::str::FromStr for PrincipalId {
     type Err = IdentityError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value.len() != 36
-            || !value.bytes().enumerate().all(|(index, byte)| {
-                if matches!(index, 8 | 13 | 18 | 23) {
-                    byte == b'-'
-                } else {
-                    byte.is_ascii_hexdigit()
-                }
-            })
-        {
+        let value = value.to_ascii_lowercase();
+        if !wamn_session::token::is_principal_id(&value) {
             return Err(IdentityError::new(
                 IdentityErrorKind::InvalidInput,
                 "principal ID must be a hyphenated UUID",
             ));
         }
-        Ok(Self(value.to_ascii_lowercase().into()))
+        Ok(Self(value.into()))
     }
 }
 
@@ -490,6 +480,13 @@ impl fmt::Display for IdentityError {
 }
 
 impl std::error::Error for IdentityError {}
+
+/// A session refusal keeps its message and is invalid input to this crate.
+impl From<wamn_session::SessionError> for IdentityError {
+    fn from(source: wamn_session::SessionError) -> Self {
+        Self::new(IdentityErrorKind::InvalidInput, source.to_string())
+    }
+}
 
 /// Create a passwordless human principal for an externally authenticated
 /// subject.
@@ -1081,12 +1078,7 @@ fn checked_scope_segment(name: &str, value: &str) -> Result<String, IdentityErro
 
 fn canonical_role(value: &str) -> Result<String, IdentityError> {
     let value = value.trim().to_ascii_lowercase();
-    if value.is_empty()
-        || value.len() > MAX_ROLE_LEN
-        || !value.bytes().enumerate().all(|(index, byte)| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || (index > 0 && byte == b'-')
-        })
-    {
+    if !wamn_session::token::is_role_slug(&value) {
         return Err(IdentityError::new(
             IdentityErrorKind::InvalidInput,
             "role must be a lowercase slug of at most 64 bytes",

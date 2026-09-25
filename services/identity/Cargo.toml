@@ -28,6 +28,7 @@ tokio-postgres = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-platform-identity = { workspace = true }
+wamn-session = { workspace = true }
 
 [dev-dependencies]
 wamn-catalog = { workspace = true }

@@ -17,7 +17,8 @@ use wamn_control_provision::sql::revoke_public_connect_floor_sql;
 use wamn_identity::cli::Cli;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_pg_core::quote_ident;
-use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, publish_session_key};
+use wamn_platform_identity::session_keys::publish_session_key;
+use wamn_session::keys::{PublicSessionKey, SessionJwks};
 
 const ISSUER: &str = "https://identity.service.internal";
 const PASSWORD: &str = "identity-surface-fixture-secret";

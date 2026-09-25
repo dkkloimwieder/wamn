@@ -1,0 +1,23 @@
+[package]
+name = "wamn-session"
+description = "Session-token verification over a key source, with no database and no HTTPS client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# A fixed token clock for tests. Never a production feature.
+test-util = []
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+ring = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

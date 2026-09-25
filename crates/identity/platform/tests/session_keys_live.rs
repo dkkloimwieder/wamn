@@ -10,13 +10,12 @@ use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_platform_identity::session_keys::{
-    PublicSessionKey, activate_session_key, publish_session_key, remove_compromised_session_key,
-    retire_session_keys, session_jwks,
+    activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
+    session_jwks,
 };
-use wamn_platform_identity::session_token::{
-    IssuedSessionToken, SessionClaims, SessionScope, session_key_id, sign_session_token,
-    verify_session_token,
-};
+use wamn_platform_identity::session_token::{IssuedSessionToken, sign_session_token};
+use wamn_session::keys::PublicSessionKey;
+use wamn_session::token::{SessionClaims, SessionScope, session_key_id, verify_session_token};
 
 const ISSUER: &str = "https://identity.lifecycle.internal";
 const OTHER_ISSUER: &str = "https://other.lifecycle.internal";
@@ -571,7 +570,7 @@ fn claims(issuer: &str) -> SessionClaims {
         iat: 0,
         exp: 0,
         jti: "fixture-token-id".into(),
-        authority: wamn_platform_identity::session_token::SessionAuthority::Login(
+        authority: wamn_session::token::SessionAuthority::Login(
             "ed7056a9-5639-455f-9640-4678458794c0".into(),
         ),
         csrf: None,

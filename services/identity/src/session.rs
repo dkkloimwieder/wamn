@@ -12,8 +12,9 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, authenticate_pat, has_project_env_membership,
-    session_token::{IssuedSessionToken, SessionAuthority, SessionClaims, sign_session_token},
+    session_token::{IssuedSessionToken, sign_session_token},
 };
+use wamn_session::token::{SessionAuthority, SessionClaims};
 
 use crate::{ConfiguredTarget, IO_TIMEOUT, Inner, connect_database, response, unavailable};
 

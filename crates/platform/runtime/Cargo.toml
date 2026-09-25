@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = []
+test-util = ["wamn-session/test-util"]
 wasm_component_model_implements = [
     "wash-runtime/wasm_component_model_implements",
     "wamn-engine/wasm_component_model_implements",
@@ -27,6 +27,7 @@ wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
+wamn-session = { workspace = true }
 wamn-pg-core = { workspace = true }
 # `tenant-key`: the shipped runtime needs the framed scope digest to check a
 # guest credential against the tenant it will serve (wamn-0h0g.22.6.7).
@@ -95,6 +96,8 @@ wat = "=1.254.0"
 opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }
 tracing-subscriber = { workspace = true }
 wamn-test-postgres = { workspace = true }
+# The session verifier tests bind a fixed token clock.
+wamn-session = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

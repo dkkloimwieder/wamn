@@ -42,8 +42,9 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::session_verifier::SessionVerifier;
+use crate::session_keys::IssuerKeys;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_session::verifier::SessionVerifier;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -522,7 +523,7 @@ impl RouteAuthentication {
 /// Session authentication with current identity and tenant permission reads.
 pub struct SessionRouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,
-    verifier: SessionVerifier,
+    verifier: SessionVerifier<IssuerKeys>,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
     project: Box<str>,
 }
@@ -539,7 +540,7 @@ impl std::fmt::Debug for SessionRouteAuthentication {
 impl SessionRouteAuthentication {
     /// Bind the configured verifier to the host's existing permission authority.
     pub fn new(
-        verifier: SessionVerifier,
+        verifier: SessionVerifier<IssuerKeys>,
         identity_reader: Arc<tokio_postgres::Client>,
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
         project: impl Into<Box<str>>,

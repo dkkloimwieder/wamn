@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig, TestClock};
-use wamn_runtime::session_verifier::{SessionTestClock, SessionVerifier};
+use wamn_session::verifier::{SessionTestClock, SessionVerifier};
 
 pub(super) const ISSUER: &str = "https://identity.example.test/issuer";
 pub(super) const ORG: &str = "org-a";
@@ -167,7 +167,7 @@ impl Server {
         .expect("issuer cache")
     }
 
-    pub(super) fn verifier(&self) -> (SessionVerifier, SessionTestClock, TestClock) {
+    pub(super) fn verifier(&self) -> (SessionVerifier<IssuerKeys>, SessionTestClock, TestClock) {
         let (keys, key_clock) = self.cache();
         let (verifier, token_clock) = SessionVerifier::with_test_clock(keys, ORG, AUDIENCE, 1000)
             .expect("trusted verifier scope");

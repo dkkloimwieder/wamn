@@ -29,15 +29,14 @@ use wamn_control_provision::{
 use wamn_control_registry::Triple;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_pg_core::quote_ident;
-use wamn_platform_identity::session_keys::{
-    SessionJwks, activate_session_key, publish_session_key,
-};
-use wamn_platform_identity::session_token::{
-    MAXIMUM_LIFETIME, SessionClaims, SessionScope, session_key_id, verify_session_token,
-};
+use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::{
     Principal, create_human, create_service, disable_principal, grant_project_env_membership,
     issue_pat, revoke_pat, revoke_project_env_membership,
+};
+use wamn_session::keys::SessionJwks;
+use wamn_session::token::{
+    MAXIMUM_LIFETIME, SessionClaims, SessionScope, session_key_id, verify_session_token,
 };
 
 #[path = "session_exchange/password_lifecycle.rs"]

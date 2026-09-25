@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, ensure};
 use clap::Args;
-use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, decode_public_key};
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
+use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
