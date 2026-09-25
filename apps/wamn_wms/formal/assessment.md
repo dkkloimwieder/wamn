@@ -1,166 +1,156 @@
 # WMS assessment
 
-This experiment is useful within its finite domain.
-It tests inventory conservation, complete transaction history, and original-result replay.
-The model follows the owner's intended history contract where current production behavior differs.
-The [contract](README.md) separates those requirements from current implementation evidence and explicit scope limits.
+The prototype remains useful within its finite domain.
+The revised model separates inventory disposition, inventory lifecycle, and packaging lifecycle.
+It follows the owner's target business rules, including equal-disposition merge and packaging-derived location.
+The [contract](README.md) records all thirteen requested properties and the finite domain.
+Task `wamn-s43x.9` owns this revision. Production alignment remains separate in `wamn-s43x.10`.
 
-## Execution record
+## Evidence and execution
 
-Production source review used revision `1931d925f15e3e33ef2fc4899a8a46e96f0b4125`.
-Review of prototype commit `7d77dd4e8` identified the missing distinction between pallet status and quantity status.
-Task `wamn-s43x.8` corrects that model limitation without changing production code or capacity bounds.
-The toolchain is Kani 0.68.0, CBMC 6.11.0, and Kani's nightly Rust toolchain dated 2026-08-21.
+Production source review used revision `1931d925f15e3e33ef2fc4899a8a46e96f0b4125` and the unchanged command sources on this branch.
+The scenario, schema, implementations, SQL, and existing tests define the current production baseline.
+The owner's latest work order and answers define the new Inventory/Packaging target.
+No production code changed, and no application or deployed test ran for this model revision.
+Existing application test mappings below describe inspected assertions, not new runtime results.
+
+The toolchain is Kani 0.68.0, CBMC 6.11.0, and nightly Rust dated 2026-08-21.
 The [run instructions](../../../docs/operations/running-tests.md#wms-formal-model) reproduce the experiment.
-No application, database, or deployed test ran for this prototype.
-Existing test mappings below describe inspected assertions, not newly measured application results.
-
-## Measured results
-
-All seven Kani harnesses passed, and all fourteen cover properties were satisfied.
+All eight Kani harnesses passed, and all eighteen cover properties were satisfied.
 A cover property demonstrates that a specified case is reachable.
-The final suite exited with status zero and used loop bound four with unwinding assertions enabled.
-These assertions detect execution paths that exceed the loop bound.
-Default assertion reachability tests remained enabled.
+The final suite exited with status zero and kept loop bound four, unwinding assertions, and default assertion reachability enabled.
+No business assertion, reachable unsupported construct, or loop-bound assertion failed in the correct model.
 
-| Harness | Result | Covers satisfied | Verification time |
-| --- | --- | --- | --- |
-| `later_merge_cannot_change_split_history_or_replay` | Pass | 0 | 108.91 seconds |
-| `split_history_is_complete` | Pass | 0 | 22.20 seconds |
-| `original_result_and_changed_intent` | Pass | 1 | 180.31 seconds |
-| `quantities_and_closed_inventory` | Pass | 5 | 339.82 seconds |
-| `complete_transactions` | Pass | 4 | 207.48 seconds |
-| `state_and_history_preservation` | Pass | 3 | 263.47 seconds |
-| `initialization` | Pass | 1 | 9.50 seconds |
+| Harness | Covers satisfied | Solver time |
+| --- | --- | --- |
+| `packaging_closure_preserves_history_and_replay` | 0 | 177.29 seconds |
+| `later_merge_cannot_change_split_history_or_replay` | 0 | 157.44 seconds |
+| `split_history_is_complete` | 0 | 32.55 seconds |
+| `original_result_and_changed_intent` | 1 | 171.10 seconds |
+| `quantities_and_closed_inventory` | 8 | 366.00 seconds |
+| `complete_transactions` | 5 | 210.13 seconds |
+| `state_and_history_preservation` | 3 | 278.53 seconds |
+| `initialization` | 1 | 15.26 seconds |
 
-The successful verification times total 1131.69 seconds, about 18.9 minutes on this host.
-The reviewed run at `7d77dd4e8` recorded 409.14 seconds.
-These run times are host observations, not a controlled benchmark.
-Four native examples passed. Standalone Clippy with warnings denied and Rust formatting also passed.
-Kani reported toolchain configuration warnings and unsupported constructs in unreachable paths.
-No reachable unsupported construct, unwinding assertion, or business assertion failed in the correct model.
+The successful solver times total 1408.30 seconds, about 23.5 minutes on this host.
+These are host observations, not a controlled benchmark.
+The total covers only the final successful suite, excluding compilation, interrupted exploratory runs, and the separate mutation experiment.
+Five native examples passed. Standalone Clippy with warnings denied and Rust formatting also passed.
+Kani emitted configuration, edition-compatibility, and unreachable-construct warnings.
 No unintended business counterexample appeared within the declared domain.
 
-In the earlier experiment, a bound of 128 caused excessive runtime, so those exploratory runs were stopped.
-Inspection showed short loops over two-element arrays, including generated comparisons.
-The final bound of four passed every unwinding assertion without removing any safety property.
-Proof assertions use direct Boolean comparisons to avoid unnecessary diagnostic formatting code.
+The source hashes identify the measured model, proofs, and native examples:
 
-The source hashes identify the measured files:
+- `model.rs`: `a00144dd5bf03b24ec9b35a2e1aa4b2ffbc9ae5f3807a4b4cf0aa358c0adddcf`
+- `proofs.rs`: `6202bcd6b61d829bdb2bdcff99001b6ca7b8e607dd8a92328b915aebf279b754`
+- `tests.rs`: `9fa70b5e87a169fb6e6fb0ebf29b8fc49581d3361922a0099508b97570037e49`
 
-- `model.rs`: `18633ffdf38ecf24463eaa816f2f201d46e1b67adb2aae9290a4b195416da627`
-- `proofs.rs`: `9fd6272fc035f78a165a5c3432b2e2d8d761c69ed01871e5021d8888be42dfcc`
-- `tests.rs`: `6beff2dab9c65383ab7016f8099227d9f433be8a1eec92ec724358c5b95f8c49`
-
-Raw final logs remain in `/tmp/wamn-wms-status-run/` and `/tmp/wamn-wms-status-mutant/` on this host.
-The assessment preserves the results because temporary directories are not durable project storage.
+Raw final logs remain in `/tmp/wamn-wms-inventory-final/` and `/tmp/wamn-wms-inventory-mutant/` on this host.
+This assessment preserves the results because temporary directories are not durable project storage.
 
 ## Deliberate defect
 
 The [mutation patch](missing-transaction.patch) omits the new inventory transaction during split.
-Inventory quantities remain correct, so conservation alone cannot detect this defect.
-Kani found an initial inventory with two units and a split request for one unit.
-The result contains one unit in each inventory, but the new inventory has no transaction row.
-The `split_history_is_complete` harness fails at `created inventory lacks its transaction`.
+The command still creates stock, and total quantity remains unchanged.
+The `split_history_is_complete` harness requires a transaction for the new inventory.
+Kani found a source with three units and a request to split one unit.
+The result contains two units in the source and one in the new inventory.
+The new inventory lacks its transaction row, so conservation passes but history completeness fails.
+The failing assertion is `created inventory lacks its transaction`.
+The defective run exited with status one after 79.94 seconds of solver time.
+Kani printed the concrete input `3`. No overflow or loop-bound failure caused this result.
+After reversing the patch, the affected proof passed in 47.55 seconds and exited with status zero.
+The patch affected only an owned temporary copy.
 
-The defective run exited with status one after 50.10 seconds of solver time.
-Kani printed a concrete playback input of `2` for the initial quantity.
-The failure is a business-history assertion, not overflow or an insufficient loop bound.
-After reversing the patch, the affected proof passed in 26.02 seconds and exited with status zero.
-The patch was applied only to an owned temporary copy.
-Production code remains unchanged.
+## Target versus production
 
-## Status correction
+The previous correction at `e017dee28` separated pallet status from available/held quantity rows.
+That correction modeled current production, including mixed active pallet statuses during merge.
+The new owner rules define a different command unit: a scalar inventory identity with one disposition, separate from packaging.
+The revised model therefore refuses unequal inventory dispositions without silently changing either one.
+The prior production finding remains valid and does not define the new target policy.
 
-The reviewed model combined pallet lifecycle and quantity status in one field.
-Its restriction to matching active statuses excluded supported merge behavior.
-That restriction was a model defect, not neutral bounding or an unresolved business rule.
+Beads `wamn-s43x.10` tracks this domain alignment separately from the prototype.
+Current [merge](../data/src/inventory_merge.rs) transfers all source pallet rows by product and stock status.
+Its [lock test](../data/src/inventory_merge.rs) accepts a held source pallet and an available target pallet.
+The [target update](../command/inventory_merge/touch_target.sql) preserves target pallet status.
+The [quantity update](../command/inventory_merge/add_to_target.sql) and [insertion](../command/inventory_merge/place_on_target.sql) preserve each stock status.
+Current production can therefore retain both available and held stock on one target pallet.
+This is not a target inventory merge between unequal dispositions.
 
-The corrected model has separate `PalletStatus` and `QuantityStatus` dimensions.
-Each inventory identity has available and held quantities, independent of its pallet status.
-Merge adds each quantity to the same status on the target and leaves the target pallet status unchanged.
-The source closes with zero current quantities, while transactions retain the original values.
-Split and adjustment select a quantity status without changing the independent pallet status.
-
-The two new cover cases require mixed active pallet statuses in both merge directions.
-Each case requires stock that produces both available and held quantities on the target.
-The native mixed-status example also compares both immutable transaction rows and replays the merge after a later adjustment to held quantity.
-The existing two-identity, two-claim, two-operation, and six-unit bounds remain unchanged.
-
-Source evidence resolves the former question `wamn-s43x.7`.
-The [merge lock test](../data/src/inventory_merge.rs) accepts a held source and an available target.
-The [target update](../command/inventory_merge/touch_target.sql) preserves pallet status.
-The [quantity update](../command/inventory_merge/add_to_target.sql) and [quantity insertion](../command/inventory_merge/place_on_target.sql) preserve quantity status.
-These sources define the modeled behavior without a new owner policy decision.
-
-## Implementation discrepancies
+Current move relocates a whole pallet. The target move changes one inventory's packaging reference.
+Current split creates a pallet. The target split creates inventory inside existing open packaging.
+Current merge retires the source pallet. The target merge closes source inventory and leaves packaging lifecycle unchanged.
+The current schema has no separate generic packaging lifecycle with the owner's empty-closure invariant.
+The prototype models that invariant without changing production storage or commands.
 
 Beads `wamn-s43x.6` records incomplete inventory history.
-The [movement schema](../migrations/0001_initial.sql) lacks complete inventory lineage and paired quantity/status values.
-Existing rows group through command type and `idempotency_key`, without an explicit `operation_id`.
-That existing grouping does not supply the missing transition snapshots.
-The [split insertion](../command/inventory_split/insert_movement.sql) and [merge insertion](../command/inventory_merge/insert_movement.sql) omit complete snapshots for both affected inventories.
+The [movement schema](../migrations/0001_initial.sql) lacks complete lineage and paired transition values.
+Rows already group through command type and `idempotency_key`, but lack an explicit `operation_id`.
+Existing grouping does not supply the missing transition snapshots.
+The [split insertion](../command/inventory_split/insert_movement.sql) and [merge insertion](../command/inventory_merge/insert_movement.sql) omit complete snapshots for both affected identities.
 The [adjustment insertion](../command/inventory_adjust/insert_movement.sql) records the resulting count without its starting count.
-The public movement model exposes reads, but that alone does not prove immutable database storage.
+A read-only public movement model alone does not establish immutable storage.
 
-Beads `wamn-s43x.1` records replay that reads mutable status.
-The owner resolved the intended rule: exact replay returns the complete original result independently of later inventory changes.
-[Split](../data/src/inventory_split.rs), [merge](../data/src/inventory_merge.rs), and [adjustment](../data/src/inventory_adjust.rs) reread current pallet status on replay.
+Beads `wamn-s43x.1` records replay that reads mutable pallet status.
+[Split](../data/src/inventory_split.rs), [merge](../data/src/inventory_merge.rs), and [adjustment](../data/src/inventory_adjust.rs) reread current status during replay.
 [Move](../data/src/inventory_move.rs) stores its original result status in the claim.
-The formal model follows the owner's original-result rule for every command.
-The source discrepancy remains open until production code and regression tests fix it.
+The target requires the complete original result, independent of later changes.
+The formal model follows that rule for inventory and packaging snapshots.
 
-Beads `wamn-s43x.5` records the missing closed-inventory refusal for move.
-The [move lock](../command/inventory_move/lock_pallet.sql) and command body do not reject a closed pallet.
-The other three command implementations explicitly reject that state.
-This finding comes from source review, not a new runtime reproduction.
+Beads `wamn-s43x.5` records the missing final-state refusal in move.
+The [move lock](../command/inventory_move/lock_pallet.sql) and command body do not reject the terminal pallet state.
+The other three command implementations reject that state.
+This remains a source finding, not a new runtime reproduction.
 
-Production keeps old quantity rows on a final-state pallet and excludes them from its aggregate.
-The intended model closes the inventory with zero current quantity and preserves the old quantity in immutable transactions.
-This representation difference is distinct from the incomplete-history finding.
-No production refactor or fix forms part of this experiment.
+Production retains old quantity rows on a terminal pallet and excludes them from the live aggregate.
+The target closes source inventory with zero current quantity and preserves original quantity in transactions.
+That representation difference does not itself establish production double counting.
+All production findings remain open until implementation changes and tests resolve them.
 
-## Existing implementation tests
+## Property and test mapping
 
 The [local runner](../tests/local_business.rs), `local_business::operations_and_replay`, calls assertions in [wms_runtime_live.rs](../tests/wms_runtime_live.rs).
-The table maps each formal property to the closest existing assertion or an explicit coverage gap.
+The mappings below identify shared business rules and explicit gaps.
+They do not claim equivalence between pallet commands and the new inventory commands.
 
-| Formal properties | Existing assertions | Limits of that evidence |
+| Required property | Formal obligation | Existing application evidence or gap |
 | --- | --- | --- |
-| Initialization and state validity | Fixture inventory and aggregate assertions in `assert_remaining_operations` | These exercise fixture states, not all modeled states. |
-| Move quantity and location | `assert_contention_and_replay` and `assert_remaining_operations` | The model covers arbitrary quantities within its bound. |
-| Adjustment effect and reason | `assert_remaining_operations` counts inventory to seven. `inventory_adjust::tests::the_reason_and_status_are_refused_before_any_statement` tests preparation. | No complete paired transaction snapshot assertion. |
-| Split/merge conservation and closure | `assert_remaining_operations` splits three units, merges stock, observes final source status, and requires seven units on one live pallet. | These test available inventory and one fixture history. |
-| Mixed-status merge | `inventory_merge::tests::the_locked_pair_is_found_by_id_and_must_be_live` accepts different active pallet statuses. | This unit test establishes acceptance, not the complete stock transfer. The SQL supplies the transfer rule. |
-| Closed inventory refusal | `inventory_merge::tests::the_locked_pair_is_found_by_id_and_must_be_live` | No inspected move assertion for closed inventory. |
-| Refused commands preserve state | Excess-split and self-merge cases in `assert_remaining_operations` | The cases do not compare every inventory, claim, and transaction field across refusal. |
-| Pallet status inherited by split | Available-source assertions in `assert_remaining_operations` | Held-source coverage remains in `wamn-s43x.3`. |
-| Complete immutable transactions | No equivalent complete-history assertion in the inspected owner tests | The current schema cannot express the intended full history. See `wamn-s43x.6`. |
-| Original result replay | Move compares full results in `assert_label_delivery_and_replay`. Split compares identity and revision in `assert_remaining_operations`. | Those cases do not establish a complete split/merge/adjust result after later status changes. |
-| Changed intent refuses | Command canonicalization unit tests and move claim behavior | Canonicalization evidence does not prove full state preservation for all conflicting command histories. |
+| 1. Move preserves quantity | `quantities_and_closed_inventory` | `assert_contention_and_replay` and `assert_remaining_operations` exercise pallet moves. Inventory repackaging has no equivalent test. |
+| 2. Split conserves quantity | `quantities_and_closed_inventory` | `assert_remaining_operations` splits three units and examines resulting inventory. |
+| 3. Merge conserves quantity | `quantities_and_closed_inventory` | `assert_remaining_operations` merges stock and requires seven units on one live pallet. |
+| 4. Adjustment changes quantity | `quantities_and_closed_inventory` | `assert_remaining_operations` counts inventory to seven. Adjustment preparation tests require a reason. |
+| 5. Split source lineage | `complete_transactions`, `split_history_is_complete` | No complete paired snapshot assertion. See `wamn-s43x.6`. |
+| 6. Merge source lineage | `complete_transactions` | No assertion for explicit source lineage on both affected inventory rows. See `wamn-s43x.6`. |
+| 7. Complete affected history | `complete_transactions` | Current history cannot express the full target transition. See `wamn-s43x.6`. |
+| 8. Existing history immutable | `state_and_history_preservation` | Inspected tests do not compare complete prior transaction snapshots. |
+| 9. Original replay, no mutation | `original_result_and_changed_intent` | Move compares full results in `assert_label_delivery_and_replay`. Split compares identity and revision in `assert_remaining_operations`. |
+| 10. Later changes preserve replay | Both two-operation history harnesses | Split/merge/adjustment lack full-result coverage after later status changes. See `wamn-s43x.1`. |
+| 11. Changed intent refuses | `original_result_and_changed_intent` | Canonical-command unit tests and move claim behavior cover selected intent differences. |
+| 12. Closed inventory refuses | `quantities_and_closed_inventory` | Merge lock tests require live pallets. Inspected move tests lack terminal-state refusal. See `wamn-s43x.5`. |
+| 13. Packaging/location snapshots | `complete_transactions` | Current move tests inspect location, but no generic packaging transition exists. See `wamn-s43x.10`. |
+| Equal dispositions and packaging lifecycle | `quantities_and_closed_inventory`, `state_and_history_preservation` | New target rules have no direct current-production equivalents. |
 
-The native examples cover held-stock split, mixed-status merge, later adjustment, immutable history, and original replay.
-They also cover reason refusal and changed quantity status or timestamp under an existing claim.
-The general replay proof covers arbitrary changed modeled intent, including invalid commands that refuse during preparation.
-A separate reachable history closes the original split source and then replays that split.
-Beads `wamn-s43x.3` retains the existing implementation gaps for held splitting and complete refusal snapshots.
+The five native examples test held-stock split and merge, mismatched dispositions, packaging/location snapshots, empty closure, and closed-packaging refusal.
+They also compare immutable history, original replay results, adjustment reasons, and changed intent.
+Beads `wamn-s43x.3` retains the older application gaps for held splitting and complete refusal snapshots.
 
 ## Practicality and limits
 
-The model contains 435 lines, with 422 lines of proofs and 260 lines of native examples.
-It contains no database, transport, generated accessors, deployment state, or shared formal framework.
-The four production command files alone exceed 1,200 lines, excluding SQL and generated code.
-The model's explicit transaction fields add size, but they expose a history defect that quantity conservation alone cannot detect.
+The model keeps two inventory identities, two claims, two operations, and a six-unit total.
+Two packaging identities make packaging references and lifecycle explicit without modeling infrastructure.
+It remains smaller than the four production command files alone, excluding SQL and generated code.
+The business model contains 458 lines, with 490 lines of proofs and 257 lines of native examples.
+The four production command files contain 1,296 lines before their SQL and generated dependencies.
+The transaction observer tests history completeness independently of quantity conservation.
+The measured solver cost appears in the execution record above. Routine CI cost remains unmeasured.
 
-The proofs establish the Rust model's behavior within its finite bounds.
-They do not establish equivalence with production code or correctness for unbounded inventory histories.
-Kani establishes three local obligations: empty initial history, complete new operations, and preservation of existing operations.
-A separate inductive argument composes those obligations for executions within the finite domain.
-No single harness checks arbitrary-length history, and the two-operation capacity still limits the experiment.
+The proofs establish behavior of this finite Rust model, not production equivalence or an unbounded warehouse system.
+Kani establishes empty initialization, complete new operations, and preservation of existing operations.
+A separate inductive argument composes those obligations within the modeled domain.
+No individual harness checks arbitrary-length history.
 
-Mixed active pallet statuses and coexistence of available and held stock now belong to the model.
-Multiple-product pallets, decimal encoding, lot/serial rules, and label effects remain outside this experiment.
-The measured runtime supports a focused local experiment, but routine CI cost remains unmeasured.
-The model is smaller than the production command files and omits their infrastructure.
-Its transaction counterexample and source discrepancies justify the added history model.
-No result justifies shared formal infrastructure yet.
+The owner's answers resolve merge disposition, location ownership, and packaging closure for this phase.
+Unpackaged stock, lot/serial identity, multiple products, decimal quantities, and concurrency remain excluded rather than assigned invented semantics.
+Adjustment to zero retains the current refusal rule, and no broader adjustment authorization policy is inferred.
+The prototype does not justify a shared framework or DSL.
