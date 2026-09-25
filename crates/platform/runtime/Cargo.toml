@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-session/test-util"]
+test-util = ["wamn-engine/test-util", "wamn-session/test-util"]
 wasm_component_model_implements = [
     "wash-runtime/wasm_component_model_implements",
     "wamn-engine/wasm_component_model_implements",
@@ -15,7 +15,6 @@ wasm_component_model_implements = [
 [dependencies]
 # Activation compares the native broker declarations from this library.
 wamn-control-provision = { workspace = true }
-boon = { workspace = true }
 object_store = { workspace = true }
 # `oci`: the registry artifact source loads components through wash-runtime's
 # OCI client. wamn-engine links wash-runtime without it.
@@ -68,7 +67,6 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tokio-rustls = { workspace = true }
 tower-service = { workspace = true }
 wasmtime-wasi = { workspace = true }
-wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
@@ -96,6 +94,8 @@ wat = "=1.254.0"
 opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }
 tracing-subscriber = { workspace = true }
 wamn-test-postgres = { workspace = true }
+# The route authentication tests call the route plugin's test entry point.
+wamn-engine = { workspace = true, features = ["test-util"] }
 # The session verifier tests bind a fixed token clock.
 wamn-session = { workspace = true, features = ["test-util"] }
 

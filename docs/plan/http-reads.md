@@ -39,7 +39,7 @@ Measured on main at `07aa8d811` on 2026-09-25.
 | `crates/control/lib/src/publish_release/attachments.rs` | Requires exactly a string `path` and `method`, and keys uniqueness on path and method. |
 | `crates/control/lib/src/delivery/deployment.rs` | `require_released_route` requires `method == "POST"`, because the smoke interaction always sends a POST. |
 | `crates/catalog/model/src/serving_manifest.rs` | `RouteKind::is_read()` is true for `get`, `query` and `projection`. Publish reads the kind from the generated contract. |
-| `crates/platform/runtime/src/plugins/flow_http_routing.rs` | `serves_read` uses that kind. Since `wamn-glgg`, a cookie read needs no `x-wamn-csrf` header. |
+| `crates/platform/engine/src/flow_http_routing.rs` | `serves_read` uses that kind. Since `wamn-glgg`, a cookie read needs no `x-wamn-csrf` header. |
 | `apps/platform/ingress/http-route` | Parses the body as JSON. An empty body is `null`. It sets no `Cache-Control`, `ETag` or `Vary` header. |
 | Route input schemas | An array of 1 to 100 items. Each item requires `request_id`. |
 | `web/runtime/src/transport.ts` | Always sends a JSON body. It has no cache and no dedupe. |

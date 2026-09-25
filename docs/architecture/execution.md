@@ -11,6 +11,10 @@ Route concurrency limits refuse excess work with HTTP 429.
 
 The HTTP ingress path authenticates the caller before invoking application code.
 The host compares the route, operation, permissions, wiring, and release facts before dispatch.
+The host side of the ingress guest's two imports lives in `wamn-engine`: the [route plugin](../../crates/platform/engine/src/flow_http_routing.rs) and the [delivery plugin](../../crates/platform/engine/src/router_delivery.rs).
+A host plugs in through two traits.
+`RouteAuthenticator` reads the credential of a protected route, and `RouteDelivery` serves one delivery request.
+The cloud implements them as [`PlatformRouteAuthenticator`](../../crates/platform/runtime/src/plugins/route_authentication.rs) and [`RouterDeliveryBridge`](../../crates/execution/host/src/router_delivery.rs).
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
 Publish folds each export's call graph into its released operation: the union of the permissions, `fresh_only` if any callee sets it, and the union of the statements.
@@ -33,7 +37,7 @@ A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale
 Both are `private`, unless the auth policy of the route is `none`, and then they are `public`.
 A successful read also sends `Vary: Authorization, Cookie`.
 Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
-[`read_cache_control`](../../crates/platform/runtime/src/plugins/flow_http_routing.rs) owns the values.
+[`read_cache_control`](../../crates/platform/engine/src/flow_http_routing.rs) owns the values.
 
 A read also carries an ETag, which the host derives and compares.
 A `get` has a strong ETag from the manifest digest of the release and the revision field of the record that it returns.
@@ -57,7 +61,7 @@ The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 For an unexpected property, the pointer names that property.
 An unparseable payload carries the root pointer `""`.
 A platform cause, such as a missing or uncompiled schema, gives a body with no `data`.
-The [route validator](../../crates/platform/runtime/src/plugins/flow_http_routing.rs) and the [HTTP route adapter](../../apps/platform/ingress/http-route/src/lib.rs) own this response.
+The [route validator](../../crates/platform/engine/src/flow_http_routing.rs) and the [HTTP route adapter](../../apps/platform/ingress/http-route/src/lib.rs) own this response.
 
 An unknown hostname returns the native 404 response.
 An explicit hostname in the release returns 503 while its route binding is absent.
@@ -65,7 +69,7 @@ The adapter adds no `Retry-After` header and leaves application responses unchan
 A selected route whose native dispatch handle disappears still returns 404.
 Wildcard expansion, operator aliases, and readiness based on route bindings remain absent.
 
-The [expected-host adapter](../../crates/platform/runtime/src/expected_router.rs) owns this narrow response distinction.
+The [expected-host adapter](../../crates/platform/engine/src/expected_router.rs) owns this narrow response distinction.
 Service readiness does not establish route-aware traffic removal.
 The native route controller can reach Pods directly, so a readiness change alone does not remove every rebind outage.
 

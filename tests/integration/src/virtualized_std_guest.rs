@@ -16,10 +16,11 @@ mod tests {
     use hyper::{Method, Request, StatusCode};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use wamn_engine::engine::build_engine;
-    use wamn_execution_host::{ROUTER_DELIVERY_ID, RouterDeliveryBridge};
-    use wamn_runtime::plugins::flow_http_routing::FLOW_HTTP_ROUTING_ID;
+    use wamn_engine::flow_http_routing::{FLOW_HTTP_ROUTING_ID, FlowHttpRouting};
+    use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
+    use wamn_execution_host::RouterDeliveryBridge;
+    use wamn_runtime::plugins::WamnJetstream;
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
-    use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream};
     use wamn_workflow::RouterDriverRequest;
     use wash_runtime::engine::InstancePolicy;
     use wash_runtime::engine::ctx::{Ctx, SharedCtx};
@@ -426,6 +427,7 @@ mod tests {
             loopback,
             InstancePolicy::Ephemeral,
         );
+        let delivery = Arc::new(RouterDelivery::new(bridge));
         let imports = workload.world().imports;
         {
             let mut item = WorkloadItem::Component(&mut workload);
@@ -433,7 +435,7 @@ mod tests {
                 .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
                 .await
                 .context("bind release-backed HTTP routing")?;
-            bridge
+            delivery
                 .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
                 .await
                 .context("bind the production router-delivery bridge")?;
@@ -441,7 +443,7 @@ mod tests {
 
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
-        plugins.insert(ROUTER_DELIVERY_ID, bridge);
+        plugins.insert(ROUTER_DELIVERY_ID, delivery);
         let workload_id = workload.workload_id().to_owned();
         let component_id = workload.id().to_owned();
         let ctx = Ctx::builder(workload_id, component_id)

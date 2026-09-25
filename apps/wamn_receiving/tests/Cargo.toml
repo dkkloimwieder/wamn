@@ -51,7 +51,7 @@ wamn-test-postgres = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-session = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
-wamn-execution-host = { workspace = true, features = ["test-util"] }
+wamn-execution-host = { workspace = true }
 wamn-workflow = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true }

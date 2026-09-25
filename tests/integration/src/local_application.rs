@@ -13,8 +13,9 @@ use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use wamn_execution_host::{ROUTER_DELIVERY_ID, RouterDeliveryBridge};
-use wamn_runtime::plugins::flow_http_routing::{FLOW_HTTP_ROUTING_ID, FlowHttpRouting};
+use wamn_engine::flow_http_routing::{FLOW_HTTP_ROUTING_ID, FlowHttpRouting};
+use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
+use wamn_execution_host::RouterDeliveryBridge;
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
@@ -258,6 +259,7 @@ where
         loopback,
         InstancePolicy::Ephemeral,
     );
+    let delivery = Arc::new(RouterDelivery::new(bridge));
     let imports = workload.world().imports;
     {
         let mut item = WorkloadItem::Component(&mut workload);
@@ -265,14 +267,14 @@ where
             .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
             .await
             .context("bind released HTTP routing")?;
-        bridge
+        delivery
             .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
             .await
             .context("bind router delivery")?;
     }
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
-    plugins.insert(ROUTER_DELIVERY_ID, bridge);
+    plugins.insert(ROUTER_DELIVERY_ID, delivery);
     let ctx = Ctx::builder(workload.workload_id().to_owned(), workload.id().to_owned())
         .with_plugins(plugins)
         .build();

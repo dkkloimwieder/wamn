@@ -4,7 +4,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ServingManifest, WiringDocument};
-use wamn_runtime::plugins::flow_http_routing::queued_service_caller;
+use wamn_runtime::plugins::route_authentication::queued_service_caller;
 use wamn_schema_control::BareSchemaName;
 
 /// Exact released work and the service principal responsible for its writes.

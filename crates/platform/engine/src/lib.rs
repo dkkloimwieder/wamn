@@ -7,6 +7,13 @@
 //! - [`lifecycle`]: bounded service shutdown and native liveness supervision.
 //! - [`HostPlugin`]: the plugin trait. It is wash-runtime's trait, re-exported.
 //!   The engine owns no plugin trait of its own.
+//! - [`flow_http_routing`] and [`router_delivery`]: the two host plugins that
+//!   serve the http-route ingress guest's imports. A host plugs in its
+//!   credential mechanism through
+//!   [`RouteAuthenticator`](flow_http_routing::RouteAuthenticator) and its
+//!   delivery through [`RouteDelivery`](router_delivery::RouteDelivery).
+//! - [`expected_router`]: the native HTTP router that refuses an unbound
+//!   release hostname as unavailable.
 //! - [`component_admission`]: pure byte admission for tenant components.
 //! - [`component_artifact`]: the wire contract for digest-addressed component
 //!   artifacts.
@@ -44,10 +51,14 @@ pub mod artifact_source;
 pub mod component_admission;
 pub mod component_artifact;
 pub mod engine;
+pub mod expected_router;
+pub mod flow_http_routing;
 pub mod invocation_trace;
 pub mod lifecycle;
 pub mod operation;
 pub mod release_manifest;
+mod route_bindings;
+pub mod router_delivery;
 pub mod warm_reuse;
 
 pub use engine::{

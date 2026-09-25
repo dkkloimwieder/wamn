@@ -13,8 +13,7 @@ mod route;
 mod router_delivery;
 
 pub use operation::{
-    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationRefusal,
-    OperationRefusalKind, OperationScope, authorize_registered_operation, bounded_node_deadline_ms,
+    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationScope,
     component_invocation, invocation_span, node_trace_context, remote_trace_context,
 };
 pub use readiness::{
@@ -23,33 +22,5 @@ pub use readiness::{
     synchronous_route_count,
 };
 pub use router_delivery::{
-    DeadlineAdjustment, DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome,
-    EXECUTION_FAILED, EffectOutcome, Emission, FailedOutcome, FailureKind, PartialCompletion,
-    ROUTER_DELIVERY_ID, RouterDeliveryBridge, SourceRef, WiringCall, WiringDelivery, WiringPreload,
-    lower_operation_refusal,
+    DeadlineAdjustment, RouterDeliveryBridge, WiringCall, WiringDelivery, WiringPreload,
 };
-
-/// Exercise the production attachment resolver and registered-operation guard
-/// from an integration test.
-#[cfg(feature = "test-util")]
-pub fn authorize_attachment_for_test(
-    release: &wamn_engine::release_manifest::LoadedRelease,
-    attachment_id: &str,
-    caller: Option<&wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller>,
-) -> Result<(), Box<str>> {
-    router_delivery::authorize_attachment_for_test(release, attachment_id, caller)
-}
-
-/// Settle one route outcome, so the wiring layer can test that a route and
-/// its one-node wiring answer alike. Returns the outcome, the live view
-/// label, and the live view result.
-#[cfg(feature = "test-util")]
-pub fn settle_route_for_test(
-    outcome: Result<
-        wamn_engine::operation::node_types::Emission,
-        wamn_engine::operation::node_types::NodeError,
-    >,
-) -> anyhow::Result<(DeliveryOutcome, &'static str, serde_json::Value)> {
-    router_delivery::settle_route(outcome)
-        .map(|settled| (settled.outcome, settled.label, settled.result))
-}

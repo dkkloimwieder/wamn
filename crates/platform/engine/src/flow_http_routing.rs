@@ -1,11 +1,12 @@
-//! Host plugin for `wamn:flow-http-routing@0.1.0`.
+//! Host plugin for `wamn:flow-http-routing@0.1.0`, the route supply of the
+//! http-route ingress guest.
 //!
 //! Reader 3 of the four the loaded release manifest enumerates
-//! ([`wamn_engine::release_manifest`]): it answers `routes` out of
+//! ([`crate::release_manifest`]): it answers `routes` out of
 //! [`ServingManifest::attachments`] with no database read. Authentication
-//! re-derives the selected attachment's policy from that same loaded release, verifies the
-//! PAT through the system identity reader, and loads the role's exact permission
-//! set through the existing callable-HTTP project pool. The plugin never loads,
+//! re-derives the selected attachment's policy from that same loaded release.
+//! The plugin admits a `none` policy itself and hands every other policy to the
+//! host's [`RouteAuthenticator`]. The plugin never loads,
 //! parses, or digest-verifies a manifest of its own and adds no route table over
 //! the immutable in-memory projection.
 //!
@@ -28,39 +29,24 @@ use boon::{Compiler, Draft, ErrorKind, SchemaIndex, Schemas, ValidationError};
 use opentelemetry::KeyValue;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use tracing::Instrument as _;
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentKind, AttachmentRef, OperationKind, ServingManifest,
     parse_attachment_auth_policy,
 };
-use wamn_platform_identity::{PAT_TOKEN_PREFIX, PreparedIdentityReads, PrincipalKind};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::session_keys::IssuerKeys;
-use wamn_engine::release_manifest::LoadedRelease;
-use wamn_session::verifier::SessionVerifier;
-
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        world: "flow-http-routing-plugin",
-        imports: { default: async | trappable | tracing },
-        with: {
-            "wamn:flow-http-routing/routing.route-permit": super::RoutePermit,
-            "wamn:flow-http-routing/routing.authenticated-caller": super::AuthenticatedCaller,
-        },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-use bindings::wamn::flow_http_routing::routing::{
-    self, AuthRejection, Cardinality, Header, Mapping, MappingSource, RouteDefinition,
+use crate::release_manifest::LoadedRelease;
+use crate::route_bindings::wamn::flow_http_routing::routing::{
+    self, Cardinality, Mapping, MappingSource, RouteDefinition,
 };
+/// The request header and the refusal that cross a [`RouteAuthenticator`].
+pub use crate::route_bindings::wamn::flow_http_routing::routing::{AuthRejection, Header};
 
 pub const FLOW_HTTP_ROUTING_ID: &str = "wamn-flow-http-routing";
 
@@ -250,7 +236,6 @@ const SCHEMA_INVALID: &str = "schema-invalid";
 /// that conversion and turn every `routes` call into a 503.
 const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
 
-const ROUTE_CALLER_ROLE: &str = "route-caller";
 const UNAUTHORIZED_STATUS: u16 = 401;
 const UNAUTHORIZED_CODE: &str = "unauthorized";
 const AUTHENTICATION_UNAVAILABLE_STATUS: u16 = 503;
@@ -411,6 +396,21 @@ impl std::fmt::Debug for AuthenticatedCaller {
 }
 
 impl AuthenticatedCaller {
+    /// Record the caller that a host authenticated for one attachment.
+    pub fn new(
+        attachment_id: impl Into<Box<str>>,
+        principal_id: impl Into<Box<str>>,
+        credential_kind: CredentialKind,
+        permissions: HashSet<String>,
+    ) -> Self {
+        Self {
+            attachment_id: attachment_id.into(),
+            principal_id: principal_id.into(),
+            credential_kind,
+            permissions: Arc::new(permissions),
+        }
+    }
+
     /// Return the immutable attachment identity whose policy produced this caller record.
     pub fn attachment_id(&self) -> &str {
         &self.attachment_id
@@ -432,128 +432,6 @@ impl AuthenticatedCaller {
     }
 }
 
-/// Resolve an admitted service against its current tenant status and role grants.
-pub async fn queued_service_caller(
-    client: &(impl tokio_postgres::GenericClient + Sync),
-    tenant: &str,
-    principal_id: &str,
-) -> anyhow::Result<AuthenticatedCaller> {
-    let rows = client
-        .query(
-            "SELECT users.id::text, permissions.permission \
-             FROM app_system.users AS users \
-             LEFT JOIN app_system.user_roles AS user_roles \
-               ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
-             LEFT JOIN app_system.permissions AS permissions \
-               ON permissions.tenant_id = user_roles.tenant_id \
-              AND permissions.role_name = user_roles.role_name \
-             WHERE users.tenant_id = $1 AND users.id = $2::text::uuid \
-               AND users.type = 'service' AND users.status = 'active'",
-            &[&tenant, &principal_id],
-        )
-        .await?;
-    let principal = rows
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("queued service principal is absent or inactive"))?
-        .try_get::<_, String>(0)?;
-    let permissions = rows
-        .iter()
-        .map(|row| row.try_get::<_, Option<String>>(1))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect();
-    Ok(AuthenticatedCaller {
-        attachment_id: "automation".into(),
-        principal_id: principal.into(),
-        credential_kind: CredentialKind::QueuedService,
-        permissions: Arc::new(permissions),
-    })
-}
-
-/// Trusted dependencies and scope for PAT-backed route authentication.
-pub struct RouteAuthentication {
-    identity_reader: Arc<tokio_postgres::Client>,
-    /// The identity statement, parsed once at construction rather than on
-    /// every request. See [`PreparedIdentityReads`].
-    prepared: PreparedIdentityReads,
-    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    org: Box<str>,
-    project: Box<str>,
-    expected_subject: Box<str>,
-}
-
-impl std::fmt::Debug for RouteAuthentication {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("RouteAuthentication")
-            .field("org", &self.org)
-            .field("project", &self.project)
-            .finish_non_exhaustive()
-    }
-}
-
-impl RouteAuthentication {
-    /// Bind the two read authorities to trusted package coordinates.
-    ///
-    /// Environment and tenant remain single-sourced from the loaded release.
-    /// Async because it parses the identity statements on `identity_reader`
-    /// here, once, instead of on every request. A reader that cannot parse them
-    /// cannot authenticate anything, so this fails at startup rather than on the
-    /// first request.
-    pub async fn new(
-        identity_reader: Arc<tokio_postgres::Client>,
-        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        org: impl Into<Box<str>>,
-        project: impl Into<Box<str>>,
-        expected_subject: impl Into<Box<str>>,
-    ) -> Result<Self, wamn_platform_identity::IdentityError> {
-        let prepared = PreparedIdentityReads::prepare(identity_reader.as_ref()).await?;
-        Ok(Self {
-            identity_reader,
-            prepared,
-            postgres,
-            org: org.into(),
-            project: project.into(),
-            expected_subject: expected_subject.into(),
-        })
-    }
-}
-
-/// Session authentication with current identity and tenant permission reads.
-pub struct SessionRouteAuthentication {
-    identity_reader: Arc<tokio_postgres::Client>,
-    verifier: SessionVerifier<IssuerKeys>,
-    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    project: Box<str>,
-}
-
-impl std::fmt::Debug for SessionRouteAuthentication {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("SessionRouteAuthentication")
-            .field("project", &self.project)
-            .finish_non_exhaustive()
-    }
-}
-
-impl SessionRouteAuthentication {
-    /// Bind the configured verifier to the host's existing permission authority.
-    pub fn new(
-        verifier: SessionVerifier<IssuerKeys>,
-        identity_reader: Arc<tokio_postgres::Client>,
-        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        project: impl Into<Box<str>>,
-    ) -> Self {
-        Self {
-            identity_reader,
-            verifier,
-            postgres,
-            project: project.into(),
-        }
-    }
-}
-
 /// This process was given no release, so it can answer no route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoRelease;
@@ -566,6 +444,46 @@ impl std::fmt::Display for NoRelease {
 
 impl std::error::Error for NoRelease {}
 
+/// The host's mechanism for a route whose policy names a credential.
+///
+/// The route plugin resolves the attachment and its policy, and it admits a
+/// `none` policy itself. Every other policy reaches the authenticator. It reads
+/// the credential from the headers and returns the caller with its exact
+/// operation grants, or the refusal that the guest answers with.
+#[async_trait::async_trait]
+pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
+    /// Authenticate one request to a route whose policy is not `none`.
+    async fn authenticate(
+        &self,
+        request: AuthenticationRequest<'_>,
+    ) -> Result<AuthenticatedCaller, AuthRejection>;
+}
+
+/// One request to a protected route, as the route plugin resolved it.
+#[derive(Clone, Copy)]
+pub struct AuthenticationRequest<'a> {
+    /// The loaded release that carries the attachment.
+    pub manifest: &'a ServingManifest,
+    pub attachment_id: &'a str,
+    pub attachment: AttachmentRef<'a>,
+    /// The attachment's parsed policy. It is never `none`.
+    pub policy: AttachmentAuthPolicy,
+    pub headers: &'a [Header],
+}
+
+/// Hand-written so a debug print never shows a header, because the headers
+/// carry the credential.
+impl std::fmt::Debug for AuthenticationRequest<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticationRequest")
+            .field("attachment_id", &self.attachment_id)
+            .field("policy", &self.policy)
+            .field("header_count", &self.headers.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Authoritative HTTP route supply for the flow-http adapter.
 pub struct FlowHttpRouting {
     /// `None` in a process that was given no manifest root. Absence is a
@@ -577,8 +495,9 @@ pub struct FlowHttpRouting {
     /// `services/host/src/host.rs`, not here behind an `Option`.
     release: Option<Arc<LoadedRelease>>,
     input_schemas: InputSchemaValidators,
-    authentication: Option<Arc<RouteAuthentication>>,
-    session_authentication: Option<Arc<SessionRouteAuthentication>>,
+    /// `None` on a host with no credential mechanism. Such a host refuses every
+    /// protected route as authentication-unavailable.
+    authenticator: Option<Arc<dyn RouteAuthenticator>>,
     limiter: Arc<RouteLimiter>,
 }
 
@@ -601,11 +520,7 @@ impl std::fmt::Debug for FlowHttpRouting {
                 &self.input_schemas.validators.len(),
             )
             .field("route_in_flight_limit", &self.limiter.limit)
-            .field("authentication_configured", &self.authentication.is_some())
-            .field(
-                "session_authentication_configured",
-                &self.session_authentication.is_some(),
-            )
+            .field("authenticator", &self.authenticator)
             .finish_non_exhaustive()
     }
 }
@@ -620,26 +535,15 @@ impl FlowHttpRouting {
         Self {
             release,
             input_schemas,
-            authentication: None,
-            session_authentication: None,
+            authenticator: None,
             limiter: RouteLimiter::new(route_in_flight_limit),
         }
     }
 
-    /// Enable PAT authentication with host-selected database authorities.
+    /// Hand every protected route to the host's credential mechanism.
     #[must_use]
-    pub fn with_authentication(mut self, authentication: Arc<RouteAuthentication>) -> Self {
-        self.authentication = Some(authentication);
-        self
-    }
-
-    /// Supply public verification keys and the scoped tenant permission reader.
-    #[must_use]
-    pub fn with_session_authentication(
-        mut self,
-        authentication: Arc<SessionRouteAuthentication>,
-    ) -> Self {
-        self.session_authentication = Some(authentication);
+    pub fn with_authenticator(mut self, authenticator: Arc<dyn RouteAuthenticator>) -> Self {
+        self.authenticator = Some(authenticator);
         self
     }
 
@@ -699,186 +603,20 @@ impl FlowHttpRouting {
         if policy == AttachmentAuthPolicy::None {
             return Ok(None);
         }
-        let cookie = session_cookie(headers)?;
-        let has_authorization = headers
-            .iter()
-            .any(|header| header.name.eq_ignore_ascii_case("authorization"));
-        if has_authorization && cookie.is_some() {
-            return Err(unauthorized());
-        }
-        if let Some(token) = cookie.filter(|_| policy.allows_session()) {
-            return self
-                .authenticate_session(
-                    attachment_id,
-                    token,
-                    Some((headers, !serves_read(manifest, attachment))),
-                    &manifest.release.tenant_id,
-                    &manifest.release.environment,
-                )
-                .await
-                .map(Some);
-        }
-        // The wire shape selects one mechanism; failed authentication never
-        // falls back to another credential or repeats an executed operation.
-        let session = policy.allows_session()
-            && (!policy.allows_pat()
-                || bearer_token(headers).is_some_and(|token| !token.starts_with(PAT_TOKEN_PREFIX)));
-        if session {
-            let token = required_bearer_token(headers)?;
-            return self
-                .authenticate_session(
-                    attachment_id,
-                    token,
-                    None,
-                    &manifest.release.tenant_id,
-                    &manifest.release.environment,
-                )
-                .await
-                .map(Some);
-        }
-        let span = tracing::info_span!(
-            target: "wamn::route",
-            "wamn.route.authenticate",
-            wamn.attachment_id = %attachment_id,
-        );
-        async {
-            let authentication = self
-                .authentication
-                .as_ref()
-                .ok_or_else(authentication_unavailable)?;
-            let token = required_bearer_token(headers)?;
-            let principal = authentication
-                .prepared
-                .authenticate_route_pat(
-                    authentication.identity_reader.as_ref(),
-                    token,
-                    &authentication.org,
-                    &authentication.project,
-                    &manifest.release.environment,
-                    ROUTE_CALLER_ROLE,
-                )
-                .instrument(tracing::info_span!("wamn.auth.identity"))
-                .await
-                .map_err(|error| {
-                    tracing::warn!(error = %error, "route PAT authentication unavailable");
-                    authentication_unavailable()
-                })?
-                .ok_or_else(unauthorized)?;
-            let principal = principal.principal();
-            let permissions = match principal.kind() {
-                PrincipalKind::Platform => return Err(unauthorized()),
-                PrincipalKind::Service => {
-                    if principal.subject() != authentication.expected_subject.as_ref() {
-                        return Err(unauthorized());
-                    }
-                    authentication
-                        .postgres
-                        .operation_permissions(
-                            &authentication.project,
-                            &manifest.release.tenant_id,
-                            ROUTE_CALLER_ROLE,
-                        )
-                        .instrument(tracing::info_span!("wamn.auth.permissions"))
-                        .await
-                }
-                PrincipalKind::Human => {
-                    authentication
-                        .postgres
-                        .user_operation_permissions(
-                            &authentication.project,
-                            &manifest.release.tenant_id,
-                            principal.id(),
-                        )
-                        .instrument(tracing::info_span!("wamn.auth.permissions"))
-                        .await
-                }
-            }
-            .map_err(|error| {
-                tracing::warn!(error = %error, "route operation grants unavailable");
-                authentication_unavailable()
-            })?;
-            Ok(Some(AuthenticatedCaller {
-                attachment_id: attachment_id.into(),
-                principal_id: principal.id().as_str().into(),
-                credential_kind: CredentialKind::Pat,
-                permissions: Arc::new(permissions.into_iter().collect()),
-            }))
-        }
-        .instrument(span)
-        .await
-    }
-
-    /// `cookie_headers` is `Some` only when `token` arrived by the session
-    /// cookie; those requests then pass the CSRF check. Its flag is whether
-    /// the route requires the CSRF header, which a read route does not.
-    async fn authenticate_session(
-        &self,
-        attachment_id: &str,
-        token: &str,
-        cookie_headers: Option<(&[Header], bool)>,
-        tenant: &str,
-        environment: &str,
-    ) -> Result<AuthenticatedCaller, AuthRejection> {
-        let authentication = self
-            .session_authentication
+        let authenticator = self
+            .authenticator
             .as_ref()
-            .ok_or_else(unauthorized)?;
-        let session = authentication
-            .verifier
-            .verify(token)
+            .ok_or_else(authentication_unavailable)?;
+        authenticator
+            .authenticate(AuthenticationRequest {
+                manifest,
+                attachment_id,
+                attachment,
+                policy,
+                headers,
+            })
             .await
-            .map_err(|_| unauthorized())?;
-        if let Some((headers, requires_csrf)) = cookie_headers {
-            check_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
-        }
-        let principal = session.claims().sub.parse().map_err(|_| unauthorized())?;
-        let permissions = authentication
-            .postgres
-            .session_operation_permissions(
-                &authentication.project,
-                tenant,
-                &session.claims().roles,
-                &principal,
-            )
-            .instrument(tracing::info_span!("wamn.auth.permissions"))
-            .await
-            .map_err(|error| {
-                tracing::warn!(error = %error, "route operation grants unavailable");
-                authentication_unavailable()
-            })?;
-        let active = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            wamn_platform_identity::session_token::session_is_active(
-                authentication.identity_reader.as_ref(),
-                session.claims(),
-                &authentication.project,
-                environment,
-            ),
-        )
-        .await
-        .map_err(|_| authentication_unavailable())?
-        .map_err(|_| authentication_unavailable())?;
-        if !active {
-            return Err(unauthorized());
-        }
-        // Permission I/O cannot extend the evidence that admitted this request.
-        // Once returned, nested work retains this caller without reauthentication.
-        // If the key evidence expired during that I/O, the same token is
-        // verified once more on fresh keys, and a token past its own age still
-        // refuses (wamn-co0p).
-        if session.check_admission().is_err() {
-            authentication
-                .verifier
-                .verify(token)
-                .await
-                .map_err(|_| unauthorized())?;
-        }
-        Ok(AuthenticatedCaller {
-            attachment_id: attachment_id.into(),
-            principal_id: session.claims().sub.as_str().into(),
-            credential_kind: CredentialKind::Session,
-            permissions: Arc::new(permissions.into_iter().collect()),
-        })
+            .map(Some)
     }
 
     /// Exercise production route authentication from an integration test.
@@ -1108,7 +846,7 @@ fn input_mapping(value: &Value) -> Option<Mapping> {
 }
 
 /// Extract one standard bearer presentation without exposing why it failed.
-fn bearer_token(headers: &[Header]) -> Option<&str> {
+pub fn bearer_token(headers: &[Header]) -> Option<&str> {
     let mut values = headers
         .iter()
         .filter(|header| header.name.eq_ignore_ascii_case("authorization"));
@@ -1122,7 +860,8 @@ fn bearer_token(headers: &[Header]) -> Option<&str> {
     (scheme.eq_ignore_ascii_case("bearer") && fields.next().is_none()).then_some(token)
 }
 
-fn required_bearer_token(headers: &[Header]) -> Result<&str, AuthRejection> {
+/// The one standard bearer token, or the opaque refusal.
+pub fn required_bearer_token(headers: &[Header]) -> Result<&str, AuthRejection> {
     bearer_token(headers).ok_or_else(unauthorized)
 }
 
@@ -1132,7 +871,7 @@ const SESSION_COOKIE: &str = "__Host-wamn-session";
 const CSRF_HEADER: &str = "x-wamn-csrf";
 
 /// Find the one session cookie across every `cookie` header; a duplicate refuses.
-fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
+pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
     let mut found = None;
     let pairs = headers
         .iter()
@@ -1152,7 +891,7 @@ fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
 /// Whether an attachment only reads: it targets a route whose operation kind is
 /// one of `OperationKind::READ_KINDS`. A wiring can write, so it never reads
 /// only.
-fn serves_read(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> bool {
+pub fn serves_read(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> bool {
     route_kind(manifest, attachment).is_some_and(OperationKind::is_read)
 }
 
@@ -1176,7 +915,7 @@ fn route_kind(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> Opti
 ///
 /// A cookie token must carry the `csrf` claim. When the route requires it, one
 /// `x-wamn-csrf` header must hash to that claim.
-fn check_csrf(
+pub fn check_csrf(
     requires_csrf: bool,
     claims_csrf: Option<&str>,
     headers: &[Header],
@@ -1206,14 +945,16 @@ fn check_csrf(
     Ok(())
 }
 
-fn unauthorized() -> AuthRejection {
+/// The refusal for a missing, malformed or rejected credential.
+pub fn unauthorized() -> AuthRejection {
     AuthRejection {
         status: UNAUTHORIZED_STATUS,
         code: UNAUTHORIZED_CODE.to_string(),
     }
 }
 
-fn authentication_unavailable() -> AuthRejection {
+/// The refusal for a credential mechanism that cannot answer now.
+pub fn authentication_unavailable() -> AuthRejection {
     AuthRejection {
         status: AUTHENTICATION_UNAVAILABLE_STATUS,
         code: AUTHENTICATION_UNAVAILABLE_CODE.to_string(),
@@ -1263,7 +1004,7 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                crate::invocation_trace::invocation_trace(&ctx),
             ))
         })?;
         trace
@@ -2108,24 +1849,6 @@ mod tests {
         assert_eq!(served_ids(&served), ["orders"]);
     }
 
-    #[tokio::test]
-    async fn pat_mode_is_recognized_and_an_absent_backend_is_one_generic_outage() {
-        let mut protected = attachment(AttachmentKind::Http, orders_definition());
-        protected.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
-        let manifest = release_manifest(BTreeMap::from([("orders".to_string(), protected)]));
-        let mount = Mount::holding(&manifest, "pat-backend");
-        let plugin =
-            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
-
-        let rejection = plugin
-            .authenticate("orders", &[])
-            .await
-            .expect_err("a protected route without its backend refuses");
-
-        assert_eq!(rejection.status, AUTHENTICATION_UNAVAILABLE_STATUS);
-        assert_eq!(rejection.code, AUTHENTICATION_UNAVAILABLE_CODE);
-    }
-
     #[test]
     fn bearer_parsing_has_one_success_shape_and_one_opaque_refusal_class() {
         let header = |name: &str, value: &str| Header {
@@ -2195,30 +1918,6 @@ mod tests {
             assert_unauthorized(
                 &session_cookie(&duplicated).expect_err("a duplicate session cookie refuses"),
             );
-        }
-    }
-
-    #[tokio::test]
-    async fn a_bearer_and_a_session_cookie_together_refuse() {
-        let mut protected = attachment(AttachmentKind::Http, orders_definition());
-        protected.auth_policy = json!({"modes": ["pat", "session"]});
-        let manifest = release_manifest(BTreeMap::from([("orders".to_string(), protected)]));
-        let mount = Mount::holding(&manifest, "both-credentials");
-        let plugin =
-            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
-
-        for authorization in ["Bearer session.token", "Bearer wamn_pat_x", "Basic x"] {
-            let rejection = plugin
-                .authenticate(
-                    "orders",
-                    &[
-                        header("authorization", authorization),
-                        header("cookie", "__Host-wamn-session=session.token"),
-                    ],
-                )
-                .await
-                .expect_err("two credentials refuse");
-            assert_unauthorized(&rejection);
         }
     }
 

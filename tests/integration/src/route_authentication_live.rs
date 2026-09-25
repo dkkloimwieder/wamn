@@ -12,15 +12,16 @@ use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
+use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_execution_host::authorize_attachment_for_test;
+use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_platform_identity::{
     PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat,
     resolve_subject, revoke_pat, route_caller_subject,
 };
-use wamn_runtime::plugins::flow_http_routing::{
-    FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,
+use wamn_runtime::plugins::route_authentication::{
+    PlatformRouteAuthenticator, RouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
@@ -270,15 +271,17 @@ async fn routing(
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
         FlowHttpRouting::new(Some(loaded_release), RouteInFlightLimit::default())
-            .with_authentication(Arc::new(
-                RouteAuthentication::new(
-                    identity_reader,
-                    postgres,
-                    ORG,
-                    PROJECT,
-                    route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
-                )
-                .await?,
+            .with_authenticator(Arc::new(
+                PlatformRouteAuthenticator::default().with_authentication(Arc::new(
+                    RouteAuthentication::new(
+                        identity_reader,
+                        postgres,
+                        ORG,
+                        PROJECT,
+                        route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
+                    )
+                    .await?,
+                )),
             )),
     )
 }

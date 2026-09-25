@@ -11,8 +11,8 @@ use http_body_util::{BodyExt as _, Full, StreamBody, combinators::UnsyncBoxBody}
 use hyper::body::Frame;
 use hyper::{Method, Request, StatusCode};
 use tokio::sync::Notify;
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_execution_host::RouterDeliveryBridge;
-use wamn_runtime::plugins::flow_http_routing::FlowHttpRouting;
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;

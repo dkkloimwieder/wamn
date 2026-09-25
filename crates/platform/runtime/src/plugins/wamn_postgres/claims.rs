@@ -1908,14 +1908,14 @@ impl WamnPostgres {
         project: &str,
         tenant: &str,
         principal_id: &str,
-    ) -> anyhow::Result<crate::plugins::flow_http_routing::AuthenticatedCaller> {
+    ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
         anyhow::ensure!(valid_project(project), "invalid queued-service project");
         anyhow::ensure!(valid_tenant(tenant), "invalid queued-service tenant");
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        crate::plugins::flow_http_routing::queued_service_caller(
+        crate::plugins::route_authentication::queued_service_caller(
             &**connection,
             tenant,
             principal_id,

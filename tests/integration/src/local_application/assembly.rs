@@ -20,6 +20,7 @@ use wamn_control_provision::{
 };
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
+use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
     OperationHost, OperationScope, RouterDeliveryBridge, RouterReadinessProbe,
@@ -30,8 +31,8 @@ use wamn_platform_identity::{
 };
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::flow_http_routing::{
-    FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,
+use wamn_runtime::plugins::route_authentication::{
+    PlatformRouteAuthenticator, RouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
 use wamn_runtime::plugins::wamn_logging::WamnLoggingConfig;
@@ -367,16 +368,18 @@ pub(super) async fn assemble(
     .await?;
     tokio::spawn(reader_connection);
     let routing = Arc::new(
-        FlowHttpRouting::new(Some(release), RouteInFlightLimit::default()).with_authentication(
+        FlowHttpRouting::new(Some(release), RouteInFlightLimit::default()).with_authenticator(
             Arc::new(
-                RouteAuthentication::new(
-                    Arc::new(reader),
-                    postgres,
-                    input.org,
-                    input.project,
-                    subject,
-                )
-                .await?,
+                PlatformRouteAuthenticator::default().with_authentication(Arc::new(
+                    RouteAuthentication::new(
+                        Arc::new(reader),
+                        postgres,
+                        input.org,
+                        input.project,
+                        subject,
+                    )
+                    .await?,
+                )),
             ),
         ),
     );

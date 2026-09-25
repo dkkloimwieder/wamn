@@ -29,18 +29,19 @@ use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
 };
-use wamn_engine::release_manifest::LoadedRelease;
-use wamn_execution_host::{
-    OperationHost, OperationScope, ROUTER_DELIVERY_ID, RouterDeliveryBridge, WiringDelivery,
+use wamn_engine::flow_http_routing::{
+    FlowHttpRouting, requires_pat_route_authentication, requires_session_route_authentication,
 };
+use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
+use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge, WiringDelivery};
 use wamn_platform_identity::route_caller_subject;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::flow_http_routing::{
-    FlowHttpRouting, RouteAuthentication, SessionRouteAuthentication,
-    requires_pat_route_authentication, requires_session_route_authentication,
+use wamn_runtime::plugins::route_authentication::{
+    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
@@ -937,24 +938,29 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("activate declared event streams: {error:?}"))?;
     let flow_http =
         FlowHttpRouting::from_env(release.clone()).context("wamn:flow-http-routing plugin init")?;
-    let flow_http = match (&route_auth_scope, &identity_reader) {
-        (Some((org, subject)), Some(identity_reader)) => flow_http.with_authentication(Arc::new(
-            RouteAuthentication::new(
-                Arc::clone(identity_reader),
-                Arc::clone(&postgres),
-                org.clone(),
-                args.project.clone(),
-                subject.clone(),
-            )
-            .await
-            .context("prepare the route authentication identity reads")?,
-        )),
-        (None, None) => flow_http,
+    // The host always installs its authenticator, even an empty one, so a
+    // protected route refuses the same way on every host.
+    let authenticator = PlatformRouteAuthenticator::default();
+    let authenticator = match (&route_auth_scope, &identity_reader) {
+        (Some((org, subject)), Some(identity_reader)) => {
+            authenticator.with_authentication(Arc::new(
+                RouteAuthentication::new(
+                    Arc::clone(identity_reader),
+                    Arc::clone(&postgres),
+                    org.clone(),
+                    args.project.clone(),
+                    subject.clone(),
+                )
+                .await
+                .context("prepare the route authentication identity reads")?,
+            ))
+        }
+        (None, None) => authenticator,
         _ => unreachable!("route authentication inputs are constructed together"),
     };
-    let flow_http = match session_verifier {
+    let authenticator = match session_verifier {
         Some(verifier) => {
-            flow_http.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
+            authenticator.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
                 verifier,
                 Arc::clone(
                     identity_reader
@@ -965,8 +971,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 args.project.clone(),
             )))
         }
-        None => flow_http,
+        None => authenticator,
     };
+    let flow_http = flow_http.with_authenticator(Arc::new(authenticator));
 
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
@@ -1001,7 +1008,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     ];
 
     if let Some(operations) = &operations {
-        plugins.push(Arc::new(
+        plugins.push(Arc::new(RouterDelivery::new(Arc::new(
             RouterDeliveryBridge::new(
                 Arc::clone(operations),
                 router_driver
@@ -1017,7 +1024,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             // variable is set. Without this call both `wamn.router.delivery`
             // series exist and stay permanently silent (wamn-1fhk).
             .with_metrics(&global::meter(ROUTER_DELIVERY_ID)),
-        ));
+        ))));
     }
 
     let queue = match (&router_driver, &release) {
@@ -1093,7 +1100,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let mut ingress_connections = None;
     let mut ingress_handler = None;
     if let Some(addr) = args.http_addr {
-        let router = wamn_runtime::expected_router::expected_host_router(
+        let router = wamn_engine::expected_router::expected_host_router(
             release.as_deref(),
             stopping.clone(),
         );

@@ -6,10 +6,13 @@ use std::sync::{Arc, Mutex, RwLock};
 use anyhow::Context as _;
 use tokio::time::Instant;
 use wamn_catalog::{AdmittedComponent, ComponentOperationDependency, ServingComponentOperation};
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{INVOCATION_TRACES_ID, InvocationTrace, InvocationTraces};
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::router_delivery::{
+    OperationRefusal, OperationRefusalKind, authorize_registered_operation,
+};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_blobstore::plugin::{
     self as blobstore, WAMN_BLOBSTORE_ID, WamnBlobstore,
 };
@@ -24,10 +27,7 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_call::{NativeCallFailure, NativeInvocation};
 use super::native_workload::native_component_name;
-use super::{
-    NodeAcquisition, OperationRefusal, OperationRefusalKind, authorize_registered_operation,
-    prepare_statement_sets,
-};
+use super::{NodeAcquisition, prepare_statement_sets};
 
 pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 

@@ -13,8 +13,8 @@ use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::{DynamicRouter, IngressRoute, RouteError, Router};
 use wasmtime_wasi_http::{RequestOptions, WasiBody};
 
-use crate::plugins::flow_http_routing::expected_http_hostnames;
-use wamn_engine::release_manifest::LoadedRelease;
+use crate::flow_http_routing::expected_http_hostnames;
+use crate::release_manifest::LoadedRelease;
 
 /// A native router whose unbound release hostnames report temporary unavailability.
 pub struct ExpectedHostRouter {

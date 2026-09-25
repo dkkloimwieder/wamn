@@ -29,7 +29,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-wamn-execution-host = { workspace = true, features = ["test-util"] }
 wamn-schema-control = { workspace = true }
 tokio-postgres = { workspace = true }
 wamn-control = { workspace = true }

@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [features]
+# The route plugin's authentication entry points for integration tests.
+test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
@@ -17,14 +19,27 @@ wamn-component-policy = { workspace = true }
 wamn-execution-contract = { workspace = true }
 # `invoke_operation` takes the intent store trait. Run-state is pure.
 wamn-run-state = { workspace = true }
+# A route delivery derives its causation, and a registration source names the
+# platform component that runs it. Both crates are pure.
+wamn-event-wire = { workspace = true }
+wamn-project-state = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+# Route input schemas. A pure schema check with no I/O.
+boon = { workspace = true }
+hex = { workspace = true }
+# The route limiter's in-flight and shed gauges.
+opentelemetry = { workspace = true, features = ["metrics"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["fs", "sync", "time"] }
 tracing = { workspace = true }
 wasmparser = { workspace = true }
+# The expected-host router answers in native wasi:http types. hyper supplies
+# the request types only, with no client or server feature.
+hyper = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }

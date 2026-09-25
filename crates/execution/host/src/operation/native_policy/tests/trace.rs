@@ -6,7 +6,7 @@ use opentelemetry::trace::{
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SpanData};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::layer::SubscriberExt as _;
-use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 
 use super::{Fixture, ROOT};
 

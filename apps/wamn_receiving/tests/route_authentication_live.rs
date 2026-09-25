@@ -54,6 +54,7 @@ use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessReque
 use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,
 };
+use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge};
 use wamn_gate_harness::journey::{BaseCandidate, JourneyDocument, MaterializerPhase};
@@ -64,8 +65,8 @@ use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::plugins::WamnJetstream;
-use wamn_runtime::plugins::flow_http_routing::{
-    FlowHttpRouting, RouteAuthentication, RouteInFlightLimit, SessionRouteAuthentication,
+use wamn_runtime::plugins::route_authentication::{
+    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;

@@ -18,6 +18,7 @@ use wamn_catalog::{
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalKind};
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -40,11 +41,11 @@ use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
 use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use super::super::NodeAcquisition;
 use super::super::native_call::{NativeInvocation, invoke_native, prepare_native};
 use super::super::native_workload::{
     NativeApplication, NativeComponent, NativeWorkload, NativeWorkloadSpec, load_native_application,
 };
-use super::super::{NodeAcquisition, OperationRefusal, OperationRefusalKind};
 use super::{
     NATIVE_POLICY_ID, NativeFacts, NativePolicy, NativePolicyResources, new_native_policy,
 };

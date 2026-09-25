@@ -13,16 +13,18 @@ use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::{AdmittedComponent, DefinitionHash, ServingManifest, ServingWiring};
 use wamn_engine::artifact_source::ComponentArtifactFetchErrorKind;
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{
     NativeApplication, OperationCall, OperationClosure, invoke_operation, node_types,
 };
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
+use wamn_engine::router_delivery::{authorize_registered_operation, bounded_node_deadline_ms};
 use wamn_event_wire::Causation;
 use wamn_execution_host::{
     DeadlineAdjustment, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
-    WiringPreload, authorize_registered_operation, bounded_node_deadline_ms, component_invocation,
-    invocation_span, node_trace_context, remote_trace_context, synchronous_request_kind,
+    WiringPreload, component_invocation, invocation_span, node_trace_context, remote_trace_context,
+    synchronous_request_kind,
 };
 use wamn_project_state::PlatformComponent;
 use wamn_router::{
@@ -33,7 +35,6 @@ use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
-use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_postgres::{
     CandidateBindingWorld, CandidateWiringResolution, ResolvedActiveWiring,
 };

@@ -47,6 +47,47 @@ const WASH_RUNTIME_LIST: &[&str] = &[
     "tonic",
 ];
 
+/// Every direct dependency of the engine, with the reason it is accepted. The
+/// edge pays for each one, so a new dependency needs its own line here.
+const ACCEPTED: &[(&str, &str)] = &[
+    ("anyhow", "error context"),
+    ("async-trait", "the host traits the engine declares"),
+    (
+        "boon",
+        "route input schemas: a pure schema check with no I/O",
+    ),
+    ("hex", "the route CSRF digest"),
+    (
+        "hyper",
+        "the expected-host router's request types, with no client or server feature",
+    ),
+    ("opentelemetry", "the route limiter's gauges"),
+    ("serde", "wire and manifest types"),
+    ("serde_json", "wire and manifest types"),
+    ("sha2", "component and schema digests"),
+    ("tokio", "timers, files and channels"),
+    ("tracing", "spans and events"),
+    (
+        "wamn-catalog",
+        "the release manifest and admitted components",
+    ),
+    ("wamn-component-policy", "component admission"),
+    ("wamn-event-wire", "the causation a route delivery derives"),
+    ("wamn-execution-contract", "canonical JSON"),
+    (
+        "wamn-project-state",
+        "the platform component a registration delivery runs as",
+    ),
+    ("wamn-run-state", "the intent store trait"),
+    ("wash-runtime", "the native runtime"),
+    ("wasmparser", "component admission"),
+    ("wasmtime", "the native runtime"),
+    (
+        "wasmtime-wasi-http",
+        "the expected-host router's native HTTP types",
+    ),
+];
+
 /// The crate names in `cargo tree -p wamn-engine -e normal`, plus `extra` flags.
 fn normal_dependencies(extra: &[&str]) -> BTreeSet<String> {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -82,6 +123,21 @@ fn the_engine_links_no_refused_crate_outside_wash_runtime() {
         .map(|(name, rule)| format!("wamn-engine links `{name}`: {rule}"))
         .collect();
     assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
+#[test]
+fn every_direct_dependency_is_accepted_with_a_reason() {
+    let direct = normal_dependencies(&["--depth", "1"]);
+    let direct: BTreeSet<&str> = direct
+        .iter()
+        .map(String::as_str)
+        .filter(|name| *name != "wamn-engine")
+        .collect();
+    let accepted: BTreeSet<&str> = ACCEPTED.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        direct, accepted,
+        "the engine's direct dependencies changed; give each new one a reason in ACCEPTED"
+    );
 }
 
 #[test]

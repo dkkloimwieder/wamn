@@ -21,8 +21,9 @@ use wamn_catalog::{
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
-use wamn_engine::engine::MAX_HOST_CALL_DURATION;
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialKind};
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
+use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::plugins::EffectEvidence;
@@ -31,7 +32,6 @@ use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
     InvocationEntry,
 };
-use wamn_runtime::plugins::flow_http_routing::{AuthenticatedCaller, CredentialKind};
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -58,71 +58,6 @@ use native_workload::{NativeWorkloadSpec, load_native_application};
 /// Keep at most two verified artifact fetches in flight per release load.
 /// Native workload loading owns compilation after these bounded fetches finish.
 const COMPONENT_FETCH_CONCURRENCY: usize = 2;
-
-/// Why an originating caller cannot invoke a registered operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperationRefusalKind {
-    PermissionDenied,
-    FreshCredentialRequired,
-}
-
-/// Exact operation authority missing from the originating caller.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OperationRefusal {
-    kind: OperationRefusalKind,
-    operation: Box<str>,
-}
-
-impl OperationRefusal {
-    pub fn new(kind: OperationRefusalKind, operation: impl Into<Box<str>>) -> Self {
-        Self {
-            kind,
-            operation: operation.into(),
-        }
-    }
-
-    pub fn kind(&self) -> OperationRefusalKind {
-        self.kind
-    }
-
-    pub fn operation(&self) -> &str {
-        &self.operation
-    }
-}
-
-impl fmt::Display for OperationRefusal {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let reason = match self.kind {
-            OperationRefusalKind::PermissionDenied => "permission denied",
-            OperationRefusalKind::FreshCredentialRequired => "fresh-credential-required",
-        };
-        write!(formatter, "{reason} for operation {}", self.operation)
-    }
-}
-
-impl std::error::Error for OperationRefusal {}
-
-pub fn authorize_registered_operation(
-    caller: Option<&AuthenticatedCaller>,
-    operation: Option<&str>,
-    fresh_only: bool,
-) -> Result<(), OperationRefusal> {
-    let Some(operation) = operation else {
-        return Ok(());
-    };
-    let caller = caller
-        .filter(|caller| caller.permits(operation))
-        .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
-    // Human sessions now receive a current authority check at request admission.
-    // This does not widen the separately admitted queued-service contract.
-    if fresh_only && caller.credential_kind() == CredentialKind::QueuedService {
-        return Err(OperationRefusal::new(
-            OperationRefusalKind::FreshCredentialRequired,
-            operation,
-        ));
-    }
-    Ok(())
-}
 
 struct TraceHeaders<'a> {
     traceparent: &'a str,
@@ -681,18 +616,6 @@ fn lower_statement_set(
             )
         })
         .collect()
-}
-
-/// The host call ceiling in milliseconds. The constant is well under an hour,
-/// so it fits every width this bound converts to.
-fn max_host_call_ms() -> u64 {
-    u64::try_from(MAX_HOST_CALL_DURATION.as_millis()).unwrap_or(u64::MAX)
-}
-
-pub fn bounded_node_deadline_ms(deadline_ms: Option<u64>) -> u64 {
-    deadline_ms
-        .unwrap_or(max_host_call_ms())
-        .clamp(1, max_host_call_ms())
 }
 
 #[cfg(test)]

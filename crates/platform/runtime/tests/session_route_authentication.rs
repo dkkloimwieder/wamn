@@ -17,10 +17,12 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
-use wamn_engine::release_manifest::LoadedRelease;
-use wamn_runtime::plugins::flow_http_routing::{
+use wamn_engine::flow_http_routing::{
     AuthenticatedCaller, CredentialKind, FlowHttpRouting, RouteInFlightLimit,
-    SessionRouteAuthentication,
+};
+use wamn_engine::release_manifest::LoadedRelease;
+use wamn_runtime::plugins::route_authentication::{
+    PlatformRouteAuthenticator, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
@@ -209,7 +211,9 @@ fn routing(
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
         FlowHttpRouting::new(Some(load_release(modes)?), RouteInFlightLimit::default())
-            .with_session_authentication(authentication),
+            .with_authenticator(Arc::new(
+                PlatformRouteAuthenticator::default().with_session_authentication(authentication),
+            )),
     )
 }
 

@@ -2,6 +2,7 @@ use wamn_catalog::{AdmittedComponentOperation, ComponentPackageScope};
 use wamn_runtime::plugins::connection_http::WiringPosition;
 
 use super::*;
+use wamn_engine::router_delivery::{OperationRefusalKind, authorize_registered_operation};
 
 fn component_with_operations(
     operations: BTreeMap<String, AdmittedComponentOperation>,
@@ -45,16 +46,6 @@ fn statement_plugin() -> Arc<WamnPostgres> {
     Arc::new(WamnPostgres::with_provider(Arc::new(
         wamn_runtime::plugins::wamn_postgres::StaticCredentialProvider::new(HashMap::new(), None),
     )))
-}
-
-#[test]
-fn node_deadline_is_nonzero_and_host_bounded() {
-    let ceiling = max_host_call_ms();
-
-    assert_eq!(bounded_node_deadline_ms(None), ceiling);
-    assert_eq!(bounded_node_deadline_ms(Some(0)), 1);
-    assert_eq!(bounded_node_deadline_ms(Some(ceiling + 1)), ceiling);
-    assert_eq!(bounded_node_deadline_ms(Some(17)), 17);
 }
 
 #[test]
@@ -133,16 +124,6 @@ fn partial_statement_binding_failure_cleans_earlier_operations() {
             .is_err(),
         "no operation of a refused digest is ever bound"
     );
-}
-
-#[test]
-fn every_registered_invocation_requires_the_exact_operation_grant() {
-    let operation = "orders:widget/get@7.0.0";
-
-    assert!(authorize_registered_operation(None, None, false).is_ok());
-    let denial = authorize_registered_operation(None, Some(operation), false)
-        .expect_err("a registered invocation without an originating caller is denied");
-    assert_eq!(denial.operation(), operation);
 }
 
 /// Spec test 9. The host refuses the fixture's custom list read to a caller

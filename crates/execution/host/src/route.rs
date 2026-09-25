@@ -10,14 +10,16 @@ use tracing::Instrument as _;
 use wamn_catalog::AdmittedComponent;
 use wamn_event_wire::Causation;
 use wamn_runtime::plugins::connection_http::{ConnectionExecutionClosure, InvocationEntry};
-use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 
 use crate::operation::{
-    InvocationSite, NativeFacts, NodeAcquisition, OperationHost, authorize_registered_operation,
-    bounded_node_deadline_ms, component_invocation, invocation_span, node_trace_context,
-    remote_trace_context,
+    InvocationSite, NativeFacts, NodeAcquisition, OperationHost, component_invocation,
+    invocation_span, node_trace_context, remote_trace_context,
 };
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use wamn_engine::router_delivery::{
+    authorize_registered_operation, bounded_node_deadline_ms, route_component,
+};
 
 /// One request to one route.
 pub(crate) struct RouteCall<'a> {
@@ -142,21 +144,4 @@ fn authorized_component<'a>(
         fact.fresh_only,
     )?;
     Ok(component)
-}
-
-/// The one admitted component of the package that exports the route operation.
-fn route_component<'a>(
-    components: &'a [AdmittedComponent],
-    package_id: &str,
-    component: &str,
-    operation: &str,
-) -> anyhow::Result<&'a AdmittedComponent> {
-    let mut providers = components.iter().filter(|fact| {
-        fact.scope.package_id == package_id
-            && fact.component == component
-            && fact.operations.contains_key(operation)
-    });
-    let provider = providers.next().context("route-component-missing")?;
-    anyhow::ensure!(providers.next().is_none(), "route-component-ambiguous");
-    Ok(provider)
 }

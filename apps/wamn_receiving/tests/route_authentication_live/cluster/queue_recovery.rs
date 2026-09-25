@@ -136,9 +136,10 @@ async fn recover(
         "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)",
         &[&tenant, &principal, &super::super::ROUTE_CALLER_ROLE],
     ).await.context("assign the disposable queue service its declared role")?;
-    let caller =
-        wamn_runtime::plugins::flow_http_routing::queued_service_caller(client, tenant, principal)
-            .await?;
+    let caller = wamn_runtime::plugins::route_authentication::queued_service_caller(
+        client, tenant, principal,
+    )
+    .await?;
     ensure!(
         caller.permits(super::super::BASE_RECORD_RECEIPT),
         "queue fixture must authorize its receipt operation before admission"

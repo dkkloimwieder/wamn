@@ -5,13 +5,13 @@ use std::borrow::Cow;
 
 use opentelemetry::KeyValue;
 use wamn_catalog::AttachmentTarget;
-use wamn_event_wire::Causation;
-use wamn_execution_host::{
+use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome, EXECUTION_FAILED,
     EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureKind as WireFailureKind,
-    OperationRefusal, PartialCompletion, ROUTER_DELIVERY_ID, RouterDeliveryBridge, SourceRef,
-    WiringCall, WiringDelivery, WiringPreload, lower_operation_refusal,
+    OperationRefusal, PartialCompletion, ROUTER_DELIVERY_ID, SourceRef, lower_operation_refusal,
 };
+use wamn_event_wire::Causation;
+use wamn_execution_host::{RouterDeliveryBridge, WiringCall, WiringDelivery, WiringPreload};
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, RouterTapPhase};
 
@@ -329,28 +329,10 @@ fn lower_failure_kind(kind: FailureKind) -> WireFailureKind {
 #[cfg(test)]
 mod tests {
     use wamn_engine::operation::node_types;
+    use wamn_engine::router_delivery::settle_route;
     use wamn_router::{ErrorDetail, Failure};
 
     use super::*;
-
-    /// A route's settlement, read through the host crate's test hook.
-    struct RouteSettlement {
-        outcome: DeliveryOutcome,
-        label: &'static str,
-        result: serde_json::Value,
-    }
-
-    fn settle_route(
-        outcome: Result<node_types::Emission, node_types::NodeError>,
-    ) -> anyhow::Result<RouteSettlement> {
-        wamn_execution_host::settle_route_for_test(outcome).map(|(outcome, label, result)| {
-            RouteSettlement {
-                outcome,
-                label,
-                result,
-            }
-        })
-    }
 
     #[test]
     fn terminal_mapping_preserves_each_router_class_without_node_coordinates() {

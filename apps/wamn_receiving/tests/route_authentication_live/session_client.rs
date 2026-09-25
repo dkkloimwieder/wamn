@@ -12,10 +12,10 @@ use wamn_client::{
     ClientError, CredentialProvider, HttpRequest, HttpResponse, ItemOutcome, RouteMetadata,
     Transport, WamnClient,
 };
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_execution_host::RouterDeliveryBridge;
 use wamn_platform_identity::{Principal, issue_pat, revoke_pat};
 use wamn_receiving_tui::login;
-use wamn_runtime::plugins::flow_http_routing::FlowHttpRouting;
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 

@@ -385,26 +385,25 @@ pub(super) async fn build_journey_runtime(
         PROJECT,
     )?);
     let (identity_reader, identity_task) = connect(&credentials.identity_reader).await?;
-    let mut routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
-        .with_authentication(Arc::new(
-            RouteAuthentication::new(
-                Arc::clone(&identity_reader),
-                Arc::clone(&postgres),
-                ORG,
-                PROJECT,
-                route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
-            )
-            .await?,
-        ));
-    if let Some(verifier) = session_verifier {
-        routing = routing.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
-            verifier,
-            identity_reader,
-            postgres,
+    let mut authenticator = PlatformRouteAuthenticator::default().with_authentication(Arc::new(
+        RouteAuthentication::new(
+            Arc::clone(&identity_reader),
+            Arc::clone(&postgres),
+            ORG,
             PROJECT,
-        )));
+            route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
+        )
+        .await?,
+    ));
+    if let Some(verifier) = session_verifier {
+        authenticator = authenticator.with_session_authentication(Arc::new(
+            SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
+        ));
     }
-    let routing = Arc::new(routing);
+    let routing = Arc::new(
+        FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
+            .with_authenticator(Arc::new(authenticator)),
+    );
     let raw = engine.inner();
     let flow_http_bytes = std::fs::read(&inputs.flow_http_wasm)
         .with_context(|| format!("read {}", inputs.flow_http_wasm.display()))?;

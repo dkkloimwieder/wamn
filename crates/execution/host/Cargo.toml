@@ -5,9 +5,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-test-util = []
-
 [dependencies]
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }

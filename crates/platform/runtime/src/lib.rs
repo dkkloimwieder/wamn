@@ -5,7 +5,6 @@
 pub mod component_artifact_source;
 pub mod connection_authority;
 pub mod connection_generation;
-pub mod expected_router;
 pub mod local_application;
 pub mod plugins;
 pub mod registry_credentials;

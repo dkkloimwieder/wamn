@@ -75,10 +75,17 @@ The owner ruled that the generator emits imports from what the contract uses, no
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (ruled) | The edge serves the same `http-route` ingress guest. The edge crate implements its two imports, `wamn:flow-http-routing/routing` and `wamn:router-delivery/delivery`, over the loaded release and the local grants. | The edge writes the routing and delivery host side again, without Postgres and JetStream. |
+| A (ruled) | The edge serves the same `http-route` ingress guest. The engine implements its two imports, `wamn:flow-http-routing/routing` and `wamn:router-delivery/delivery`. The edge implements the engine's two host traits over the loaded release and the local grants. | The edge writes an authenticator and a delivery, without Postgres and JetStream. |
 | B | A native Rust route layer in the edge. | A second path matcher and a second outcome lowering. Two readers of one fact. |
 
-Option A keeps one path matcher and one lowering, by the uniformity rule. The pure parts of settlement move down into `wamn-engine`, so that the cloud host and the edge share them. Issue 4 names each moved function.
+Option A keeps one path matcher and one lowering, by the uniformity rule. Issue `wamn-e5in.5` moved the host side of both imports into `wamn-engine`, because only the crate that owns the generated bindings can implement them for wash-runtime's context. The engine now holds:
+
+- the bindings of both imports, in one world;
+- the route plugin `FlowHttpRouting`, with the route limiter, the input schema validators, the route table, and the header and CSRF helpers;
+- the delivery plugin `RouterDelivery`, with source and target resolution, the derived causation, route settlement, and the refusal literals;
+- the caller type `AuthenticatedCaller`, the grant check `authorize_registered_operation`, and the expected-host router.
+
+A host plugs in through two traits. `RouteAuthenticator` reads the credential of a protected route. `RouteDelivery` serves one delivery request. The cloud implements them in `wamn-runtime` and `wamn-execution-host`, and the edge implements the same two traits.
 
 ### 4.4 Session verification and grants
 

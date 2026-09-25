@@ -1,58 +1,26 @@
 //! Guest delivery. A route calls its one operation on the operation host, and
 //! a wiring target goes to the wiring layer through `WiringDelivery`.
 
-use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
-use wamn_catalog::{
-    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, OperationKind, ServingManifest,
-    ServingRoute, parse_attachment_auth_policy,
-};
+use wamn_catalog::{AdmittedComponent, AttachmentTarget, OperationKind, ServingRoute};
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_event_wire::Causation;
-use wamn_project_state::PlatformComponent;
-pub use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
-use wamn_runtime::plugins::wamn_jetstream::{RouterTapPhase, RouterTapPreview, WamnJetstream};
-use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
-use wash_runtime::engine::workload::WorkloadItem;
-use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wasmtime::component::Accessor;
-use wash_runtime::wit::{WitInterface, WitWorld};
-
-use crate::operation::{
-    OperationHost, OperationRefusal, OperationRefusalKind, authorize_registered_operation,
+use wamn_engine::router_delivery::{
+    DeliveryClass, DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest,
+    EXECUTION_FAILED, FRESH_CREDENTIAL_REQUIRED, OperationRefusal, OperationRefusalKind,
+    PERMISSION_DENIED, ROUTER_DELIVERY_ID, RouteDelivery, RouteSettlement, Source, SourceRef,
+    derived_causation, lower_operation_refusal, resolve_authorized_target, settle_route,
 };
+use wamn_event_wire::Causation;
+use wamn_runtime::plugins::wamn_jetstream::{RouterTapPhase, RouterTapPreview, WamnJetstream};
+
+use crate::operation::OperationHost;
 use crate::read_cache::{get_tag, list_tag, matches};
 use crate::route::{RouteCall, authorize_route, invoke_route};
-use wamn_engine::operation::node_types;
-
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: ["../../platform/runtime/wit/deps/wamn-flow-http-routing", "wit"],
-        world: "wamn:execution-host/router-delivery-plugin@0.1.0",
-        imports: { default: async | trappable | tracing },
-        with: {
-            "wamn:flow-http-routing/routing.authenticated-caller": super::AuthenticatedCaller,
-        },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-use bindings::wamn::router_delivery::delivery::{
-    self, DeliveryReport, DeliveryRequest, FailureKind as WireFailureKind, ParentCausation,
-    PermissionDenial, Source,
-};
-/// The wire types of `wamn:router-delivery` that the wiring layer settles into.
-pub use bindings::wamn::router_delivery::delivery::{
-    DeliveryError, DeliveryFailure, DeliveryOutcome, EffectOutcome, Emission, FailedOutcome,
-    FailureKind, PartialCompletion,
-};
-
-/// Host-plugin identity for the one guest-to-router bridge.
-pub const ROUTER_DELIVERY_ID: &str = "wamn-router-delivery";
 
 // The two series this bridge owns. Both are dashboard contracts that no grep
 // from a chart can find, because the Prometheus exporter turns the dots into
@@ -70,14 +38,6 @@ const SOURCE_ID: &str = "wamn.source.id";
 const WIRING_ID: &str = "wamn.wiring.id";
 const WIRING_VERSION: &str = "wamn.wiring.version";
 const DELIVERY_ERROR: &str = "wamn.delivery.error";
-
-// The bounded driver refusals a live view can show. Shared with `DeliveryClass`
-// rather than respelled, so a dashboard and a run screen never disagree about
-// what happened to the same delivery — pinned by
-// `a_refusal_reads_the_same_to_a_dashboard_and_to_a_live_view`.
-const PERMISSION_DENIED: &str = "permission-denied";
-const FRESH_CREDENTIAL_REQUIRED: &str = "fresh-credential-required";
-pub const EXECUTION_FAILED: &str = "execution-failed";
 
 /// The wiring arm of the bridge. A route never reaches it.
 ///
@@ -194,49 +154,6 @@ impl RouterDeliveryBridge {
     pub fn record(&self, attributes: &[KeyValue], class: DeliveryClass) {
         if let Some(metrics) = &self.metrics {
             metrics.record(attributes, class);
-        }
-    }
-
-    async fn deliver_report(
-        &self,
-        request: DeliveryRequest,
-        caller: Option<AuthenticatedCaller>,
-    ) -> DeliveryReport {
-        let label_eligible = caller.is_some() && matches!(request.source, Source::Attachment(_));
-        let mut deadline_adjustments = Vec::new();
-        let mut etag = None;
-        let outcome = self
-            .deliver_inner(request, caller, &mut deadline_adjustments, &mut etag)
-            .await;
-        let mut actor_labels = Vec::new();
-        if label_eligible && let Ok(DeliveryOutcome::Respond(payload)) = &outcome {
-            let actors = result_actors(payload);
-            match self
-                .operations
-                .postgres
-                .record_actor_labels(
-                    &self.operations.project,
-                    &self.release.manifest().release.tenant_id,
-                    &actors,
-                )
-                .await
-            {
-                Ok(labels) => actor_labels = labels,
-                Err(error) => tracing::warn!(%error, "record actor labels unavailable"),
-            }
-        }
-        DeliveryReport {
-            outcome,
-            actor_labels,
-            etag,
-            deadline_adjustments: deadline_adjustments
-                .into_iter()
-                .map(|adjustment| delivery::DeadlineAdjustment {
-                    node: adjustment.node,
-                    requested_ms: adjustment.requested_ms,
-                    effective_ms: adjustment.effective_ms,
-                })
-                .collect(),
         }
     }
 
@@ -549,6 +466,54 @@ impl RouterDeliveryBridge {
     }
 }
 
+#[async_trait::async_trait]
+impl RouteDelivery for RouterDeliveryBridge {
+    async fn deliver(
+        &self,
+        request: DeliveryRequest,
+        caller: Option<AuthenticatedCaller>,
+    ) -> DeliveryReport {
+        let label_eligible = caller.is_some() && matches!(request.source, Source::Attachment(_));
+        let mut deadline_adjustments = Vec::new();
+        let mut etag = None;
+        let outcome = self
+            .deliver_inner(request, caller, &mut deadline_adjustments, &mut etag)
+            .await;
+        let mut actor_labels = Vec::new();
+        if label_eligible && let Ok(DeliveryOutcome::Respond(payload)) = &outcome {
+            let actors = result_actors(payload);
+            match self
+                .operations
+                .postgres
+                .record_actor_labels(
+                    &self.operations.project,
+                    &self.release.manifest().release.tenant_id,
+                    &actors,
+                )
+                .await
+            {
+                Ok(labels) => actor_labels = labels,
+                Err(error) => tracing::warn!(%error, "record actor labels unavailable"),
+            }
+        }
+        DeliveryReport {
+            outcome,
+            actor_labels,
+            etag,
+            deadline_adjustments: deadline_adjustments
+                .into_iter()
+                .map(
+                    |adjustment| wamn_engine::router_delivery::DeadlineAdjustment {
+                        node: adjustment.node,
+                        requested_ms: adjustment.requested_ms,
+                        effective_ms: adjustment.effective_ms,
+                    },
+                )
+                .collect(),
+        }
+    }
+}
+
 /// Only successful result values supply actor IDs. Refusals and input do not.
 fn result_actors(payload: &str) -> Vec<String> {
     fn collect(value: &serde_json::Value, actors: &mut std::collections::BTreeSet<String>) {
@@ -587,28 +552,6 @@ fn result_actors(payload: &str) -> Vec<String> {
     actors.into_iter().collect()
 }
 
-fn derived_causation(
-    delivery_id: &str,
-    parent: Option<ParentCausation>,
-) -> Result<Causation, DeliveryError> {
-    match parent {
-        Some(parent) if parent.root.is_empty() => Err(DeliveryError::InvalidRequest),
-        Some(parent) => Ok(Causation {
-            run: delivery_id.to_owned(),
-            root: parent.root,
-            depth: parent
-                .depth
-                .checked_add(1)
-                .ok_or(DeliveryError::InvalidRequest)?,
-        }),
-        None => Ok(Causation {
-            run: delivery_id.to_owned(),
-            root: delivery_id.to_owned(),
-            depth: 0,
-        }),
-    }
-}
-
 impl fmt::Debug for RouterDeliveryBridge {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -617,241 +560,6 @@ impl fmt::Debug for RouterDeliveryBridge {
             .field("wiring_layer", &self.wirings.is_some())
             .field("release", &self.release.release())
             .finish_non_exhaustive()
-    }
-}
-
-#[async_trait::async_trait]
-impl HostPlugin for RouterDeliveryBridge {
-    fn id(&self) -> &'static str {
-        ROUTER_DELIVERY_ID
-    }
-
-    fn world(&self) -> WitWorld {
-        WitWorld {
-            imports: HashSet::from([WitInterface::from("wamn:router-delivery/delivery@0.1.0")]),
-            exports: HashSet::new(),
-        }
-    }
-
-    async fn on_workload_item_bind<'a>(
-        &self,
-        item: &mut WorkloadItem<'a>,
-        interfaces: WitInterfaces<'_>,
-    ) -> anyhow::Result<()> {
-        if !interfaces.contains("wamn", "router-delivery", &["delivery"]) {
-            return Ok(());
-        }
-        delivery::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
-        Ok(())
-    }
-}
-
-fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<RouterDeliveryBridge>> {
-    ctx.try_get_plugin::<RouterDeliveryBridge>(ROUTER_DELIVERY_ID)
-}
-
-impl delivery::Host for ActiveCtx<'_> {}
-
-impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
-    async fn deliver(
-        accessor: &Accessor<T, Self>,
-        mut request: DeliveryRequest,
-    ) -> wash_runtime::wasmtime::Result<DeliveryReport> {
-        let (plugin, caller) = accessor.with(|mut access| {
-            let ctx = access.get();
-            let plugin = plugin_of(&ctx)?;
-            let caller = request
-                .caller
-                .take()
-                .map(|caller| ctx.table.delete(caller))
-                .transpose()?;
-            Ok::<_, wash_runtime::wasmtime::Error>((plugin, caller))
-        })?;
-        Ok(plugin.deliver_report(request, caller).await)
-    }
-}
-
-/// The ingress source of one delivery.
-#[derive(Debug, Clone, Copy)]
-pub enum SourceRef<'a> {
-    Attachment(&'a str),
-    Registration(&'a str),
-}
-
-impl<'a> SourceRef<'a> {
-    /// The bridge's two ingress kinds, as the label a metric attribute and a
-    /// delivery preview both carry.
-    pub fn kind(self) -> &'static str {
-        match self {
-            SourceRef::Attachment(_) => "attachment",
-            SourceRef::Registration(_) => "registration",
-        }
-    }
-
-    pub fn id(self) -> &'a str {
-        match self {
-            SourceRef::Attachment(id) | SourceRef::Registration(id) => id,
-        }
-    }
-
-    /// The platform component that executes a callerless delivery from this
-    /// source. A registration delivery stays callerless and executes as
-    /// `wamn:materializer`. An anonymous attachment has no executing principal.
-    pub fn platform(self) -> Option<PlatformComponent> {
-        match self {
-            SourceRef::Attachment(_) => None,
-            SourceRef::Registration(_) => Some(PlatformComponent::Materializer),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ResolvedTarget {
-    package_id: String,
-    /// A registration always names a wiring. An attachment names either.
-    target: AttachmentTarget,
-    caller_attached: bool,
-    /// `Some` only for attachment ingress. A callerless attachment is legal
-    /// only when its loaded auth policy explicitly names anonymous mode.
-    anonymous_caller_permitted: Option<bool>,
-    registered_operation: Option<String>,
-}
-
-fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<ResolvedTarget> {
-    match source {
-        SourceRef::Attachment(id) => {
-            let attachment = manifest.attachment(id)?;
-            Some(ResolvedTarget {
-                package_id: attachment.package_id().to_owned(),
-                target: attachment.target(),
-                caller_attached: true,
-                anonymous_caller_permitted: Some(
-                    parse_attachment_auth_policy(attachment.auth_policy())
-                        == Some(AttachmentAuthPolicy::None),
-                ),
-                registered_operation: attachment.registered_operation().map(str::to_owned),
-            })
-        }
-        SourceRef::Registration(id) => {
-            manifest
-                .workflow
-                .registrations
-                .get(id)
-                .map(|registration| ResolvedTarget {
-                    package_id: registration.package_id.clone(),
-                    target: AttachmentTarget::Wiring {
-                        wiring_id: registration.wiring_id.clone(),
-                        wiring_version: registration.wiring_version,
-                    },
-                    caller_attached: false,
-                    anonymous_caller_permitted: None,
-                    registered_operation: None,
-                })
-        }
-    }
-}
-
-fn validate_caller(
-    source: SourceRef<'_>,
-    target: &ResolvedTarget,
-    caller: Option<&AuthenticatedCaller>,
-) -> Result<(), DeliveryError> {
-    if caller_matches_source(
-        source,
-        target.anonymous_caller_permitted,
-        caller.map(AuthenticatedCaller::attachment_id),
-    ) {
-        Ok(())
-    } else {
-        Err(DeliveryError::InvalidRequest)
-    }
-}
-
-fn resolve_authorized_target(
-    manifest: &ServingManifest,
-    source: SourceRef<'_>,
-    caller: Option<&AuthenticatedCaller>,
-) -> Result<ResolvedTarget, DeliveryError> {
-    let target = resolve_target(manifest, source).ok_or(DeliveryError::SourceNotFound)?;
-    validate_caller(source, &target, caller)?;
-    // Attachments do not own freshness. The driver reads each released operation.
-    authorize_registered_operation(caller, target.registered_operation.as_deref(), false)
-        .map_err(|denial| lower_operation_refusal(&denial))?;
-    Ok(target)
-}
-
-/// Exercise the exact production attachment resolver and authorization gate.
-#[cfg(feature = "test-util")]
-pub(crate) fn authorize_attachment_for_test(
-    release: &wamn_engine::release_manifest::LoadedRelease,
-    attachment_id: &str,
-    caller: Option<&AuthenticatedCaller>,
-) -> Result<(), Box<str>> {
-    resolve_authorized_target(
-        release.manifest(),
-        SourceRef::Attachment(attachment_id),
-        caller,
-    )
-    .map(|_| ())
-    .map_err(|error| match error {
-        DeliveryError::PermissionDenied(PermissionDenial { operation }) => operation.into(),
-        DeliveryError::FreshCredentialRequired(_) => FRESH_CREDENTIAL_REQUIRED.into(),
-        DeliveryError::SourceNotFound => "source-not-found".into(),
-        DeliveryError::InvalidRequest => "invalid-request".into(),
-        DeliveryError::InvalidPayload => "invalid-payload".into(),
-        DeliveryError::ExecutionFailed => "execution-failed".into(),
-    })
-}
-
-fn caller_matches_source(
-    source: SourceRef<'_>,
-    anonymous_caller_permitted: Option<bool>,
-    caller_attachment_id: Option<&str>,
-) -> bool {
-    match (source, anonymous_caller_permitted, caller_attachment_id) {
-        (SourceRef::Registration(_), None, None) | (SourceRef::Attachment(_), Some(true), None) => {
-            true
-        }
-        (SourceRef::Attachment(attachment_id), Some(false), Some(caller_attachment_id)) => {
-            caller_attachment_id == attachment_id
-        }
-        _ => false,
-    }
-}
-
-/// The wire refusal for an operation the caller may not invoke.
-pub fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
-    let detail = PermissionDenial {
-        operation: denial.operation().to_owned(),
-    };
-    match denial.kind() {
-        OperationRefusalKind::PermissionDenied => DeliveryError::PermissionDenied(detail),
-        OperationRefusalKind::FreshCredentialRequired => {
-            DeliveryError::FreshCredentialRequired(detail)
-        }
-    }
-}
-
-/// How the router driver answered one delivery. The variants are the arms of
-/// the driver match in [`RouterDeliveryBridge::deliver`]; the
-/// bridge classifies nothing else.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeliveryClass {
-    Delivered,
-    PermissionDenied,
-    FreshCredentialRequired,
-    ExecutionFailed,
-}
-
-impl DeliveryClass {
-    /// The `wamn.delivery.error` value, or `None` for the one delivered class.
-    fn error(self) -> Option<&'static str> {
-        match self {
-            DeliveryClass::Delivered => None,
-            DeliveryClass::PermissionDenied => Some(PERMISSION_DENIED),
-            DeliveryClass::FreshCredentialRequired => Some(FRESH_CREDENTIAL_REQUIRED),
-            DeliveryClass::ExecutionFailed => Some(EXECUTION_FAILED),
-        }
     }
 }
 
@@ -911,61 +619,6 @@ fn delivery_attributes(source: SourceRef<'_>, target: &AttachmentTarget) -> Vec<
     attributes
 }
 
-/// How one route call settled: what the caller receives, and the live view's
-/// label and result for it.
-#[derive(Debug)]
-pub(crate) struct RouteSettlement {
-    pub(crate) outcome: DeliveryOutcome,
-    pub(crate) label: &'static str,
-    pub(crate) result: serde_json::Value,
-}
-
-/// Lower the one export call of a route.
-///
-/// A route never retries, so a retryable or rate-limited error lowers to the
-/// failure that a wiring reports after its last attempt, and the caller sees
-/// one shape. The labels and results are the ones [`settled_preview`] gives
-/// the same wiring outcome.
-pub(crate) fn settle_route(
-    outcome: Result<node_types::Emission, node_types::NodeError>,
-) -> anyhow::Result<RouteSettlement> {
-    let failed = |kind, detail: node_types::ErrorDetail| RouteSettlement {
-        label: "failed",
-        result: serde_json::json!({"code": detail.code, "message": detail.message}),
-        outcome: DeliveryOutcome::Failed(DeliveryFailure {
-            kind,
-            code: detail.code,
-            message: detail.message,
-        }),
-    };
-    Ok(match outcome {
-        Ok(emission) => {
-            let payload: serde_json::Value = serde_json::from_str(&emission.payload)
-                .map_err(|_| anyhow::anyhow!("wamn:node emitted invalid JSON"))?;
-            RouteSettlement {
-                outcome: DeliveryOutcome::Respond(serde_json::to_string(&payload)?),
-                label: "respond",
-                result: payload,
-            }
-        }
-        Err(node_types::NodeError::Retryable(detail)) => {
-            failed(WireFailureKind::RetryExhausted, detail)
-        }
-        Err(node_types::NodeError::RateLimited(limited)) => {
-            failed(WireFailureKind::RetryExhausted, limited.detail)
-        }
-        Err(node_types::NodeError::Terminal(detail)) => failed(WireFailureKind::Terminal, detail),
-        Err(node_types::NodeError::InvalidInput(detail)) => {
-            failed(WireFailureKind::InvalidInput, detail)
-        }
-        Err(node_types::NodeError::Cancelled) => RouteSettlement {
-            outcome: DeliveryOutcome::Cancelled,
-            label: "cancelled",
-            result: serde_json::Value::Null,
-        },
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -988,6 +641,7 @@ mod tests {
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
+    use wamn_catalog::ServingManifest;
 
     const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":3,"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"routes":[],"workflow":{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}}"#;
 
@@ -995,213 +649,6 @@ mod tests {
         ServingManifest::from_canonical_bytes(MANIFEST)
             .expect("format-3 fixture is canonical")
             .0
-    }
-
-    #[test]
-    fn a_registration_delivery_executes_as_the_materializer_and_an_attachment_as_its_caller() {
-        assert_eq!(
-            SourceRef::Registration("manifest_mint::orders-changed").platform(),
-            Some(PlatformComponent::Materializer)
-        );
-        assert_eq!(SourceRef::Attachment("orders-http").platform(), None);
-    }
-
-    #[test]
-    fn source_ids_resolve_only_the_manifest_target_and_derive_caller_attachment() {
-        assert_eq!(
-            resolve_target(&manifest(), SourceRef::Attachment("orders-http")),
-            Some(ResolvedTarget {
-                package_id: "manifest_mint".into(),
-                target: AttachmentTarget::Wiring {
-                    wiring_id: "orders".into(),
-                    wiring_version: 1,
-                },
-                caller_attached: true,
-                anonymous_caller_permitted: Some(true),
-                registered_operation: None,
-            })
-        );
-        assert_eq!(
-            resolve_target(
-                &manifest(),
-                SourceRef::Registration("manifest_mint::orders-changed"),
-            ),
-            Some(ResolvedTarget {
-                package_id: "manifest_mint".into(),
-                target: AttachmentTarget::Wiring {
-                    wiring_id: "shipping".into(),
-                    wiring_version: 2,
-                },
-                caller_attached: false,
-                anonymous_caller_permitted: None,
-                registered_operation: None,
-            })
-        );
-        assert_eq!(
-            resolve_target(&manifest(), SourceRef::Attachment("shipping")),
-            None,
-            "a wiring id is not an attachment id and cannot bypass the projection"
-        );
-    }
-
-    #[test]
-    fn caller_handle_must_match_the_loaded_attachment_identity() {
-        let anonymous = resolve_target(&manifest(), SourceRef::Attachment("orders-http"))
-            .expect("the fixture names the anonymous attachment");
-        assert!(caller_matches_source(
-            SourceRef::Attachment("orders-http"),
-            anonymous.anonymous_caller_permitted,
-            None,
-        ));
-
-        let mut protected_manifest = manifest();
-        protected_manifest
-            .workflow
-            .attachments
-            .get_mut("orders-http")
-            .expect("the fixture names the protected attachment")
-            .auth_policy = serde_json::json!({"modes": ["pat"]});
-        let protected = resolve_target(&protected_manifest, SourceRef::Attachment("orders-http"))
-            .expect("the protected attachment still resolves");
-        assert!(!caller_matches_source(
-            SourceRef::Attachment("orders-http"),
-            protected.anonymous_caller_permitted,
-            None,
-        ));
-        assert!(!caller_matches_source(
-            SourceRef::Attachment("orders-http"),
-            protected.anonymous_caller_permitted,
-            Some("other-http"),
-        ));
-        assert!(caller_matches_source(
-            SourceRef::Attachment("orders-http"),
-            protected.anonymous_caller_permitted,
-            Some("orders-http"),
-        ));
-
-        let registration = resolve_target(
-            &protected_manifest,
-            SourceRef::Registration("manifest_mint::orders-changed"),
-        )
-        .expect("the fixture names the callerless registration");
-        assert!(caller_matches_source(
-            SourceRef::Registration("manifest_mint::orders-changed"),
-            registration.anonymous_caller_permitted,
-            None,
-        ));
-        assert!(!caller_matches_source(
-            SourceRef::Registration("manifest_mint::orders-changed"),
-            registration.anonymous_caller_permitted,
-            Some("orders-http"),
-        ));
-    }
-
-    #[test]
-    fn permission_denial_lowers_the_exact_registered_operation() {
-        let operation = "manifest-mint:order/get@3.0.0";
-        let mut registered = manifest();
-        registered
-            .workflow
-            .attachments
-            .get_mut("orders-http")
-            .expect("the fixture attachment exists")
-            .registered_operation = Some(operation.to_owned());
-        let target = resolve_target(&registered, SourceRef::Attachment("orders-http"))
-            .expect("the registered attachment resolves from the loaded release");
-        let denial =
-            authorize_registered_operation(None, target.registered_operation.as_deref(), false)
-                .expect_err("a callerless registered invocation is denied");
-
-        assert_eq!(denial.operation(), operation);
-        assert!(matches!(
-            lower_operation_refusal(&denial),
-            DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
-                if denied == operation
-        ));
-    }
-
-    #[test]
-    fn nested_permission_denial_uses_the_direct_call_wire_contract() {
-        let operation = "platform-fixture:widget/record-batch@1.0.0";
-        let error = anyhow::Error::new(OperationRefusal::new(
-            OperationRefusalKind::PermissionDenied,
-            operation,
-        ))
-        .context("invoke nested operation");
-        let denial = error
-            .downcast_ref::<OperationRefusal>()
-            .expect("context must retain the nested permission denial")
-            .clone();
-
-        assert!(matches!(
-            lower_operation_refusal(&denial),
-            DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
-                if denied == operation
-        ));
-    }
-
-    #[test]
-    fn nested_fresh_only_refusal_retains_its_exact_wire_contract() {
-        let operation = "platform-fixture:widget/record-batch@1.0.0";
-        let error = anyhow::Error::new(OperationRefusal::new(
-            OperationRefusalKind::FreshCredentialRequired,
-            operation,
-        ))
-        .context("invoke nested operation");
-        let refusal = error
-            .downcast_ref::<OperationRefusal>()
-            .expect("the nested host boundary must retain the operation refusal")
-            .clone();
-        assert_eq!(
-            refusal.kind(),
-            OperationRefusalKind::FreshCredentialRequired
-        );
-        assert!(matches!(
-            lower_operation_refusal(&refusal),
-            DeliveryError::FreshCredentialRequired(PermissionDenial { operation: refused })
-                if refused == operation
-        ));
-        assert_eq!(
-            DeliveryClass::FreshCredentialRequired.error(),
-            Some("fresh-credential-required")
-        );
-    }
-
-    #[test]
-    fn host_mints_current_causation_and_only_inherits_parent_root_depth() {
-        assert_eq!(
-            derived_causation("delivery-1", None).unwrap(),
-            Causation {
-                run: "delivery-1".into(),
-                root: "delivery-1".into(),
-                depth: 0,
-            }
-        );
-        assert_eq!(
-            derived_causation(
-                "delivery-2",
-                Some(ParentCausation {
-                    root: "delivery-1".into(),
-                    depth: 3,
-                })
-            )
-            .unwrap(),
-            Causation {
-                run: "delivery-2".into(),
-                root: "delivery-1".into(),
-                depth: 4,
-            }
-        );
-        assert!(
-            derived_causation(
-                "delivery-2",
-                Some(ParentCausation {
-                    root: String::new(),
-                    depth: 1,
-                })
-            )
-            .is_err()
-        );
     }
 
     /// One meter over an in-memory exporter. The provider is owned by the test,
@@ -1277,8 +724,9 @@ mod tests {
     #[test]
     fn a_delivery_is_labelled_by_its_source_kind_id_and_wiring_release() {
         let manifest = manifest();
-        let attachment = resolve_target(&manifest, SourceRef::Attachment("orders-http"))
-            .expect("the fixture names this attachment");
+        let attachment =
+            resolve_authorized_target(&manifest, SourceRef::Attachment("orders-http"), None)
+                .expect("the fixture names this attachment");
         assert_eq!(
             delivery_attributes(SourceRef::Attachment("orders-http"), &attachment.target),
             vec![
@@ -1289,9 +737,10 @@ mod tests {
             ]
         );
 
-        let registration = resolve_target(
+        let registration = resolve_authorized_target(
             &manifest,
             SourceRef::Registration("manifest_mint::orders-changed"),
+            None,
         )
         .expect("the fixture names this registration");
         assert_eq!(
