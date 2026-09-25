@@ -989,9 +989,11 @@ fn table_gap(screen: &ScreenPlan<'_>) -> Option<&'static str> {
 /// The table definition of one table screen, as data, beside its component.
 ///
 /// It names the read, its scope filters, its sort, its row id, its page
-/// maximum and its columns. A column names its row member, its label and the
-/// type the contract states. A column that names a record also names the field
-/// its record read shows. The definition states no mode and no cap, because no
+/// maximum and its columns. A column names its row member, its label, the
+/// type the contract states, and its role: the row id is the key, a column that
+/// names a record is a reference, a revision is a revision, and any other
+/// column is a value. A column that names a record also names the field its
+/// record read shows. The definition states no mode and no cap, because no
 /// manifest declares either.
 fn write_table_definition(
     source: &mut String,
@@ -1066,11 +1068,22 @@ fn write_table_definition(
             quote(&column.type_name)
         )
         .expect("write");
-        if let Some(resolved) = screen
+        let resolved = screen
             .resolved_columns
             .iter()
-            .find(|resolved| resolved.column == column.path)
-        {
+            .find(|resolved| resolved.column == column.path);
+        // The role decides the column's default aggregate.
+        let role = if column.path == lists.key_field {
+            "key"
+        } else if resolved.is_some() || column.references.is_some() {
+            "reference"
+        } else if column.revision {
+            "revision"
+        } else {
+            "value"
+        };
+        write!(source, ", role: {}", quote(role)).expect("write");
+        if let Some(resolved) = resolved {
             write!(
                 source,
                 ", displayField: {}",

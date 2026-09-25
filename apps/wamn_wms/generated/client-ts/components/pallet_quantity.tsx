@@ -321,11 +321,11 @@ export const PALLET_QUANTITY_QUERY_TABLE = {
   sortDirections: [],
   sortMaxFields: 1,
   columns: [
-    { field: "createdAt", label: "created at", type: "timestamptz" },
-    { field: "id", label: "id", type: "uuid" },
-    { field: "palletId", label: "pallet id", type: "uuid", displayField: "palletCode" },
-    { field: "productId", label: "product id", type: "uuid", displayField: "productCode" },
-    { field: "quantity", label: "quantity", type: "numeric" },
-    { field: "status", label: "status", type: "text" },
+    { field: "createdAt", label: "created at", type: "timestamptz", role: "value" },
+    { field: "id", label: "id", type: "uuid", role: "key" },
+    { field: "palletId", label: "pallet id", type: "uuid", role: "reference", displayField: "palletCode" },
+    { field: "productId", label: "product id", type: "uuid", role: "reference", displayField: "productCode" },
+    { field: "quantity", label: "quantity", type: "numeric", role: "value" },
+    { field: "status", label: "status", type: "text", role: "value" },
   ],
 } as const;

@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DataTable, type DataTableColumn } from "@wamn/ui";
 
+import { bodyRows, theButton } from "./dom.js";
+
 afterEach(cleanup);
 
 interface Row {
@@ -65,9 +67,7 @@ function table(fullyRead: () => boolean = () => true) {
 
 /** The codes of the body rows, in the order they show. */
 const shown = () =>
-  screen
-    .getAllByRole("row")
-    .slice(1)
+  bodyRows()
     .map((row) => row.querySelector("td")?.textContent)
     .filter((code) => ROWS.some((row) => row.code === code));
 
@@ -100,7 +100,7 @@ describe("the search", () => {
   it("keeps only the rows that match both the search and a refine filter", () => {
     table();
     search("alpha");
-    fireEvent.click(screen.getByRole("button", { name: "filter rank" }));
+    fireEvent.click(theButton("filter rank"));
     fireEvent.input(screen.getByLabelText("min"), { target: { value: "3" } });
     expect(shown()).toEqual(["Alpha"]);
   });
@@ -108,7 +108,7 @@ describe("the search", () => {
   it("runs before the sort", () => {
     table();
     search("a");
-    fireEvent.click(screen.getByRole("button", { name: "rank" }));
+    fireEvent.click(theButton("rank"));
     expect(shown()).toEqual(["gamma", "ALPHABET", "beta", "Alpha"]);
     search("alpha");
     expect(shown()).toEqual(["ALPHABET", "Alpha"]);

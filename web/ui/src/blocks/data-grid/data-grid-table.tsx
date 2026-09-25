@@ -26,6 +26,9 @@ const headerCellSpacingVariants = ({ size }: { size?: "dense" | "default" }) =>
 const bodyCellSpacingVariants = ({ size }: { size?: "dense" | "default" }) =>
   size === "dense" ? "px-2 py-1.5" : "px-3 py-2";
 
+const footerCellSpacingVariants = ({ size }: { size?: "dense" | "default" }) =>
+  size === "dense" ? "px-2 py-1.5" : "px-3 py-2";
+
 /**
  * Solid applies `style` objects through `setProperty`, so every declaration
  * below is written in hyphenated CSS form with explicit units.
@@ -475,6 +478,21 @@ function DataGridTableFillBodyCell() {
       <td
         aria-hidden="true"
         data-slot="data-grid-table-fill-body-cell"
+        style={{ width: "var(--data-grid-fill-size, 0px)" }}
+        class="p-0"
+      />
+    </Show>
+  );
+}
+
+function DataGridTableFillFootCell() {
+  const grid = useDataGrid();
+
+  return (
+    <Show when={grid.props.tableLayout?.columnsResizable}>
+      <td
+        aria-hidden="true"
+        data-slot="data-grid-table-fill-foot-cell"
         style={{ width: "var(--data-grid-fill-size, 0px)" }}
         class="p-0"
       />
@@ -980,6 +998,52 @@ function DataGridTableFoot(props: { children: JSX.Element }) {
   );
 }
 
+function DataGridTableFootRow(props: { children: JSX.Element }) {
+  const grid = useDataGrid();
+  const footRowBottomBorderClasses = "[&:not(:last-child)>td]:border-b";
+
+  return (
+    <tr
+      data-slot="data-grid-table-foot-row"
+      class={cn(
+        grid.props.tableLayout?.footerBackground && "bg-muted/40 dark:bg-background",
+        grid.props.tableLayout?.rowBorder && footRowBottomBorderClasses,
+        grid.props.tableLayout?.cellBorder && "*:last:border-e-0",
+      )}
+    >
+      {props.children}
+      <DataGridTableFillFootCell />
+    </tr>
+  );
+}
+
+function DataGridTableFootRowCell(props: {
+  children?: JSX.Element;
+  colSpan?: number;
+  class?: string;
+}) {
+  const grid = useDataGrid();
+  const spacing = () =>
+    footerCellSpacingVariants({
+      size: grid.props.tableLayout?.dense ? "dense" : "default",
+    });
+
+  return (
+    <td
+      colSpan={props.colSpan}
+      class={cn(
+        "text-secondary-foreground/80 align-middle font-medium",
+        spacing(),
+        grid.props.tableLayout?.footerBackground && "bg-muted/40 dark:bg-background",
+        grid.props.tableLayout?.cellBorder && "border-e",
+        props.class,
+      )}
+    >
+      {props.children}
+    </td>
+  );
+}
+
 function DataGridTableBodyRowSkeleton(props: { children: JSX.Element }) {
   const grid = useDataGrid();
 
@@ -1464,6 +1528,8 @@ export {
   DataGridTableFillBodyCell,
   DataGridTableFillHeadCell,
   DataGridTableFoot,
+  DataGridTableFootRow,
+  DataGridTableFootRowCell,
   DataGridTableHead,
   DataGridTableHeadRow,
   DataGridTableHeadRowCell,

@@ -50,5 +50,7 @@ export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";
 export { RecordSelect, type RecordSelectProps } from "./record-select";
 export { ROW_HEIGHT, WINDOW_FROM, WindowedTable } from "./windowed-table";
-export { DataTable, type DataTableColumn, type DataTableColumnType, type DataTableProps, type DataTableSort, type DataTableSortDirection } from "./table/data-table";
 export { type DataTableFilter } from "./table/column-filter";
+export { DataTable, type DataTableColumn, type DataTableColumnRole, type DataTableColumnType, type DataTableProps, type DataTableSort, type DataTableSortDirection } from "./table/data-table";
+export { type DataTableAggregate, type DataTableBucket } from "./table/aggregate";
+export { type DataTableGroupSort } from "./table/group-bar";

@@ -464,10 +464,10 @@ export const LOCATION_QUERY_TABLE = {
   sortDirections: [],
   sortMaxFields: 1,
   columns: [
-    { field: "createdAt", label: "created at", type: "timestamptz" },
-    { field: "id", label: "id", type: "uuid" },
-    { field: "locationCode", label: "location code", type: "text" },
-    { field: "rowVersion", label: "row version", type: "int32" },
+    { field: "createdAt", label: "created at", type: "timestamptz", role: "value" },
+    { field: "id", label: "id", type: "uuid", role: "key" },
+    { field: "locationCode", label: "location code", type: "text", role: "value" },
+    { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
 } as const;
 

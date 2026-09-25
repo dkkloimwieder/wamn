@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DataTable, type DataTableColumn } from "@wamn/ui";
 
+import { bodyRows, theButton } from "./dom.js";
+
 afterEach(cleanup);
 
 interface Row {
@@ -78,19 +80,17 @@ function table(fullyRead: () => boolean = () => true) {
 
 /** The codes of the body rows, in the order they show. */
 const shown = () =>
-  screen
-    .getAllByRole("row")
-    .slice(1)
+  bodyRows()
     .map((row) => row.querySelector("td")?.textContent)
     .filter((code) => ROWS.some((row) => row.code === code));
 
 const open = (label: string) =>
-  fireEvent.click(screen.getByRole("button", { name: `filter ${label}` }));
+  fireEvent.click(theButton(`filter ${label}`));
 
 const type = (label: string, value: string) =>
   fireEvent.input(screen.getByLabelText(label), { target: { value } });
 
-const press = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+const press = (name: string) => fireEvent.click(theButton(name));
 
 /** Open one column's filter, run `act`, and return the codes shown. */
 function filtered(column: string, act: () => void) {
@@ -178,13 +178,11 @@ describe("the refine filters", () => {
     expect(shown()).toEqual(["Alpha", "ALPHABET"]);
     setFullyRead(false);
     expect(shown()).toEqual(["Alpha", "beta", "ALPHABET", "gamma"]);
-    // The change of state draws the headers again, which closes the popover.
-    open("code");
     expect(screen.getByLabelText("contains").hasAttribute("disabled")).toBe(true);
-    expect(screen.getByRole("button", { name: "remove filter code" }).hasAttribute("disabled")).toBe(
+    expect(theButton("remove filter code").hasAttribute("disabled")).toBe(
       true,
     );
-    expect(screen.getByRole("button", { name: "clear all" }).hasAttribute("disabled")).toBe(true);
+    expect(theButton("clear all").hasAttribute("disabled")).toBe(true);
     expect(screen.getAllByText(/Filters apply only to a fully read set/).length).toBeGreaterThan(0);
     setFullyRead(true);
     expect(shown()).toEqual(["Alpha", "ALPHABET"]);

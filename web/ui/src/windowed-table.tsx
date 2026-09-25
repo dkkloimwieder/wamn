@@ -15,6 +15,8 @@
  * the pointer over the cell shows the whole value.
  */
 
+import type { JSX } from "solid-js";
+
 import { DataGridTableVirtual, useDataGrid } from "./blocks/data-grid";
 
 /** The row count above which a table windows its rows. */
@@ -39,7 +41,10 @@ function showFullValue(event: MouseEvent) {
   }
 }
 
-export function WindowedTable() {
+export function WindowedTable(props: {
+  /** The rows of the table footer, such as a totals row. */
+  footerContent?: JSX.Element | undefined;
+}) {
   const grid = useDataGrid();
   return (
     <div
@@ -50,6 +55,7 @@ export function WindowedTable() {
       <DataGridTableVirtual
         estimateSize={ROW_HEIGHT}
         virtualizerOptions={{ enabled: grid.props.recordCount > WINDOW_FROM }}
+        footerContent={props.footerContent}
       />
     </div>
   );

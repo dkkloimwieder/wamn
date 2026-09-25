@@ -1333,8 +1333,10 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
         "  sortFields: [{ field: \"createdAt\", wire: \"created_at\" }],",
         "  sortDirections: [\"ascending\", \"descending\"],",
         "  sortMaxFields: 1,",
-        "    { field: \"code\", label: \"Widget code\", type: \"text\" },",
-        "    { field: \"makerId\", label: \"maker id\", type: \"uuid\", displayField: \"name\" },",
+        "    { field: \"code\", label: \"Widget code\", type: \"text\", role: \"value\" },",
+        "    { field: \"editVersion\", label: \"edit version\", type: \"int64\", role: \"revision\" },",
+        "    { field: \"id\", label: \"id\", type: \"uuid\", role: \"key\" },",
+        "    { field: \"makerId\", label: \"maker id\", type: \"uuid\", role: \"reference\", displayField: \"name\" },",
     ] {
         assert!(definition.contains(line), "{line} in {definition}");
     }

@@ -11,6 +11,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { DataTable, WINDOW_FROM, type DataTableColumn, type DataTableSort } from "@wamn/ui";
 
+import { bodyRows, button } from "./dom.js";
+
 const BOX = 480;
 const ROW = 48;
 
@@ -90,12 +92,9 @@ const MESSAGE = "Full dataset cannot be loaded";
 
 /** The codes of the body rows, in the order they show. */
 const shown = () =>
-  screen
-    .getAllByRole("row")
-    .slice(1)
-    .map((row) => row.textContent?.slice(0, 5));
+  bodyRows().map((row) => row.textContent?.slice(0, 5));
 
-const header = (label: string) => screen.queryByRole("button", { name: label });
+const header = (label: string) => button(label);
 
 describe("the data table", () => {
   it("fills its container, with the toolbar outside the one element that scrolls (wamn-xtz2.4)", () => {
@@ -115,8 +114,8 @@ describe("the data table", () => {
 
   it("renders every row at the windowing limit", () => {
     table({ rows: rows(WINDOW_FROM), fullyRead: true, busy: false });
-    // One header row and one row for each record.
-    expect(screen.getAllByRole("row")).toHaveLength(WINDOW_FROM + 1);
+    // One header row, one row for each record, and the totals row.
+    expect(screen.getAllByRole("row")).toHaveLength(WINDOW_FROM + 2);
   });
 
   it("renders a window of its rows above the windowing limit", () => {

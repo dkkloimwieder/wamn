@@ -129,7 +129,7 @@ const PALLET_COLUMNS: readonly DataTableColumn<PalletRow>[] = [
   { field: "quantity", label: "quantity", type: "int32" },
   { field: "weight", label: "weight", type: "numeric" },
   { field: "createdAt", label: "created at", type: "timestamptz" },
-  { field: "id", label: "id", type: "uuid" },
+  { field: "id", label: "id", type: "uuid", role: "key" },
 ];
 
 function pallets(count: number): PalletRow[] {
@@ -143,7 +143,11 @@ function pallets(count: number): PalletRow[] {
 }
 
 /** One table over a set of `size` rows generated in memory, loaded up to its cap. */
-function MemoryTable(props: { size: number; cap?: number }): JSX.Element {
+function MemoryTable(props: {
+  size: number;
+  cap?: number;
+  groupedFields?: readonly (keyof PalletRow & string)[];
+}): JSX.Element {
   const [state, setState] = createSignal<LoadState<PalletRow>>(
     emptyLoad(props.cap ?? DEFAULT_CAP),
   );
@@ -173,6 +177,7 @@ function MemoryTable(props: { size: number; cap?: number }): JSX.Element {
       sortFields={[]}
       sortMaxFields={2}
       onSortChange={() => {}}
+      groupedFields={props.groupedFields}
     />
   );
 }
@@ -186,6 +191,7 @@ function LoadedTable<Row extends object>(props: {
   sortFields: readonly { readonly field: keyof Row & string }[];
   sortMaxFields: number;
   onSortChange: (sort: readonly DataTableSort<Row>[]) => void;
+  groupedFields?: readonly (keyof Row & string)[] | undefined;
 }): JSX.Element {
   return (
     <DataTable
@@ -203,6 +209,7 @@ function LoadedTable<Row extends object>(props: {
       sortFields={props.sortFields}
       sortMaxFields={props.sortMaxFields}
       onSortChange={props.onSortChange}
+      groupedFields={props.groupedFields}
     />
   );
 }
@@ -210,7 +217,8 @@ function LoadedTable<Row extends object>(props: {
 /**
  * One 10,000 row table at the full height of the viewport, under a header:
  * the shape an app gives a table. The app sizes the box, and the table fills
- * it, so only the grid body scrolls.
+ * it, so only the grid body scrolls. It groups by the day of creation, then by
+ * quantity.
  */
 export function AppTable(): JSX.Element {
   return (
@@ -219,7 +227,7 @@ export function AppTable(): JSX.Element {
         <p class="text-sm font-semibold uppercase">App header</p>
       </header>
       <main class="min-h-0 flex-1 p-6">
-        <MemoryTable size={10000} cap={10000} />
+        <MemoryTable size={10000} cap={10000} groupedFields={["createdAt", "quantity"]} />
       </main>
     </div>
   );

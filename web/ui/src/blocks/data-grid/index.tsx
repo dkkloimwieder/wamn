@@ -17,6 +17,8 @@ export {
   DataGridTableFillBodyCell,
   DataGridTableFillHeadCell,
   DataGridTableFoot,
+  DataGridTableFootRow,
+  DataGridTableFootRowCell,
   DataGridTableHead,
   DataGridTableHeadRow,
   DataGridTableHeadRowCell,

@@ -325,8 +325,8 @@ export const SUPPLIER_QUERY_TABLE = {
   sortDirections: [],
   sortMaxFields: 1,
   columns: [
-    { field: "createdAt", label: "Added", type: "timestamptz" },
-    { field: "id", label: "id", type: "uuid" },
-    { field: "name", label: "Supplier name", type: "text" },
+    { field: "createdAt", label: "Added", type: "timestamptz", role: "value" },
+    { field: "id", label: "id", type: "uuid", role: "key" },
+    { field: "name", label: "Supplier name", type: "text", role: "value" },
   ],
 } as const;
