@@ -38,3 +38,15 @@ An absent case, ignored case, or explicit skip cannot establish success.
 Each guard must name the runner that executes it.
 A required runner must refuse a missing, renamed, or unbuilt subject.
 A plan test establishes command selection, not the results of those commands.
+
+## Formal business models
+
+The [Receiving](../../apps/wamn_receiving/formal/README.md) and [WMS](../../apps/wamn_wms/formal/README.md) experiments express selected business rules in independent, finite Rust models.
+Kani establishes valid initialization and preservation through its modeled transitions.
+The application assessments map each property to existing implementation assertions or explicit coverage gaps.
+The model does not establish production behavior, database serialization, or correctness outside its declared domain.
+
+Each proof states its assumptions and loop bounds.
+Reachability assertions demonstrate that its success, refusal, and replay cases remain possible.
+A deliberate defect must fail the intended business assertion, rather than compilation or loop exploration.
+The [formal test commands](../operations/running-tests.md#receiving-formal-model) run this experiment without a database or application runtime.

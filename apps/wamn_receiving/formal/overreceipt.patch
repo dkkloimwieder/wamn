@@ -1,0 +1,11 @@
+--- a/model.rs
++++ b/model.rs
+@@ -149,7 +149,7 @@
+     }
+     let effect = quantities(command);
+     for (line, quantity) in effect.iter().enumerate() {
+-        if *quantity > state.ordered[line] - state.received[line] {
++        if *quantity > state.ordered[line] {
+             return Outcome::ExcessQuantity;
+         }
+     }

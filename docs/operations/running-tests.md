@@ -88,6 +88,93 @@ The expected value of the test must not come from the code under test.
 - A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.
 - A new live test must not repeat an existing one. Extend the existing test when a rule has no other check.
 
+## Receiving formal model
+
+The [Receiving contract](../../apps/wamn_receiving/formal/README.md) defines the model domain and proof limits.
+These commands require Rust through rustup and Kani 0.68.0 on x86_64 Linux.
+The [Kani installation guide](https://model-checking.github.io/kani/install-guide.html) lists other supported platforms.
+Installation needs network access and downloads a separate Rust toolchain.
+It does not change the repository toolchain selection.
+
+Install the pinned verifier:
+
+```bash
+cargo install --locked kani-verifier --version 0.68.0
+kani setup
+```
+
+From the repository root, copy the model into an owned temporary directory:
+
+```bash
+formal_run=$(mktemp -d "${TMPDIR:-/tmp}/wamn-receiving-formal.XXXXXX")
+cp apps/wamn_receiving/formal/model.rs apps/wamn_receiving/formal/proofs.rs "$formal_run/"
+rustc --edition 2024 --test "$formal_run/model.rs" -o "$formal_run/examples"
+"$formal_run/examples"
+kani "$formal_run/model.rs" --output-format terse
+```
+
+The correct model must report six successful harnesses and fourteen satisfied cover properties.
+A cover property establishes that a named case is reachable.
+Keep unwinding assertions enabled: they detect an insufficient loop bound.
+The current bound is 64 because generated equality comparisons also contain loops.
+
+After the correct model passes, apply the deliberate defect to the temporary copy:
+
+```bash
+patch -d "$formal_run" -p1 < apps/wamn_receiving/formal/overreceipt.patch
+kani "$formal_run/model.rs" --harness proofs::two_receipts_preserve_quantity --exact \
+  --output-format terse -Z concrete-playback --concrete-playback print
+```
+
+This command must exit unsuccessfully because the received quantity exceeds the order.
+An installation, compilation, or unwinding failure does not establish defect detection.
+Concrete playback prints the input values for the counterexample.
+
+Restore the temporary model and rerun the affected proof:
+
+```bash
+patch -R -d "$formal_run" -p1 < apps/wamn_receiving/formal/overreceipt.patch
+kani "$formal_run/model.rs" --harness proofs::two_receipts_preserve_quantity --exact --output-format terse
+```
+
+The restored proof must pass.
+Keep required output under the owned temporary directory and record the actual command exit statuses.
+The [assessment](../../apps/wamn_receiving/formal/assessment.md) distinguishes model results from existing implementation coverage.
+
+## WMS formal model
+
+Use the same Kani 0.68.0 installation described for [Receiving](#receiving-formal-model).
+The [WMS contract](../../apps/wamn_wms/formal/README.md) defines its finite domain and original-result replay rule.
+From the repository root, run its three native examples and seven proofs:
+
+```bash
+wms_formal_run=$(mktemp -d "${TMPDIR:-/tmp}/wamn-wms-formal.XXXXXX")
+cp apps/wamn_wms/formal/{model.rs,proofs.rs,tests.rs} "$wms_formal_run/"
+rustc --edition 2024 --test "$wms_formal_run/model.rs" -o "$wms_formal_run/examples"
+"$wms_formal_run/examples"
+kani "$wms_formal_run/model.rs" --output-format terse
+```
+
+Require seven successful harnesses and twelve satisfied cover properties.
+The loop bound is four. Keep unwinding assertions enabled to detect insufficient bounds.
+
+After the correct model passes, run the deliberate missing-transaction defect:
+
+```bash
+patch -d "$wms_formal_run" -p1 < apps/wamn_wms/formal/missing-transaction.patch
+kani "$wms_formal_run/model.rs" --harness proofs::split_history_is_complete --exact \
+  --output-format terse -Z concrete-playback --concrete-playback print
+```
+
+The command must exit unsuccessfully at the missing-transaction assertion.
+The defect creates split inventory but omits its transaction row.
+Restore the temporary copy and require the affected proof to pass:
+
+```bash
+patch -R -d "$wms_formal_run" -p1 < apps/wamn_wms/formal/missing-transaction.patch
+kani "$wms_formal_run/model.rs" --harness proofs::split_history_is_complete --exact --output-format terse
+```
+
 ## Local application business tests
 
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
