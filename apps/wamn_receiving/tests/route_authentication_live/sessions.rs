@@ -108,8 +108,9 @@ pub(super) async fn prepare_session_host_fixture(
     )
     .await?;
     anyhow::ensure!(
-        release.release().effective_release_id == 2 && release.manifest().format_version == 1,
-        "session test must publish format 1 as release 2"
+        release.release().effective_release_id == 2
+            && release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+        "session test must publish the current format as release 2"
     );
     let mut expected_attachments = previous_release.manifest().attachments.clone();
     expected_attachments
@@ -406,7 +407,7 @@ pub(super) async fn assert_nested_session(
             .auth_policy = auth_policy.clone();
     }
     anyhow::ensure!(
-        release.manifest().format_version == 1
+        release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION
             && release.release().effective_release_id == 3
             && release.manifest().attachments == expected
             && release.manifest().components == previous.manifest().components

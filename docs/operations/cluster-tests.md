@@ -95,6 +95,24 @@ It retains duplicate-delivery, blocked-handler, broker-advisory, and later-valid
 The adjacent `route_cases`, `session_cases`, and `measurement_cases` modules own the other named Receiving cases.
 Pass their full test names to `--name`.
 
+The `edge_case` module runs Receiving through the [kind edge](../plan/web-deployment.md) in `deploy/platform/edge`.
+The edge is one HTTPS host. It serves the built web files from a MinIO bucket and sends `/password` to identity and `/api` to the route ingress.
+Build the web files first, then pass their directory:
+
+```bash
+pnpm --dir apps/wamn_receiving/web run build
+WAMN_EDGE_WEB_DIST=$PWD/apps/wamn_receiving/web/dist \
+  cargo test --locked --offline -p wamn-receiving-tests --lib \
+  route_authentication_live::cluster::edge_case::receiving_through_the_edge -- --exact --ignored --nocapture
+```
+
+The case signs in by cookie through the edge, reads a purchase order list twice for a 304, and changes a supplier.
+It writes the headers it measured to `edge-results.json` in its results directory.
+To use the edge in a browser, also set `WAMN_EDGE_BY_HAND=1`.
+The case then prints the edge address and writes `edge.json` with the host, the address, the certificate authority and the account.
+Map the host to that address in the browser, and trust that authority.
+Create `edge.done` in the results directory to end the case and remove the cluster.
+
 ### `[WMS-CLUSTER-JOURNEY]` WMS application tests
 
 Run the released WMS routes:

@@ -331,7 +331,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         &format!("{}@{digest}", test.inputs.release_artifact_base),
     )?);
     anyhow::ensure!(
-        release.manifest().format_version == 1
+        release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION
             && release.release().effective_release_id == 4
             && release.manifest().release.packages.len() == 2
             && release.manifest().components.len() == 2

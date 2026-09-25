@@ -1,0 +1,6 @@
+apiVersion: v2
+name: wamn-edge
+description: One public HTTPS host for the web clients, with API and identity paths sent to the platform.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

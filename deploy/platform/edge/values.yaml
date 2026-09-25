@@ -1,0 +1,42 @@
+# The kind edge of docs/plan/web-deployment.md. A cloud deployment uses its
+# load balancer with the same path rules instead.
+image:
+  repository: nginx
+  # nginx:1.27-alpine. A digest selects exact bytes, and a tag does not.
+  digest: sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+  pullPolicy: IfNotPresent
+
+# The public host. Every application release publishes with this --route-host,
+# so the edge passes the Host header to the router unchanged.
+host: ""
+
+# The serving certificate. With issuer set, the chart requests it from that
+# cert-manager ClusterIssuer into tlsSecret. Without it, tlsSecret must exist.
+tlsSecret: ""
+issuer: ""
+
+# The route ingress, plain HTTP. The edge removes /api before it forwards.
+api: ""
+
+# The identity service, HTTPS. The edge checks its certificate against ca.crt
+# in identityCaConfigMap, for the DNS name in the identity URL.
+identity: ""
+identityCaConfigMap: ""
+
+# The bucket that holds the output of pnpm run build, readable without
+# credentials. endpoint is the object store origin, bucket the bucket name.
+bucket:
+  endpoint: ""
+  name: ""
+
+service:
+  type: ClusterIP
+  # Set with type NodePort to choose the node port.
+  nodePort: null
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

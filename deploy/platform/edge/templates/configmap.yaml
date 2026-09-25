@@ -1,0 +1,76 @@
+{{- $host := required "Set host to the public host name." .Values.host -}}
+{{- $api := required "Set api to the route ingress URL." .Values.api -}}
+{{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
+{{- $endpoint := required "Set bucket.endpoint to the object store origin." .Values.bucket.endpoint -}}
+{{- $bucket := required "Set bucket.name to the bucket of the web files." .Values.bucket.name -}}
+{{- if not (hasPrefix "https://" $identity) -}}
+{{- fail "identity must use HTTPS." -}}
+{{- end -}}
+{{- $identityName := trimPrefix "https://" $identity | splitList ":" | first -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: wamn-edge
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    events {}
+    http {
+      client_body_temp_path /tmp/client-body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server_tokens off;
+      access_log /dev/stdout;
+      error_log /dev/stderr;
+      server {
+        listen 8443 ssl;
+        server_name {{ $host }};
+        ssl_certificate /etc/wamn-edge/tls/tls.crt;
+        ssl_certificate_key /etc/wamn-edge/tls/tls.key;
+
+        # The router reads the release from the Host header, so it passes
+        # unchanged. The trailing slash removes /api.
+        location /api/ {
+          proxy_pass {{ trimSuffix "/" $api }}/;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+        }
+
+        # Identity sets the session cookies with no Domain, so the browser
+        # keeps them for this host.
+        location /password/ {
+          proxy_pass {{ trimSuffix "/" $identity }};
+          proxy_http_version 1.1;
+          proxy_ssl_server_name on;
+          proxy_ssl_name {{ $identityName }};
+          proxy_ssl_verify on;
+          proxy_ssl_trusted_certificate /etc/wamn-edge/identity-ca/ca.crt;
+        }
+
+        # A built file name carries its content hash.
+        location /assets/ {
+          limit_except GET { deny all; }
+          rewrite ^/assets/(.*)$ /{{ $bucket }}/assets/$1? break;
+          proxy_pass {{ trimSuffix "/" $endpoint }};
+          proxy_hide_header Cache-Control;
+          add_header Cache-Control "public, max-age=31536000, immutable" always;
+        }
+
+        # Every other path is a page of the application, which the client
+        # routes, so the edge answers with the one index.
+        location / {
+          limit_except GET { deny all; }
+          rewrite ^ /{{ $bucket }}/index.html? break;
+          proxy_pass {{ trimSuffix "/" $endpoint }};
+          proxy_hide_header Cache-Control;
+          add_header Cache-Control "no-cache" always;
+        }
+      }
+    }
