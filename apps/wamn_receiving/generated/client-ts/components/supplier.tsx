@@ -4,45 +4,31 @@
 // nothing else.
 
 import { Show, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
   afterWrites,
-  appendPage,
-  cellText,
   checkedMember,
-  emptyPage,
-  failedRead,
-  firstPage,
-  hasNextPage,
   newIdempotencyKey,
   newRequestId,
   refusalMarks,
   refusalSentence,
   refusedMember,
-  startRead,
-  type JsonValue,
   type Outcome,
-  type PageState,
   type Transport,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   FieldError,
   FieldGroup,
   FormActions,
   FormDone,
   TableScreen,
   TextField,
-  WindowedTable,
   announceOutcome,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
 } from "@wamn/ui";
 import {
   SUPPLIER_CREATE_REQUEST_FIELDS,
@@ -153,33 +139,12 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
   );
 }
 
-/** Columns of `wamn-receiving:supplier/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, SupplierQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "Added",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "name",
-    header: "Supplier name",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-];
-
 /** What the table for `wamn-receiving:supplier/query@1.0.0` takes. */
 export interface SupplierQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<SupplierQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: SupplierQueryRow) => void;
   /** Called with the values one row hands to `wamn-receiving:purchase-order/update@1.0.0`. */
   readonly onFillPurchaseOrderUpdate?: (initial: PurchaseOrderUpdateFormInitial) => void;
   /** Called with every outcome this screen reads. */
@@ -190,127 +155,62 @@ export interface SupplierQueryTableProps {
 export const SupplierQueryTableLabel = "Suppliers";
 
 /**
- * The table for `wamn-receiving:supplier/query@1.0.0`.
+ * The table for `wamn-receiving:supplier/query@1.0.0`: the DataTable over `SUPPLIER_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function SupplierQueryTable(props: SupplierQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<SupplierQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<SupplierQueryRow>>(emptyPage<SupplierQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as SupplierQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as SupplierQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const load = createTableLoad<SupplierQueryRow>(SUPPLIER_QUERY_TABLE, async (limit) => {
+    let request = { ...props.fixed } as SupplierQueryRequest;
+    request = writeMember(request, ["limit"], limit) as SupplierQueryRequest;
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, SupplierQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<SupplierQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
-  };
-
-  const columns: ColumnDef<GridFeatures, SupplierQueryRow>[] = [
-    ...QUERY_COLUMNS,
-    {
-      id: "fillPurchaseOrderUpdate",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillPurchaseOrderUpdate}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillPurchaseOrderUpdate?.(writeMember({} as PurchaseOrderUpdateFormInitial, ["change", "supplierId"], cell.row.original.id))}
-          >
-            update
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as SupplierQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+    return outcome;
   });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
-  return (
-    <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
+  const actions = (row: SupplierQueryRow) => (
+    <>
+      <Show when={props.onFillPurchaseOrderUpdate}>
         <Button
           type="button"
           variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
+          size="sm"
+          onClick={() => props.onFillPurchaseOrderUpdate?.(writeMember({} as PurchaseOrderUpdateFormInitial, ["change", "supplierId"], row.id))}
         >
-          next page
+          update
         </Button>
-      </FormActions>
+      </Show>
+    </>
+  );
+
+  return (
+    <TableScreen>
+      <DataTable
+        name="supplier"
+        columns={SUPPLIER_QUERY_TABLE.columns}
+        rowId={SUPPLIER_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={SUPPLIER_QUERY_TABLE.sortFields}
+        sortMaxFields={SUPPLIER_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={SUPPLIER_QUERY_TABLE.scopeFilters}
+        onScopeChange={() => void load.load()}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }

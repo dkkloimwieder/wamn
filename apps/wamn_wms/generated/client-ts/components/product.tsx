@@ -4,37 +4,26 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
   afterWrites,
-  appendPage,
   cellText,
   checkedMember,
-  emptyPage,
-  failedRead,
-  firstPage,
-  hasNextPage,
   newIdempotencyKey,
   newRequestId,
   readMember,
   refusalMarks,
   refusalSentence,
   refusedMember,
-  startRead,
-  type JsonValue,
   type Outcome,
-  type PageState,
   type Transport,
   type Uuid,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -43,10 +32,9 @@ import {
   FormDone,
   TableScreen,
   TextField,
-  WindowedTable,
   announceOutcome,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
+  type DataTableScopeFilter,
 } from "@wamn/ui";
 import {
   PRODUCT_CREATE_REQUEST_FIELDS,
@@ -225,38 +213,12 @@ export function ProductGetDetail(props: ProductGetDetailProps) {
   );
 }
 
-/** Columns of `wamn-wms:product/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, ProductQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "created at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "productCode",
-    header: "product code",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "rowVersion",
-    header: "row version",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
-  },
-];
-
 /** What the table for `wamn-wms:product/query@1.0.0` takes. */
 export interface ProductQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<ProductQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: ProductQueryRow) => void;
   /** Called when the operator opens `wamn-wms:product/get@1.0.0` from one row. */
   readonly onOpenProductGet?: (row: ProductQueryRow) => void;
   /** Called with the values one row hands to `wamn-wms:inventory/adjust@1.0.0`. */
@@ -271,164 +233,91 @@ export interface ProductQueryTableProps {
 export const ProductQueryTableLabel = "query";
 
 /**
- * The table for `wamn-wms:product/query@1.0.0`.
+ * The table for `wamn-wms:product/query@1.0.0`: the DataTable over `PRODUCT_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function ProductQueryTable(props: ProductQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<ProductQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as ProductQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as ProductQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const [scope, setScope] = createSignal<Partial<ProductQueryRequest>>({});
+  const load = createTableLoad<ProductQueryRow>(PRODUCT_QUERY_TABLE, async (limit) => {
+    let request = { ...scope(), ...props.fixed } as ProductQueryRequest;
+    request = writeMember(request, ["limit"], limit) as ProductQueryRequest;
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, ProductQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<ProductQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
-  };
-
-  const columns: ColumnDef<GridFeatures, ProductQueryRow>[] = [
-    ...QUERY_COLUMNS,
-    {
-      id: "openProductGet",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onOpenProductGet}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onOpenProductGet?.(cell.row.original)}
-          >
-            get
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventoryAdjust",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventoryAdjust}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventoryAdjust?.(writeMember({} as InventoryAdjustFormInitial, ["value", "productId"], cell.row.original.id))}
-          >
-            adjust
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventorySplit",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventorySplit}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "productId"], cell.row.original.id))}
-          >
-            split
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as ProductQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+    return outcome;
   });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
-  return (
-    <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="product code"
-            type="text"
-            onChange={(value) => change(["filter", "productCode"], value.split(",").filter((part) => part !== ""))}
-          />
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
+  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
+    let next: Partial<ProductQueryRequest> = {};
+    for (const filter of filters) {
+      switch (filter.field) {
+        case "productCode":
+          next = writeMember(next, ["filter", "productCode"], [...filter.values]);
+          break;
+      }
+    }
+    setScope(next);
+    void load.load();
+  };
+
+  const actions = (row: ProductQueryRow) => (
+    <>
+      <Show when={props.onOpenProductGet}>
+        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenProductGet?.(row)}>
+          get
+        </Button>
+      </Show>
+      <Show when={props.onFillInventoryAdjust}>
         <Button
           type="button"
           variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
+          size="sm"
+          onClick={() => props.onFillInventoryAdjust?.(writeMember({} as InventoryAdjustFormInitial, ["value", "productId"], row.id))}
         >
-          next page
+          adjust
         </Button>
-      </FormActions>
+      </Show>
+      <Show when={props.onFillInventorySplit}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "productId"], row.id))}
+        >
+          split
+        </Button>
+      </Show>
+    </>
+  );
+
+  return (
+    <TableScreen>
+      <DataTable
+        name="product"
+        columns={PRODUCT_QUERY_TABLE.columns}
+        rowId={PRODUCT_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={PRODUCT_QUERY_TABLE.sortFields}
+        sortMaxFields={PRODUCT_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={PRODUCT_QUERY_TABLE.scopeFilters}
+        onScopeChange={changeScope}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }

@@ -3,42 +3,26 @@
 // `receipt` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
+import { Show, createResource, onCleanup } from "solid-js";
 import {
   afterWrites,
-  appendPage,
   cellText,
-  emptyPage,
-  failedRead,
-  firstPage,
-  hasNextPage,
   readMember,
-  startRead,
-  type JsonValue,
   type Outcome,
-  type PageState,
   type Transport,
   type Uuid,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   DetailItem,
   DetailList,
   FieldError,
-  FieldGroup,
-  FormActions,
   TableScreen,
-  TextField,
-  WindowedTable,
   announceOutcome,
   createRecordLabels,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
 } from "@wamn/ui";
 import {
   get,
@@ -123,8 +107,6 @@ export interface ReceiptQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<ReceiptQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: ReceiptQueryRow) => void;
   /** Called when the operator opens `wamn-receiving:receipt/get@1.0.0` from one row. */
   readonly onOpenReceiptGet?: (row: ReceiptQueryRow) => void;
   /** Called with every outcome this screen reads. */
@@ -135,54 +117,24 @@ export interface ReceiptQueryTableProps {
 export const ReceiptQueryTableLabel = "Receipts";
 
 /**
- * The table for `wamn-receiving:receipt/query@1.0.0`.
+ * The table for `wamn-receiving:receipt/query@1.0.0`: the DataTable over `RECEIPT_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<ReceiptQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<ReceiptQueryRow>>(emptyPage<ReceiptQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as ReceiptQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as ReceiptQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const load = createTableLoad<ReceiptQueryRow>(RECEIPT_QUERY_TABLE, async (limit) => {
+    let request = { ...props.fixed } as ReceiptQueryRequest;
+    request = writeMember(request, ["limit"], limit) as ReceiptQueryRequest;
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, ReceiptQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<ReceiptQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
-  };
+    return outcome;
+  });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
   const purchaseOrderGetLabels = createRecordLabels(async (key) => {
     const request = writeMember({}, ["id"], key) as PurchaseOrderGetRequest;
@@ -194,112 +146,47 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     return text == null ? null : String(text);
   });
 
-  const columns: ColumnDef<GridFeatures, ReceiptQueryRow>[] = [
-    {
-      accessorKey: "createdAt",
-      header: "Recorded",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-    },
-    {
-      accessorKey: "createdBy",
-      header: "Recorded by",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      accessorKey: "id",
-      header: "id",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      accessorKey: "idempotencyKey",
-      header: "idempotency key",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-    },
-    {
-      accessorKey: "occurredAt",
-      header: "Received at",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-    },
-    {
-      accessorKey: "purchaseOrderId",
-      header: "Purchase order",
-      cell: (cell) => <>{purchaseOrderGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      accessorKey: "receiptReference",
-      header: "Receipt reference",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-    },
-    {
-      id: "openReceiptGet",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onOpenReceiptGet}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onOpenReceiptGet?.(cell.row.original)}
-          >
-            get
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as ReceiptQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+  const columns = RECEIPT_QUERY_TABLE.columns.map((column) => {
+    switch (column.field) {
+      case "purchaseOrderId":
+        return { ...column, cell: (value: unknown) => <>{purchaseOrderGetLabels(value as string | null)}</> };
+      default:
+        return column;
+    }
   });
+
+  const actions = (row: ReceiptQueryRow) => (
+    <>
+      <Show when={props.onOpenReceiptGet}>
+        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenReceiptGet?.(row)}>
+          get
+        </Button>
+      </Show>
+    </>
+  );
 
   return (
     <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
-        >
-          next page
-        </Button>
-      </FormActions>
+      <DataTable
+        name="receipt"
+        columns={columns}
+        rowId={RECEIPT_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={RECEIPT_QUERY_TABLE.sortFields}
+        sortMaxFields={RECEIPT_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={RECEIPT_QUERY_TABLE.scopeFilters}
+        onScopeChange={() => void load.load()}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }

@@ -3,42 +3,26 @@
 // `inventory_movement` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
+import { Show, createResource, onCleanup } from "solid-js";
 import {
   afterWrites,
-  appendPage,
   cellText,
-  emptyPage,
-  failedRead,
-  firstPage,
-  hasNextPage,
   readMember,
-  startRead,
-  type JsonValue,
   type Outcome,
-  type PageState,
   type Transport,
   type Uuid,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   DetailItem,
   DetailList,
   FieldError,
-  FieldGroup,
-  FormActions,
   TableScreen,
-  TextField,
-  WindowedTable,
   announceOutcome,
   createRecordLabels,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
 } from "@wamn/ui";
 import {
   get,
@@ -136,8 +120,6 @@ export interface InventoryMovementQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<InventoryMovementQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: InventoryMovementQueryRow) => void;
   /** Called when the operator opens `wamn-wms:inventory-movement/get@1.0.0` from one row. */
   readonly onOpenInventoryMovementGet?: (row: InventoryMovementQueryRow) => void;
   /** Called with every outcome this screen reads. */
@@ -148,54 +130,24 @@ export interface InventoryMovementQueryTableProps {
 export const InventoryMovementQueryTableLabel = "query";
 
 /**
- * The table for `wamn-wms:inventory-movement/query@1.0.0`.
+ * The table for `wamn-wms:inventory-movement/query@1.0.0`: the DataTable over `INVENTORY_MOVEMENT_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function InventoryMovementQueryTable(props: InventoryMovementQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<InventoryMovementQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<InventoryMovementQueryRow>>(emptyPage<InventoryMovementQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as InventoryMovementQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as InventoryMovementQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const load = createTableLoad<InventoryMovementQueryRow>(INVENTORY_MOVEMENT_QUERY_TABLE, async (limit) => {
+    let request = { ...props.fixed } as InventoryMovementQueryRequest;
+    request = writeMember(request, ["limit"], limit) as InventoryMovementQueryRequest;
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, InventoryMovementQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<InventoryMovementQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
-  };
+    return outcome;
+  });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
   const locationGetLabels = createRecordLabels(async (key) => {
     const request = writeMember({}, ["id"], key) as LocationGetRequest;
@@ -225,137 +177,53 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     return text == null ? null : String(text);
   });
 
-  const columns: ColumnDef<GridFeatures, InventoryMovementQueryRow>[] = [
-    {
-      accessorKey: "createdAt",
-      header: "created at",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-    },
-    {
-      accessorKey: "createdBy",
-      header: "created by",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      accessorKey: "fromLocationId",
-      header: "from location id",
-      cell: (cell) => <>{locationGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      accessorKey: "id",
-      header: "id",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      accessorKey: "idempotencyKey",
-      header: "idempotency key",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-    },
-    {
-      accessorKey: "kind",
-      header: "kind",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-    },
-    {
-      accessorKey: "occurredAt",
-      header: "occurred at",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-    },
-    {
-      accessorKey: "palletId",
-      header: "pallet id",
-      cell: (cell) => <>{palletGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      accessorKey: "productId",
-      header: "product id",
-      cell: (cell) => <>{productGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      accessorKey: "quantity",
-      header: "quantity",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
-    },
-    {
-      accessorKey: "reasonCode",
-      header: "reason code",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-    },
-    {
-      accessorKey: "toLocationId",
-      header: "to location id",
-      cell: (cell) => <>{locationGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      id: "openInventoryMovementGet",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onOpenInventoryMovementGet}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onOpenInventoryMovementGet?.(cell.row.original)}
-          >
-            get
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as InventoryMovementQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+  const columns = INVENTORY_MOVEMENT_QUERY_TABLE.columns.map((column) => {
+    switch (column.field) {
+      case "fromLocationId":
+        return { ...column, cell: (value: unknown) => <>{locationGetLabels(value as string | null)}</> };
+      case "palletId":
+        return { ...column, cell: (value: unknown) => <>{palletGetLabels(value as string | null)}</> };
+      case "productId":
+        return { ...column, cell: (value: unknown) => <>{productGetLabels(value as string | null)}</> };
+      case "toLocationId":
+        return { ...column, cell: (value: unknown) => <>{locationGetLabels(value as string | null)}</> };
+      default:
+        return column;
+    }
   });
+
+  const actions = (row: InventoryMovementQueryRow) => (
+    <>
+      <Show when={props.onOpenInventoryMovementGet}>
+        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenInventoryMovementGet?.(row)}>
+          get
+        </Button>
+      </Show>
+    </>
+  );
 
   return (
     <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
-        >
-          next page
-        </Button>
-      </FormActions>
+      <DataTable
+        name="inventory-movement"
+        columns={columns}
+        rowId={INVENTORY_MOVEMENT_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={INVENTORY_MOVEMENT_QUERY_TABLE.sortFields}
+        sortMaxFields={INVENTORY_MOVEMENT_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={INVENTORY_MOVEMENT_QUERY_TABLE.scopeFilters}
+        onScopeChange={() => void load.load()}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }

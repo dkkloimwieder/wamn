@@ -6,33 +6,55 @@
  * operator would see.
  *
  * The subject is the fixture's page table, written by
- * `crates/schema/generator/src/client_component.rs`. The command
- * `check_client_components` writes it into `fixture/` before this runs.
+ * `crates/schema/generator/src/client_component.rs`. It renders the DataTable
+ * over its table definition (wamn-oi59). The command `check_client_components`
+ * writes it into `fixture/` before this runs.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTransport, type JsonValue, type Outcome } from "@wamn/web-runtime";
 
-import { WidgetQueryTable, WidgetQueryTableLabel } from "../fixture/components/widget.js";
+import {
+  WIDGET_QUERY_TABLE,
+  WidgetQueryTable,
+  WidgetQueryTableLabel,
+} from "../fixture/components/widget.js";
 import { GONE, MAKER, SOUTH, makerStub, page, tableStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
 
+/** Types one value into the scope bar control of a filter and adds it with Enter. */
+function addScope(label: string, value: string) {
+  const bar = document.querySelector<HTMLElement>("[data-slot=data-table-scope]")!;
+  const input = within(bar).getByLabelText(label) as HTMLInputElement;
+  input.value = value;
+  fireEvent.keyDown(input, { key: "Enter" });
+}
+
+/** The input of the `index`th request the table sent. */
+const item = (sent: readonly { items: readonly unknown[] }[], index: number) =>
+  sent[index]?.items[0] as { [key: string]: JsonValue };
+
 describe("the generated table for a page", () => {
-  it("shows one row for each record the release returned", async () => {
+  it("loads when it mounts and shows one row for each record the release returned", async () => {
     const { transport } = stub([page(["a", "b"], null)]);
     render(() => <WidgetQueryTable transport={transport} />);
-    fireEvent.click(screen.getByText("read"));
-    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));
-    // One header row, and one row for each record.
+    // One header row, one row for each record, and the totals row of a fully
+    // read set.
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
     expect(screen.getByText("a")).toBeDefined();
     expect(screen.getByText("b")).toBeDefined();
-    // The plan's columns are the headers, in contract order. A column whose
-    // model authors a label reads that text, and one that does not keeps its
-    // field name with spaces. The row link and the row form are one column
-    // each, after the plan's columns, with no header text.
+    // The totals have one cell for each column of the definition, and none
+    // for the row buttons.
+    expect(document.querySelectorAll("[data-slot=data-table-total]")).toHaveLength(
+      WIDGET_QUERY_TABLE.columns.length,
+    );
+    // The definition's columns are the headers, in contract order. A column
+    // whose model authors a label reads that text, and one that does not keeps
+    // its field name with spaces. The row buttons are one last column with no
+    // header text.
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
       "Widget code",
       "created at",
@@ -41,14 +63,12 @@ describe("the generated table for a page", () => {
       "maker id",
       "Operator note",
       "",
-      "",
     ]);
   });
 
   it("shows the maker a widget names by its name, reading each maker once (wamn-zrrg)", async () => {
     const { transport, sent } = makerStub();
     render(() => <WidgetQueryTable transport={transport} />);
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(screen.getAllByText("Northwind")).toHaveLength(2));
     expect(screen.getByText("Southwind")).toBeDefined();
     // A key that no read finds shows the key, so the cell still names it.
@@ -63,6 +83,19 @@ describe("the generated table for a page", () => {
     expect(makers.every((request) => request.operation.includes("/get@"))).toBe(true);
   });
 
+  it("opens the record of a row from its row link, in the last column", async () => {
+    const { transport } = stub([page(["a", "b"], null)]);
+    const opened: string[] = [];
+    render(() => (
+      <WidgetQueryTable transport={transport} onOpenWidgetGet={(row) => opened.push(row.id)} />
+    ));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "get" })).toHaveLength(2));
+    fireEvent.click(screen.getAllByRole("button", { name: "get" })[1]!);
+    expect(opened).toEqual(["b"]);
+    // A page that passes no callback gets no button.
+    expect(screen.queryByRole("button", { name: "record-batch" })).toBeNull();
+  });
+
   it("names the screen without rendering a heading", () => {
     // The label is an exported constant. A component does not own a heading,
     // because the page that places it does.
@@ -72,86 +105,60 @@ describe("the generated table for a page", () => {
     expect(container.querySelectorAll("h1, h2, h3")).toHaveLength(0);
   });
 
-  it("asks for the next page with the cursor the last reply returned", async () => {
-    const { transport, sent } = stub([page(["a"], "c1"), page(["b"], null)]);
+  it("reads one page at the page maximum, and a cursor left over is not fully read", async () => {
+    const { transport, sent } = stub([page(["a"], "c1")]);
     render(() => <WidgetQueryTable transport={transport} />);
-    const next = screen.getByRole("button", { name: "next page" }) as HTMLButtonElement;
-    // The control stays in place and waits for a cursor.
-    expect(next.disabled).toBe(true);
-    fireEvent.click(screen.getByText("read"));
-    await waitFor(() => expect(next.disabled).toBe(false));
-
-    fireEvent.click(next);
-    await waitFor(() => expect(sent).toHaveLength(2));
-    const second = sent[1]?.items[0] as { [key: string]: JsonValue };
-    expect(second["cursor"]).toBe("c1");
-    // The page appends, so both records stay on the screen.
-    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));
-    expect(screen.getByText("a")).toBeDefined();
-    expect(screen.getByText("b")).toBeDefined();
-    // The last page sent no cursor, so the control is disabled again.
-    expect(next.disabled).toBe(true);
+    await waitFor(() => expect(screen.getByText("a")).toBeDefined());
+    // The default cap is above the page maximum, so the read asks for the page
+    // maximum, and it follows no cursor.
+    expect(item(sent, 0)["limit"]).toBe(WIDGET_QUERY_TABLE.pageMaximum);
+    expect(item(sent, 0)["cursor"]).toBeUndefined();
+    expect(sent).toHaveLength(1);
+    expect(screen.getByText("Full dataset cannot be loaded")).toBeDefined();
   });
 
-  it("clears the rows and reads again when a control changes", async () => {
-    const { transport, sent } = stub([page(["a"], "c1"), page(["b"], null)]);
+  it("starts a new load with a scope filter when the scope bar adds a value", async () => {
+    const { transport, sent } = stub([page(["a"], null), page(["b"], null)]);
     render(() => <WidgetQueryTable transport={transport} />);
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(screen.getByText("a")).toBeDefined());
 
-    fireEvent.change(screen.getByLabelText("Widget code"), { target: { value: "x,y" } });
+    addScope("Widget code", "x");
     await waitFor(() => expect(screen.getByText("b")).toBeDefined());
-    // The old rows go, because the cursor named a place in the old list.
     expect(screen.queryByText("a")).toBeNull();
-    const second = sent[1]?.items[0] as { [key: string]: JsonValue };
-    expect(second["filter"]).toEqual({ code: ["x", "y"] });
-    expect(second["cursor"]).toBeUndefined();
+    expect(item(sent, 1)["filter"]).toEqual({ code: ["x"] });
+    expect(item(sent, 1)["limit"]).toBe(WIDGET_QUERY_TABLE.pageMaximum);
+    addScope("Widget code", "y");
+    await waitFor(() => expect(sent).toHaveLength(3));
+    expect(item(sent, 2)["filter"]).toEqual({ code: ["x", "y"] });
   });
 
-  it("sends no filter member once the operator empties the filter (wamn-oya5)", async () => {
+  it("sends no filter member once the operator removes the last value (wamn-oya5)", async () => {
     const { transport, sent } = stub([page(["a"], null)]);
     render(() => <WidgetQueryTable transport={transport} />);
-    const code = screen.getByLabelText("Widget code");
-    fireEvent.change(code, { target: { value: "x" } });
     await waitFor(() => expect(sent).toHaveLength(1));
-    expect((sent[0]?.items[0] as { [key: string]: JsonValue })["filter"]).toEqual({ code: ["x"] });
+    addScope("Widget code", "x");
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(item(sent, 1)["filter"]).toEqual({ code: ["x"] });
 
     // An empty list would ask for no record, so the read leaves the filter out.
-    fireEvent.change(code, { target: { value: "" } });
-    await waitFor(() => expect(sent).toHaveLength(2));
-    expect(sent[1]?.items[0] as { [key: string]: JsonValue }).not.toHaveProperty("filter");
+    fireEvent.click(screen.getByRole("button", { name: "remove Widget code x" }));
+    await waitFor(() => expect(sent).toHaveLength(3));
+    expect(item(sent, 2)).not.toHaveProperty("filter");
   });
 
-  it("sends a sort only once both its field and its direction are chosen (wamn-2ut3)", async () => {
-    const { transport, sent } = stub([page(["a"], null)]);
+  it("sends the sort of a header click as a new load when the set is not fully read", async () => {
+    const { transport, sent } = stub([page(["a"], "c1")]);
     render(() => <WidgetQueryTable transport={transport} />);
-    const pick = async (label: string, name: string) => {
-      const trigger = screen.getByRole("button", { name: label });
-      await waitFor(() => {
-        if (trigger.getAttribute("aria-expanded") !== "true") {
-          fireEvent.pointerDown(trigger, { pointerType: "mouse", button: 0 });
-          fireEvent.pointerUp(trigger, { pointerType: "mouse", button: 0 });
-          fireEvent.click(trigger);
-          throw new Error(`the choice ${label} did not open`);
-        }
-      });
-      const option = await waitFor(() => screen.getByRole("option", { name }));
-      fireEvent.pointerDown(option, { pointerType: "mouse", button: 0 });
-      fireEvent.pointerUp(option, { pointerType: "mouse", button: 0 });
-      fireEvent.click(option);
-    };
+    await waitFor(() => expect(screen.getByText("a")).toBeDefined());
+    expect(item(sent, 0)).not.toHaveProperty("sort");
 
-    // A direction with no field is not a sort the release accepts.
-    await pick("direction", "ascending");
-    await waitFor(() => expect(sent).toHaveLength(1));
-    expect(sent[0]?.items[0] as { [key: string]: JsonValue }).not.toHaveProperty("sort");
-
-    await pick("field", "created at");
+    // The request names the field by its wire name.
+    fireEvent.click(screen.getByRole("button", { name: "created at" }));
     await waitFor(() => expect(sent).toHaveLength(2));
-    expect((sent[1]?.items[0] as { [key: string]: JsonValue })["sort"]).toEqual({
-      field: "created_at",
-      direction: "ascending",
-    });
+    expect(item(sent, 1)["sort"]).toEqual({ field: "created_at", direction: "ascending" });
+    fireEvent.click(screen.getByRole("button", { name: "created at" }));
+    await waitFor(() => expect(sent).toHaveLength(3));
+    expect(item(sent, 2)["sort"]).toEqual({ field: "created_at", direction: "descending" });
   });
 
   it("states an outcome that is not a completion in place of the empty message", async () => {
@@ -162,12 +169,11 @@ describe("the generated table for a page", () => {
     render(() => (
       <WidgetQueryTable transport={transport} onOutcome={(outcome) => seen.push(outcome)} />
     ));
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]?.status).toBe("refused");
     // The header row, and the one row the grid shows when it holds no record,
     // which states the refusal (wamn-jh80).
-    expect(screen.queryAllByRole("row")).toHaveLength(2);
+    await waitFor(() => expect(screen.queryAllByRole("row")).toHaveLength(2));
     expect(screen.getAllByText("You do not have permission to do this.").length).toBeGreaterThan(0);
     expect(screen.queryByText("permission_denied")).toBeNull();
     expect(screen.queryByText("No data available")).toBeNull();
@@ -176,7 +182,6 @@ describe("the generated table for a page", () => {
   it("says no data only when a read completed with no row", async () => {
     const { transport } = stub([page([], null)]);
     render(() => <WidgetQueryTable transport={transport} />);
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(screen.getByText("No data available")).toBeDefined());
   });
 
@@ -207,7 +212,6 @@ describe("the generated table for a page", () => {
       <WidgetQueryTable transport={transport} onOutcome={(outcome) => seen.push(outcome)} />
     ));
 
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toMatchObject({ status: "refused", code: "unauthenticated" });
     await waitFor(() =>
@@ -215,7 +219,7 @@ describe("the generated table for a page", () => {
     );
     expect(screen.queryByText("No data available")).toBeNull();
 
-    fireEvent.click(screen.getByText("read"));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
     await waitFor(() => expect(seen).toHaveLength(2));
     expect(seen[1]?.status).toBe("uncertain");
     await waitFor(() =>

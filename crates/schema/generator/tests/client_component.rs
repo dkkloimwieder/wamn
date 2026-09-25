@@ -74,68 +74,75 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     );
 }
 
+/// A page table with a table definition renders the DataTable over it
+/// (wamn-oi59). The declared filters are the table's scope bar, and the table
+/// owns the sort and the cap, so the load writes them at their declared input
+/// paths.
 #[test]
-fn a_page_table_renders_every_control_the_plan_names() {
+fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() {
     let files = emit(&release());
     let widget = widget(&files);
     let query = widget
         .split("export function WidgetQueryTable")
         .nth(1)
+        .and_then(|rest| rest.split("\nexport ").next())
         .expect("the query table exists");
 
     assert!(
-        widget.contains("change([\"filter\", \"code\"], value.split(\",\")"),
-        "a repeated filter takes a list"
+        query.contains(concat!(
+            "      switch (filter.field) {\n",
+            "        case \"code\":\n",
+            "          next = writeMember(next, [\"filter\", \"code\"], [...filter.values]);\n",
+        )),
+        "a scope filter is written at its declared input path, as a list"
     );
     assert!(
-        query.contains("    setControls((current) => writeControl(current, path, value));\n"),
-        "an emptied control sends no member, never an empty list (wamn-oya5)"
+        query.contains("    setScope(next);\n    void load.load();\n"),
+        "a scope change starts a new load"
+    );
+    assert!(
+        query.contains(concat!(
+            "        scopeFilters={WIDGET_QUERY_TABLE.scopeFilters}\n",
+            "        onScopeChange={changeScope}\n",
+        )),
+        "the table's scope bar holds the declared filters"
+    );
+    for retired in ["<form", "FieldGroup", "TextField", "writeControl"] {
+        assert!(
+            !query.contains(retired),
+            "the scope bar replaces the filter form: {retired}"
+        );
+    }
+    assert!(
+        query.contains(
+            "  const load = createTableLoad<WidgetQueryRow>(WIDGET_QUERY_TABLE, async (limit, sort) => {\n"
+        ),
+        "the load reads through the definition"
     );
     assert!(
         query.contains(
-            "      ...completePair(controls(), [\"sort\", \"field\"], [\"sort\", \"direction\"]),\n"
+            "    request = writeMember(request, [\"limit\"], limit) as WidgetQueryRequest;\n"
         ),
-        "a read sends the sort only when both its field and its direction are set (wamn-2ut3)"
+        "the limit of a load is written at its declared path"
     );
     assert!(
-        widget.contains(concat!(
-            "          <ChoiceField\n",
-            "            label=\"field\"\n",
-            "            allowEmpty={true}\n",
-            "            choices={[\n",
-            "              { value: \"created_at\", text: \"created at\" },\n",
-            "            ]}\n",
-            "            onChange={(value) => change([\"sort\", \"field\"], value)}\n",
+        query.contains(concat!(
+            "    if (sort !== undefined) {\n",
+            "      request = writeMember(request, [\"sort\", \"field\"], sort.field) as WidgetQueryRequest;\n",
+            "      request = writeMember(request, [\"sort\", \"direction\"], sort.direction) as WidgetQueryRequest;\n",
+            "    }\n",
         )),
-        "the sort field is a choice of exactly what the contract permits"
+        "a header sort sends its field and its direction together, or neither (wamn-2ut3)"
     );
-    assert!(widget.contains("              { value: \"ascending\", text: \"ascending\" },"));
+    for retired in ["ChoiceField", "change([\"limit\"]", "cursor", "next page"] {
+        assert!(
+            !query.contains(retired),
+            "the table owns the sort and the cap, and a load follows no cursor: {retired}"
+        );
+    }
     assert!(
-        query.contains("      >\n        <FieldGroup>\n          <TextField\n")
-            && query.contains("        </FieldGroup>\n        <FormActions>\n"),
-        "the controls of a table sit in one field group, which spaces them"
-    );
-    assert!(
-        widget.contains("onChange={(value) => change([\"limit\"], value)}"),
-        "the limit is a control, not an operator field"
-    );
-    assert!(
-        widget.contains("min={1}")
-            && widget.contains("max={100}")
-            && widget.contains("value=\"100\""),
-        "the limit states the bounds the contract declares"
-    );
-    assert!(
-        query.contains("writeMember(request, [\"cursor\"], cursor)"),
-        "the next page carries the cursor the last reply returned"
-    );
-    assert!(
-        query.contains("appendPage(page(), rows, outcome.value.nextCursor)"),
-        "a page appends, as the terminal does"
-    );
-    assert!(
-        query.contains("const rows = outcome.value.item;"),
-        "a page carries its rows under item"
+        query.contains("  void load.load();\n  onCleanup(afterWrites(props.transport, () => void load.load()));\n"),
+        "the table loads when it mounts, and again after a write"
     );
 }
 
@@ -238,9 +245,10 @@ fn a_table_declares_its_features_and_leaves_paging_to_the_release() {
     }
 }
 
-/// A table renders through the UI package, which owns how it looks.
+/// A table renders through the UI package, which owns how it looks. A table
+/// with a definition renders the DataTable, and one with none the data grid.
 #[test]
-fn a_table_renders_through_the_data_grid_and_states_no_class() {
+fn a_table_renders_through_the_ui_package_and_states_no_class() {
     let files = emit(&release());
     let widget = widget(&files);
     let ui = widget
@@ -250,75 +258,88 @@ fn a_table_renders_through_the_data_grid_and_states_no_class() {
         .expect("the module imports the UI package");
     for name in [
         "Button",
-        "ChoiceField",
         "DataGrid",
         "DataGridContainer",
+        "DataTable",
+        "TableScreen",
         "WindowedTable",
+        "createTableLoad",
     ] {
         assert!(
             ui.contains(&format!("  {name},\n")),
-            "the table names {name} from the UI package"
+            "the tables name {name} from the UI package"
         );
     }
+    let query = widget
+        .split("export function WidgetQueryTable")
+        .nth(1)
+        .and_then(|rest| rest.split("\nexport ").next())
+        .expect("the query table exists");
     assert!(
-        widget.contains("      <DataGrid\n        table={table}\n"),
+        query.contains(concat!(
+            "      <DataTable\n",
+            "        name=\"widget\"\n",
+            "        columns={columns}\n",
+            "        rowId={WIDGET_QUERY_TABLE.rowId}\n",
+            "        rows={load.state().rows}\n",
+        )) && query.contains(concat!(
+            "        sortFields={WIDGET_QUERY_TABLE.sortFields}\n",
+            "        sortMaxFields={WIDGET_QUERY_TABLE.sortMaxFields}\n",
+            "        onSortChange={load.sortBy}\n",
+            "        scopeFilters={WIDGET_QUERY_TABLE.scopeFilters}\n",
+            "        onScopeChange={changeScope}\n",
+            "        rowActions={actions}\n",
+            "      />\n",
+            "    </TableScreen>\n",
+        )),
+        "a table with a definition renders the DataTable over it, in the table screen"
+    );
+    assert!(
+        !query.contains("WindowedTable"),
+        "the DataTable owns its rows"
+    );
+    let list = widget
+        .split("export function WidgetListTable")
+        .nth(1)
+        .and_then(|rest| rest.split("\nexport ").next())
+        .expect("the list table exists");
+    assert!(
+        list.contains("      <DataGrid\n        table={table}\n"),
         "the grid renders the instance the component creates"
     );
     // The UI package decides which rows reach the page, so a long table
     // renders only a window of them (wamn-ly11.1).
     assert!(
-        widget.contains(
+        list.contains(
             "        <DataGridContainer>\n          <WindowedTable />\n        </DataGridContainer>\n"
         ),
         "the grid renders its rows through the windowed table"
     );
     assert!(!ui.contains("  DataGridTable,\n"));
     assert!(
-        widget.contains("onRowClick={(row) => props.onRowSelect?.(row)}"),
+        list.contains("onRowClick={(row) => props.onRowSelect?.(row)}"),
         "picking a row still reaches the page"
     );
     assert!(
-        widget.contains(concat!(
-            "      <FormActions>\n",
-            "        <Button\n",
-            "          type=\"button\"\n",
-            "          variant=\"outline\"\n",
-            "          disabled={!hasNextPage(page())}\n",
-            "          onClick={() => void read(page().cursor)}\n",
-            "        >\n",
-            "          next page\n",
-        )),
-        "the next page is a button in the actions row, because a keyset page has no index, \
-         and it stays in place, disabled while the release sent no cursor"
-    );
-    assert!(
-        widget.contains(concat!(
+        list.contains(concat!(
             "        <FormActions>\n",
             "          <Button type=\"submit\">read</Button>\n",
             "        </FormActions>\n",
             "      </form>\n",
         )),
-        "the read button closes the filter form in the actions row"
+        "the read button closes the form in the actions row"
     );
-    assert!(
-        widget.contains("    <TableScreen>\n      <form\n")
-            && widget.contains("      </FormActions>\n    </TableScreen>\n"),
-        "the filter form, the rows and the next page stack in one table screen"
-    );
-    let query = widget
-        .split("export function WidgetQueryTable")
-        .nth(1)
-        .and_then(|rest| rest.split("\nexport ").next())
-        .expect("the query table exists");
-    for markup in [
-        "<table",
-        "<select",
-        "<input",
-        "<button",
-        "class=",
-        "className=",
-    ] {
-        assert!(!query.contains(markup), "the UI package owns {markup}");
+    for table in [query, list] {
+        for markup in [
+            "<table",
+            "<select",
+            "<input",
+            "<button",
+            "class=",
+            "className=",
+        ] {
+            assert!(!table.contains(markup), "the UI package owns {markup}");
+        }
     }
 }
 
@@ -331,7 +352,7 @@ fn a_row_link_becomes_one_callback_named_from_its_target() {
         "the plan's row link reaches the props"
     );
     assert!(
-        widget.contains("onClick={() => props.onOpenWidgetGet?.(cell.row.original)}"),
+        widget.contains("onClick={() => props.onOpenWidgetGet?.(row)}"),
         "the row carries the key, and the parent decides what to open"
     );
     for absent in ["href=", "navigate", "router", "<a "] {
@@ -871,12 +892,11 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         "a repeated group reads the label its line bound declares"
     );
 
-    // A page control that names a model column.
+    // A scope filter that names a model column: the table's scope bar reads
+    // the label of that column in the definition.
     assert!(
-        widget.contains(
-            "          <TextField\n            label=\"Widget code\"\n            type=\"text\""
-        ),
-        "a filter control reads the column's authored label"
+        widget.contains("    { field: \"code\", label: \"Widget code\", type: \"text\""),
+        "a scope filter reads the column's authored label"
     );
 
     // The screen name, exported once for each component and rendered nowhere.
@@ -1025,13 +1045,13 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
     );
     assert!(
         maker.contains(
-            "onClick={() => props.onFillWidgetCreate?.(writeMember({} as WidgetCreateFormInitial, [\"makerId\"], cell.row.original.id))}"
+            "onClick={() => props.onFillWidgetCreate?.(writeMember({} as WidgetCreateFormInitial, [\"makerId\"], row.id))}"
         ),
         "the row writes its key at the declared input path"
     );
     assert!(
         maker.contains(
-            "props.onFillWidgetUpdate?.(writeMember({} as WidgetUpdateFormInitial, [\"change\", \"makerId\"], cell.row.original.id))"
+            "props.onFillWidgetUpdate?.(writeMember({} as WidgetUpdateFormInitial, [\"change\", \"makerId\"], row.id))"
         ),
         "a nested input path is written at its declared members"
     );

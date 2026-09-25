@@ -4,7 +4,7 @@
  * FormActions closes a form or a table with its buttons. The row spans the
  * full width and aligns its buttons right, so a second button lines up beside
  * the first. FormDone reads in that row after a command completes. TableScreen stacks a table's filter form, its rows and its next
- * page with one gap between them.
+ * page with one gap between them, and gives a data table in it the height of the viewport.
  */
 
 import { type JSX, Show } from "solid-js";
@@ -48,7 +48,13 @@ export interface TableScreenProps {
 
 export function TableScreen(props: TableScreenProps): JSX.Element {
   return (
-    <section data-slot="table-screen" class="flex min-w-0 flex-col gap-4">
+    // A data table fills the height of its container, so the screen gives it
+    // the height of the viewport below the page header and the actions row,
+    // and never less than 32rem. A read never changes the height of the page.
+    <section
+      data-slot="table-screen"
+      class="flex min-w-0 flex-col gap-4 [&>[data-slot=data-table]]:h-[calc(100svh-9rem)] [&>[data-slot=data-table]]:min-h-[32rem]"
+    >
       {props.children}
     </section>
   );

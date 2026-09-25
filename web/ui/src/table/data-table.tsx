@@ -40,6 +40,11 @@
  * shown text. Group rows and the footer are not exported. On a set that is
  * not fully read, the button is disabled and says why.
  *
+ * A caller that passes `rowActions` gets one last column with the buttons of
+ * each row, for example the row link that opens its record. That column does
+ * not group, total or export, and it stays out of the column panel, the views
+ * and the URL, which read the declared columns.
+ *
  * Each header has a menu that sorts, hides, pins and unpins its column and
  * chooses its aggregate. The column panel shows and hides columns and orders
  * them, and a header edge drag sets a width. The arrangement works in every
@@ -176,6 +181,12 @@ export interface DataTableColumn<TRow extends object> {
   readonly type: DataTableColumnType;
   /** The column's role. A column that states none is a value. */
   readonly role?: DataTableColumnRole | undefined;
+  /**
+   * What a cell shows in place of its value, for example the text of the
+   * record a key names. The sort, the filters, the search and the export
+   * still read the value.
+   */
+  readonly cell?: ((value: unknown) => JSX.Element) | undefined;
 }
 
 export interface DataTableProps<TRow extends object> {
@@ -225,6 +236,8 @@ export interface DataTableProps<TRow extends object> {
    * Only a top-level table has one. A table without one stays out of the URL.
    */
   readonly urlKey?: string | undefined;
+  /** The buttons of one row, in a last column that does not sort, filter or search. */
+  readonly rowActions?: ((row: TRow) => JSX.Element) | undefined;
 }
 
 /** The text the search box shows when the set is not fully read. */
@@ -413,7 +426,8 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   const columns = createMemo(() => {
     const fullyRead = props.fullyRead;
     const sortFields = props.sortFields;
-    return props.columns.map(
+    return [
+      ...props.columns.map(
       (definition): ColumnDef<DataTableFeatures, TRow> => ({
         id: definition.field,
         header: (context) => (
@@ -441,6 +455,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         cell: (context) => (
           <DataTableCell
             cell={context.cell}
+            show={definition.cell}
             groupLabel={(field, value) =>
               column(field).type === "timestamptz"
                 ? bucketLabel(String(value), bucketFor(field))
@@ -481,7 +496,9 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         // A set that is not fully read sorts only by a declared sort field.
         enableSorting: fullyRead || sortFields.some((sort) => sort.field === definition.field),
       }),
-    );
+      ),
+      ...(props.rowActions === undefined ? [] : [actionsColumn(props.rowActions)]),
+    ];
   });
 
   /** The order of the groups of each level, as the group bar sets it. */
@@ -784,10 +801,14 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     });
   }
 
+  /** The visible columns that hold a field, which leaves out the row buttons. */
+  const dataColumns = () =>
+    table.getVisibleLeafColumns().filter((leaf) => leaf.id !== ACTIONS_COLUMN);
+
   /** The footer: each visible column's aggregate over every kept row. */
   const totals = createMemo(() => {
     const rows = table.getFilteredRowModel().rows;
-    return table.getVisibleLeafColumns().map((visible) => ({
+    return dataColumns().map((visible) => ({
       id: visible.id,
       aggregate: aggregateOf(visible.id),
       value: aggregateRows(visible.id, rows),
@@ -799,7 +820,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
    * data rows in the table sort, without group rows or totals.
    */
   function exportCsv() {
-    const visible = table.getVisibleLeafColumns().map((leaf) => column(leaf.id));
+    const visible = dataColumns().map((leaf) => column(leaf.id));
     const sorting = table.atoms.sorting?.get() ?? [];
     const rows = [...table.getFilteredRowModel().rows].sort((a, b) => {
       for (const sort of sorting) {
@@ -1034,6 +1055,8 @@ function DataTableCell<TRow extends object>(props: {
   cell: Cell<DataTableFeatures, TRow, unknown>;
   /** The label of a group of one column with a non-empty value. */
   groupLabel: (field: string, value: unknown) => string;
+  /** What a data row's cell shows in place of its value. */
+  show?: ((value: unknown) => JSX.Element) | undefined;
 }): JSX.Element {
   const row = () => props.cell.row;
   const label = () => {
@@ -1041,7 +1064,7 @@ function DataTableCell<TRow extends object>(props: {
     return isEmpty(value) ? NONE : props.groupLabel(props.cell.column.id, value);
   };
   return (
-    <Switch fallback={shownText(props.cell.getValue())}>
+    <Switch fallback={props.show?.(props.cell.getValue()) ?? shownText(props.cell.getValue())}>
       <Match when={props.cell.getIsGrouped()}>
         <Button
           type="button"
@@ -1062,6 +1085,31 @@ function DataTableCell<TRow extends object>(props: {
       <Match when={props.cell.getIsAggregated()}>{shownText(props.cell.getValue())}</Match>
     </Switch>
   );
+}
+
+/** The id of the last column, which holds the buttons of each row. */
+const ACTIONS_COLUMN = "rowActions";
+
+/** The last column: the buttons of each data row, and nothing on a group row. */
+function actionsColumn<TRow extends object>(
+  actions: (row: TRow) => JSX.Element,
+): ColumnDef<DataTableFeatures, TRow> {
+  return {
+    id: ACTIONS_COLUMN,
+    header: "",
+    cell: (cell) => (
+      <Show when={!cell.row.getIsGrouped()}>
+        <div class="flex gap-2">{actions(cell.row.original)}</div>
+      </Show>
+    ),
+    enableSorting: false,
+    enableColumnFilter: false,
+    enableGlobalFilter: false,
+    enableGrouping: false,
+    enableHiding: false,
+    enablePinning: false,
+    enableResizing: false,
+  };
 }
 
 /** A header: its label, and a sort control when the column can sort. */

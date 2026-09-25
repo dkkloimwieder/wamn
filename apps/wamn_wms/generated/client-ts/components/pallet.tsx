@@ -4,7 +4,6 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
@@ -12,9 +11,7 @@ import {
   appendPage,
   cellText,
   checkedMember,
-  completePair,
   emptyPage,
-  failedRead,
   firstPage,
   hasNextPage,
   newIdempotencyKey,
@@ -23,21 +20,16 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
-  startRead,
-  type JsonValue,
   type Outcome,
   type PageState,
   type Transport,
   type Uuid,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
-  Badge,
   Button,
   ChoiceField,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -47,11 +39,10 @@ import {
   RecordSelect,
   TableScreen,
   TextField,
-  WindowedTable,
   announceOutcome,
   createRecordLabels,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
+  type DataTableScopeFilter,
 } from "@wamn/ui";
 import {
   PALLET_CREATE_REQUEST_FIELDS,
@@ -315,8 +306,6 @@ export interface PalletQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<PalletQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: PalletQueryRow) => void;
   /** Called when the operator opens `wamn-wms:pallet/get@1.0.0` from one row. */
   readonly onOpenPalletGet?: (row: PalletQueryRow) => void;
   /** Called with the values one row hands to `wamn-wms:inventory/adjust@1.0.0`. */
@@ -333,53 +322,47 @@ export interface PalletQueryTableProps {
 export const PalletQueryTableLabel = "query";
 
 /**
- * The table for `wamn-wms:pallet/query@1.0.0`.
+ * The table for `wamn-wms:pallet/query@1.0.0`: the DataTable over `PALLET_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function PalletQueryTable(props: PalletQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<PalletQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...completePair(controls(), ["sort", "field"], ["sort", "direction"]),
-      ...props.fixed,
-    } as PalletQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as PalletQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const [scope, setScope] = createSignal<Partial<PalletQueryRequest>>({});
+  const load = createTableLoad<PalletQueryRow>(PALLET_QUERY_TABLE, async (limit, sort) => {
+    let request = { ...scope(), ...props.fixed } as PalletQueryRequest;
+    request = writeMember(request, ["limit"], limit) as PalletQueryRequest;
+    if (sort !== undefined) {
+      request = writeMember(request, ["sort", "field"], sort.field) as PalletQueryRequest;
+      request = writeMember(request, ["sort", "direction"], sort.direction) as PalletQueryRequest;
+    }
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, PalletQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
+    return outcome;
+  });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
+
+  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
+    let next: Partial<PalletQueryRequest> = {};
+    for (const filter of filters) {
+      switch (filter.field) {
+        case "locationId":
+          next = writeMember(next, ["filter", "locationId"], [...filter.values]);
+          break;
+        case "palletCode":
+          next = writeMember(next, ["filter", "palletCode"], [...filter.values]);
+          break;
+        case "status":
+          next = writeMember(next, ["filter", "status"], [...filter.values]);
+          break;
       }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<PalletQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
+    }
+    setScope(next);
+    void load.load();
   };
 
   const locationGetLabels = createRecordLabels(async (key) => {
@@ -392,209 +375,77 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
     return text == null ? null : String(text);
   });
 
-  const columns: ColumnDef<GridFeatures, PalletQueryRow>[] = [
-    {
-      accessorKey: "createdAt",
-      header: "created at",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-    },
-    {
-      accessorKey: "createdBy",
-      header: "created by",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      accessorKey: "id",
-      header: "id",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      accessorKey: "locationId",
-      header: "location id",
-      cell: (cell) => <>{locationGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      accessorKey: "palletCode",
-      header: "pallet code",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-    },
-    {
-      accessorKey: "rowVersion",
-      header: "row version",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
-    },
-    {
-      accessorKey: "status",
-      header: "status",
-      cell: (cell) => (
-        <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
-          <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
-        </Show>
-      ),
-    },
-    {
-      accessorKey: "updatedAt",
-      header: "updated at",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-    },
-    {
-      accessorKey: "updatedBy",
-      header: "updated by",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      id: "openPalletGet",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onOpenPalletGet}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onOpenPalletGet?.(cell.row.original)}
-          >
-            get
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventoryAdjust",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventoryAdjust}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventoryAdjust?.(writeMember({} as InventoryAdjustFormInitial, ["value", "palletId"], cell.row.original.id))}
-          >
-            adjust
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventoryMove",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventoryMove}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventoryMove?.(writeMember({} as InventoryMoveFormInitial, ["value", "palletId"], cell.row.original.id))}
-          >
-            move
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventorySplit",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventorySplit}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "sourcePalletId"], cell.row.original.id))}
-          >
-            split
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as PalletQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+  const columns = PALLET_QUERY_TABLE.columns.map((column) => {
+    switch (column.field) {
+      case "locationId":
+        return { ...column, cell: (value: unknown) => <>{locationGetLabels(value as string | null)}</> };
+      default:
+        return column;
+    }
   });
 
-  return (
-    <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="location id"
-            type="text"
-            onChange={(value) => change(["filter", "locationId"], value.split(",").filter((part) => part !== ""))}
-          />
-          <TextField
-            label="pallet code"
-            type="text"
-            onChange={(value) => change(["filter", "palletCode"], value.split(",").filter((part) => part !== ""))}
-          />
-          <TextField
-            label="status"
-            type="text"
-            onChange={(value) => change(["filter", "status"], value.split(",").filter((part) => part !== ""))}
-          />
-          <ChoiceField
-            label="field"
-            allowEmpty={true}
-            choices={[
-              { value: "created_at", text: "created at" },
-              { value: "location_id", text: "location id" },
-              { value: "pallet_code", text: "pallet code" },
-              { value: "updated_at", text: "updated at" },
-            ]}
-            onChange={(value) => change(["sort", "field"], value)}
-          />
-          <ChoiceField
-            label="direction"
-            allowEmpty={true}
-            choices={[
-              { value: "ascending", text: "ascending" },
-              { value: "descending", text: "descending" },
-            ]}
-            onChange={(value) => change(["sort", "direction"], value)}
-          />
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
+  const actions = (row: PalletQueryRow) => (
+    <>
+      <Show when={props.onOpenPalletGet}>
+        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenPalletGet?.(row)}>
+          get
+        </Button>
+      </Show>
+      <Show when={props.onFillInventoryAdjust}>
         <Button
           type="button"
           variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
+          size="sm"
+          onClick={() => props.onFillInventoryAdjust?.(writeMember({} as InventoryAdjustFormInitial, ["value", "palletId"], row.id))}
         >
-          next page
+          adjust
         </Button>
-      </FormActions>
+      </Show>
+      <Show when={props.onFillInventoryMove}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onFillInventoryMove?.(writeMember({} as InventoryMoveFormInitial, ["value", "palletId"], row.id))}
+        >
+          move
+        </Button>
+      </Show>
+      <Show when={props.onFillInventorySplit}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "sourcePalletId"], row.id))}
+        >
+          split
+        </Button>
+      </Show>
+    </>
+  );
+
+  return (
+    <TableScreen>
+      <DataTable
+        name="pallet"
+        columns={columns}
+        rowId={PALLET_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={PALLET_QUERY_TABLE.sortFields}
+        sortMaxFields={PALLET_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={PALLET_QUERY_TABLE.scopeFilters}
+        onScopeChange={changeScope}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }

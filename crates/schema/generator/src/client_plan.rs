@@ -1074,7 +1074,7 @@ fn populated_inputs<'a>(
 ///
 /// The query input contract writes a filter under `filter.<field>`, and an
 /// array filter's leaf keeps the `[]` the IR adds.
-fn filter_input(path: &str, field: &str) -> bool {
+pub(crate) fn filter_input(path: &str, field: &str) -> bool {
     path.strip_prefix(FILTER_PREFIX)
         .is_some_and(|rest| rest == field || rest.trim_end_matches("[]") == field)
 }

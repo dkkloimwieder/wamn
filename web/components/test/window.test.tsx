@@ -2,8 +2,8 @@
  * The testing method for a long table, used once.
  *
  * A table that holds 1000 rows renders only the rows in view, and scrolling
- * brings later rows in. Paging does not change: the second page appends to
- * the first (wamn-ly11.1).
+ * brings later rows in (wamn-ly11.1). The stub answers one page of 1000 rows,
+ * because it does not apply the limit the load sends.
  *
  * The document has no layout, so the test gives the scroll box the height a
  * browser would measure. Every row is `ROW_HEIGHT` tall and is not measured.
@@ -46,14 +46,8 @@ const ids = (from: number, count: number) =>
 
 describe("a table that holds 1000 rows", () => {
   it("renders a window of its rows, and scrolling brings later rows in", async () => {
-    const { transport, sent } = stub([page(ids(0, 500), "c2"), page(ids(500, 500), null)]);
+    const { transport } = stub([page(ids(0, 1000), null)]);
     render(() => <WidgetQueryTable transport={transport} />);
-    fireEvent.click(screen.getByText("read"));
-    await waitFor(() => expect(screen.getByText("w0000")).toBeDefined());
-    fireEvent.click(screen.getByRole("button", { name: "next page" }));
-    await waitFor(() => expect(sent).toHaveLength(2));
-
-    // The second page appended, so the first row is still the first.
     await waitFor(() => expect(screen.getByText("w0000")).toBeDefined());
     const rendered = () => screen.getAllByRole("row").length;
     expect(rendered()).toBeLessThan(50);
@@ -71,9 +65,8 @@ describe("a table that holds 1000 rows", () => {
   it("renders every row of a short table", async () => {
     const { transport } = stub([page(ids(0, 60), null)]);
     render(() => <WidgetQueryTable transport={transport} />);
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(screen.getByText("w0059")).toBeDefined());
-    // One header row and one row for each record.
-    expect(screen.getAllByRole("row")).toHaveLength(61);
+    // One header row, one row for each record, and the totals row.
+    expect(screen.getAllByRole("row")).toHaveLength(62);
   });
 });

@@ -4,7 +4,6 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
@@ -12,9 +11,7 @@ import {
   appendPage,
   cellText,
   checkedMember,
-  completePair,
   emptyPage,
-  failedRead,
   firstPage,
   hasNextPage,
   newRequestId,
@@ -22,21 +19,15 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
-  startRead,
-  type JsonValue,
   type Outcome,
   type PageState,
   type Transport,
   type Uuid,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
-  Badge,
   Button,
-  ChoiceField,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -45,11 +36,9 @@ import {
   FormDone,
   RecordSelect,
   TableScreen,
-  TextField,
-  WindowedTable,
   announceOutcome,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
+  type DataTableScopeFilter,
 } from "@wamn/ui";
 import {
   PURCHASE_ORDER_UPDATE_REQUEST_FIELDS,
@@ -141,67 +130,12 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
   );
 }
 
-/** Columns of `wamn-receiving:purchase-order/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, PurchaseOrderQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "Created",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "createdBy",
-    header: "Created by",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "purchaseOrderNumber",
-    header: "Order number",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "rowVersion",
-    header: "Revision",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
-  },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: (cell) => (
-      <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
-        <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
-      </Show>
-    ),
-  },
-  {
-    accessorKey: "supplierId",
-    header: "Supplier",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "updatedAt",
-    header: "Updated",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "updatedBy",
-    header: "Updated by",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-];
-
 /** What the table for `wamn-receiving:purchase-order/query@1.0.0` takes. */
 export interface PurchaseOrderQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<PurchaseOrderQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: PurchaseOrderQueryRow) => void;
   /** Called when the operator opens `wamn-receiving:purchase-order/get@1.0.0` from one row. */
   readonly onOpenPurchaseOrderGet?: (row: PurchaseOrderQueryRow) => void;
   /** Called with the values one row hands to `wamn-receiving:receiving/record-receipt@1.0.0`. */
@@ -214,177 +148,91 @@ export interface PurchaseOrderQueryTableProps {
 export const PurchaseOrderQueryTableLabel = "Purchase orders";
 
 /**
- * The table for `wamn-receiving:purchase-order/query@1.0.0`.
+ * The table for `wamn-receiving:purchase-order/query@1.0.0`: the DataTable over `PURCHASE_ORDER_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<PurchaseOrderQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...completePair(controls(), ["sort", "field"], ["sort", "direction"]),
-      ...props.fixed,
-    } as PurchaseOrderQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as PurchaseOrderQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const [scope, setScope] = createSignal<Partial<PurchaseOrderQueryRequest>>({});
+  const load = createTableLoad<PurchaseOrderQueryRow>(PURCHASE_ORDER_QUERY_TABLE, async (limit, sort) => {
+    let request = { ...scope(), ...props.fixed } as PurchaseOrderQueryRequest;
+    request = writeMember(request, ["limit"], limit) as PurchaseOrderQueryRequest;
+    if (sort !== undefined) {
+      request = writeMember(request, ["sort", "field"], sort.field) as PurchaseOrderQueryRequest;
+      request = writeMember(request, ["sort", "direction"], sort.direction) as PurchaseOrderQueryRequest;
+    }
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, PurchaseOrderQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<PurchaseOrderQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
-  };
-
-  const columns: ColumnDef<GridFeatures, PurchaseOrderQueryRow>[] = [
-    ...QUERY_COLUMNS,
-    {
-      id: "openPurchaseOrderGet",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onOpenPurchaseOrderGet}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onOpenPurchaseOrderGet?.(cell.row.original)}
-          >
-            get
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillReceivingRecordReceipt",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillReceivingRecordReceipt}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "purchaseOrderId"], cell.row.original.id))}
-          >
-            record-receipt
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as PurchaseOrderQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+    return outcome;
   });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
-  return (
-    <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="Order number"
-            type="text"
-            onChange={(value) => change(["filter", "purchaseOrderNumber"], value.split(",").filter((part) => part !== ""))}
-          />
-          <TextField
-            label="Status"
-            type="text"
-            onChange={(value) => change(["filter", "status"], value.split(",").filter((part) => part !== ""))}
-          />
-          <TextField
-            label="Supplier"
-            type="text"
-            onChange={(value) => change(["filter", "supplierId"], value.split(",").filter((part) => part !== ""))}
-          />
-          <ChoiceField
-            label="field"
-            allowEmpty={true}
-            choices={[
-              { value: "created_at", text: "created at" },
-              { value: "purchase_order_number", text: "purchase order number" },
-              { value: "status", text: "status" },
-            ]}
-            onChange={(value) => change(["sort", "field"], value)}
-          />
-          <ChoiceField
-            label="direction"
-            allowEmpty={true}
-            choices={[
-              { value: "ascending", text: "ascending" },
-              { value: "descending", text: "descending" },
-            ]}
-            onChange={(value) => change(["sort", "direction"], value)}
-          />
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
+  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
+    let next: Partial<PurchaseOrderQueryRequest> = {};
+    for (const filter of filters) {
+      switch (filter.field) {
+        case "purchaseOrderNumber":
+          next = writeMember(next, ["filter", "purchaseOrderNumber"], [...filter.values]);
+          break;
+        case "status":
+          next = writeMember(next, ["filter", "status"], [...filter.values]);
+          break;
+        case "supplierId":
+          next = writeMember(next, ["filter", "supplierId"], [...filter.values]);
+          break;
+      }
+    }
+    setScope(next);
+    void load.load();
+  };
+
+  const actions = (row: PurchaseOrderQueryRow) => (
+    <>
+      <Show when={props.onOpenPurchaseOrderGet}>
+        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenPurchaseOrderGet?.(row)}>
+          get
+        </Button>
+      </Show>
+      <Show when={props.onFillReceivingRecordReceipt}>
         <Button
           type="button"
           variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
+          size="sm"
+          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "purchaseOrderId"], row.id))}
         >
-          next page
+          record-receipt
         </Button>
-      </FormActions>
+      </Show>
+    </>
+  );
+
+  return (
+    <TableScreen>
+      <DataTable
+        name="purchase-order"
+        columns={PURCHASE_ORDER_QUERY_TABLE.columns}
+        rowId={PURCHASE_ORDER_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={PURCHASE_ORDER_QUERY_TABLE.sortFields}
+        sortMaxFields={PURCHASE_ORDER_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={PURCHASE_ORDER_QUERY_TABLE.scopeFilters}
+        onScopeChange={changeScope}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }

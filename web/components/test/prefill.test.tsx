@@ -29,7 +29,6 @@ describe("a row that opens a form", () => {
         carried = initial;
       }} />
     ));
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
 
     fireEvent.click(screen.getByRole("button", { name: "create" }));
@@ -52,7 +51,6 @@ describe("a row that opens a form", () => {
     render(() => (
       <WidgetMakerQueryTable transport={transport} onFillWidgetCreate={() => {}} {...untyped} />
     ));
-    fireEvent.click(screen.getByText("read"));
     await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
 
     expect(screen.getByRole("button", { name: "create" })).toBeDefined();

@@ -232,19 +232,38 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     for screen in &screens {
         match screen.role {
             Role::Table => {
-                table = true;
-                solid.extend(["createSignal", "onCleanup"]);
-                emit_table(
-                    &mut body,
-                    screen,
-                    &mut runtime,
-                    &mut ui,
-                    &mut bindings,
-                    &mut foreign,
-                    &mut sibling,
-                )?;
+                solid.insert("onCleanup");
                 if table_gap(screen).is_none() {
+                    // The filters of a table are the one signal it keeps.
+                    if screen
+                        .paging
+                        .as_ref()
+                        .is_some_and(|paging| !paging.filter_inputs.is_empty())
+                    {
+                        solid.insert("createSignal");
+                    }
+                    emit_definition_table(
+                        &mut body,
+                        screen,
+                        &mut runtime,
+                        &mut ui,
+                        &mut bindings,
+                        &mut foreign,
+                        &mut sibling,
+                    )?;
                     write_table_definition(&mut body, screen)?;
+                } else {
+                    table = true;
+                    solid.insert("createSignal");
+                    emit_table(
+                        &mut body,
+                        screen,
+                        &mut runtime,
+                        &mut ui,
+                        &mut bindings,
+                        &mut foreign,
+                        &mut sibling,
+                    )?;
                 }
             }
             Role::Detail => {
@@ -966,6 +985,308 @@ fn emit_table(
         source.push_str("      <FormActions>\n        <Button\n          type=\"button\"\n          variant=\"outline\"\n          disabled={!hasNextPage(page())}\n          onClick={() => void read(page().cursor)}\n        >\n          next page\n        </Button>\n      </FormActions>\n");
     }
     source.push_str("    </TableScreen>\n  );\n}\n");
+    Ok(())
+}
+
+/// One table screen with a table definition: the DataTable over that
+/// definition.
+///
+/// The declared filters are the scope bar of the table, and a change to one
+/// starts a new load that sends it at its declared input path. The table owns the sort, the cap and the refresh, and a
+/// row link or a row form is one button in the last column. The table loads
+/// when it mounts, and again after every write the transport completes.
+fn emit_definition_table(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    runtime: &mut BTreeSet<&'static str>,
+    ui: &mut BTreeSet<&'static str>,
+    bindings: &mut BTreeSet<String>,
+    foreign: &mut BTreeMap<String, BTreeSet<String>>,
+    sibling: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), ClientComponentError> {
+    let stem = crate::client_ts::type_stem(screen.model, screen.name);
+    let function = crate::client_ts::function_name(screen.name).map_err(|error| {
+        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+    })?;
+    let Some(paging) = screen.paging.as_ref() else {
+        unreachable!("table_gap admits only a screen with paging");
+    };
+    // The load state reads the rows of a page as `item` and its cursor as
+    // `nextCursor`, so the outcome of the read is the outcome of the load.
+    if !matches!(screen.rows, crate::client_plan::Rows::List { key: "item" })
+        || paging.cursor_input.is_none()
+    {
+        return Err(ClientComponentError::new(
+            ClientComponentErrorKind::UnwrittenRole,
+            format!(
+                "{} has a table definition but no `item` rows with a cursor",
+                screen.contract.operation
+            ),
+        ));
+    }
+    let definition = format!(
+        "{}_{}_TABLE",
+        screen.model.to_uppercase(),
+        screen.name.to_uppercase()
+    );
+    ui.extend([
+        "TableScreen",
+        "DataTable",
+        "createTableLoad",
+        "announceOutcome",
+    ]);
+    runtime.extend(["afterWrites", "type Outcome", "type Transport"]);
+    bindings.insert(function.clone());
+    bindings.insert(format!("type {stem}Request"));
+    bindings.insert(format!("type {stem}Result"));
+    bindings.insert(format!("type {stem}Row"));
+    let filtered = !paging.filter_inputs.is_empty();
+
+    // The props.
+    writeln!(
+        source,
+        "\n/** What the table for `{}` takes. */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(source, "export interface {stem}TableProps {{").expect("write");
+    source.push_str("  /** The transport the application supplies. */\n");
+    source.push_str("  readonly transport: Transport;\n");
+    source.push_str("  /** Input the parent fixes, which the operator does not edit. */\n");
+    writeln!(source, "  readonly fixed?: Partial<{stem}Request>;").expect("write");
+    for link in &screen.row_links {
+        let target = crate::client_ts::operation_stem(link.operation);
+        writeln!(
+            source,
+            "  /** Called when the operator opens `{}` from one row. */\n  readonly onOpen{target}?: (row: {stem}Row) => void;",
+            link.operation
+        )
+        .expect("write");
+    }
+    for form in &screen.row_forms {
+        let target = crate::client_ts::operation_stem(form.operation);
+        if form.model != screen.model {
+            // The type is written by that model's component module, beside
+            // the form it belongs to, so a sibling import reads it.
+            sibling
+                .entry(form.model.to_owned())
+                .or_default()
+                .insert(format!("type {target}FormInitial"));
+        }
+        writeln!(
+            source,
+            "  /** Called with the values one row hands to `{}`. */\n  readonly onFill{target}?: (initial: {target}FormInitial) => void;",
+            form.operation
+        )
+        .expect("write");
+    }
+    source.push_str("  /** Called with every outcome this screen reads. */\n");
+    writeln!(
+        source,
+        "  readonly onOutcome?: (outcome: Outcome<{stem}Result>) => void;\n}}"
+    )
+    .expect("write");
+
+    // The component.
+    writeln!(
+        source,
+        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}TableLabel = {:?};",
+        screen_label(screen)
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "\n/**\n * The table for `{}`: the DataTable over `{definition}`.\n *\n * It loads when it mounts. A change to a filter, a sort of rows the load did\n * not read in full, a cap change and a refresh each start a new load.\n */",
+        screen.contract.operation
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "export function {stem}Table(props: {stem}TableProps) {{"
+    )
+    .expect("write");
+    if filtered {
+        writeln!(
+            source,
+            "  const [scope, setScope] = createSignal<Partial<{stem}Request>>({{}});"
+        )
+        .expect("write");
+    }
+    let sort = paging
+        .sort
+        .and(paging.sort_field_input.or(paging.sort_direction_input));
+    let parameters = match (paging.limit_input.is_some(), sort.is_some()) {
+        (_, true) => "limit, sort",
+        (true, false) => "limit",
+        (false, false) => "",
+    };
+    writeln!(
+        source,
+        "  const load = createTableLoad<{stem}Row>({definition}, async ({parameters}) => {{"
+    )
+    .expect("write");
+    let scope = if filtered {
+        "...scope(), ...props.fixed"
+    } else {
+        "...props.fixed"
+    };
+    let limit = paging.limit_input.map(|path| {
+        runtime.insert("writeMember");
+        format!(
+            "\n    request = writeMember(request, {}, limit) as {stem}Request;",
+            member_literal(path)
+        )
+    });
+    writeln!(
+        source,
+        "    {} request = {{ {scope} }} as {stem}Request;{}",
+        if limit.is_some() || sort.is_some() {
+            "let"
+        } else {
+            "const"
+        },
+        limit.unwrap_or_default()
+    )
+    .expect("write");
+    if sort.is_some() {
+        runtime.insert("writeMember");
+        source.push_str("    if (sort !== undefined) {\n");
+        for (path, member) in [
+            (paging.sort_field_input, "field"),
+            (paging.sort_direction_input, "direction"),
+        ] {
+            if let Some(path) = path {
+                writeln!(
+                    source,
+                    "      request = writeMember(request, {}, sort.{member}) as {stem}Request;",
+                    member_literal(path)
+                )
+                .expect("write");
+            }
+        }
+        source.push_str("    }\n");
+    }
+    writeln!(
+        source,
+        "    const outcome = await {function}(props.transport, [request]);\n    props.onOutcome?.(outcome);\n    if (outcome.status !== \"completed\") {{\n      announceOutcome(outcome, {stem}TableLabel);\n    }}\n    return outcome;\n  }});"
+    )
+    .expect("write");
+    source.push_str("  void load.load();\n");
+    // A write can change the rows a table shows, so the table loads again.
+    source.push_str("  onCleanup(afterWrites(props.transport, () => void load.load()));\n");
+    if filtered {
+        // The scope bar hands over only the filters that hold a value, so an
+        // emptied filter sends no member, never an empty list.
+        runtime.insert("writeMember");
+        ui.insert("type DataTableScopeFilter");
+        writeln!(
+            source,
+            "\n  const changeScope = (filters: readonly DataTableScopeFilter[]) => {{\n    let next: Partial<{stem}Request> = {{}};\n    for (const filter of filters) {{\n      switch (filter.field) {{"
+        )
+        .expect("write");
+        for filter in paging.filters {
+            let Some(path) = paging
+                .filter_inputs
+                .iter()
+                .find(|path| crate::client_plan::filter_input(path, &filter.field))
+            else {
+                continue;
+            };
+            let value = if path.ends_with("[]") {
+                "[...filter.values]"
+            } else {
+                "filter.values[0]!"
+            };
+            writeln!(
+                source,
+                "        case {}:\n          next = writeMember(next, {}, {value});\n          break;",
+                serde_json::Value::String(column_member(&filter.field, &screen.contract.operation)?),
+                member_literal(path)
+            )
+            .expect("write");
+        }
+        source.push_str("      }\n    }\n    setScope(next);\n    void load.load();\n  };\n");
+    }
+
+    // A column that names a record shows the text its record read returns.
+    // The markup holds the text, which Solid tracks, so the cell follows the
+    // read when it answers.
+    let columns = if screen.resolved_columns.is_empty() {
+        format!("{definition}.columns")
+    } else {
+        source.push('\n');
+        emit_record_labels(source, screen, runtime, ui, bindings, foreign)?;
+        writeln!(
+            source,
+            "\n  const columns = {definition}.columns.map((column) => {{\n    switch (column.field) {{"
+        )
+        .expect("write");
+        for resolved in &screen.resolved_columns {
+            writeln!(
+                source,
+                "      case {}:\n        return {{ ...column, cell: (value: unknown) => <>{{{}(value as string | null)}}</> }};",
+                serde_json::Value::String(column_member(resolved.column, &screen.contract.operation)?),
+                labels_name(resolved)
+            )
+            .expect("write");
+        }
+        source.push_str("      default:\n        return column;\n    }\n  });\n");
+        "columns".to_owned()
+    };
+
+    // The buttons of one row: each row link, then each row form.
+    let actions = !screen.row_links.is_empty() || !screen.row_forms.is_empty();
+    if actions {
+        ui.insert("Button");
+        writeln!(source, "\n  const actions = (row: {stem}Row) => (\n    <>").expect("write");
+        for link in &screen.row_links {
+            let target = crate::client_ts::operation_stem(link.operation);
+            writeln!(
+                source,
+                "      <Show when={{props.onOpen{target}}}>\n        <Button type=\"button\" variant=\"outline\" size=\"sm\" onClick={{() => props.onOpen{target}?.(row)}}>\n          {}\n        </Button>\n      </Show>",
+                link_label(link.operation)
+            )
+            .expect("write");
+        }
+        for form in &screen.row_forms {
+            let target = crate::client_ts::operation_stem(form.operation);
+            let mut initial = format!("{{}} as {target}FormInitial");
+            for (field, input) in &form.pairs {
+                initial = format!(
+                    "writeMember({initial}, {}, row.{})",
+                    member_literal(input),
+                    crate::client_ts::to_camel(field),
+                );
+            }
+            runtime.insert("writeMember");
+            writeln!(
+                source,
+                "      <Show when={{props.onFill{target}}}>\n        <Button\n          type=\"button\"\n          variant=\"outline\"\n          size=\"sm\"\n          onClick={{() => props.onFill{target}?.({initial})}}\n        >\n          {}\n        </Button>\n      </Show>",
+                link_label(form.operation)
+            )
+            .expect("write");
+        }
+        source.push_str("    </>\n  );\n");
+    }
+
+    // The markup.
+    source.push_str("\n  return (\n    <TableScreen>\n");
+    writeln!(
+        source,
+        "      <DataTable\n        name={}\n        columns={{{columns}}}\n        rowId={{{definition}.rowId}}\n        rows={{load.state().rows}}\n        fullyRead={{load.state().fullyRead}}\n        busy={{load.state().busy}}\n        refusal={{load.state().refusal}}\n        cap={{load.state().cap}}\n        onCapChange={{(cap) => void load.load(cap)}}\n        onRefresh={{() => void load.load()}}\n        startedAt={{load.state().startedAt}}\n        endedAt={{load.state().endedAt}}\n        sortFields={{{definition}.sortFields}}\n        sortMaxFields={{{definition}.sortMaxFields}}\n        onSortChange={{load.sortBy}}\n        scopeFilters={{{definition}.scopeFilters}}\n        onScopeChange={{{}}}",
+        // The file name of a CSV export starts with the model.
+        serde_json::Value::String(screen.model.replace('_', "-")),
+        if filtered {
+            "changeScope"
+        } else {
+            "() => void load.load()"
+        }
+    )
+    .expect("write");
+    if actions {
+        source.push_str("        rowActions={actions}\n");
+    }
+    source.push_str("      />\n    </TableScreen>\n  );\n}\n");
     Ok(())
 }
 
@@ -2510,24 +2831,7 @@ fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>, ui: &mut BTreeSet
     let Some(paging) = screen.paging.as_ref() else {
         return;
     };
-    for path in &paging.filter_inputs {
-        let repeated = path.ends_with("[]");
-        let value = if repeated {
-            format!(
-                "change({}, value.split(\",\").filter((part) => part !== \"\"))",
-                member_literal(path)
-            )
-        } else {
-            format!("change({}, value)", member_literal(path))
-        };
-        ui.insert("TextField");
-        writeln!(
-            source,
-            "        <TextField\n          label={:?}\n          type=\"text\"\n          onChange={{(value) => {value}}}\n        />",
-            control_label(screen, path)
-        )
-        .expect("write");
-    }
+    emit_filter_controls(source, screen, ui);
     if let (Some(path), Some(sort)) = (paging.sort_field_input, paging.sort) {
         emit_select(source, path, &sort.fields, &control_label(screen, path), ui);
     }
@@ -2550,6 +2854,35 @@ fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>, ui: &mut BTreeSet
             limit.maximum,
             limit.default,
             member_literal(path)
+        )
+        .expect("write");
+    }
+}
+
+/// One text control for each declared filter of a table screen.
+fn emit_filter_controls(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    ui: &mut BTreeSet<&'static str>,
+) {
+    let Some(paging) = screen.paging.as_ref() else {
+        return;
+    };
+    for path in &paging.filter_inputs {
+        let repeated = path.ends_with("[]");
+        let value = if repeated {
+            format!(
+                "change({}, value.split(\",\").filter((part) => part !== \"\"))",
+                member_literal(path)
+            )
+        } else {
+            format!("change({}, value)", member_literal(path))
+        };
+        ui.insert("TextField");
+        writeln!(
+            source,
+            "        <TextField\n          label={:?}\n          type=\"text\"\n          onChange={{(value) => {value}}}\n        />",
+            control_label(screen, path)
         )
         .expect("write");
     }

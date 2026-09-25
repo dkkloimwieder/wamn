@@ -4,37 +4,26 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
   afterWrites,
-  appendPage,
   cellText,
   checkedMember,
-  emptyPage,
-  failedRead,
-  firstPage,
-  hasNextPage,
   newIdempotencyKey,
   newRequestId,
   readMember,
   refusalMarks,
   refusalSentence,
   refusedMember,
-  startRead,
-  type JsonValue,
   type Outcome,
-  type PageState,
   type Transport,
   type Uuid,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   DetailItem,
   DetailList,
   FieldError,
@@ -43,10 +32,9 @@ import {
   FormDone,
   TableScreen,
   TextField,
-  WindowedTable,
   announceOutcome,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
+  type DataTableScopeFilter,
 } from "@wamn/ui";
 import {
   LOCATION_CREATE_REQUEST_FIELDS,
@@ -228,38 +216,12 @@ export function LocationGetDetail(props: LocationGetDetailProps) {
   );
 }
 
-/** Columns of `wamn-wms:location/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, LocationQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "created at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "locationCode",
-    header: "location code",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "rowVersion",
-    header: "row version",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
-  },
-];
-
 /** What the table for `wamn-wms:location/query@1.0.0` takes. */
 export interface LocationQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<LocationQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: LocationQueryRow) => void;
   /** Called when the operator opens `wamn-wms:location/get@1.0.0` from one row. */
   readonly onOpenLocationGet?: (row: LocationQueryRow) => void;
   /** Called with the values one row hands to `wamn-wms:inventory/move@1.0.0`. */
@@ -276,180 +238,101 @@ export interface LocationQueryTableProps {
 export const LocationQueryTableLabel = "query";
 
 /**
- * The table for `wamn-wms:location/query@1.0.0`.
+ * The table for `wamn-wms:location/query@1.0.0`: the DataTable over `LOCATION_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function LocationQueryTable(props: LocationQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<LocationQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as LocationQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as LocationQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const [scope, setScope] = createSignal<Partial<LocationQueryRequest>>({});
+  const load = createTableLoad<LocationQueryRow>(LOCATION_QUERY_TABLE, async (limit) => {
+    let request = { ...scope(), ...props.fixed } as LocationQueryRequest;
+    request = writeMember(request, ["limit"], limit) as LocationQueryRequest;
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, LocationQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<LocationQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
-  };
-
-  const columns: ColumnDef<GridFeatures, LocationQueryRow>[] = [
-    ...QUERY_COLUMNS,
-    {
-      id: "openLocationGet",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onOpenLocationGet}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onOpenLocationGet?.(cell.row.original)}
-          >
-            get
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventoryMove",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventoryMove}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventoryMove?.(writeMember({} as InventoryMoveFormInitial, ["value", "toLocationId"], cell.row.original.id))}
-          >
-            move
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventorySplit",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventorySplit}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "toLocationId"], cell.row.original.id))}
-          >
-            split
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillPalletCreate",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillPalletCreate}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillPalletCreate?.(writeMember({} as PalletCreateFormInitial, ["locationId"], cell.row.original.id))}
-          >
-            create
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as LocationQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+    return outcome;
   });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
-  return (
-    <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="location code"
-            type="text"
-            onChange={(value) => change(["filter", "locationCode"], value.split(",").filter((part) => part !== ""))}
-          />
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
+  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
+    let next: Partial<LocationQueryRequest> = {};
+    for (const filter of filters) {
+      switch (filter.field) {
+        case "locationCode":
+          next = writeMember(next, ["filter", "locationCode"], [...filter.values]);
+          break;
+      }
+    }
+    setScope(next);
+    void load.load();
+  };
+
+  const actions = (row: LocationQueryRow) => (
+    <>
+      <Show when={props.onOpenLocationGet}>
+        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenLocationGet?.(row)}>
+          get
+        </Button>
+      </Show>
+      <Show when={props.onFillInventoryMove}>
         <Button
           type="button"
           variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
+          size="sm"
+          onClick={() => props.onFillInventoryMove?.(writeMember({} as InventoryMoveFormInitial, ["value", "toLocationId"], row.id))}
         >
-          next page
+          move
         </Button>
-      </FormActions>
+      </Show>
+      <Show when={props.onFillInventorySplit}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "toLocationId"], row.id))}
+        >
+          split
+        </Button>
+      </Show>
+      <Show when={props.onFillPalletCreate}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onFillPalletCreate?.(writeMember({} as PalletCreateFormInitial, ["locationId"], row.id))}
+        >
+          create
+        </Button>
+      </Show>
+    </>
+  );
+
+  return (
+    <TableScreen>
+      <DataTable
+        name="location"
+        columns={LOCATION_QUERY_TABLE.columns}
+        rowId={LOCATION_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={LOCATION_QUERY_TABLE.sortFields}
+        sortMaxFields={LOCATION_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={LOCATION_QUERY_TABLE.scopeFilters}
+        onScopeChange={changeScope}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }

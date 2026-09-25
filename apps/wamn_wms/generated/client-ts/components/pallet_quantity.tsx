@@ -3,42 +3,26 @@
 // `pallet_quantity` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
+import { Show, createResource, onCleanup } from "solid-js";
 import {
   afterWrites,
-  appendPage,
   cellText,
-  emptyPage,
-  failedRead,
-  firstPage,
-  hasNextPage,
   readMember,
-  startRead,
-  type JsonValue,
   type Outcome,
-  type PageState,
   type Transport,
   type Uuid,
-  writeControl,
   writeMember,
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   DetailItem,
   DetailList,
   FieldError,
-  FieldGroup,
-  FormActions,
   TableScreen,
-  TextField,
-  WindowedTable,
   announceOutcome,
   createRecordLabels,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
 } from "@wamn/ui";
 import {
   get,
@@ -126,8 +110,6 @@ export interface PalletQuantityQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<PalletQuantityQueryRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: PalletQuantityQueryRow) => void;
   /** Called when the operator opens `wamn-wms:pallet-quantity/get@1.0.0` from one row. */
   readonly onOpenPalletQuantityGet?: (row: PalletQuantityQueryRow) => void;
   /** Called with every outcome this screen reads. */
@@ -138,54 +120,24 @@ export interface PalletQuantityQueryTableProps {
 export const PalletQuantityQueryTableLabel = "query";
 
 /**
- * The table for `wamn-wms:pallet-quantity/query@1.0.0`.
+ * The table for `wamn-wms:pallet-quantity/query@1.0.0`: the DataTable over `PALLET_QUANTITY_QUERY_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
-  const [controls, setControls] = createSignal<Partial<PalletQuantityQueryRequest>>({});
-  const [page, setPage] = createSignal<PageState<PalletQuantityQueryRow>>(emptyPage<PalletQuantityQueryRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as PalletQuantityQueryRequest;
-    const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as PalletQuantityQueryRequest);
-    const outcome = await query(props.transport, [sent]);
+  const load = createTableLoad<PalletQuantityQueryRow>(PALLET_QUANTITY_QUERY_TABLE, async (limit) => {
+    let request = { ...props.fixed } as PalletQuantityQueryRequest;
+    request = writeMember(request, ["limit"], limit) as PalletQuantityQueryRequest;
+    const outcome = await query(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, PalletQuantityQueryTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.item;
-    setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<PalletQuantityQueryRow>());
-    void read(null);
-  };
-
-  const change = (path: readonly string[], value: JsonValue) => {
-    setControls((current) => writeControl(current, path, value));
-    restart();
-  };
+    return outcome;
+  });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
   const palletGetLabels = createRecordLabels(async (key) => {
     const request = writeMember({}, ["id"], key) as PalletGetRequest;
@@ -206,107 +158,49 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     return text == null ? null : String(text);
   });
 
-  const columns: ColumnDef<GridFeatures, PalletQuantityQueryRow>[] = [
-    {
-      accessorKey: "createdAt",
-      header: "created at",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-    },
-    {
-      accessorKey: "id",
-      header: "id",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-    },
-    {
-      accessorKey: "palletId",
-      header: "pallet id",
-      cell: (cell) => <>{palletGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      accessorKey: "productId",
-      header: "product id",
-      cell: (cell) => <>{productGetLabels(cell.getValue() as string | null)}</>,
-    },
-    {
-      accessorKey: "quantity",
-      header: "quantity",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
-    },
-    {
-      accessorKey: "status",
-      header: "status",
-      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-    },
-    {
-      id: "openPalletQuantityGet",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onOpenPalletQuantityGet}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onOpenPalletQuantityGet?.(cell.row.original)}
-          >
-            get
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as PalletQuantityQueryRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+  const columns = PALLET_QUANTITY_QUERY_TABLE.columns.map((column) => {
+    switch (column.field) {
+      case "palletId":
+        return { ...column, cell: (value: unknown) => <>{palletGetLabels(value as string | null)}</> };
+      case "productId":
+        return { ...column, cell: (value: unknown) => <>{productGetLabels(value as string | null)}</> };
+      default:
+        return column;
+    }
   });
+
+  const actions = (row: PalletQuantityQueryRow) => (
+    <>
+      <Show when={props.onOpenPalletQuantityGet}>
+        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenPalletQuantityGet?.(row)}>
+          get
+        </Button>
+      </Show>
+    </>
+  );
 
   return (
     <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FieldGroup>
-          <TextField
-            label="limit"
-            type="number"
-            min={1}
-            max={100}
-            value="100"
-            onChange={(value) => change(["limit"], value)}
-          />
-        </FieldGroup>
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
-      <FormActions>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!hasNextPage(page())}
-          onClick={() => void read(page().cursor)}
-        >
-          next page
-        </Button>
-      </FormActions>
+      <DataTable
+        name="pallet-quantity"
+        columns={columns}
+        rowId={PALLET_QUANTITY_QUERY_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={PALLET_QUANTITY_QUERY_TABLE.sortFields}
+        sortMaxFields={PALLET_QUANTITY_QUERY_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={PALLET_QUANTITY_QUERY_TABLE.scopeFilters}
+        onScopeChange={() => void load.load()}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }
