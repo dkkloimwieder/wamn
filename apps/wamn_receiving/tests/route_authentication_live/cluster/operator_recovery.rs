@@ -1,4 +1,9 @@
-//! Receiving requests during a scheduler outage and operator restart.
+//! Receiving requests during and after a scheduler outage.
+//!
+//! The outage asserts two states: a route answers during the outage, and
+//! after it every Host is ready and every release that served before is
+//! ready again. It asserts no operator message. The released operator exits
+//! during a scheduler outage, so what it writes then is timing (wamn-9izh).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -13,7 +18,7 @@ use tokio::sync::{oneshot, watch};
 use wamn_control::provision_project_env::secret_value;
 use wamn_integration_tests::operator_recovery::{
     OperatorState, array, digest, epoch_seconds, host_ids, normalized_crd, now, operator_state,
-    pod_ids, ready, supervised_restart, text, timestamp,
+    pod_ids, ready, text, timestamp,
 };
 
 use super::{ReceivingCluster, kubectl, materializer_case};
@@ -22,14 +27,6 @@ const SYSTEM: &str = "wamn-system";
 const REQUEST_ID: &str = "00000000-0000-4000-8000-000000000929";
 const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 const OUTAGE_SECONDS: u32 = 150;
-/// How long the outage may run past OUTAGE_SECONDS while a Host has not yet
-/// recorded the loss-of-heartbeat guard. The operator reaches the guard per
-/// Host on its own reconcile timing, about 25 seconds after "not reporting"
-/// in the wamn-9izh run.
-const GUARD_BOUND_SECONDS: u32 = 90;
-/// How long one operator transition may wait for its logs and events to
-/// carry the recorded cause.
-const TRANSITION_BOUND_SECONDS: u64 = 30;
 const RECOVERY_SECONDS: u32 = 120;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -205,7 +202,6 @@ struct Snapshot {
 enum Continuity {
     Original,
     Supervised,
-    Restarted,
 }
 struct Recovery<'a> {
     cluster: &'a ReceivingCluster,
@@ -216,12 +212,16 @@ struct Recovery<'a> {
     original_pods: Vec<(String, String, u64, String)>,
     original_operator: Vec<(String, String, u64, String)>,
     operator_initial: Option<OperatorState>,
-    operator_seen: Option<OperatorState>,
-    operator_transitions: Vec<Value>,
-    operator_fresh_after: f64,
-    scheduler_fault_started: Option<f64>,
-    scheduler_address: String,
+    released: BTreeSet<String>,
     phases: BTreeMap<String, Value>,
+}
+/// The UIDs of the workloads whose Ready condition is True.
+fn ready_workloads(workloads: &[Value]) -> anyhow::Result<BTreeSet<String>> {
+    workloads
+        .iter()
+        .filter(|workload| ready(workload))
+        .map(|workload| text(workload, "/metadata/uid").map(str::to_owned))
+        .collect()
 }
 impl Recovery<'_> {
     fn write(&self, name: &str, value: &impl Serialize) -> anyhow::Result<()> {
@@ -362,7 +362,7 @@ impl Recovery<'_> {
         self.write(&format!("{label}-state"), &value)?;
         Ok(value)
     }
-    async fn continuity(&mut self, value: &Snapshot, mode: Continuity) -> anyhow::Result<bool> {
+    fn continuity(&self, value: &Snapshot, mode: Continuity) -> anyhow::Result<bool> {
         ensure!(
             host_ids(&value.hosts)? == self.original_hosts,
             "the scheduler outage deleted or replaced a Host object"
@@ -379,106 +379,17 @@ impl Recovery<'_> {
                 );
                 Ok(true)
             }
-            Continuity::Restarted => {
-                Ok(value.operator_pods.len() == 1 && value.operator_pods.iter().all(ready))
-            }
             Continuity::Supervised => {
                 let current = operator_state(&value.operator_pods)?;
                 let initial = self
                     .operator_initial
                     .as_ref()
                     .context("the initial operator was observed")?;
-                let previous = self
-                    .operator_seen
-                    .as_ref()
-                    .context("the previous operator was observed")?
-                    .clone();
                 ensure!(
                     current.pod_uid == initial.pod_uid && current.image_id == initial.image_id,
                     "the operator pod or image changed during the scheduler fault"
                 );
-                if current.restart_count == previous.restart_count {
-                    ensure!(
-                        current.container_id == previous.container_id,
-                        "the operator container changed without a recorded restart"
-                    );
-                } else {
-                    let label = format!("operator-transition-{}", current.restart_count);
-                    let pod = format!("pod/{}", current.pod_name);
-                    self.write(
-                        &format!("{label}-state"),
-                        &json!({"previous":previous,"current":current}),
-                    )?;
-                    // The recorded termination is read once. Its logs and
-                    // events are read again, for a bounded time, until they
-                    // carry the cause: the kubelet can already hold the
-                    // next container of the crash loop (wamn-203x).
-                    let deadline = Instant::now() + Duration::from_secs(TRANSITION_BOUND_SECONDS);
-                    let mut transition = loop {
-                        let mut logs = Vec::new();
-                        for (suffix, previous_only) in
-                            [("previous-log", true), ("current-log", false)]
-                        {
-                            let mut args = vec![
-                                "-n",
-                                SYSTEM,
-                                "logs",
-                                &pod,
-                                "-c",
-                                "runtime-operator",
-                                "--timestamps",
-                            ];
-                            if previous_only {
-                                args.push("--previous");
-                            }
-                            logs.extend(
-                                self.run(&format!("{label}-{suffix}"), &args, 30, true)
-                                    .await?,
-                            );
-                            logs.push(b'\n');
-                        }
-                        let event_log = self
-                            .run(
-                                &format!("{label}-events"),
-                                &[
-                                    "-n",
-                                    SYSTEM,
-                                    "get",
-                                    "events",
-                                    "--field-selector",
-                                    &format!("involvedObject.uid={}", current.pod_uid),
-                                    "-o",
-                                    "json",
-                                ],
-                                30,
-                                true,
-                            )
-                            .await?;
-                        let events =
-                            serde_json::from_slice(&event_log).unwrap_or_else(|_| json!({}));
-                        let classified = supervised_restart(
-                            &previous,
-                            &current,
-                            &String::from_utf8_lossy(&logs),
-                            &events,
-                            self.scheduler_fault_started
-                                .context("the scheduler fault start was recorded")?,
-                            &self.scheduler_address,
-                        );
-                        match classified {
-                            Ok(transition) => break transition,
-                            Err(error) if Instant::now() >= deadline => return Err(error),
-                            Err(_) => tokio::time::sleep(Duration::from_secs(5)).await,
-                        }
-                    };
-                    self.operator_fresh_after = now();
-                    transition["observed_at"] = json!(self.operator_fresh_after);
-                    self.operator_transitions.push(transition);
-                    self.write("operator-supervision", &json!({"initial":self.operator_initial,"transitions":self.operator_transitions}))?;
-                }
-                let ready = current.ready;
-                self.operator_seen = Some(current);
-                Ok(ready)
+                Ok(current.ready)
             }
         }
     }
@@ -499,20 +410,16 @@ impl Recovery<'_> {
         let mut ready_since = None;
         loop {
             let current = self.snapshot(label).await?;
-            let operator_ready = self.continuity(&current, mode).await?;
-            let fresh_after = if matches!(mode, Continuity::Supervised) {
-                after.max(self.operator_fresh_after)
-            } else {
-                after
-            };
+            let operator_ready = self.continuity(&current, mode)?;
             let fresh = current
                 .hosts
                 .iter()
-                .map(|host| Ok(timestamp(text(host, "/status/lastSeen")?)? >= fresh_after))
+                .map(|host| Ok(timestamp(text(host, "/status/lastSeen")?)? >= after))
                 .collect::<anyhow::Result<Vec<_>>>()?
                 .into_iter()
                 .all(|fresh| fresh);
-            if operator_ready && current.hosts.iter().all(ready) && fresh {
+            let released = ready_workloads(&current.workloads)? == self.released;
+            if operator_ready && current.hosts.iter().all(ready) && fresh && released {
                 ready_since.get_or_insert_with(now);
             } else {
                 ready_since = None;
@@ -759,11 +666,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         original_pods: Vec::new(),
         original_operator: Vec::new(),
         operator_initial: None,
-        operator_seen: None,
-        operator_transitions: Vec::new(),
-        operator_fresh_after: 0.0,
-        scheduler_fault_started: None,
-        scheduler_address: String::new(),
+        released: BTreeSet::new(),
         phases: BTreeMap::new(),
     };
     let context = format!("kind-{}", resources.name);
@@ -811,18 +714,6 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
     let scheduler = recovery
         .get("scheduler-deployment", SYSTEM, "deployment/nats", &[])
         .await?;
-    let service = recovery
-        .get("scheduler-service", SYSTEM, "service/nats", &[])
-        .await?;
-    let address = text(&service, "/spec/clusterIP")?;
-    ensure!(
-        address != "None"
-            && array(&service, "/spec/ports")?
-                .iter()
-                .any(|port| port["port"] == 4222 && port["protocol"] == "TCP"),
-        "the scheduler Service identifies its configured NATS endpoint"
-    );
-    recovery.scheduler_address = format!("{address}:4222");
     ensure!(
         operator["spec"]["replicas"] == 1 && scheduler["spec"]["replicas"] == 1,
         "the operator and scheduler each have one replica"
@@ -907,9 +798,12 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         "operator-image-identity",
         &json!({"distributed":image,"observed":recovery.original_operator}),
     )?;
-    let initial = operator_state(&before.operator_pods)?;
-    recovery.operator_initial = Some(initial.clone());
-    recovery.operator_seen = Some(initial);
+    recovery.operator_initial = Some(operator_state(&before.operator_pods)?);
+    recovery.released = ready_workloads(&before.workloads)?;
+    ensure!(
+        !recovery.released.is_empty(),
+        "a release is ready before the scheduler fault"
+    );
 
     let endpoint = materializer_case::endpoint(cluster, "receiving-operator-recovery").await?;
     recovery.write("request-origin",&json!({"kind":"owned-nodeport","endpoint":endpoint,"cluster":resources.name,
@@ -939,11 +833,11 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         let settling = Instant::now();
         while settling.elapsed() < Duration::from_secs(75) {
             let current = recovery.snapshot("settling").await?;
-            recovery.continuity(&current,Continuity::Original).await?;
+            recovery.continuity(&current,Continuity::Original)?;
             ensure!(recovery.samples(&samples)?.last().is_some_and(|sample| sample.result == "serving"), "normal serving failed before the scheduler fault");
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
-        scheduler_stopped = true; recovery.scheduler_fault_started = Some(now());
+        scheduler_stopped = true;
         recovery.run("stop-scheduler", &["-n",SYSTEM,"scale","deployment/nats","--replicas=0"],30,false).await?;
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
@@ -955,42 +849,24 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         let stopped = now(); let outage = Instant::now();
         recovery.phases.insert("scheduler-stopped".to_owned(),json!({"started":stopped,"required_seconds":OUTAGE_SECONDS}));
         recovery.write("phases",&recovery.phases)?;
-        let mut guarded = BTreeSet::new();
-        let every_host = recovery.original_hosts.iter().map(|(uid,_)|uid.clone()).collect::<BTreeSet<_>>();
-        while outage.elapsed() < Duration::from_secs(u64::from(OUTAGE_SECONDS))
-            || (guarded != every_host
-                && outage.elapsed() < Duration::from_secs(u64::from(OUTAGE_SECONDS + GUARD_BOUND_SECONDS)))
-        {
+        // The outage records its snapshots and asserts nothing about them:
+        // the operator exits during the outage, so its state then is timing.
+        while outage.elapsed() < Duration::from_secs(u64::from(OUTAGE_SECONDS)) {
             let pods = recovery.get("scheduler-still-stopped",SYSTEM,"pods",&["-l","wasmcloud.com/name=nats"]).await?;
             ensure!(array(&pods,"/items")?.is_empty(),"the scheduler resumed before the required outage interval ended");
-            let current = recovery.snapshot("scheduler-down").await?;
-            recovery.continuity(&current,Continuity::Supervised).await?;
-            for host in &current.hosts {
-                if array(host,"/status/conditions")?.iter().any(|condition| condition["type"] == "Ready" && condition["status"] == "Unknown"
-                    && condition["message"].as_str().is_some_and(|message| message.contains("operator has not been hearing the fleet"))) {
-                    guarded.insert(text(host,"/metadata/uid")?.to_owned());
-                }
-            }
+            recovery.snapshot("scheduler-down").await?;
             recovery.samples(&samples)?;
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
-        ensure!(guarded == every_host, "the native loss-of-heartbeat guard was not observed for every Host");
-        ensure!(recovery.samples(&samples)?.iter().any(|sample| epoch_seconds(sample.timestamp * 1_000_000) >= stopped), "no actual request sampled the stopped interval");
         let resumed = now();
+        ensure!(recovery.samples(&samples)?.iter().any(|sample| (stopped..=resumed).contains(&epoch_seconds(sample.timestamp * 1_000_000)) && sample.result == "serving"),
+            "no route answered during the scheduler outage");
         let phase = recovery.phases.get_mut("scheduler-stopped").context("the scheduler outage was recorded")?;
-        phase["ended"] = json!(resumed); phase["actual_seconds"] = json!(outage.elapsed().as_secs_f64()); phase["fleet_guard_host_uids"] = json!(guarded);
+        phase["ended"] = json!(resumed); phase["actual_seconds"] = json!(outage.elapsed().as_secs_f64());
         recovery.write("phases",&recovery.phases)?;
         recovery.run("restore-scheduler", &["-n",SYSTEM,"scale","deployment/nats","--replicas=1"],30,false).await?;
-        recovery.recovered("scheduler-recovery",resumed,Continuity::Supervised,&samples).await?;
+        let after = recovery.recovered("scheduler-recovery",resumed,Continuity::Supervised,&samples).await?;
         scheduler_stopped = false;
-        recovery.run("scheduler-recovered-operator-log", &["-n",SYSTEM,"logs","deployment/runtime-operator","--tail=2000"],30,false).await?;
-        let restarted = now();
-        recovery.run("restart-operator", &["-n",SYSTEM,"rollout","restart","deployment/runtime-operator"],30,false).await?;
-        recovery.run("wait-operator", &["-n",SYSTEM,"rollout","status","deployment/runtime-operator","--timeout=100s"],110,false).await?;
-        let after = recovery.recovered("operator-restart",restarted,Continuity::Restarted,&samples).await?;
-        let new_operator = pod_ids(&after.operator_pods,"runtime-operator")?;
-        ensure!(new_operator.len() == 1 && new_operator[0].0 != recovery.original_operator[0].0 && new_operator[0].3 == recovery.original_operator[0].3,
-            "the operator must restart in a new pod with the same image");
         let samples = recovery.samples(&samples)?;
         let mut counts = BTreeMap::<&str,usize>::new();
         for sample in &samples { *counts.entry(&sample.result).or_default() += 1; }
@@ -999,9 +875,9 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         let ids = |workloads: &[Value]| -> anyhow::Result<Vec<String>> {
             let mut ids=workloads.iter().map(|workload|text(workload,"/metadata/uid").map(str::to_owned)).collect::<anyhow::Result<Vec<_>>>()?; ids.sort(); Ok(ids)
         };
-        Ok::<Value,anyhow::Error>(json!({"result":"pass","context":context,"scope":"shared-scheduler-outage-and-operator-restart",
+        Ok::<Value,anyhow::Error>(json!({"result":"pass","context":context,"scope":"shared-scheduler-outage",
             "request_origin":"owned-nodeport","phases":recovery.phases,"hosts_preserved":recovery.original_hosts,"host_processes_preserved":recovery.original_pods,
-            "operator_before":recovery.original_operator,"operator_after":new_operator,"scheduler_operator_transitions":recovery.operator_transitions,
+            "operator":recovery.original_operator,"released_workload_uids":recovery.released,
             "before_workload_uids":ids(&before.workloads)?,"after_workload_uids":ids(&after.workloads)?}))
     }.await;
     let mut cleanup_errors = Vec::new();

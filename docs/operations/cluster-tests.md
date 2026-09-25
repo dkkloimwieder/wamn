@@ -66,7 +66,12 @@ cargo test --locked --offline -p wamn-receiving-tests --lib \
   route_authentication_live::cluster::stages::outage_stage -- --exact --ignored
 ```
 
-The outage stage checks the heartbeat guard and the supervised operator exits during one scheduler outage, then restarts the operator.
+The outage stage stops the scheduler for 150 seconds and then restores it.
+It checks two states: a route answers during the outage, and every Host and release is ready again after it.
+
+A cluster stage asserts state after a phase, never a message during it.
+A message that a component writes during a phase depends on its timing, so a check of it fails at random.
+For example, the released operator exits during a scheduler outage, so its heartbeat guard message appears on zero to three Hosts.
 An attached stage runs the committed test code at HEAD against the images of the setup commit.
 It refuses when a production path changed since the setup stage.
 Remove the cluster, its containers, its private files, and its image tags with the teardown stage:

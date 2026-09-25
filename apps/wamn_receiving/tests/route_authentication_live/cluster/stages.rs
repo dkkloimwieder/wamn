@@ -200,8 +200,8 @@ pub(super) async fn startup(cluster: &ReceivingCluster, ready: &Ready) -> anyhow
     startup_case::assert_startup(cluster, &ready.carrier, &ready.issuer, &ready.instance).await
 }
 
-/// Stop the scheduler, check the heartbeat guard and the supervised operator
-/// exits, restore it, and restart the operator.
+/// Stop the scheduler, check that a route answers during the outage, restore
+/// it, and check that every Host and release is ready again.
 pub(super) async fn outage(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     super::operator_recovery::assert_recovery(cluster).await?;
     fs::copy(
