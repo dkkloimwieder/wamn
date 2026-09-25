@@ -443,6 +443,22 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
   );
 }
 
+/** The table definition of `wamn-wms:location/query@1.0.0`. */
+export const LOCATION_QUERY_TABLE = {
+  read: "query",
+  rowId: "id",
+  pageMaximum: 100,
+  scopeFilters: ["locationCode"],
+  sortFields: [],
+  sortDirections: [],
+  columns: [
+    { field: "createdAt", label: "created at", type: "timestamptz" },
+    { field: "id", label: "id", type: "uuid" },
+    { field: "locationCode", label: "location code", type: "text" },
+    { field: "rowVersion", label: "row version", type: "int32" },
+  ],
+} as const;
+
 /** What an operator types for `wamn-wms:location/update@1.0.0`. */
 const UPDATE_INPUT = z.object({
   change: z

@@ -378,6 +378,27 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
   );
 }
 
+/** The table definition of `wamn-receiving:purchase-order/query@1.0.0`. */
+export const PURCHASE_ORDER_QUERY_TABLE = {
+  read: "query",
+  rowId: "id",
+  pageMaximum: 100,
+  scopeFilters: ["purchaseOrderNumber", "status", "supplierId"],
+  sortFields: ["created_at", "purchase_order_number", "status"],
+  sortDirections: ["ascending", "descending"],
+  columns: [
+    { field: "createdAt", label: "Created", type: "timestamptz" },
+    { field: "createdBy", label: "Created by", type: "uuid" },
+    { field: "id", label: "id", type: "uuid" },
+    { field: "purchaseOrderNumber", label: "Order number", type: "text" },
+    { field: "rowVersion", label: "Revision", type: "int32" },
+    { field: "status", label: "Status", type: "text" },
+    { field: "supplierId", label: "Supplier", type: "uuid" },
+    { field: "updatedAt", label: "Updated", type: "timestamptz" },
+    { field: "updatedBy", label: "Updated by", type: "uuid" },
+  ],
+} as const;
+
 /** What an operator types for `wamn-receiving:purchase-order/update@1.0.0`. */
 const UPDATE_INPUT = z.object({
   change: z

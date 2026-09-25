@@ -586,3 +586,24 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
     </TableScreen>
   );
 }
+
+/** The table definition of `wamn-wms:pallet/query@1.0.0`. */
+export const PALLET_QUERY_TABLE = {
+  read: "query",
+  rowId: "id",
+  pageMaximum: 100,
+  scopeFilters: ["locationId", "palletCode", "status"],
+  sortFields: ["created_at", "location_id", "pallet_code", "updated_at"],
+  sortDirections: ["ascending", "descending"],
+  columns: [
+    { field: "createdAt", label: "created at", type: "timestamptz" },
+    { field: "createdBy", label: "created by", type: "uuid" },
+    { field: "id", label: "id", type: "uuid" },
+    { field: "locationId", label: "location id", type: "uuid", displayField: "locationCode" },
+    { field: "palletCode", label: "pallet code", type: "text" },
+    { field: "rowVersion", label: "row version", type: "int32" },
+    { field: "status", label: "status", type: "text" },
+    { field: "updatedAt", label: "updated at", type: "timestamptz" },
+    { field: "updatedBy", label: "updated by", type: "uuid" },
+  ],
+} as const;

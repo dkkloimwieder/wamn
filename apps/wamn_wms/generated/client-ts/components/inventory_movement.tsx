@@ -348,3 +348,27 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     </TableScreen>
   );
 }
+
+/** The table definition of `wamn-wms:inventory-movement/query@1.0.0`. */
+export const INVENTORY_MOVEMENT_QUERY_TABLE = {
+  read: "query",
+  rowId: "id",
+  pageMaximum: 100,
+  scopeFilters: [],
+  sortFields: [],
+  sortDirections: [],
+  columns: [
+    { field: "createdAt", label: "created at", type: "timestamptz" },
+    { field: "createdBy", label: "created by", type: "uuid" },
+    { field: "fromLocationId", label: "from location id", type: "uuid", displayField: "locationCode" },
+    { field: "id", label: "id", type: "uuid" },
+    { field: "idempotencyKey", label: "idempotency key", type: "text" },
+    { field: "kind", label: "kind", type: "text" },
+    { field: "occurredAt", label: "occurred at", type: "timestamptz" },
+    { field: "palletId", label: "pallet id", type: "uuid", displayField: "palletCode" },
+    { field: "productId", label: "product id", type: "uuid", displayField: "productCode" },
+    { field: "quantity", label: "quantity", type: "numeric" },
+    { field: "reasonCode", label: "reason code", type: "text" },
+    { field: "toLocationId", label: "to location id", type: "uuid", displayField: "locationCode" },
+  ],
+} as const;

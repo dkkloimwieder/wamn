@@ -11,7 +11,7 @@
  */
 
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
-import { type JSX, Show } from "solid-js";
+import { createMemo, type JSX, Show } from "solid-js";
 
 import { DataGrid, DataGridContainer } from "../blocks/data-grid";
 import { Button } from "../components/ui/button";
@@ -64,19 +64,24 @@ export interface DataTableProps<TRow extends object> {
 }
 
 export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX.Element {
+  // The column definitions change only with the columns. A getter that built
+  // them on every read would make the table rebuild its columns on every read.
+  const columns = createMemo(() =>
+    props.columns.map(
+      (column): ColumnDef<GridFeatures, TRow> => ({
+        id: column.field,
+        header: column.label,
+        accessorFn: (row) => row[column.field],
+      }),
+    ),
+  );
   const table = createTable({
     features: gridFeatures,
     get data() {
       return props.rows as TRow[];
     },
     get columns() {
-      return props.columns.map(
-        (column): ColumnDef<GridFeatures, TRow> => ({
-          id: column.field,
-          header: column.label,
-          accessorFn: (row) => row[column.field],
-        }),
-      );
+      return columns();
     },
     getRowId: (row) => String(row[props.rowId]),
     manualPagination: true,

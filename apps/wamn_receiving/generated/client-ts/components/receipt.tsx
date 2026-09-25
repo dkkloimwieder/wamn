@@ -292,3 +292,22 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     </TableScreen>
   );
 }
+
+/** The table definition of `wamn-receiving:receipt/query@1.0.0`. */
+export const RECEIPT_QUERY_TABLE = {
+  read: "query",
+  rowId: "id",
+  pageMaximum: 100,
+  scopeFilters: [],
+  sortFields: [],
+  sortDirections: [],
+  columns: [
+    { field: "createdAt", label: "Recorded", type: "timestamptz" },
+    { field: "createdBy", label: "Recorded by", type: "uuid" },
+    { field: "id", label: "id", type: "uuid" },
+    { field: "idempotencyKey", label: "idempotency key", type: "text" },
+    { field: "occurredAt", label: "Received at", type: "timestamptz" },
+    { field: "purchaseOrderId", label: "Purchase order", type: "uuid", displayField: "purchaseOrderNumber" },
+    { field: "receiptReference", label: "Receipt reference", type: "text" },
+  ],
+} as const;

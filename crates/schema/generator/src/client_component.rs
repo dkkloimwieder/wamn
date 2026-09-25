@@ -40,6 +40,9 @@ pub struct ClientComponentError {
 pub enum ClientComponentErrorKind {
     /// A screen states a role whose component this emitter does not write yet.
     UnwrittenRole,
+    /// A table column that a table definition cannot state: it is not a member
+    /// of its row, or its type is not one of the frozen `sql-value` names.
+    UnwrittenColumn,
 }
 
 impl ClientComponentErrorKind {
@@ -48,6 +51,7 @@ impl ClientComponentErrorKind {
     pub const fn code(self) -> &'static str {
         match self {
             Self::UnwrittenRole => "unwritten_role",
+            Self::UnwrittenColumn => "unwritten_column",
         }
     }
 }
@@ -143,6 +147,17 @@ pub fn emit_ts_components(
             .expect("writing to a String cannot fail");
         }
     }
+    let undefined: Vec<_> = plan
+        .screens()
+        .filter(|screen| screen.role == Role::Table && written(screen))
+        .filter_map(|screen| table_gap(screen).map(|reason| (&screen.contract.operation, reason)))
+        .collect();
+    if !undefined.is_empty() {
+        index.push_str("\n// These tables get no table definition, for the reason beside each:\n");
+        for (operation, reason) in undefined {
+            writeln!(index, "// {operation}: {reason}").expect("writing to a String cannot fail");
+        }
+    }
     // The release gap an author closes: a column that names a record whose
     // model serves no list with a record read beside it shows the key.
     let unresolved = plan.unresolved();
@@ -228,6 +243,9 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                     &mut foreign,
                     &mut sibling,
                 )?;
+                if table_gap(screen).is_none() {
+                    write_table_definition(&mut body, screen)?;
+                }
             }
             Role::Detail => {
                 solid.insert("createResource");
@@ -940,6 +958,138 @@ fn emit_table(
 }
 
 /// One detail screen: the fields of one record that the release reads.
+/// Why a written table gets no table definition, or nothing when it gets one.
+fn table_gap(screen: &ScreenPlan<'_>) -> Option<&'static str> {
+    if screen.contract.lists.is_none() {
+        Some("it states no `lists`, so its rows have no row id")
+    } else if screen
+        .paging
+        .as_ref()
+        .and_then(|paging| paging.limit)
+        .is_none()
+    {
+        Some("it declares no page limit")
+    } else {
+        None
+    }
+}
+
+/// The table definition of one table screen, as data, beside its component.
+///
+/// It names the read, its scope filters, its sort, its row id, its page
+/// maximum and its columns. A column names its row member, its label and the
+/// type the contract states. A column that names a record also names the field
+/// its record read shows. The definition states no mode and no cap, because no
+/// manifest declares either.
+fn write_table_definition(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+) -> Result<(), ClientComponentError> {
+    let operation = screen.contract;
+    let (Some(lists), Some(paging)) = (operation.lists.as_ref(), screen.paging.as_ref()) else {
+        unreachable!("table_gap admits only a screen with lists and paging");
+    };
+    let Some(limit) = paging.limit else {
+        unreachable!("table_gap admits only a screen with a page limit");
+    };
+    let quote = |text: &str| serde_json::Value::String(text.to_owned()).to_string();
+    let read = crate::client_ts::function_name(&operation.name).map_err(|error| {
+        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+    })?;
+
+    writeln!(
+        source,
+        "\n/** The table definition of `{}`. */\nexport const {}_{}_TABLE = {{",
+        operation.operation,
+        screen.model.to_uppercase(),
+        screen.name.to_uppercase()
+    )
+    .expect("write");
+    writeln!(source, "  read: {},", quote(&read)).expect("write");
+    writeln!(
+        source,
+        "  rowId: {},",
+        quote(&column_member(&lists.key_field, &operation.operation)?)
+    )
+    .expect("write");
+    writeln!(source, "  pageMaximum: {},", limit.maximum).expect("write");
+    let filters = paging
+        .filters
+        .iter()
+        .map(|filter| {
+            column_member(&filter.field, &operation.operation).map(|member| quote(&member))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    writeln!(source, "  scopeFilters: [{}],", filters.join(", ")).expect("write");
+    let (fields, directions): (Vec<_>, Vec<_>) =
+        paging.sort.map_or_else(Default::default, |sort| {
+            (
+                sort.fields.iter().map(|field| quote(field)).collect(),
+                sort.directions
+                    .iter()
+                    .map(|direction| quote(direction))
+                    .collect(),
+            )
+        });
+    writeln!(source, "  sortFields: [{}],", fields.join(", ")).expect("write");
+    writeln!(source, "  sortDirections: [{}],", directions.join(", ")).expect("write");
+    source.push_str("  columns: [\n");
+    for column in &screen.columns {
+        column_type(column, &operation.operation)?;
+        write!(
+            source,
+            "    {{ field: {}, label: {}, type: {}",
+            quote(&column_member(&column.path, &operation.operation)?),
+            quote(&label(column)),
+            quote(&column.type_name)
+        )
+        .expect("write");
+        if let Some(resolved) = screen
+            .resolved_columns
+            .iter()
+            .find(|resolved| resolved.column == column.path)
+        {
+            write!(
+                source,
+                ", displayField: {}",
+                quote(&crate::client_ts::to_camel(resolved.display_field))
+            )
+            .expect("write");
+        }
+        source.push_str(" },\n");
+    }
+    source.push_str("  ],\n} as const;\n");
+    Ok(())
+}
+
+/// The row member of one result field, which is a leaf of the row.
+fn column_member(path: &str, operation: &str) -> Result<String, ClientComponentError> {
+    if path.contains('.') {
+        return Err(ClientComponentError::new(
+            ClientComponentErrorKind::UnwrittenColumn,
+            format!("{operation} table column {path:?} is not a member of its row"),
+        ));
+    }
+    Ok(crate::client_ts::to_camel(path))
+}
+
+/// Refuse a table column whose type is not one of the frozen `sql-value` names.
+fn column_type(field: &FieldIr, operation: &str) -> Result<(), ClientComponentError> {
+    use wamn_schema_introspection::ir::ColumnType;
+
+    serde_json::from_value::<ColumnType>(serde_json::Value::String(field.type_name.clone()))
+        .map(|_| ())
+        .map_err(|_| {
+            ClientComponentError::new(
+                ClientComponentErrorKind::UnwrittenColumn,
+                format!(
+                    "{operation} table column {:?} has type {:?}, which is not a sql-value type",
+                    field.path, field.type_name
+                ),
+            )
+        })
+}
+
 fn emit_detail(
     source: &mut String,
     screen: &ScreenPlan<'_>,

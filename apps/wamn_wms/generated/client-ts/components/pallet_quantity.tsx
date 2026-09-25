@@ -299,3 +299,21 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     </TableScreen>
   );
 }
+
+/** The table definition of `wamn-wms:pallet-quantity/query@1.0.0`. */
+export const PALLET_QUANTITY_QUERY_TABLE = {
+  read: "query",
+  rowId: "id",
+  pageMaximum: 100,
+  scopeFilters: [],
+  sortFields: [],
+  sortDirections: [],
+  columns: [
+    { field: "createdAt", label: "created at", type: "timestamptz" },
+    { field: "id", label: "id", type: "uuid" },
+    { field: "palletId", label: "pallet id", type: "uuid", displayField: "palletCode" },
+    { field: "productId", label: "product id", type: "uuid", displayField: "productCode" },
+    { field: "quantity", label: "quantity", type: "numeric" },
+    { field: "status", label: "status", type: "text" },
+  ],
+} as const;

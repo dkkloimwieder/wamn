@@ -304,3 +304,18 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
     </TableScreen>
   );
 }
+
+/** The table definition of `wamn-receiving:supplier/query@1.0.0`. */
+export const SUPPLIER_QUERY_TABLE = {
+  read: "query",
+  rowId: "id",
+  pageMaximum: 100,
+  scopeFilters: [],
+  sortFields: [],
+  sortDirections: [],
+  columns: [
+    { field: "createdAt", label: "Added", type: "timestamptz" },
+    { field: "id", label: "id", type: "uuid" },
+    { field: "name", label: "Supplier name", type: "text" },
+  ],
+} as const;

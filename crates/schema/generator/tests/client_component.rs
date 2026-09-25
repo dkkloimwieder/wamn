@@ -1311,3 +1311,52 @@ fn a_form_sends_the_revision_of_the_record_its_revision_names() {
         "the other input of the same model supplies no revision"
     );
 }
+
+#[test]
+fn a_table_screen_gets_a_table_definition_beside_its_component() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let component = widget
+        .find("export function WidgetQueryTable(")
+        .expect("the widget query gets a component");
+    let start = widget
+        .find("export const WIDGET_QUERY_TABLE = {")
+        .expect("the widget query gets a table definition");
+    assert!(start > component, "the definition follows its screen");
+    let end = start + widget[start..].find("} as const;").unwrap();
+    let definition = &widget[start..end];
+    for line in [
+        "  read: \"query\",",
+        "  rowId: \"id\",",
+        "  pageMaximum: 100,",
+        "  scopeFilters: [\"code\"],",
+        "  sortFields: [\"created_at\"],",
+        "  sortDirections: [\"ascending\", \"descending\"],",
+        "    { field: \"code\", label: \"Widget code\", type: \"text\" },",
+        "    { field: \"makerId\", label: \"maker id\", type: \"uuid\", displayField: \"name\" },",
+    ] {
+        assert!(definition.contains(line), "{line} in {definition}");
+    }
+    // No manifest declares a mode or a cap, so the definition states neither.
+    assert!(!definition.contains("mode") && !definition.contains("cap"));
+}
+
+#[test]
+fn a_table_with_no_row_id_or_no_page_limit_gets_no_definition_and_the_index_names_it() {
+    let files = emit(&release());
+    assert!(!widget(&files).contains("WIDGET_LIST_TABLE"));
+    assert!(
+        !source(&files, "generated/client-ts/components/widget_maker.tsx")
+            .contains("WIDGET_MAKER_LIST_TABLE")
+    );
+    let index = source(&files, "generated/client-ts/components/index.ts");
+    assert!(
+        index.contains(concat!(
+            "\n// These tables get no table definition, for the reason beside each:\n",
+            "// platform-fixture:widget/list@1.0.0: it declares no page limit\n",
+            "// platform-fixture:widget-maker/list@1.0.0: it states no `lists`, so its rows",
+            " have no row id\n",
+        )),
+        "{index}"
+    );
+}
