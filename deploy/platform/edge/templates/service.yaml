@@ -6,6 +6,10 @@ metadata:
   labels:
     app.kubernetes.io/name: wamn-edge
     app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- if .Values.gcp.project }}
+  annotations:
+    cloud.google.com/neg: {{ printf "{\"exposed_ports\":{\"443\":{\"name\":\"%s\"}}}" .Release.Name | quote }}
+  {{- end }}
 spec:
   type: {{ .Values.service.type }}
   selector:

@@ -1,5 +1,6 @@
-# The kind edge of docs/plan/web-deployment.md. A cloud deployment uses its
-# load balancer with the same path rules instead.
+# The edge of docs/plan/web-deployment.md. In kind it serves every path. On
+# Google Cloud (gcp.project set) a load balancer sends /api/ and /password/ to
+# it and serves every other path from a Cloud CDN backend bucket.
 image:
   repository: nginx
   # nginx:1.27-alpine. A digest selects exact bytes, and a tag does not.
@@ -25,10 +26,23 @@ identityCaConfigMap: ""
 
 # The bucket path that `wamn web upload` wrote, readable without credentials:
 # <bucket>/<prefix>/<package>/<release digest hex>. endpoint is the object store
-# origin. Each object carries its own Cache-Control, which the edge passes on.
+# origin that the edge reads, which Google Cloud does not use. Each object
+# carries its own Cache-Control, which the edge and the CDN pass on.
 bucket:
   endpoint: ""
   path: ""
+
+# Google Cloud, rendered as Config Connector resources: the bucket, its public
+# read, the backend bucket with Cloud CDN, the backend service over the edge's
+# endpoint groups, the URL map, the certificate, the address and the
+# forwarding rule. host names the domain and issuer the certificate issuer.
+# Assumed, not tested: only a rendering proves this part.
+gcp:
+  # The project. Empty renders no Google Cloud resource.
+  project: ""
+  # The zones of the edge pods. GKE makes one endpoint group in each.
+  zones: []
+  bucketLocation: US
 
 service:
   type: ClusterIP

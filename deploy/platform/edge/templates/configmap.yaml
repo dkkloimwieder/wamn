@@ -1,7 +1,10 @@
 {{- $host := required "Set host to the public host name." .Values.host -}}
 {{- $api := required "Set api to the route ingress URL." .Values.api -}}
 {{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
-{{- $endpoint := required "Set bucket.endpoint to the object store origin." .Values.bucket.endpoint -}}
+{{- $endpoint := .Values.bucket.endpoint -}}
+{{- if not (or $endpoint .Values.gcp.project) -}}
+{{- fail "Set bucket.endpoint to the object store origin." -}}
+{{- end -}}
 {{- $bucket := required "Set bucket.path to the path that wamn web upload wrote." .Values.bucket.path | trimAll "/" -}}
 {{- if not (hasPrefix "https://" $identity) -}}
 {{- fail "identity must use HTTPS." -}}
@@ -54,6 +57,12 @@ data:
           proxy_ssl_trusted_certificate /etc/wamn-edge/identity-ca/ca.crt;
         }
 
+        # The load balancer health check.
+        location = /healthz {
+          return 200;
+        }
+{{- if $endpoint }}
+
         # The upload wrote each object with its Cache-Control, which passes on.
         location /assets/ {
           limit_except GET { deny all; }
@@ -68,5 +77,6 @@ data:
           rewrite ^ /{{ $bucket }}/index.html? break;
           proxy_pass {{ trimSuffix "/" $endpoint }};
         }
+{{- end }}
       }
     }

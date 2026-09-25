@@ -188,6 +188,31 @@ The bucket must allow reads without credentials.
 The edge chart in `deploy/platform/edge` serves one such path with `bucket.path`, and passes each object's headers on.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
+## Google Cloud edge
+
+The edge chart also renders the Google Cloud load balancer of the [web deployment plan](../plan/web-deployment.md), as Config Connector resources.
+This part is assumed and not tested. Only a rendering checks it.
+One values file names the three owner inputs, which have no default: `gcp.project`, `host` (the domain), and `issuer` (the cert-manager ClusterIssuer of the public certificate).
+[`values-gcp.example.yaml`](../../deploy/platform/edge/values-gcp.example.yaml) shows that file with placeholders.
+The chart refuses a rendering that leaves out one of the three, or `gcp.zones`.
+
+With `gcp.project` set, the chart renders these resources:
+
+- the bucket of `bucket.path`, readable by anyone, and a Cloud CDN backend bucket over it that follows each object's Cache-Control;
+- a backend service over the endpoint groups that GKE makes for the edge Service in each zone of `gcp.zones`;
+- a URL map for `host` that sends `/api/` and `/password/` to that backend service, `/assets/` to the release path in the bucket, and every other path to its `index.html`;
+- the certificate that `issuer` issues into `tlsSecret`, a global address, and an HTTPS forwarding rule.
+
+The edge itself still removes `/api` and checks the identity certificate, as it does in kind.
+The cluster needs Config Connector for the project and cert-manager with the named ClusterIssuer.
+Check the rendering before an install:
+
+```bash
+helm template wamn-edge deploy/platform/edge --namespace <namespace> -f <values file>
+```
+
+Write the web client with `wamn web upload` and `AWS_ENDPOINT=https://storage.googleapis.com`, with an HMAC key of the project as the key pair.
+
 ## Identity password configuration
 
 `wamn-identity` loads `.env` from its working directory before it starts the runtime.

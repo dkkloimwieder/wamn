@@ -1,0 +1,19 @@
+# One Google Cloud deployment of the edge. The three owner inputs have no
+# default: gcp.project, host (the domain) and issuer (the cert-manager
+# ClusterIssuer of the public certificate). The values here are placeholders.
+host: wamn.example.com
+issuer: example-public-issuer
+gcp:
+  project: example-project
+  zones:
+    - us-central1-a
+    - us-central1-b
+
+# The rest follows from the deployment.
+tlsSecret: wamn-edge-tls
+api: http://flow-http.receiving.svc.cluster.local
+identity: https://identity.receiving.svc.cluster.local
+identityCaConfigMap: identity-ca
+bucket:
+  # <bucket>/<prefix>/<package>/<release digest hex>, as wamn web upload wrote it.
+  path: example-project-wamn-web/clients/wamn_receiving/0000000000000000000000000000000000000000000000000000000000000000

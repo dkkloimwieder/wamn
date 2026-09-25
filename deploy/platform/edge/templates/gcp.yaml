@@ -1,0 +1,218 @@
+{{- if .Values.gcp.project }}
+{{- $project := .Values.gcp.project -}}
+{{- $domain := required "Set host to the public domain." .Values.host -}}
+{{- $issuer := required "Set issuer to the cert-manager ClusterIssuer of the public certificate." .Values.issuer -}}
+{{- $tlsSecret := required "Set tlsSecret to the Secret that receives the public certificate." .Values.tlsSecret -}}
+{{- if not .Values.gcp.zones -}}
+{{- fail "Set gcp.zones to the zones of the edge pods." -}}
+{{- end -}}
+{{- $path := required "Set bucket.path to the path that wamn web upload wrote." .Values.bucket.path | trimAll "/" -}}
+{{- $parts := splitList "/" $path -}}
+{{- $bucket := first $parts -}}
+{{- $objects := rest $parts | join "/" -}}
+{{- if not $objects -}}
+{{- fail "bucket.path names the bucket and the uploaded release path." -}}
+{{- end -}}
+{{- $name := .Release.Name -}}
+{{- $annotations := dict "cnrm.cloud.google.com/project-id" $project -}}
+# The web client files. The upload writes them through the S3-compatible XML
+# API, and anyone may read them, as a browser does.
+apiVersion: storage.cnrm.cloud.google.com/v1beta1
+kind: StorageBucket
+metadata:
+  name: {{ $bucket }}
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: {{ .Values.gcp.bucketLocation }}
+  uniformBucketLevelAccess: true
+---
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: {{ $name }}-public-read
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  member: allUsers
+  role: roles/storage.objectViewer
+  resourceRef:
+    apiVersion: storage.cnrm.cloud.google.com/v1beta1
+    kind: StorageBucket
+    name: {{ $bucket }}
+---
+# Cloud CDN caches what each object's Cache-Control allows, so the built files
+# stay and the index revalidates.
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeBackendBucket
+metadata:
+  name: {{ $name }}-files
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  bucketRef:
+    name: {{ $bucket }}
+  enableCdn: true
+  cdnPolicy:
+    cacheMode: USE_ORIGIN_HEADERS
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeHealthCheck
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: global
+  httpsHealthCheck:
+    port: 8443
+    requestPath: /healthz
+---
+# The edge sends /api and /password on as it does in kind. The backend service
+# has no CDN, and every authenticated read is private.
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeBackendService
+metadata:
+  name: {{ $name }}-platform
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: global
+  loadBalancingScheme: EXTERNAL_MANAGED
+  protocol: HTTPS
+  healthChecks:
+    - healthCheckRef:
+        name: {{ $name }}
+  backend:
+    {{- range .Values.gcp.zones }}
+    - group:
+        networkEndpointGroupRef:
+          external: {{ printf "projects/%s/zones/%s/networkEndpointGroups/%s" $project . $name | quote }}
+      balancingMode: RATE
+      maxRatePerEndpoint: 100
+    {{- end }}
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeURLMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: global
+  defaultService:
+    backendBucketRef:
+      name: {{ $name }}-files
+  hostRule:
+    - hosts:
+        - {{ $domain | quote }}
+      pathMatcher: edge
+  pathMatcher:
+    - name: edge
+      defaultService:
+        backendBucketRef:
+          name: {{ $name }}-files
+      routeRules:
+        - priority: 1
+          matchRules:
+            - prefixMatch: /api/
+          service:
+            backendServiceRef:
+              name: {{ $name }}-platform
+        - priority: 2
+          matchRules:
+            - prefixMatch: /password/
+          service:
+            backendServiceRef:
+              name: {{ $name }}-platform
+        - priority: 3
+          matchRules:
+            - prefixMatch: /assets/
+          service:
+            backendBucketRef:
+              name: {{ $name }}-files
+          routeAction:
+            urlRewrite:
+              pathPrefixRewrite: {{ printf "/%s/assets/" $objects | quote }}
+        # Every other path is a page, which the client routes, so the bucket
+        # answers with the one index.
+        - priority: 4
+          matchRules:
+            - fullPathMatch: /
+          service:
+            backendBucketRef:
+              name: {{ $name }}-files
+          routeAction:
+            urlRewrite:
+              pathPrefixRewrite: {{ printf "/%s/index.html" $objects | quote }}
+        - priority: 5
+          matchRules:
+            - pathTemplateMatch: "/{page=**}"
+          service:
+            backendBucketRef:
+              name: {{ $name }}-files
+          routeAction:
+            urlRewrite:
+              pathTemplateRewrite: {{ printf "/%s/index.html" $objects | quote }}
+---
+# cert-manager issues the certificate into tlsSecret (certificate.yaml), and
+# the load balancer takes it from there.
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeSSLCertificate
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: global
+  certificate:
+    valueFrom:
+      secretKeyRef:
+        name: {{ $tlsSecret }}
+        key: tls.crt
+  privateKey:
+    valueFrom:
+      secretKeyRef:
+        name: {{ $tlsSecret }}
+        key: tls.key
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeTargetHTTPSProxy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: global
+  urlMapRef:
+    name: {{ $name }}
+  sslCertificates:
+    - name: {{ $name }}
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeAddress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: global
+  ipVersion: IPV4
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeForwardingRule
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations: {{ toJson $annotations }}
+spec:
+  location: global
+  loadBalancingScheme: EXTERNAL_MANAGED
+  portRange: "443"
+  ipAddress:
+    addressRef:
+      name: {{ $name }}
+  target:
+    targetHTTPSProxyRef:
+      name: {{ $name }}
+{{- end }}
