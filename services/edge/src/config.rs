@@ -8,6 +8,7 @@
 //! `services/edge/edge.example.toml` shows every key.
 
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
@@ -87,6 +88,11 @@ const OVERRIDES: &[(&str, &[&str], Shape)] = &[
         "WAMN_EDGE_FORWARD_KEY_FIELD",
         &["forward", "key_field"],
         Shape::Text,
+    ),
+    (
+        "WAMN_EDGE_FORWARD_CREDENTIAL_BOUND",
+        &["forward", "credential_bound"],
+        Shape::Integer,
     ),
 ];
 
@@ -191,6 +197,16 @@ pub struct ForwardConfig {
     /// `value.idempotency_key`. The forward writes the sample key into it.
     #[serde(default)]
     pub key_field: Option<String>,
+    /// The 401 or 403 answers in a row after which the forward stops sending
+    /// until the edge restarts.
+    #[serde(default = "credential_bound")]
+    pub credential_bound: NonZeroU32,
+}
+
+/// The default bound: with the backoff, the fifth failure comes about 75
+/// seconds after the first.
+fn credential_bound() -> NonZeroU32 {
+    NonZeroU32::new(5).expect("5 is not zero")
 }
 
 impl EdgeConfig {
@@ -258,6 +274,7 @@ mod tests {
         assert_eq!(device.serial.baud, 9600);
         let forward = config.forward.expect("the example has a forward");
         assert_eq!(forward.key_field.as_deref(), Some("value.idempotency_key"));
+        assert_eq!(forward.credential_bound.get(), 5);
         assert_eq!(config.http.listen.port(), 8080);
     }
 

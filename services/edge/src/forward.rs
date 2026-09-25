@@ -17,7 +17,7 @@
 //!   Those answers concern the moment, not the sample.
 //! - A 401 or 403 status: a credential failure. The sample stays pending and
 //!   the forward waits a backoff, as above. The forward counts each credential
-//!   failure and logs the first. After `CREDENTIAL_BOUND` failures in a row it
+//!   failure and logs the first. After `credential_bound` failures in a row it
 //!   stops sending until the edge restarts, because an expired or revoked PAT
 //!   needs an operator, and the edge reads the PAT only at start (owner
 //!   ruling, `wamn-e5in.9`).
@@ -55,9 +55,6 @@ const LAST_BACKOFF: Duration = Duration::from_mins(15);
 const PASS_SIZE: u32 = 16;
 /// The most bytes of a platform answer that a refusal keeps.
 const REASON_BYTES: usize = 1024;
-/// The credential failures in a row after which the forward stops sending.
-/// With the backoff, the fifth failure comes about 75 seconds after the first.
-const CREDENTIAL_BOUND: u32 = 5;
 
 /// A running forward.
 #[derive(Debug)]
@@ -107,6 +104,7 @@ struct Forwarder {
     url: hyper::Uri,
     authorization: String,
     key_field: Option<String>,
+    credential_bound: u32,
 }
 
 /// Check `config`, read the PAT, and forward the samples of `samples` until
@@ -127,6 +125,7 @@ pub fn start(
         url,
         authorization: format!("Bearer {}", read_token(&config.token_file)?),
         key_field: config.key_field.clone(),
+        credential_bound: config.credential_bound.get(),
     };
     let credential_failures = Arc::new(AtomicU64::new(0));
     let task = tokio::spawn(run(
@@ -214,7 +213,7 @@ async fn run(
             Pass::Unreachable => {}
             Pass::Credential => {
                 in_a_row += 1;
-                if in_a_row >= CREDENTIAL_BOUND {
+                if in_a_row >= forwarder.credential_bound {
                     tracing::error!(
                         failures = in_a_row,
                         "the forward stopped: the platform refused the PAT; \

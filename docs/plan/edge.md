@@ -197,7 +197,7 @@ The forward, as issue `wamn-e5in.9` built it in [`forward.rs`](../../services/ed
 - Each attempt reads the pending samples from the store, one sample per request. A retry never comes from memory, and a restart continues where the store says.
 - A refusal is an outcome (owner ruling). An item error or a 4xx status stores the sample as refused, and the forward never sends it again.
 - No answer, a timeout, or a 5xx, 408 or 429 status leaves the sample pending, and the forward waits a backoff from 5 seconds to 15 minutes.
-- A 401 or 403 status is a credential failure (owner ruling). The sample stays pending behind the same backoff. `Forward::credential_failures` counts each failure, and the edge logs the first. After 5 failures in a row, the forward stops sending and logs an error. A restart with a valid PAT starts it again. An expired PAT is an operator problem, and an endless retry hides it.
+- A 401 or 403 status is a credential failure (owner ruling). The sample stays pending behind the same backoff. `Forward::credential_failures` counts each failure, and the edge logs the first. After `credential_bound` failures in a row (default 5), the forward stops sending and logs an error. A restart with a valid PAT starts it again. An expired PAT is an operator problem, and an endless retry hides it.
 - The forward wakes when a sample is stored. A forward in flight when the edge stops is dropped, and the platform key makes its repeat harmless.
 
 ### 4.9 Size and dependency budget

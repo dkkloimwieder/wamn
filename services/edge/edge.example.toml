@@ -58,3 +58,6 @@ token_file = "/etc/wamn-edge/device.pat"
 # The item field of the platform route's idempotency key. The forward writes
 # the sample key into it, so a repeated forward is harmless.
 key_field = "value.idempotency_key"
+# The 401 or 403 answers in a row after which the forward stops sending until
+# the edge restarts. The default is 5.
+# credential_bound = 5

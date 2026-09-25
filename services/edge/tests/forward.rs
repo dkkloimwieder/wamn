@@ -1,5 +1,6 @@
 //! The forward survives a kill between the store and the forward, and a kill
-//! during the forward (spec 4.10).
+//! during the forward (spec 4.10). A PAT that the platform refuses stops the
+//! forward after `credential_bound` failures in a row.
 //!
 //! The test runs the `wamn-edge` binary as a child with a configuration file,
 //! a pseudo-terminal as its device, and an HTTPS platform in the test that
@@ -30,6 +31,8 @@ use wamn_edge::refusals;
 use support::{ATTACHMENT, AUDIENCE, HOST, ISSUER, ORG, PRINCIPAL, bundle, ingress, key};
 
 const TOKEN: &str = "wamn_pat_edge_forward_test";
+/// A PAT that the platform does not accept.
+const EXPIRED_TOKEN: &str = "wamn_pat_edge_forward_expired";
 const REFUSED_FRAME: &str = "refuse me";
 /// The longest wait for one step of the child.
 const STEP: Duration = Duration::from_secs(60);
@@ -51,6 +54,8 @@ fn pseudo_terminal() -> (File, PathBuf) {
 /// What the platform received and applied.
 #[derive(Default)]
 struct Received {
+    /// The requests, with or without a valid PAT.
+    requests: usize,
     /// Every item, in order of arrival.
     items: Vec<Value>,
     /// The answer of each applied key.
@@ -153,6 +158,8 @@ async fn read_request(
 
 /// The status and body that answer one request, or `None` to hold it.
 fn handle(received: &Mutex<Received>, authorization: &str, body: &[u8]) -> Option<(u16, String)> {
+    let mut received = received.lock().expect("platform state");
+    received.requests += 1;
     if authorization != format!("Bearer {TOKEN}") {
         return Some((401, "[]".to_owned()));
     }
@@ -163,7 +170,6 @@ fn handle(received: &Mutex<Received>, authorization: &str, body: &[u8]) -> Optio
         .as_str()
         .expect("the forward writes the key field")
         .to_owned();
-    let mut received = received.lock().expect("platform state");
     received.items.push(item.clone());
     if let Some(answer) = received.applied.get(&key) {
         let answer = json!([{"request_id": request_id, "value": answer}]);
@@ -233,6 +239,8 @@ fn configuration(
     device: &Path,
     port: u16,
     ca_file: &Path,
+    token: &str,
+    credential_bound: u32,
 ) -> PathBuf {
     let token_file = directory.join("device.pat");
     std::fs::OpenOptions::new()
@@ -240,7 +248,7 @@ fn configuration(
         .create_new(true)
         .mode(0o600)
         .open(&token_file)
-        .and_then(|mut file| file.write_all(TOKEN.as_bytes()))
+        .and_then(|mut file| file.write_all(token.as_bytes()))
         .expect("write the token file");
     let text = format!(
         r#"
@@ -276,6 +284,7 @@ url = "https://127.0.0.1:{port}/samples"
 token_file = "{token}"
 ca_file = "{ca}"
 key_field = "value.idempotency_key"
+credential_bound = {credential_bound}
 "#,
         dir = directory.display(),
         keys = directory.join("session-keys.json").display(),
@@ -371,7 +380,7 @@ async fn a_sample_is_forwarded_once_across_kills() {
     let (mut controller, device) = pseudo_terminal();
     let port = free_port();
     let (ca_file, acceptor) = tls(&directory);
-    let config = configuration(&directory, &digest, &device, port, &ca_file);
+    let config = configuration(&directory, &digest, &device, port, &ca_file, TOKEN, 5);
 
     // The platform is down: the samples are stored and the forward fails.
     let mut edge = Edge::start(&config);
@@ -466,4 +475,58 @@ async fn a_sample_is_forwarded_once_across_kills() {
         refusals::run(&command(&["list"]), &db).await.expect("list"),
         ""
     );
+}
+
+/// With `credential_bound` 1, the first 401 stops the forward. The device loop
+/// still stores each frame, no second request reaches the platform after the
+/// first backoff would end, and the samples stay pending, never refused.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+async fn a_refused_pat_stops_the_forward_at_the_bound() {
+    let (_, public) = key("key-one", 1);
+    let (directory, digest) = bundle("forward-credential", &ingress(), &public);
+    let (mut controller, device) = pseudo_terminal();
+    let port = free_port();
+    let (ca_file, acceptor) = tls(&directory);
+    let config = configuration(
+        &directory,
+        &digest,
+        &device,
+        port,
+        &ca_file,
+        EXPIRED_TOKEN,
+        1,
+    );
+    let platform = Platform::new();
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .await
+        .expect("bind the platform port");
+    platform.serve(listener, acceptor);
+
+    let mut edge = Edge::start(&config);
+    controller.write_all(b"12.5 kg\n").expect("send a frame");
+    edge.wait_for("the platform refused the forward's PAT", 1);
+    edge.wait_for("the forward stopped", 1);
+    controller.write_all(b"13.0 kg\n").expect("send a frame");
+    edge.wait_for("the device call stored its sample", 2);
+    // Without the stop, the forward sends again after the first 5 s backoff.
+    tokio::time::sleep(Duration::from_secs(7)).await;
+    edge.kill();
+    assert_eq!(
+        platform.received().requests,
+        1,
+        "one request, then the stop"
+    );
+
+    let connection = rusqlite::Connection::open(directory.join("edge.db"))
+        .expect("open the stopped edge's file");
+    let pending: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM samples \
+             WHERE forwarded_at IS NULL AND refused_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(pending, 2, "both samples stay pending");
 }
