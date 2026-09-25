@@ -12,7 +12,7 @@ use super::super::super::invocation_policy::InvocationPolicy as _;
 use super::{CLEANUP, Case, Fixture, invoke_native, run_isolated_test};
 
 pub(super) async fn fixture(case: Case) -> Fixture {
-    Fixture::build_with_reuse(case, None, false, None, true, None).await
+    Fixture::build_with_reuse(case, None, false, None, Some(1), None).await
 }
 
 pub(super) fn starts(fixture: &Fixture) -> usize {

@@ -43,6 +43,9 @@ const PASSWORD: &str = "native-b-disposable-test-only";
 /// The test principal that the fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 const TEST_NAME: &str = "native_authenticated_call_graph_grant";
+/// Keeps a warm root through the slow fixture work between calls. The warm
+/// test counts instance starts, and a reclaim during that work adds a start.
+const REUSE_WINDOW_SECONDS: i32 = 600;
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
@@ -338,7 +341,7 @@ async fn assert_case(
         Some(scenario == Scenario::FreshOnly),
         true,
         None,
-        false,
+        None,
         Some(postgres),
     )
     .await;
@@ -577,7 +580,7 @@ fn native_authenticated_transaction_participant() {
                 None,
                 true,
                 None,
-                false,
+                None,
                 Some(Arc::clone(&postgres)),
             )
             .await;
@@ -616,7 +619,7 @@ fn native_authenticated_transaction_participant() {
                 None,
                 true,
                 None,
-                false,
+                None,
                 Some(postgres),
             )
             .await;
@@ -658,7 +661,7 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
                 Some(false),
                 true,
                 None,
-                true,
+                Some(REUSE_WINDOW_SECONDS),
                 Some(Arc::clone(&postgres)),
             )
             .await;
@@ -757,7 +760,7 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
                 Some(true),
                 true,
                 None,
-                true,
+                Some(REUSE_WINDOW_SECONDS),
                 Some(Arc::clone(&postgres)),
             )
             .await;
@@ -808,9 +811,15 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
                 .expect("session remains authorized after PAT calls")
                 .expect("emission");
             super::warm::close(&fresh_only).await;
-            let retired =
-                Fixture::build_with_reuse(Case::Success, None, true, None, true, Some(postgres))
-                    .await;
+            let retired = Fixture::build_with_reuse(
+                Case::Success,
+                None,
+                true,
+                None,
+                Some(REUSE_WINDOW_SECONDS),
+                Some(postgres),
+            )
+            .await;
             let mut request = retired.request(Instant::now() + CLEANUP);
             request.facts.caller = Some(bob.clone());
             invoke_native(&retired.target().await, request)

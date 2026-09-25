@@ -33,6 +33,11 @@ use crate::plugins::wamn_postgres::{
 };
 use wamn_engine::engine::build_engine;
 
+/// Bounds a wait for an observed backend state. A wait ends when PostgreSQL
+/// shows that state, never after a fixed delay. This bound only stops a test
+/// that would otherwise hang because of a defect, so machine load cannot reach it.
+const HANG_GUARD: Duration = Duration::from_secs(120);
+
 const CANCEL_OWNER: &str = "transaction-view-cancel-owner";
 const CONTROL_OWNER: &str = "transaction-view-control-owner";
 const OWNER: &str = "transaction-view-owner";
@@ -706,7 +711,10 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
     postgres
         .activate_statement_operation(CANCEL_OWNER, OWNER_OPERATION)
         .unwrap();
-    let cancel_deadline = Instant::now() + Duration::from_secs(5);
+    // The finishing rollback, not this deadline, ends the participant. The
+    // deadline only stops a defect from hanging the test, so machine load
+    // cannot reach it before the participant reaches its lock wait.
+    let cancel_deadline = Instant::now() + HANG_GUARD;
     postgres
         .bind_transaction_scope(CANCEL_OWNER, cancel_deadline)
         .unwrap();
@@ -739,7 +747,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
             .run_transaction_view(CANCEL_OWNER, &cancel_view, &running_digest, &[])
             .await
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(HANG_GUARD, async {
         loop {
             let waiting: bool = admin
                 .query_one(

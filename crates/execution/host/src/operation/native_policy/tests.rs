@@ -530,7 +530,7 @@ impl Fixture {
         registered_root: bool,
         resolution_pause: Option<Arc<ResolutionPause>>,
     ) -> Self {
-        Self::build_with_reuse(case, callee, registered_root, resolution_pause, false, None).await
+        Self::build_with_reuse(case, callee, registered_root, resolution_pause, None, None).await
     }
 
     /// `callee` declares a call to [`CHILD`] with its `fresh_only`. Publish
@@ -541,7 +541,7 @@ impl Fixture {
         callee: Option<bool>,
         registered_root: bool,
         resolution_pause: Option<Arc<ResolutionPause>>,
-        warm: bool,
+        reclaim_seconds: Option<i32>,
         postgres: Option<Arc<WamnPostgres>>,
     ) -> Self {
         let root_bytes = component_bytes(ROOT, case);
@@ -706,9 +706,13 @@ impl Fixture {
         let application = load_native_application(
             Arc::clone(&engine),
             NativeWorkloadSpec {
-                warm_reuse: if warm {
-                    wamn_engine::warm_reuse::WarmReuse::new(&[root.component_digest.clone()], 1, 1)
-                        .expect("trusted root with bounded native reuse")
+                warm_reuse: if let Some(reclaim_seconds) = reclaim_seconds {
+                    wamn_engine::warm_reuse::WarmReuse::new(
+                        &[root.component_digest.clone()],
+                        1,
+                        reclaim_seconds,
+                    )
+                    .expect("trusted root with bounded native reuse")
                 } else {
                     wamn_engine::warm_reuse::WarmReuse::default()
                 },
@@ -903,7 +907,7 @@ async fn run_case(case: Case) {
             .await
             .expect("scoped database with provisioned platform principals");
         let callee = matches!(case, Case::CalleeGrant).then_some(false);
-        Fixture::build_with_reuse(case, callee, false, None, false, Some(postgres)).await
+        Fixture::build_with_reuse(case, callee, false, None, None, Some(postgres)).await
     } else {
         Fixture::new(case).await
     };
