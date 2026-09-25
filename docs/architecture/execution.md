@@ -443,6 +443,11 @@ It reads nothing at submit, so a change that another writer makes in between ref
 A delete whose plan binds a revision takes the key and the revision of the record that the page displayed, and it reads nothing.
 A command revision input can state `revision_of`, the input whose record it guards. The form then sends the revision that the row carried when the operator chose that record in its selector. If no row was chosen, the form refuses locally and marks that selector.
 A table row fills a form input only when that input is the one input of the form that names the row's model. If two inputs name it, the row fills neither.
+A table column that names a record shows the record's text, not its key.
+A generated result field states `references` from its column's foreign key, and an authored result field can declare it.
+The plan binds that column to the model's served list, which states the display field, and to the record read that the list's rows open.
+The table reads each key once, shows nothing while the read runs, and shows the key when no record comes back.
+A column whose model serves no such list and read shows the key, and the emitted index names it.
 An operation whose shape has no role gets no component, and the emitted index names it with the reason.
 A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
 Components state no route and no navigation: a row link is a callback, and the application decides what to open.

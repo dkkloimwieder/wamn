@@ -36,6 +36,7 @@ import {
   TableScreen,
   TextField,
   announceOutcome,
+  createRecordLabels,
   gridFeatures,
   type GridFeatures,
 } from "@wamn/ui";
@@ -48,6 +49,18 @@ import {
   type InventoryMovementQueryResult,
   type InventoryMovementQueryRow,
 } from "../inventory_movement.js";
+import {
+  get as locationGet,
+  type LocationGetRequest,
+} from "../location.js";
+import {
+  get as palletGet,
+  type PalletGetRequest,
+} from "../pallet.js";
+import {
+  get as productGet,
+  type ProductGetRequest,
+} from "../product.js";
 
 /** The record that the detail for `wamn-wms:inventory-movement/get@1.0.0` reads. */
 export interface InventoryMovementGetDetailInput {
@@ -116,70 +129,6 @@ export function InventoryMovementGetDetail(props: InventoryMovementGetDetailProp
   );
 }
 
-/** Columns of `wamn-wms:inventory-movement/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, InventoryMovementQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "created at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "createdBy",
-    header: "created by",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "fromLocationId",
-    header: "from location id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "idempotencyKey",
-    header: "idempotency key",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "kind",
-    header: "kind",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "occurredAt",
-    header: "occurred at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "palletId",
-    header: "pallet id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "productId",
-    header: "product id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "quantity",
-    header: "quantity",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
-  },
-  {
-    accessorKey: "reasonCode",
-    header: "reason code",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "toLocationId",
-    header: "to location id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-];
-
 /** What the table for `wamn-wms:inventory-movement/query@1.0.0` takes. */
 export interface InventoryMovementQueryTableProps {
   /** The transport the application supplies. */
@@ -239,8 +188,95 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     restart();
   };
 
+  const locationGetLabels = createRecordLabels(async (key) => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const outcome = await locationGet(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return null;
+    }
+    const text = outcome.value.locationCode;
+    return text == null ? null : String(text);
+  });
+  const palletGetLabels = createRecordLabels(async (key) => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const outcome = await palletGet(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return null;
+    }
+    const text = outcome.value.palletCode;
+    return text == null ? null : String(text);
+  });
+  const productGetLabels = createRecordLabels(async (key) => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const outcome = await productGet(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return null;
+    }
+    const text = outcome.value.productCode;
+    return text == null ? null : String(text);
+  });
+
   const columns: ColumnDef<GridFeatures, InventoryMovementQueryRow>[] = [
-    ...QUERY_COLUMNS,
+    {
+      accessorKey: "createdAt",
+      header: "created at",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+    },
+    {
+      accessorKey: "createdBy",
+      header: "created by",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
+    {
+      accessorKey: "fromLocationId",
+      header: "from location id",
+      cell: (cell) => <>{locationGetLabels(cell.getValue() as string | null)}</>,
+    },
+    {
+      accessorKey: "id",
+      header: "id",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
+    {
+      accessorKey: "idempotencyKey",
+      header: "idempotency key",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    },
+    {
+      accessorKey: "kind",
+      header: "kind",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    },
+    {
+      accessorKey: "occurredAt",
+      header: "occurred at",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+    },
+    {
+      accessorKey: "palletId",
+      header: "pallet id",
+      cell: (cell) => <>{palletGetLabels(cell.getValue() as string | null)}</>,
+    },
+    {
+      accessorKey: "productId",
+      header: "product id",
+      cell: (cell) => <>{productGetLabels(cell.getValue() as string | null)}</>,
+    },
+    {
+      accessorKey: "quantity",
+      header: "quantity",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
+    },
+    {
+      accessorKey: "reasonCode",
+      header: "reason code",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    },
+    {
+      accessorKey: "toLocationId",
+      header: "to location id",
+      cell: (cell) => <>{locationGetLabels(cell.getValue() as string | null)}</>,
+    },
     {
       id: "openInventoryMovementGet",
       header: "",

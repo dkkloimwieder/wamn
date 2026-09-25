@@ -878,11 +878,14 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     let widget = widget(&files);
 
     // The list of another model is imported under an alias, because two
-    // models can both declare a `list`.
+    // models can both declare a `list`. The table's maker column reads the
+    // same model's get, under an alias of the same kind.
     assert!(
         widget.contains(concat!(
             "import {\n",
+            "  get as widgetMakerGet,\n",
             "  query as widgetMakerQuery,\n",
+            "  type WidgetMakerGetRequest,\n",
             "  type WidgetMakerQueryRequest,\n",
             "  type WidgetMakerQueryRow,\n",
             "} from \"../widget_maker.js\";\n",

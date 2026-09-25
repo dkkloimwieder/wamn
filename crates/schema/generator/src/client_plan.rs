@@ -266,6 +266,42 @@ pub struct UnsearchableSelector<'a> {
     pub list_operation: &'a str,
 }
 
+/// One table column that names a record, and the read that shows its text.
+///
+/// The column carries the record key. The model's served list states the
+/// field a person reads, and the record read that list's rows open returns
+/// it, so a cell shows the same text a selector offers for that record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedColumn<'a> {
+    /// Result field of this screen that carries the key.
+    pub column: &'a str,
+    /// Canonical identity of the read that returns one record.
+    pub read_operation: &'a str,
+    /// Model that owns the read, which is the module an emitter imports it
+    /// from.
+    pub read_model: &'a str,
+    /// Operation name of the read inside its own model.
+    pub read_name: &'a str,
+    /// Input path of the read that takes the key.
+    pub key_input: &'a str,
+    /// Result field of the read that carries the text a person reads.
+    pub display_field: &'a str,
+}
+
+/// One table column that names a record no served read can show.
+///
+/// The cell shows the key. The gap is in the release, so a generator names
+/// the column and an author closes it by serving the model's list and read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnresolvedColumn<'a> {
+    /// Canonical identity of the screen that renders the column.
+    pub operation: &'a str,
+    /// Result field the column shows.
+    pub column: &'a str,
+    /// Model whose record the column names.
+    pub model: &'a str,
+}
+
 /// One selector narrowing another: this screen's value fills that list input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Narrowing<'a> {
@@ -340,6 +376,9 @@ pub struct ScreenPlan<'a> {
     pub population: Vec<PopulatedInput<'a>>,
     /// Forms that one result row opens prefilled, in plan order.
     pub row_forms: Vec<RowForm<'a>>,
+    /// Columns that name a record, each with the read that shows its text,
+    /// in contract order. Only a table states any.
+    pub resolved_columns: Vec<ResolvedColumn<'a>>,
 }
 
 /// One model's screens.
@@ -376,6 +415,7 @@ impl<'a> ClientPlan<'a> {
         plan.link_rows();
         plan.populate_inputs();
         plan.link_forms();
+        plan.resolve_columns();
         plan
     }
 
@@ -451,6 +491,25 @@ impl<'a> ClientPlan<'a> {
         }
     }
 
+    /// Bind each table column that names a record to the read that shows it.
+    ///
+    /// It runs after `link_rows`, because the read is the one a list's rows
+    /// open by record, and this pass reads that link instead of matching the
+    /// relation again.
+    fn resolve_columns(&mut self) {
+        let lists: Vec<Lister<'a>> = self.screens().filter_map(Lister::of).collect();
+        let resolved: Vec<_> = self
+            .screens()
+            .map(|screen| resolved_columns(screen, &lists, self))
+            .collect();
+        let mut resolved = resolved.into_iter();
+        for model in &mut self.models {
+            for screen in &mut model.screens {
+                screen.resolved_columns = resolved.next().expect("one column list for each screen");
+            }
+        }
+    }
+
     /// Every screen in the plan, in model and then operation order.
     pub fn screens(&self) -> impl Iterator<Item = &ScreenPlan<'a>> {
         self.models.iter().flat_map(|model| model.screens.iter())
@@ -479,6 +538,31 @@ impl<'a> ClientPlan<'a> {
         self.screens()
             .filter(|screen| screen.role.is_supported() && screen.contract.route.is_none())
             .map(|screen| screen.contract.operation.as_str())
+            .collect()
+    }
+
+    /// Every table column that names a record no served read can show.
+    ///
+    /// A generator reports this list beside [`Self::unsearchable`]. The named
+    /// columns show the record key.
+    #[must_use]
+    pub fn unresolved(&self) -> Vec<UnresolvedColumn<'a>> {
+        self.screens()
+            .filter(|screen| screen.role == Role::Table)
+            .flat_map(|screen| {
+                screen.columns.iter().filter_map(|column| {
+                    let reference = column.references.as_ref()?;
+                    let resolved = screen
+                        .resolved_columns
+                        .iter()
+                        .any(|resolved| resolved.column == column.path);
+                    (!resolved).then_some(UnresolvedColumn {
+                        operation: screen.contract.operation.as_str(),
+                        column: column.path.as_str(),
+                        model: reference.model.as_str(),
+                    })
+                })
+            })
             .collect()
     }
 
@@ -614,6 +698,7 @@ impl<'a> ScreenPlan<'a> {
             revision,
             population: Vec::new(),
             row_forms: Vec::new(),
+            resolved_columns: Vec::new(),
         }
     }
 
@@ -803,6 +888,58 @@ impl<'a> Lister<'a> {
             .copied()
             .find(|path| filter_input(path, display))
     }
+}
+
+/// Bind one table's columns that name a record to the reads that show them.
+///
+/// The model's served list states the display field, and the record read its
+/// rows open returns that field for one key. A column whose model offers no
+/// such pair stays unresolved, and the plan reports it.
+fn resolved_columns<'a>(
+    screen: &ScreenPlan<'a>,
+    lists: &[Lister<'a>],
+    plan: &ClientPlan<'a>,
+) -> Vec<ResolvedColumn<'a>> {
+    if screen.role != Role::Table {
+        return Vec::new();
+    }
+    screen
+        .columns
+        .iter()
+        .filter_map(|column| {
+            let reference = column.references.as_ref()?;
+            lists
+                .iter()
+                .filter(|list| list.model == reference.model)
+                .find_map(|list| {
+                    let display = list.display();
+                    let read = plan
+                        .screens()
+                        .find(|candidate| candidate.contract.operation == list.operation)?
+                        .row_links
+                        .iter()
+                        .filter(|link| link.reason == LinkReason::Record)
+                        .find_map(|link| {
+                            plan.screens()
+                                .find(|candidate| candidate.contract.operation == link.operation)
+                        })?;
+                    let key_input = read.record?.key_input?;
+                    // The read must return the text the list shows, or the
+                    // cell would show a different field than the selector.
+                    read.columns
+                        .iter()
+                        .any(|field| field.path == display)
+                        .then_some(ResolvedColumn {
+                            column: column.path.as_str(),
+                            read_operation: read.contract.operation.as_str(),
+                            read_model: read.model,
+                            read_name: read.name,
+                            key_input,
+                            display_field: display,
+                        })
+                })
+        })
+        .collect()
 }
 
 /// Bind one screen's inputs to the lists that offer their records.

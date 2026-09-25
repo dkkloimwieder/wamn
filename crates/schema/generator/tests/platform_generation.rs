@@ -1251,14 +1251,9 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
             .expect("an authored operation")
             .remove("lists");
     }
-    // The one derived reference leaves with its column.
-    for action in ["create", "update"] {
-        let writable = silent["models"]["widget"]["operations"][action]["writable_fields"]
-            .as_array_mut()
-            .expect("writable fields");
-        writable.retain(|field| field != "maker_id");
-    }
-    let quiet = fixture::generate_with(&fixture::catalog(), &silent);
+    // The one derived reference leaves with its foreign key, from every
+    // input and every result that carries the column.
+    let quiet = fixture::generate_with(&fixture::catalog_without_maker_key(), &silent);
     for file in quiet.files() {
         let path = file.path();
         if !path.starts_with("generated/contracts/") {
@@ -1285,6 +1280,37 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
     );
     assert_eq!(authored["lists"]["model"], "widget");
     assert_eq!(authored["lists"]["display_field"], "code");
+}
+
+/// EXIT GATE for `wamn-zrrg`: a generated result field states the record its
+/// column's foreign key names, the same member an input states.
+///
+/// A table reads it to show the record's text in place of its key. A column
+/// with no foreign key states nothing.
+#[test]
+fn a_generated_result_field_states_the_record_its_foreign_key_names() {
+    let package = fixture::generate_fixture();
+    for action in ["get", "query", "create", "update"] {
+        let result = artifact(
+            &package,
+            &format!("generated/contracts/widget/{action}.result.json"),
+        );
+        let field = |path: &str| {
+            result["fields"]
+                .as_array()
+                .expect("result fields")
+                .iter()
+                .find(|field| field["path"] == path)
+                .unwrap_or_else(|| panic!("{action} returns {path}"))
+                .clone()
+        };
+        assert_eq!(
+            field("maker_id")["references"],
+            json!({"model": "widget_maker"}),
+            "{action} states the model the foreign key names"
+        );
+        assert_eq!(field("code").get("references"), None, "{action}");
+    }
 }
 
 /// EXIT GATE for `wamn-rm14.6`: the envelope bound carries no screen text.

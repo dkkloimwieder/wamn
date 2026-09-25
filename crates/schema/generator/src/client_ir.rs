@@ -275,36 +275,36 @@ pub struct ListIr {
 }
 
 impl FieldIr {
-    /// Carry the authored text of `source` onto every leaf of `fields` that
-    /// states the same path.
+    /// Carry the declared facts of `source` onto every leaf of `fields` that
+    /// states the same path: the authored text and the record it names.
     ///
     /// A served response reads its fields from the published route schema,
-    /// which carries no text by decision. The declared contract of the
-    /// responding terminal does, so the text joins here rather than in the
+    /// which carries neither by decision. The declared contract of the
+    /// responding terminal does, so the two join here rather than in the
     /// publication, and no attachment digest moves.
-    pub fn carry_text(fields: &mut [Self], source: &[Self]) {
-        fn apply(
-            fields: &mut [FieldIr],
-            text: &BTreeMap<&str, (&Option<String>, &Option<String>)>,
-        ) {
+    pub fn carry_declared(fields: &mut [Self], source: &[Self]) {
+        fn apply(fields: &mut [FieldIr], declared: &BTreeMap<&str, &FieldIr>) {
             for field in fields {
-                if let Some((label, description)) = text.get(field.path.as_str()) {
+                if let Some(source) = declared.get(field.path.as_str()) {
                     if field.label.is_none() {
-                        field.label.clone_from(label);
+                        field.label.clone_from(&source.label);
                     }
                     if field.description.is_none() {
-                        field.description.clone_from(description);
+                        field.description.clone_from(&source.description);
+                    }
+                    if field.references.is_none() {
+                        field.references.clone_from(&source.references);
                     }
                 }
-                apply(&mut field.children, text);
+                apply(&mut field.children, declared);
             }
         }
 
-        let text: BTreeMap<&str, (&Option<String>, &Option<String>)> = leaf_fields(source)
+        let declared: BTreeMap<&str, &FieldIr> = leaf_fields(source)
             .into_iter()
-            .map(|field| (field.path.as_str(), (&field.label, &field.description)))
+            .map(|field| (field.path.as_str(), field))
             .collect();
-        apply(fields, &text);
+        apply(fields, &declared);
     }
 }
 
@@ -1154,9 +1154,9 @@ fn bind_served_contracts(models: &mut [ModelIr]) {
                     route.response.fields = terminal.result_fields.clone();
                 } else {
                     // The published schema states the shape and carries no
-                    // authored text. The terminal's declared contract carries
-                    // it, so the two join here.
-                    FieldIr::carry_text(&mut route.response.fields, &terminal.result_fields);
+                    // authored text and no reference. The terminal's declared
+                    // contract carries both, so the two join here.
+                    FieldIr::carry_declared(&mut route.response.fields, &terminal.result_fields);
                 }
                 route.response.errors = terminal.errors.clone();
             }

@@ -26,6 +26,175 @@ pub const WIDGET_MAKER_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
+/// Input for `platform-fixture:widget-maker/get@1.0.0`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WidgetMakerGetRequest {
+    /// `uuid`
+    pub id: uuid::Uuid,
+    /// `string`
+    pub request_id: String,
+}
+
+/// Result of `platform-fixture:widget-maker/get@1.0.0`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WidgetMakerGetResult {
+    /// `timestamptz`
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub id: uuid::Uuid,
+    /// `text`
+    pub name: String,
+}
+
+/// Input descriptors for `platform-fixture:widget-maker/get@1.0.0`.
+pub const WIDGET_MAKER_GET_INPUT: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        path: "id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "request_id",
+        type_name: "string",
+        nullable: false,
+        values: &[],
+    },
+];
+
+/// Result descriptors for `platform-fixture:widget-maker/get@1.0.0`.
+pub const WIDGET_MAKER_GET_RESULT: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        path: "created_at",
+        type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "name",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+];
+
+pub const WIDGET_MAKER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "request_id",
+            type_name: "string",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+];
+
+pub const WIDGET_MAKER_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "created_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "name",
+            type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+];
+
+pub const WIDGET_MAKER_GET_KIND: &str = "get";
+pub const WIDGET_MAKER_GET_REQUIRES_COMPOSITION: bool = false;
+pub const WIDGET_MAKER_GET_REPLAY: Option<&str> = None;
+pub const WIDGET_MAKER_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const WIDGET_MAKER_GET_RESULT_OPAQUE: bool = false;
+/// The grant a caller presents to invoke `platform-fixture:widget-maker/get@1.0.0`.
+pub const WIDGET_MAKER_GET_GRANT: &str = "platform-fixture:widget-maker/get@1.0.0";
+
+/// Typed refusals `platform-fixture:widget-maker/get@1.0.0` declares.
+pub const WIDGET_MAKER_GET_ERRORS: &[&str] = &[
+    "internal_error",
+    "invalid_input",
+    "not_found",
+    "permission_denied",
+    "retry",
+    "timeout",
+];
+
+/// Where the release publishes `platform-fixture:widget-maker/get@1.0.0`.
+///
+/// Method and template only — the host and base URL are the client's
+/// deployment config, not this release's facts.
+#[must_use]
+pub fn get_route() -> RouteMetadata {
+    RouteMetadata {
+        method: "POST".to_owned(),
+        template: "/widget_maker/get".to_owned(),
+    }
+}
+
+/// Invoke `platform-fixture:widget-maker/get@1.0.0` through a bound client.
+///
+/// # Errors
+///
+/// [`ClientError`] for a transport failure, a refusal, or a response that
+/// does not match the operation's envelope.
+pub async fn get(
+    client: &WamnClient,
+    items: &[serde_json::Value],
+) -> Result<Vec<wamn_client::ItemOutcome>, ClientError> {
+    client
+        .invoke(&get_route(), &std::collections::BTreeMap::new(), items)
+        .await
+}
+
 /// Input for `platform-fixture:widget-maker/list@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerListRequest {

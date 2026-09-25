@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 
 use crate::client_ir::{FieldIr, leaf_fields};
 use crate::client_plan::{
-    ClientPlan, ModelPlan, PopulatedInput, Role, Rows, ScreenPlan, SuppliedKind,
+    ClientPlan, ModelPlan, PopulatedInput, ResolvedColumn, Role, Rows, ScreenPlan, SuppliedKind,
 };
 use crate::client_ts::{RUNTIME_PACKAGE, UI_PACKAGE, ts_type};
 use crate::generate::GeneratedFile;
@@ -143,6 +143,22 @@ pub fn emit_ts_components(
             .expect("writing to a String cannot fail");
         }
     }
+    // The release gap an author closes: a column that names a record whose
+    // model serves no list with a record read beside it shows the key.
+    let unresolved = plan.unresolved();
+    if !unresolved.is_empty() {
+        index.push_str(
+            "\n// These table columns show the record key, because the model they name\n// serves no list whose rows open a record read that returns its text:\n",
+        );
+        for column in unresolved {
+            writeln!(
+                index,
+                "// {} {}: {}",
+                column.operation, column.column, column.model
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
     files.push(GeneratedFile::new(
         format!("{COMPONENT_DIRECTORY}/index.ts").into_boxed_str(),
         index.into_bytes().into_boxed_slice(),
@@ -209,6 +225,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                     &mut runtime,
                     &mut ui,
                     &mut bindings,
+                    &mut foreign,
                     &mut sibling,
                 )?;
             }
@@ -471,12 +488,127 @@ fn cell_type(field: &FieldIr) -> &str {
     }
 }
 
+/// The name of the labels one table keeps for the records a read returns.
+///
+/// Two columns can name records of one model, so the labels are named after
+/// the read, never after the column, and both columns share them.
+fn labels_name(resolved: &ResolvedColumn<'_>) -> String {
+    format!(
+        "{}Labels",
+        foreign_alias(resolved.read_model, resolved.read_name)
+    )
+}
+
+/// The column list of one table, one entry for each result leaf, in contract
+/// order.
+///
+/// A column that names a record shows the text its read returns, from the
+/// labels the component keeps. Every other column shows its own value.
+fn write_columns(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    indent: usize,
+    ui: &mut BTreeSet<&'static str>,
+) {
+    let pad = " ".repeat(indent);
+    for column in &screen.columns {
+        writeln!(source, "{pad}{{").expect("write");
+        writeln!(source, "{pad}  accessorKey: {:?},", accessor(&column.path)).expect("write");
+        writeln!(source, "{pad}  header: {:?},", label(column)).expect("write");
+        if let Some(resolved) = screen
+            .resolved_columns
+            .iter()
+            .find(|resolved| resolved.column == column.path)
+        {
+            // The grid calls a cell once, so the text sits in markup, which
+            // Solid tracks, and the cell follows the read when it answers.
+            writeln!(
+                source,
+                "{pad}  cell: (cell) => <>{{{}(cell.getValue() as string | null)}}</>,",
+                labels_name(resolved)
+            )
+            .expect("write");
+        } else if column.values.is_empty() {
+            writeln!(
+                source,
+                "{pad}  cell: (cell) => cellText(cell.getValue() as JsonValue, {:?}),",
+                cell_type(column)
+            )
+            .expect("write");
+        } else {
+            // A declared value domain reads as a badge. An absent value shows
+            // nothing, the same as any other cell.
+            ui.insert("Badge");
+            let cell = format!(
+                "cellText(cell.getValue() as JsonValue, {:?})",
+                cell_type(column)
+            );
+            writeln!(
+                source,
+                "{pad}  cell: (cell) => (\n{pad}    <Show when={{{cell} !== \"\"}}>\n{pad}      <Badge variant=\"outline\">{{{cell}}}</Badge>\n{pad}    </Show>\n{pad}  ),"
+            )
+            .expect("write");
+        }
+        writeln!(source, "{pad}}},").expect("write");
+    }
+}
+
+/// The labels one table keeps for each read its columns name.
+///
+/// Each read runs once for each key the rows name, and it asks for the key
+/// alone. A reply that is not a record leaves the cell showing the key.
+fn emit_record_labels(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    runtime: &mut BTreeSet<&'static str>,
+    ui: &mut BTreeSet<&'static str>,
+    bindings: &mut BTreeSet<String>,
+    foreign: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), ClientComponentError> {
+    let mut written = BTreeSet::new();
+    for resolved in &screen.resolved_columns {
+        let name = labels_name(resolved);
+        if !written.insert(name.clone()) {
+            continue;
+        }
+        let function = crate::client_ts::function_name(resolved.read_name).map_err(|error| {
+            ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+        })?;
+        let stem = crate::client_ts::type_stem(resolved.read_model, resolved.read_name);
+        // The table's own model imports its binding by name. Another model's
+        // binding carries the model in its alias, as a selector's list does.
+        let call = if resolved.read_model == screen.model {
+            bindings.insert(function.clone());
+            bindings.insert(format!("type {stem}Request"));
+            function
+        } else {
+            let alias = foreign_alias(resolved.read_model, resolved.read_name);
+            let names = foreign.entry(resolved.read_model.to_owned()).or_default();
+            names.insert(format!("{function} as {alias}"));
+            names.insert(format!("type {stem}Request"));
+            alias
+        };
+        ui.insert("createRecordLabels");
+        runtime.insert("newRequestId");
+        runtime.insert("writeMember");
+        writeln!(
+            source,
+            "  const {name} = createRecordLabels(async (key) => {{\n    const request = writeMember({{ requestId: newRequestId() }}, {}, key) as {stem}Request;\n    const outcome = await {call}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return null;\n    }}\n    const text = outcome.value.{};\n    return text == null ? null : String(text);\n  }});",
+            member_literal(resolved.key_input),
+            crate::client_ts::to_camel(resolved.display_field)
+        )
+        .expect("write");
+    }
+    Ok(())
+}
+
 fn emit_table(
     source: &mut String,
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
     ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
+    foreign: &mut BTreeMap<String, BTreeSet<String>>,
     sibling: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
@@ -540,45 +672,25 @@ fn emit_table(
         }
     };
 
-    // The columns, in contract order.
-    writeln!(
-        source,
-        "\n/** Columns of `{}`, in contract order. */",
-        screen.contract.operation
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "const {}_COLUMNS: ColumnDef<GridFeatures, {stem}Row>[] = [",
-        screen.name.to_uppercase()
-    )
-    .expect("write");
-    for column in &screen.columns {
-        writeln!(source, "  {{").expect("write");
-        writeln!(source, "    accessorKey: {:?},", accessor(&column.path)).expect("write");
-        writeln!(source, "    header: {:?},", label(column)).expect("write");
-        if column.values.is_empty() {
-            writeln!(
-                source,
-                "    cell: (cell) => cellText(cell.getValue() as JsonValue, {:?}),",
-                cell_type(column)
-            )
-            .expect("write");
-        } else {
-            // A declared value domain reads as a badge. An absent value shows
-            // nothing, the same as any other cell.
-            ui.insert("Badge");
-            writeln!(
-                source,
-                "    cell: (cell) => (\n      <Show when={{cellText(cell.getValue() as JsonValue, {:?}) !== \"\"}}>\n        <Badge variant=\"outline\">{{cellText(cell.getValue() as JsonValue, {:?})}}</Badge>\n      </Show>\n    ),",
-                cell_type(column),
-                cell_type(column)
-            )
-            .expect("write");
-        }
-        writeln!(source, "  }},").expect("write");
+    // The columns, in contract order. A column that names a record reads the
+    // labels the component keeps, so that list is written inside it.
+    let resolving = !screen.resolved_columns.is_empty();
+    if !resolving {
+        writeln!(
+            source,
+            "\n/** Columns of `{}`, in contract order. */",
+            screen.contract.operation
+        )
+        .expect("write");
+        writeln!(
+            source,
+            "const {}_COLUMNS: ColumnDef<GridFeatures, {stem}Row>[] = [",
+            screen.name.to_uppercase()
+        )
+        .expect("write");
+        write_columns(source, screen, 2, ui);
+        source.push_str("];\n");
     }
-    source.push_str("];\n");
 
     // The props.
     writeln!(
@@ -748,15 +860,23 @@ fn emit_table(
     // The grid renders every cell of a row from the column list, so a row link
     // and a row form are each one column. Each reads a callback the page
     // supplied, so these columns are built inside the component.
-    let columns = if screen.row_links.is_empty() && screen.row_forms.is_empty() {
+    if resolving {
+        source.push('\n');
+        emit_record_labels(source, screen, runtime, ui, bindings, foreign)?;
+    }
+    let columns = if !resolving && screen.row_links.is_empty() && screen.row_forms.is_empty() {
         format!("{}_COLUMNS", screen.name.to_uppercase())
     } else {
         writeln!(
             source,
-            "\n  const columns: ColumnDef<GridFeatures, {stem}Row>[] = [\n    ...{}_COLUMNS,",
-            screen.name.to_uppercase()
+            "\n  const columns: ColumnDef<GridFeatures, {stem}Row>[] = ["
         )
         .expect("write");
+        if resolving {
+            write_columns(source, screen, 4, ui);
+        } else {
+            writeln!(source, "    ...{}_COLUMNS,", screen.name.to_uppercase()).expect("write");
+        }
         for link in &screen.row_links {
             let target = crate::client_ts::operation_stem(link.operation);
             writeln!(

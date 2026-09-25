@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTransport, type JsonValue, type Outcome } from "@wamn/web-runtime";
 
 import { WidgetQueryTable, WidgetQueryTableLabel } from "../fixture/components/widget.js";
-import { page, tableStub as stub } from "../stubs/index.js";
+import { GONE, MAKER, SOUTH, makerStub, page, tableStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
 
@@ -43,6 +43,24 @@ describe("the generated table for a page", () => {
       "",
       "",
     ]);
+  });
+
+  it("shows the maker a widget names by its name, reading each maker once (wamn-zrrg)", async () => {
+    const { transport, sent } = makerStub();
+    render(() => <WidgetQueryTable transport={transport} />);
+    fireEvent.click(screen.getByText("read"));
+    await waitFor(() => expect(screen.getAllByText("Northwind")).toHaveLength(2));
+    expect(screen.getByText("Southwind")).toBeDefined();
+    // A key that no read finds shows the key, so the cell still names it.
+    await waitFor(() => expect(screen.getByText(GONE)).toBeDefined());
+    expect(screen.queryByText(MAKER)).toBeNull();
+    // One table read, then one read for each maker the rows name. Two rows
+    // name the same maker, and a row that names none asks for nothing.
+    const makers = sent.filter((request) => request.operation.includes("widget-maker"));
+    expect(makers.map((request) => (request.items[0] as { id: string }).id).sort()).toEqual(
+      [GONE, MAKER, SOUTH].sort(),
+    );
+    expect(makers.every((request) => request.operation.includes("/get@"))).toBe(true);
   });
 
   it("names the screen without rendering a heading", () => {

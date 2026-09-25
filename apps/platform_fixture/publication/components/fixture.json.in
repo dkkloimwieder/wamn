@@ -146,6 +146,15 @@
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
     },
+    "platform-fixture:widget-maker/get@1.0.0": {
+      "registered-operation": "platform-fixture:widget-maker/get@1.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {"$ref": "generated/routes/widget_maker/get.json"}
+      }],
+      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+      "parameters": []
+    },
     "platform-fixture:widget-maker/query@1.0.0": {
       "registered-operation": "platform-fixture:widget-maker/query@1.0.0",
       "input-ports": [{

@@ -120,7 +120,9 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
         ("widget", "record_batch"),
         ("widget", "update"),
         // A selector reads a served list, so the second model's reads are
-        // published like every other operation.
+        // published like every other operation. A table reads one maker
+        // through its get, to show the maker a widget names.
+        ("widget-maker", "get"),
         ("widget-maker", "list"),
         ("widget-maker", "query"),
     ]
@@ -274,17 +276,24 @@ pub(crate) fn catalog() -> CatalogIr {
 
 /// The fixture catalog, with more columns on the second model.
 pub(crate) fn catalog_with(maker_columns: Vec<Column>) -> CatalogIr {
-    catalog_of(true, maker_columns)
+    catalog_of(true, maker_columns, true)
 }
 
 /// The fixture catalog with `widget.note` NOT NULL: a schema change that
 /// moves the generated contracts and edits no manifest.
 #[allow(dead_code, reason = "not every test module changes the widget table")]
 pub(crate) fn catalog_with_required_note() -> CatalogIr {
-    catalog_of(false, Vec::new())
+    catalog_of(false, Vec::new(), true)
 }
 
-fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>) -> CatalogIr {
+/// The fixture catalog with no foreign key from `widget.maker_id`, so no
+/// column names another model's record.
+#[allow(dead_code, reason = "not every test module drops the maker key")]
+pub(crate) fn catalog_without_maker_key() -> CatalogIr {
+    catalog_of(true, Vec::new(), false)
+}
+
+fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>, maker_key: bool) -> CatalogIr {
     let widget = Table::new(
         "inventory",
         "widget",
@@ -324,6 +333,9 @@ fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>) -> CatalogIr {
                 "code = ANY (ARRAY['priority'::text, 'standard'::text])",
             )
             .expect("valid check constraint"),
+        ]
+        .into_iter()
+        .chain(maker_key.then(|| {
             Constraint::foreign_key(
                 "widget_maker_id_fkey",
                 vec![ForeignKeyColumn::new("maker_id", "id")],
@@ -332,8 +344,9 @@ fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>) -> CatalogIr {
                 ForeignKeyAction::NoAction,
                 ForeignKeyAction::NoAction,
             )
-            .expect("valid foreign key"),
-        ],
+            .expect("valid foreign key")
+        }))
+        .collect(),
         Vec::new(),
     );
     // The second model. It is as small as the first: an identity, one text

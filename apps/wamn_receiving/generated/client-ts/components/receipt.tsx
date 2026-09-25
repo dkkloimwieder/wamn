@@ -36,6 +36,7 @@ import {
   TableScreen,
   TextField,
   announceOutcome,
+  createRecordLabels,
   gridFeatures,
   type GridFeatures,
 } from "@wamn/ui";
@@ -48,6 +49,10 @@ import {
   type ReceiptQueryResult,
   type ReceiptQueryRow,
 } from "../receipt.js";
+import {
+  get as purchaseOrderGet,
+  type PurchaseOrderGetRequest,
+} from "../purchase_order.js";
 
 /** The record that the detail for `wamn-receiving:receipt/get@1.0.0` reads. */
 export interface ReceiptGetDetailInput {
@@ -111,45 +116,6 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
   );
 }
 
-/** Columns of `wamn-receiving:receipt/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, ReceiptQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "Recorded",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "createdBy",
-    header: "Recorded by",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "idempotencyKey",
-    header: "idempotency key",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "occurredAt",
-    header: "Received at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "purchaseOrderId",
-    header: "Purchase order",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "receiptReference",
-    header: "Receipt reference",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-];
-
 /** What the table for `wamn-receiving:receipt/query@1.0.0` takes. */
 export interface ReceiptQueryTableProps {
   /** The transport the application supplies. */
@@ -209,8 +175,52 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     restart();
   };
 
+  const purchaseOrderGetLabels = createRecordLabels(async (key) => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PurchaseOrderGetRequest;
+    const outcome = await purchaseOrderGet(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return null;
+    }
+    const text = outcome.value.purchaseOrderNumber;
+    return text == null ? null : String(text);
+  });
+
   const columns: ColumnDef<GridFeatures, ReceiptQueryRow>[] = [
-    ...QUERY_COLUMNS,
+    {
+      accessorKey: "createdAt",
+      header: "Recorded",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+    },
+    {
+      accessorKey: "createdBy",
+      header: "Recorded by",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
+    {
+      accessorKey: "id",
+      header: "id",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
+    {
+      accessorKey: "idempotencyKey",
+      header: "idempotency key",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    },
+    {
+      accessorKey: "occurredAt",
+      header: "Received at",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+    },
+    {
+      accessorKey: "purchaseOrderId",
+      header: "Purchase order",
+      cell: (cell) => <>{purchaseOrderGetLabels(cell.getValue() as string | null)}</>,
+    },
+    {
+      accessorKey: "receiptReference",
+      header: "Receipt reference",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    },
     {
       id: "openReceiptGet",
       header: "",

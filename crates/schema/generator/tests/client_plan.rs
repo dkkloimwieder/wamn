@@ -1,8 +1,8 @@
 use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
 use wamn_schema_generator::client_plan::{
-    ChosenRevision, ClientPlan, LinkReason, NoRole, Role, RowLink, Rows, ScreenPlan, SuppliedKind,
-    UnsearchableSelector, effective_result_fields,
+    ChosenRevision, ClientPlan, LinkReason, NoRole, ResolvedColumn, Role, RowLink, Rows,
+    ScreenPlan, SuppliedKind, UnresolvedColumn, UnsearchableSelector, effective_result_fields,
 };
 
 #[path = "support/platform_fixture.rs"]
@@ -302,8 +302,8 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         plan.screens()
             .filter(|screen| screen.role.is_supported())
             .count(),
-        9,
-        "the other screens keep their role, the second model lists, and the third updates"
+        10,
+        "the other screens keep their role, the second model lists and reads one, and the third updates"
     );
 }
 
@@ -784,6 +784,63 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
 ///
 /// A reader that branched on the origin would give two screens of the same
 /// shape two behaviors, which is the defect this states cannot happen.
+/// EXIT GATE for `wamn-zrrg`: a table column that names a record states the
+/// read that shows the record's text, and the plan reports a column that no
+/// served read can show.
+///
+/// The text is the display field of the model's served list, so a cell shows
+/// what a selector offers for the same record.
+#[test]
+fn a_table_column_that_names_a_record_states_the_read_that_shows_it() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    let widgets = plan
+        .screens()
+        .find(|screen| screen.model == "widget" && screen.name == "query")
+        .expect("the widget query");
+    assert_eq!(
+        widgets.resolved_columns,
+        [ResolvedColumn {
+            column: "maker_id",
+            read_operation: "platform-fixture:widget-maker/get@1.0.0",
+            read_model: "widget_maker",
+            read_name: "get",
+            key_input: "id",
+            display_field: "name",
+        }],
+        "the maker column reads the maker's name through its get"
+    );
+    assert!(
+        screen(&plan, "get").resolved_columns.is_empty(),
+        "only a table resolves its columns"
+    );
+    assert!(plan.unresolved().is_empty(), "every named record resolves");
+
+    // With no served get, the list's rows open no record read, so the
+    // column shows the key and the plan names it.
+    let mut unserved = release();
+    let maker = unserved
+        .models
+        .iter_mut()
+        .find(|model| model.name == "widget_maker")
+        .expect("the second model");
+    maker
+        .operations
+        .iter_mut()
+        .find(|operation| operation.name == "get")
+        .expect("the maker get")
+        .route = None;
+    let plan = ClientPlan::from_ir(&unserved);
+    assert_eq!(
+        plan.unresolved(),
+        [UnresolvedColumn {
+            operation: "platform-fixture:widget/query@1.0.0",
+            column: "maker_id",
+            model: "widget_maker",
+        }]
+    );
+}
+
 #[test]
 fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
     let ir = release();

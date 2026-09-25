@@ -25,6 +25,7 @@ pub fn screens(binding: SessionBinding) -> Vec<Screen> {
         screens::widget::query(binding.clone()),
         screens::widget::record_batch(binding.clone()),
         screens::widget::update(binding.clone()),
+        screens::widget_maker::get(binding.clone()),
         screens::widget_maker::list(binding.clone()),
         screens::widget_maker::query(binding.clone()),
         screens::widget_tag::update(binding),

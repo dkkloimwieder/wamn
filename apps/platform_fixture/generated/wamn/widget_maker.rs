@@ -9,10 +9,31 @@ pub struct WidgetMakerRow {
     pub name: String,
 }
 
+pub(crate) const GET_DIGEST: &str =
+    "sha256:8758c3a9b62a08bdd9a700fbc1fb373604d4c41982adf6c73e5b6828ff73f652";
 pub(crate) const QUERY_0_DIGEST: &str =
     "sha256:e61b9f01a671b9b6b2a2b37a863ad7b246b42aad3e2fcb0ec055e70fd99e23d3";
 pub(crate) const QUERY_1_DIGEST: &str =
     "sha256:a3390cf3fe289e153cd85e4334304105b93568f5590687bafbd4a55a25fa013b";
+
+pub(crate) async fn get(
+    connection: &mut Connection,
+    id: wamn_postgres_statements::Uuid,
+) -> Result<Option<WidgetMakerRow>, wamn_postgres_statements::StatementError> {
+    let rows = connection
+        .run(
+            GET_DIGEST,
+            vec![wamn_postgres_statements::into_sql_value(id)],
+        )
+        .await?;
+    wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
+        Ok(WidgetMakerRow {
+            created_at: row.decode("created_at")?,
+            id: row.decode("id")?,
+            name: row.decode("name")?,
+        })
+    })
+}
 
 pub(crate) async fn query_created_at_ascending(
     connection: &mut Connection,

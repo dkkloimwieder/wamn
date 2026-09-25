@@ -46,6 +46,7 @@ import {
   TableScreen,
   TextField,
   announceOutcome,
+  createRecordLabels,
   gridFeatures,
   type GridFeatures,
 } from "@wamn/ui";
@@ -68,7 +69,9 @@ import {
   type InventorySplitFormInitial,
 } from "./inventory.js";
 import {
+  get as locationGet,
   query as locationQuery,
+  type LocationGetRequest,
   type LocationQueryRequest,
   type LocationQueryRow,
 } from "../location.js";
@@ -293,59 +296,6 @@ export function PalletGetDetail(props: PalletGetDetailProps) {
   );
 }
 
-/** Columns of `wamn-wms:pallet/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, PalletQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "created at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "createdBy",
-    header: "created by",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "locationId",
-    header: "location id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "palletCode",
-    header: "pallet code",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-  {
-    accessorKey: "rowVersion",
-    header: "row version",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
-  },
-  {
-    accessorKey: "status",
-    header: "status",
-    cell: (cell) => (
-      <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
-        <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
-      </Show>
-    ),
-  },
-  {
-    accessorKey: "updatedAt",
-    header: "updated at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "updatedBy",
-    header: "updated by",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-];
-
 /** What the table for `wamn-wms:pallet/query@1.0.0` takes. */
 export interface PalletQueryTableProps {
   /** The transport the application supplies. */
@@ -411,8 +361,66 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
     restart();
   };
 
+  const locationGetLabels = createRecordLabels(async (key) => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const outcome = await locationGet(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return null;
+    }
+    const text = outcome.value.locationCode;
+    return text == null ? null : String(text);
+  });
+
   const columns: ColumnDef<GridFeatures, PalletQueryRow>[] = [
-    ...QUERY_COLUMNS,
+    {
+      accessorKey: "createdAt",
+      header: "created at",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+    },
+    {
+      accessorKey: "createdBy",
+      header: "created by",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
+    {
+      accessorKey: "id",
+      header: "id",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
+    {
+      accessorKey: "locationId",
+      header: "location id",
+      cell: (cell) => <>{locationGetLabels(cell.getValue() as string | null)}</>,
+    },
+    {
+      accessorKey: "palletCode",
+      header: "pallet code",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    },
+    {
+      accessorKey: "rowVersion",
+      header: "row version",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
+    },
+    {
+      accessorKey: "status",
+      header: "status",
+      cell: (cell) => (
+        <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
+          <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
+        </Show>
+      ),
+    },
+    {
+      accessorKey: "updatedAt",
+      header: "updated at",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+    },
+    {
+      accessorKey: "updatedBy",
+      header: "updated by",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
     {
       id: "openPalletGet",
       header: "",

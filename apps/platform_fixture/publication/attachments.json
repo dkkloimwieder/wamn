@@ -122,6 +122,31 @@
     },
     "registered-operation": "platform-fixture:widget/list@1.0.0"
   },
+  "widget-maker-get-http": {
+    "kind": "http",
+    "package-id": "platform_fixture",
+    "component": "fixture",
+    "operation": "platform-fixture:widget-maker/get@1.0.0",
+    "definition-hash": "sha256:946dc8fb071b6127d693041505ea89c1d0d0509d0a630b959941795c668fc25f",
+    "definition": {
+      "id": "widget-maker-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/widget_maker/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {"$ref": "generated/routes/widget_maker/get.json"}
+    },
+    "auth-policy": {
+      "modes": [
+        "pat"
+      ]
+    },
+    "registered-operation": "platform-fixture:widget-maker/get@1.0.0"
+  },
   "widget-maker-list-http": {
     "kind": "http",
     "package-id": "platform_fixture",

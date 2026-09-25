@@ -64,6 +64,58 @@ export function page(ids: readonly string[], cursor: string | null): Outcome<Jso
   };
 }
 
+/** The key of a maker that no read finds. */
+export const GONE = "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a";
+
+/**
+ * One transport whose widgets name makers, and which reads one maker by key.
+ *
+ * Four widgets name three makers, and one names none, so a table that reads
+ * each maker once sends three maker reads. `GONE` answers not found.
+ */
+export function makerStub(): { transport: Transport; sent: WireRequest[] } {
+  const sent: WireRequest[] = [];
+  const makers: { readonly [key: string]: string } = { [MAKER]: "Northwind", [SOUTH]: "Southwind" };
+  const widget = (id: string, maker: string | null) => ({
+    id,
+    code: "standard",
+    note: null,
+    maker_id: maker,
+    edit_version: "1",
+    created_at: "2026-09-21T12:00:00.000000Z",
+  });
+  return {
+    sent,
+    transport: {
+      invoke: (request: WireRequest) => {
+        sent.push(request);
+        if (!request.operation.includes("widget-maker")) {
+          return Promise.resolve<Outcome<JsonValue>>({
+            status: "completed",
+            value: {
+              item: [
+                widget("a", MAKER),
+                widget("b", SOUTH),
+                widget("c", MAKER),
+                widget("d", GONE),
+                widget("e", null),
+              ],
+              next_cursor: null,
+            },
+          });
+        }
+        const key = String((request.items[0] as { id?: string }).id);
+        const name = makers[key];
+        return Promise.resolve<Outcome<JsonValue>>(
+          name === undefined
+            ? { status: "refused", code: "not_found", detail: null }
+            : { status: "completed", value: { id: key, name, created_at: "2026-09-21T12:00:00.000000Z" } },
+        );
+      },
+    },
+  };
+}
+
 /** One transport that answers each operation from its own reply. */
 export function selectorStub(): { transport: Transport; sent: WireRequest[] } {
   const sent: WireRequest[] = [];

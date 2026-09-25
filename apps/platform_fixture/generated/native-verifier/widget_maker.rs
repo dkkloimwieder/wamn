@@ -7,11 +7,15 @@ pub struct WidgetMakerRow {
     pub name: String,
 }
 
+pub(crate) const GET_SQL: &str = include_str!("../sql/widget_maker/get.sql");
 pub(crate) const QUERY_0_SQL: &str =
     include_str!("../sql/widget_maker/query_created_at_ascending.sql");
 pub(crate) const QUERY_1_SQL: &str =
     include_str!("../sql/widget_maker/query_created_at_descending.sql");
 
+pub(crate) fn get_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
 pub(crate) fn query_created_at_ascending_name_filter_bind_fixture() -> Option<serde_json::Value> {
     None
 }

@@ -27,6 +27,7 @@ wit_bindgen::generate!({
           export platform-fixture:widget/query@1.0.0;
           export platform-fixture:widget/record-batch@1.0.0;
           export platform-fixture:widget/update@1.0.0;
+          export platform-fixture:widget-maker/get@1.0.0;
           export platform-fixture:widget-maker/%list@1.0.0;
           export platform-fixture:widget-maker/query@1.0.0;
           export platform-fixture:widget-tag/update@1.0.0;

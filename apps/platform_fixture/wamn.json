@@ -134,6 +134,10 @@
       },
       "enum_fields": {},
       "operations": {
+        "get": {
+          "permission": "widget_maker.get",
+          "result": "one"
+        },
         "query": {
           "filters": [
             {

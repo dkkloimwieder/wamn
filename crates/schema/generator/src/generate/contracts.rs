@@ -20,6 +20,7 @@ use super::{
     insert_json_line, json, operation_constraints, operation_exclusions, query_variants, relation,
     rust_type_identifier, server_owned_fields, sha256, sql,
 };
+use crate::manifest::FieldReference;
 use wamn_record_history::HISTORY_COLUMNS;
 
 #[expect(
@@ -862,7 +863,7 @@ fn emit_operation_contracts(
     insert_json(
         files,
         &format!("{root}.result.json"),
-        &crud_result_contract(model, action, operation.result, &columns),
+        &crud_result_contract(manifest, model, table, action, operation.result, &columns),
     )?;
     insert_json(
         files,
@@ -961,7 +962,9 @@ fn model_text_members(model: &ModelDeclaration, column: &str) -> Vec<(String, Va
 }
 
 fn crud_result_contract(
+    manifest: &PackageManifest,
     model: &ModelDeclaration,
+    table: &Table,
     action: CrudAction,
     class: ResultClass,
     columns: &[StatementValueContract],
@@ -991,8 +994,14 @@ fn crud_result_contract(
                 // own text is the only text this result can carry.
                 label: model_text(model, &column.name).label,
                 description: model_text(model, &column.name).description,
-                // A result field is read, never chosen, so it names no list.
-                references: None,
+                // The column's own foreign key states the record it names,
+                // so a table can show that record's text instead of its key.
+                references: column_reference(manifest, table, &column.name).map(|(model, _)| {
+                    FieldReference {
+                        model,
+                        narrowed_by: None,
+                    }
+                }),
             })
             .collect(),
     }

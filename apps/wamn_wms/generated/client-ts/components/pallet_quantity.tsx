@@ -36,6 +36,7 @@ import {
   TableScreen,
   TextField,
   announceOutcome,
+  createRecordLabels,
   gridFeatures,
   type GridFeatures,
 } from "@wamn/ui";
@@ -48,6 +49,14 @@ import {
   type PalletQuantityQueryResult,
   type PalletQuantityQueryRow,
 } from "../pallet_quantity.js";
+import {
+  get as palletGet,
+  type PalletGetRequest,
+} from "../pallet.js";
+import {
+  get as productGet,
+  type ProductGetRequest,
+} from "../product.js";
 
 /** The record that the detail for `wamn-wms:pallet-quantity/get@1.0.0` reads. */
 export interface PalletQuantityGetDetailInput {
@@ -110,40 +119,6 @@ export function PalletQuantityGetDetail(props: PalletQuantityGetDetailProps) {
   );
 }
 
-/** Columns of `wamn-wms:pallet-quantity/query@1.0.0`, in contract order. */
-const QUERY_COLUMNS: ColumnDef<GridFeatures, PalletQuantityQueryRow>[] = [
-  {
-    accessorKey: "createdAt",
-    header: "created at",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
-  },
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "palletId",
-    header: "pallet id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "productId",
-    header: "product id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "quantity",
-    header: "quantity",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
-  },
-  {
-    accessorKey: "status",
-    header: "status",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-];
-
 /** What the table for `wamn-wms:pallet-quantity/query@1.0.0` takes. */
 export interface PalletQuantityQueryTableProps {
   /** The transport the application supplies. */
@@ -203,8 +178,56 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     restart();
   };
 
+  const palletGetLabels = createRecordLabels(async (key) => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const outcome = await palletGet(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return null;
+    }
+    const text = outcome.value.palletCode;
+    return text == null ? null : String(text);
+  });
+  const productGetLabels = createRecordLabels(async (key) => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const outcome = await productGet(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return null;
+    }
+    const text = outcome.value.productCode;
+    return text == null ? null : String(text);
+  });
+
   const columns: ColumnDef<GridFeatures, PalletQuantityQueryRow>[] = [
-    ...QUERY_COLUMNS,
+    {
+      accessorKey: "createdAt",
+      header: "created at",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "timestamptz"),
+    },
+    {
+      accessorKey: "id",
+      header: "id",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
+    },
+    {
+      accessorKey: "palletId",
+      header: "pallet id",
+      cell: (cell) => <>{palletGetLabels(cell.getValue() as string | null)}</>,
+    },
+    {
+      accessorKey: "productId",
+      header: "product id",
+      cell: (cell) => <>{productGetLabels(cell.getValue() as string | null)}</>,
+    },
+    {
+      accessorKey: "quantity",
+      header: "quantity",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
+    },
+    {
+      accessorKey: "status",
+      header: "status",
+      cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
+    },
     {
       id: "openPalletQuantityGet",
       header: "",
