@@ -238,7 +238,7 @@ export function TableSections(): JSX.Element {
               <SeamTable size={3} />
             </div>
           </State>
-          <State name="WIDGET_QUERY_TABLE, not fully read: a sort by created at loads again in that order">
+          <State name="WIDGET_QUERY_TABLE, not fully read: a sort by created at loads again in that order, and the filters are disabled">
             <div class="h-[32rem]">
               <SeamTable size={150} />
             </div>

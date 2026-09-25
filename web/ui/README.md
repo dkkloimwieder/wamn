@@ -15,13 +15,14 @@ On 2026-09-23 the design system moved from vega to the preset `buIovdQ`, through
 That preset replaced `src/styles/base.css`, changed the primary, secondary and sidebar colors, and added the Inter font.
 It changed no component source.
 On 2026-09-25 the app shell added `sidebar` from the same registry, with the items it needs that the copy lacked: `sheet`, `tooltip` and `use-mobile`.
+On 2026-09-25 the data table added `popover` from the same registry, for its column filters.
 By owner direction the font is Fira Code, over the system monospace font, in place of the preset's Inter.
 Labels, column headers, buttons, card titles and detail terms read in capitals, and values and descriptions keep their case.
 
 | Kind | Items |
 | --- | --- |
 | Block | `data-grid`, trimmed to `data-grid.tsx`, `data-grid-table.tsx`, `data-grid-table-virtual.tsx`, and an index of those three |
-| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `field`, `input`, `input-group`, `label`, `select`, `separator`, `sheet`, `sidebar`, `skeleton`, `spinner`, `toast`, `tooltip` |
+| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `field`, `input`, `input-group`, `label`, `popover`, `select`, `separator`, `sheet`, `sidebar`, `skeleton`, `spinner`, `toast`, `tooltip` |
 | Hook | `use-mobile` |
 | Shared | `color-mode` |
 | Design system | `preset-buIovdQ`: `style-lyra`, `neutral`, the indigo theme, `font-inter`, the default radius |

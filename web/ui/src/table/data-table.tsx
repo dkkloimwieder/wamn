@@ -5,14 +5,19 @@
  * The source of the load owns the rows, the times and the cap, and starts a
  * new load when the cap changes.
  *
- * The table declares one static bundle, `gridFeatures` with the sorted row
- * model. It renders through `WindowedTable`, so a table above `WINDOW_FROM`
- * rows draws only the rows in view.
+ * The table declares one static bundle: `gridFeatures`, column filtering, and
+ * the filtered and sorted row models. It renders through `WindowedTable`, so a
+ * table above `WINDOW_FROM` rows draws only the rows in view.
  *
  * A header click sorts. The sort state lives in the table. If the set is fully
  * read, the table sorts its rows. If it is not, the table calls
  * `onSortChange` and does not sort, because the source must read again in the
  * new order. Then only the declared sort fields can sort.
+ *
+ * Each column header has a refine filter, and the toolbar shows a chip for
+ * each active filter. The filters run in the table, before the sort, and only
+ * on a fully read set. On a set that is not fully read, the filters stay in
+ * the table state, apply to no row, and their chips are disabled.
  *
  * The table fills the height of its container, which the app sizes. The
  * toolbar stays above the grid, and the grid body is the only element that
@@ -20,6 +25,8 @@
  */
 
 import {
+  columnFilteringFeature,
+  createFilteredRowModel,
   createSortedRowModel,
   createTable,
   tableFeatures,
@@ -27,14 +34,22 @@ import {
   type ColumnDef,
   type Row,
 } from "@tanstack/solid-table";
-import { ArrowDown, ArrowUp } from "lucide-solid";
-import { createMemo, type JSX, Match, Show, Switch } from "solid-js";
+import { ArrowDown, ArrowUp, X } from "lucide-solid";
+import { createMemo, For, type JSX, Match, Show, Switch } from "solid-js";
 
 import { DataGrid, DataGridContainer } from "../blocks/data-grid";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { TextField } from "../fields";
 import { gridFeatures } from "../grid";
 import { WindowedTable } from "../windowed-table";
+import {
+  ColumnFilter,
+  type DataTableFilter,
+  FILTER_NEEDS_FULL_SET,
+  filterMatches,
+  filterText,
+} from "./column-filter";
 
 /** The type of a column, as the frozen `wamn:postgres/types.sql-value` names it. */
 export type DataTableColumnType =
@@ -95,13 +110,18 @@ export interface DataTableProps<TRow extends object> {
   readonly onSortChange: (sort: readonly DataTableSort<TRow>[]) => void;
 }
 
-/** The feature bundle of every data table: the grid features and the sorted row model. */
+/**
+ * The feature bundle of every data table: the grid features, column filtering,
+ * and the filtered and sorted row models. TanStack filters before it sorts.
+ */
 const dataTableFeatures = tableFeatures({
   ...gridFeatures,
+  columnFilteringFeature,
+  filteredRowModel: createFilteredRowModel(),
   sortedRowModel: createSortedRowModel(),
 });
 
-type DataTableFeatures = typeof dataTableFeatures;
+export type DataTableFeatures = typeof dataTableFeatures;
 
 /**
  * The order of two values of one column type. A null sorts after every value,
@@ -137,24 +157,37 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
       (column): ColumnDef<DataTableFeatures, TRow> => ({
         id: column.field,
         header: (context) => (
-          <SortHeader
-            column={context.column}
-            label={column.label}
-            onSort={() => {
-              if (!props.fullyRead) {
-                props.onSortChange(
-                  (table.atoms.sorting?.get() ?? []).map((sort) => ({
-                    field: sort.id as keyof TRow & string,
-                    direction: sort.desc ? "descending" : "ascending",
-                  })),
-                );
-              }
-            }}
-          />
+          <div class="flex items-center gap-1">
+            <SortHeader
+              column={context.column}
+              label={column.label}
+              onSort={() => {
+                if (!props.fullyRead) {
+                  props.onSortChange(
+                    (table.atoms.sorting?.get() ?? []).map((sort) => ({
+                      field: sort.id as keyof TRow & string,
+                      direction: sort.desc ? "descending" : "ascending",
+                    })),
+                  );
+                }
+              }}
+            />
+            <ColumnFilter
+              column={context.column}
+              type={column.type}
+              label={column.label}
+              enabled={props.fullyRead}
+            />
+          </div>
         ),
         accessorFn: (row) => row[column.field],
         sortFn: (a: Row<DataTableFeatures, TRow>, b: Row<DataTableFeatures, TRow>) =>
           compareValues(column.type, a.original[column.field], b.original[column.field]),
+        filterFn: Object.assign(
+          (row: Row<DataTableFeatures, TRow>, _id: string, filter: DataTableFilter) =>
+            filterMatches(column.type, row.original[column.field], filter),
+          { autoRemove: (filter: unknown) => filter === undefined },
+        ),
         // Read on each call, so a set that stops being fully read limits the sort.
         get enableSorting() {
           return props.fullyRead || props.sortFields.some((sort) => sort.field === column.field);
@@ -175,6 +208,10 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     get manualSorting() {
       return !props.fullyRead;
     },
+    // A set that is not fully read keeps its filters and applies none.
+    get manualFiltering() {
+      return !props.fullyRead;
+    },
     get enableMultiSort() {
       return props.sortMaxFields > 1;
     },
@@ -185,6 +222,22 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     sortDescFirst: false,
     enableSortingRemoval: false,
   });
+
+  /** The active filters, in the order they were set, as their chips name them. */
+  const filters = createMemo(() =>
+    (table.atoms.columnFilters?.get() ?? []).flatMap((active) => {
+      const column = props.columns.find((candidate) => candidate.field === active.id);
+      return column === undefined
+        ? []
+        : [
+            {
+              id: active.id,
+              label: column.label,
+              text: filterText(column.type, active.value as DataTableFilter),
+            },
+          ];
+    }),
+  );
 
   return (
     <section data-slot="data-table" class="flex h-full min-h-0 min-w-0 flex-col gap-4">
@@ -223,12 +276,47 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
             <p class="text-foreground">Full dataset cannot be loaded</p>
           </Show>
         </div>
+        <Show when={filters().length > 0}>
+          <div data-slot="data-table-filters" class="flex w-full flex-wrap items-center gap-2">
+            <For each={filters()}>
+              {(filter) => (
+                <Badge variant="outline" class="gap-1" aria-disabled={!props.fullyRead}>
+                  {filter.label} {filter.text}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`remove filter ${filter.label}`}
+                    disabled={!props.fullyRead}
+                    onClick={() => table.getColumn(filter.id)?.setFilterValue(undefined)}
+                  >
+                    <X aria-hidden="true" />
+                  </Button>
+                </Badge>
+              )}
+            </For>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!props.fullyRead}
+              onClick={() => table.setColumnFilters([])}
+            >
+              clear all
+            </Button>
+            <Show when={!props.fullyRead}>
+              <p class="text-sm text-muted-foreground">{FILTER_NEEDS_FULL_SET}</p>
+            </Show>
+          </div>
+        </Show>
       </div>
       <DataGrid
         table={table}
         recordCount={props.rows.length}
         isLoading={props.busy}
-        emptyMessage={props.refusal}
+        emptyMessage={
+          props.refusal ?? (filters().length > 0 ? "No row matches the filters." : null)
+        }
       >
         {/* The grid takes the height the toolbar leaves, in place of its fixed one. */}
         <DataGridContainer class="h-auto min-h-0 flex-1">
