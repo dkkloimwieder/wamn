@@ -27,7 +27,7 @@ export function Sample(props: SampleProps) {
     // `makerId` is the input that narrows the list to one maker. It is
     // nullable and present, which is how this platform spells "not chosen".
     (selector: JsonValue) =>
-      list(props.transport, [{ requestId: "sample", selector, makerId: null }]),
+      list(props.transport, [{ selector, makerId: null }]),
   );
   const rows = () => {
     const read = outcome();

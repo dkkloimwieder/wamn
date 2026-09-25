@@ -182,7 +182,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
   const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valuePalletIdSearch, setValuePalletIdSearch] = createSignal("");
   const readValuePalletIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as PalletQueryRequest;
+    let request = {} as PalletQueryRequest;
     if (valuePalletIdSearch() !== "") {
       request = writeMember(request, ["filter", "palletCode"], [valuePalletIdSearch()]) as PalletQueryRequest;
     }
@@ -201,7 +201,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     );
   };
   const readValuePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
@@ -209,7 +209,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
   const [valueProductIdSearch, setValueProductIdSearch] = createSignal("");
   const readValueProductIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as ProductQueryRequest;
+    let request = {} as ProductQueryRequest;
     if (valueProductIdSearch() !== "") {
       request = writeMember(request, ["filter", "productCode"], [valueProductIdSearch()]) as ProductQueryRequest;
     }
@@ -228,7 +228,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     );
   };
   const readValueProductIdRecord = async (key: string): Promise<ProductQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const request = writeMember({}, ["id"], key) as ProductGetRequest;
     const outcome = await productGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
   };
@@ -397,7 +397,6 @@ export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as InventoryAggregateRequest;
     const sent = request;
     const outcome = await aggregate(props.transport, [sent]);
@@ -533,7 +532,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
   const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueSourcePalletIdSearch, setValueSourcePalletIdSearch] = createSignal("");
   const readValueSourcePalletIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as PalletQueryRequest;
+    let request = {} as PalletQueryRequest;
     if (valueSourcePalletIdSearch() !== "") {
       request = writeMember(request, ["filter", "palletCode"], [valueSourcePalletIdSearch()]) as PalletQueryRequest;
     }
@@ -552,7 +551,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     );
   };
   const readValueSourcePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
@@ -561,7 +560,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
   const [valueTargetPalletIdSearch, setValueTargetPalletIdSearch] = createSignal("");
   const [valueTargetPalletIdRevision, setValueTargetPalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
   const readValueTargetPalletIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as PalletQueryRequest;
+    let request = {} as PalletQueryRequest;
     if (valueTargetPalletIdSearch() !== "") {
       request = writeMember(request, ["filter", "palletCode"], [valueTargetPalletIdSearch()]) as PalletQueryRequest;
     }
@@ -580,7 +579,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     );
   };
   const readValueTargetPalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
@@ -725,7 +724,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
   const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valuePalletIdSearch, setValuePalletIdSearch] = createSignal("");
   const readValuePalletIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as PalletQueryRequest;
+    let request = {} as PalletQueryRequest;
     if (valuePalletIdSearch() !== "") {
       request = writeMember(request, ["filter", "palletCode"], [valuePalletIdSearch()]) as PalletQueryRequest;
     }
@@ -744,7 +743,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     );
   };
   const readValuePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
@@ -752,7 +751,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as LocationQueryRequest;
+    let request = {} as LocationQueryRequest;
     if (valueToLocationIdSearch() !== "") {
       request = writeMember(request, ["filter", "locationCode"], [valueToLocationIdSearch()]) as LocationQueryRequest;
     }
@@ -771,7 +770,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     );
   };
   const readValueToLocationIdRecord = async (key: string): Promise<LocationQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const request = writeMember({}, ["id"], key) as LocationGetRequest;
     const outcome = await locationGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
@@ -923,7 +922,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
   const [valueProductIdSearch, setValueProductIdSearch] = createSignal("");
   const readValueProductIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as ProductQueryRequest;
+    let request = {} as ProductQueryRequest;
     if (valueProductIdSearch() !== "") {
       request = writeMember(request, ["filter", "productCode"], [valueProductIdSearch()]) as ProductQueryRequest;
     }
@@ -942,7 +941,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     );
   };
   const readValueProductIdRecord = async (key: string): Promise<ProductQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const request = writeMember({}, ["id"], key) as ProductGetRequest;
     const outcome = await productGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
   };
@@ -950,7 +949,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
   const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueSourcePalletIdSearch, setValueSourcePalletIdSearch] = createSignal("");
   const readValueSourcePalletIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as PalletQueryRequest;
+    let request = {} as PalletQueryRequest;
     if (valueSourcePalletIdSearch() !== "") {
       request = writeMember(request, ["filter", "palletCode"], [valueSourcePalletIdSearch()]) as PalletQueryRequest;
     }
@@ -969,7 +968,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     );
   };
   const readValueSourcePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
@@ -977,7 +976,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as LocationQueryRequest;
+    let request = {} as LocationQueryRequest;
     if (valueToLocationIdSearch() !== "") {
       request = writeMember(request, ["filter", "locationCode"], [valueToLocationIdSearch()]) as LocationQueryRequest;
     }
@@ -996,7 +995,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     );
   };
   const readValueToLocationIdRecord = async (key: string): Promise<LocationQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const request = writeMember({}, ["id"], key) as LocationGetRequest;
     const outcome = await locationGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };

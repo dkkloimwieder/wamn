@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use wamn_schema_generator::GeneratedFile;
 use wamn_schema_generator::client_component::emit_ts_components;
 use wamn_schema_generator::client_ir::ClientContractIr;
@@ -192,8 +194,8 @@ fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
         "it reads on mount and again when the input changes"
     );
     assert!(
-        detail.contains("{ ...input, requestId: newRequestId() } as WidgetGetRequest,"),
-        "the request identity comes from the runtime"
+        detail.contains("input as WidgetGetRequest,"),
+        "a read sends its input alone"
     );
     for (label, member, cell) in [
         ("id", "[\"id\"]", "uuid"),
@@ -527,7 +529,7 @@ fn a_revision_bound_form_sends_the_revision_it_read_when_it_opened() {
         "the form takes the record it changes"
     );
     assert!(
-        form.contains("  const [record, { refetch: readAgain }] = createResource(\n    () => props.key,\n    (key: WidgetGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),\n  );"),
+        form.contains("  const [record, { refetch: readAgain }] = createResource(\n    () => props.key,\n    (key: WidgetGetDetailInput) => get(props.transport, [key]),\n  );"),
         "it reads that record when it opens"
     );
     assert!(
@@ -727,9 +729,26 @@ fn a_component_states_no_deployment_fact_and_no_supplied_input() {
             "the operator never sees {reserved}"
         );
     }
-    assert!(
-        combined.contains("requestId: newRequestId(),"),
-        "the request identity comes from the runtime"
+}
+
+/// A read carries no `request_id` (`docs/plan/http-reads.md` section 4.4), so
+/// the only request identity a component writes is the one of a write.
+#[test]
+fn a_component_builds_a_read_request_with_no_request_identity() {
+    let files = emit(&release());
+    let combined: String = files
+        .iter()
+        .map(|file| std::str::from_utf8(file.bytes()).unwrap())
+        .collect();
+    let identities = combined
+        .lines()
+        .filter(|line| line.contains("requestId"))
+        .map(str::trim)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        identities,
+        BTreeSet::from(["item = writeMember(item, [\"requestId\"], newRequestId());"]),
+        "only a write supplies a request identity"
     );
 }
 
@@ -807,8 +826,8 @@ fn a_record_prop_names_the_record_inputs_and_no_supplied_value() {
         "no prop takes the whole request of a read"
     );
     assert!(
-        widget.contains("{ ...input, requestId: newRequestId() } as WidgetGetRequest,"),
-        "the component writes the request identity itself"
+        widget.contains("input as WidgetGetRequest,"),
+        "the component sends the detail input as the read request"
     );
 }
 
@@ -942,9 +961,7 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
         "  });\n",
     )));
     assert!(
-        widget.contains(
-            "    const request = { requestId: newRequestId(), makerId: narrowed } as WidgetListRequest;"
-        ),
+        widget.contains("    const request = { makerId: narrowed } as WidgetListRequest;"),
         "the narrowing value fills the list input the plan named"
     );
     assert!(

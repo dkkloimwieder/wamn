@@ -11,7 +11,6 @@ import {
   emptyPage,
   failedRead,
   firstPage,
-  newRequestId,
   startRead,
   type JsonValue,
   type Outcome,
@@ -89,7 +88,6 @@ export function LocationListTable(props: LocationListTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as LocationListRequest;
     const sent = request;
     const outcome = await list(props.transport, [sent]);

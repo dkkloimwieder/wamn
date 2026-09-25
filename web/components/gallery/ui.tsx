@@ -123,7 +123,6 @@ function LiveSelect(): JSX.Element {
   async function read(search: string | null, after: string | null) {
     const outcome = await query(transport, [
       {
-        requestId: crypto.randomUUID(),
         ...(search === null || search === "" ? {} : { filter: { name: [search] } }),
         ...(after === null ? {} : { cursor: after }),
       },

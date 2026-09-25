@@ -151,7 +151,7 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
   const [locationIdOptions, setLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [locationIdSearch, setLocationIdSearch] = createSignal("");
   const readLocationIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as LocationQueryRequest;
+    let request = {} as LocationQueryRequest;
     if (locationIdSearch() !== "") {
       request = writeMember(request, ["filter", "locationCode"], [locationIdSearch()]) as LocationQueryRequest;
     }
@@ -170,7 +170,7 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
     );
   };
   const readLocationIdRecord = async (key: string): Promise<LocationQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const request = writeMember({}, ["id"], key) as LocationGetRequest;
     const outcome = await locationGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
@@ -271,7 +271,7 @@ export function PalletGetDetail(props: PalletGetDetailProps) {
     () => props.input,
     async (input: PalletGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as PalletGetRequest,
+        input as PalletGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -347,7 +347,6 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
     const request = {
       ...completePair(controls(), ["sort", "field"], ["sort", "direction"]),
       ...props.fixed,
-      requestId: newRequestId(),
     } as PalletQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as PalletQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -372,7 +371,7 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
   };
 
   const locationGetLabels = createRecordLabels(async (key) => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const request = writeMember({}, ["id"], key) as LocationGetRequest;
     const outcome = await locationGet(props.transport, [request]);
     if (outcome.status !== "completed") {
       return null;

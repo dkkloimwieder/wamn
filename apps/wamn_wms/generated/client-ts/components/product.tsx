@@ -193,7 +193,7 @@ export function ProductGetDetail(props: ProductGetDetailProps) {
     () => props.input,
     async (input: ProductGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as ProductGetRequest,
+        input as ProductGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -286,7 +286,6 @@ export function ProductQueryTable(props: ProductQueryTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as ProductQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as ProductQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -469,7 +468,7 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
   // change another writer makes after it refuses as a conflict.
   const [record, { refetch: readAgain }] = createResource(
     () => props.key,
-    (key: ProductGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),
+    (key: ProductGetDetailInput) => get(props.transport, [key]),
   );
 
   const form = createForm(() => ({

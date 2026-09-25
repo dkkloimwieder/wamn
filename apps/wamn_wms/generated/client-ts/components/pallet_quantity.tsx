@@ -12,7 +12,6 @@ import {
   failedRead,
   firstPage,
   hasNextPage,
-  newRequestId,
   readMember,
   startRead,
   type JsonValue,
@@ -87,7 +86,7 @@ export function PalletQuantityGetDetail(props: PalletQuantityGetDetailProps) {
     () => props.input,
     async (input: PalletQuantityGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as PalletQuantityGetRequest,
+        input as PalletQuantityGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -154,7 +153,6 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as PalletQuantityQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as PalletQuantityQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -179,7 +177,7 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
   };
 
   const palletGetLabels = createRecordLabels(async (key) => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     if (outcome.status !== "completed") {
       return null;
@@ -188,7 +186,7 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     return text == null ? null : String(text);
   });
   const productGetLabels = createRecordLabels(async (key) => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const request = writeMember({}, ["id"], key) as ProductGetRequest;
     const outcome = await productGet(props.transport, [request]);
     if (outcome.status !== "completed") {
       return null;

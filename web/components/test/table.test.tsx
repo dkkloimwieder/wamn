@@ -186,8 +186,8 @@ describe("the generated table for a page", () => {
     // each one, so the case covers the path from HTTP to the screen.
     const replies = [
       () => new Response(JSON.stringify({ error: { code: "unauthorized" } }), { status: 401 }),
-      (requestId: string) =>
-        new Response(JSON.stringify([{ request_id: requestId, error: { code: "internal_error" } }]), {
+      () =>
+        new Response(JSON.stringify([{ error: { code: "internal_error" } }]), {
           status: 200,
         }),
     ];
@@ -195,11 +195,11 @@ describe("the generated table for a page", () => {
     const transport = createTransport({
       baseUrl: "http://stub",
       credential: "token",
-      fetch: (_url, init) => {
-        const items = JSON.parse(String(init?.body)) as { request_id: string }[];
+      // A read is a GET with no body, and its outcomes match by position.
+      fetch: () => {
         const reply = replies[next] ?? replies[replies.length - 1];
         next += 1;
-        return Promise.resolve(reply!(items[0]?.request_id ?? ""));
+        return Promise.resolve(reply!());
       },
     });
     const seen: Outcome<unknown>[] = [];

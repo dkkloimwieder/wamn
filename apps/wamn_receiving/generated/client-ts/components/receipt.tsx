@@ -12,7 +12,6 @@ import {
   failedRead,
   firstPage,
   hasNextPage,
-  newRequestId,
   readMember,
   startRead,
   type JsonValue,
@@ -83,7 +82,7 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
     () => props.input,
     async (input: ReceiptGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as ReceiptGetRequest,
+        input as ReceiptGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -151,7 +150,6 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as ReceiptQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as ReceiptQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -176,7 +174,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
   };
 
   const purchaseOrderGetLabels = createRecordLabels(async (key) => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PurchaseOrderGetRequest;
+    const request = writeMember({}, ["id"], key) as PurchaseOrderGetRequest;
     const outcome = await purchaseOrderGet(props.transport, [request]);
     if (outcome.status !== "completed") {
       return null;

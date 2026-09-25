@@ -589,11 +589,10 @@ fn emit_record_labels(
             alias
         };
         ui.insert("createRecordLabels");
-        runtime.insert("newRequestId");
         runtime.insert("writeMember");
         writeln!(
             source,
-            "  const {name} = createRecordLabels(async (key) => {{\n    const request = writeMember({{ requestId: newRequestId() }}, {}, key) as {stem}Request;\n    const outcome = await {call}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return null;\n    }}\n    const text = outcome.value.{};\n    return text == null ? null : String(text);\n  }});",
+            "  const {name} = createRecordLabels(async (key) => {{\n    const request = writeMember({{}}, {}, key) as {stem}Request;\n    const outcome = await {call}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return null;\n    }}\n    const text = outcome.value.{};\n    return text == null ? null : String(text);\n  }});",
             member_literal(resolved.key_input),
             crate::client_ts::to_camel(resolved.display_field)
         )
@@ -641,7 +640,6 @@ fn emit_table(
         "emptyPage",
         "failedRead",
         "firstPage",
-        "newRequestId",
         "startRead",
         "type JsonValue",
         "type Outcome",
@@ -804,7 +802,7 @@ fn emit_table(
         };
     writeln!(
         source,
-        "    const request = {{\n      ...{sent_controls},\n      ...props.fixed,\n      requestId: newRequestId(),\n    }} as {stem}Request;"
+        "    const request = {{\n      ...{sent_controls},\n      ...props.fixed,\n    }} as {stem}Request;"
     )
     .expect("write");
     if let Some(path) = cursor_input {
@@ -954,13 +952,7 @@ fn emit_detail(
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
     })?;
-    runtime.extend([
-        "cellText",
-        "newRequestId",
-        "readMember",
-        "type Outcome",
-        "type Transport",
-    ]);
+    runtime.extend(["cellText", "readMember", "type Outcome", "type Transport"]);
     bindings.insert(function.clone());
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
@@ -1013,7 +1005,7 @@ fn emit_detail(
     .expect("write");
     writeln!(
         source,
-        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        {{ ...input, requestId: newRequestId() }} as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      if (read.status !== \"completed\") {{\n        announceOutcome(read, {stem}DetailLabel);\n      }}\n      return read;\n    }},\n  );"
+        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        input as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      if (read.status !== \"completed\") {{\n        announceOutcome(read, {stem}DetailLabel);\n      }}\n      return read;\n    }},\n  );"
     )
     .expect("write");
     writeln!(
@@ -1451,7 +1443,7 @@ fn emit_form(
         source.push_str("  // The record this command changes, read when the form opens and again\n  // when its key changes. The form sends the revision of this read, so a\n  // change another writer makes after it refuses as a conflict.\n");
         writeln!(
             source,
-            "  const [record, {{ refetch: readAgain }}] = createResource(\n    () => props.key,\n    (key: {key}) => {read}(props.transport, [{{ ...key, requestId: newRequestId() }}]),\n  );"
+            "  const [record, {{ refetch: readAgain }}] = createResource(\n    () => props.key,\n    (key: {key}) => {read}(props.transport, [key]),\n  );"
         )
         .expect("write");
     }
@@ -1567,7 +1559,6 @@ fn emit_form(
 
     // One selector state for each input the operator chooses from a list.
     for populated in &screen.population {
-        runtime.insert("newRequestId");
         let list_stem = crate::client_ts::type_stem(populated.list_model, populated.list_name);
         let list_function =
             crate::client_ts::function_name(populated.list_name).map_err(|error| {
@@ -1757,7 +1748,6 @@ fn emit_selector_state(
         "emptyPage",
         "firstPage",
         "hasNextPage",
-        "newRequestId",
         "type PageState",
     ]);
     if populated.narrowed_by.is_some()
@@ -1827,15 +1817,11 @@ fn emit_selector_state(
         );
         writeln!(
             source,
-            "    {binding} request = {{ requestId: newRequestId(), {member}: narrowed }} as {stem}Request;"
+            "    {binding} request = {{ {member}: narrowed }} as {stem}Request;"
         )
         .expect("write");
     } else {
-        writeln!(
-            source,
-            "    {binding} request = {{ requestId: newRequestId() }} as {stem}Request;"
-        )
-        .expect("write");
+        writeln!(source, "    {binding} request = {{}} as {stem}Request;").expect("write");
     }
     // The search sends the declared filter, which takes a list of values and
     // matches each one in full.
@@ -1868,7 +1854,7 @@ fn emit_selector_state(
         let read_stem = crate::client_ts::type_stem(read.model, read.name);
         writeln!(
             source,
-            "  const read{state_upper}Record = async (key: string): Promise<{stem}Row | null> => {{\n    const request = writeMember({{ requestId: newRequestId() }}, {}, key) as {read_stem}Request;\n    const outcome = await {}(props.transport, [request]);\n    return outcome.status === \"completed\" ? ((outcome.value ?? null) as unknown as {stem}Row | null) : null;\n  }};",
+            "  const read{state_upper}Record = async (key: string): Promise<{stem}Row | null> => {{\n    const request = writeMember({{}}, {}, key) as {read_stem}Request;\n    const outcome = await {}(props.transport, [request]);\n    return outcome.status === \"completed\" ? ((outcome.value ?? null) as unknown as {stem}Row | null) : null;\n  }};",
             member_literal(read.key_input),
             foreign_alias(read.model, read.name)
         )

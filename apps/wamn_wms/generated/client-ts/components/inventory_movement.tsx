@@ -12,7 +12,6 @@ import {
   failedRead,
   firstPage,
   hasNextPage,
-  newRequestId,
   readMember,
   startRead,
   type JsonValue,
@@ -91,7 +90,7 @@ export function InventoryMovementGetDetail(props: InventoryMovementGetDetailProp
     () => props.input,
     async (input: InventoryMovementGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as InventoryMovementGetRequest,
+        input as InventoryMovementGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -164,7 +163,6 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as InventoryMovementQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as InventoryMovementQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -189,7 +187,7 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
   };
 
   const locationGetLabels = createRecordLabels(async (key) => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const request = writeMember({}, ["id"], key) as LocationGetRequest;
     const outcome = await locationGet(props.transport, [request]);
     if (outcome.status !== "completed") {
       return null;
@@ -198,7 +196,7 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     return text == null ? null : String(text);
   });
   const palletGetLabels = createRecordLabels(async (key) => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     if (outcome.status !== "completed") {
       return null;
@@ -207,7 +205,7 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     return text == null ? null : String(text);
   });
   const productGetLabels = createRecordLabels(async (key) => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const request = writeMember({}, ["id"], key) as ProductGetRequest;
     const outcome = await productGet(props.transport, [request]);
     if (outcome.status !== "completed") {
       return null;

@@ -196,7 +196,7 @@ export function LocationGetDetail(props: LocationGetDetailProps) {
     () => props.input,
     async (input: LocationGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as LocationGetRequest,
+        input as LocationGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -291,7 +291,6 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as LocationQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as LocationQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -490,7 +489,7 @@ export function LocationUpdateForm(props: LocationUpdateFormProps) {
   // change another writer makes after it refuses as a conflict.
   const [record, { refetch: readAgain }] = createResource(
     () => props.key,
-    (key: LocationGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),
+    (key: LocationGetDetailInput) => get(props.transport, [key]),
   );
 
   const form = createForm(() => ({

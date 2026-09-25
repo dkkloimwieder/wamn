@@ -104,7 +104,7 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
     () => props.input,
     async (input: PurchaseOrderGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as PurchaseOrderGetRequest,
+        input as PurchaseOrderGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -229,7 +229,6 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
     const request = {
       ...completePair(controls(), ["sort", "field"], ["sort", "direction"]),
       ...props.fixed,
-      requestId: newRequestId(),
     } as PurchaseOrderQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as PurchaseOrderQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -425,7 +424,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
   // change another writer makes after it refuses as a conflict.
   const [record, { refetch: readAgain }] = createResource(
     () => props.key,
-    (key: PurchaseOrderGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),
+    (key: PurchaseOrderGetDetailInput) => get(props.transport, [key]),
   );
 
   const form = createForm(() => ({
@@ -471,7 +470,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
   }));
   const [changeSupplierIdOptions, setChangeSupplierIdOptions] = createSignal<PageState<SupplierQueryRow>>(emptyPage<SupplierQueryRow>());
   const readChangeSupplierIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as SupplierQueryRequest;
+    let request = {} as SupplierQueryRequest;
     if (cursor !== null) {
       request = writeMember(request, ["cursor"], cursor) as SupplierQueryRequest;
     }

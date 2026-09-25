@@ -165,7 +165,6 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as ReceivingLoadPurchaseOrderHistoryRequest;
     const sent = request;
     const outcome = await loadPurchaseOrderHistory(props.transport, [sent]);
@@ -323,7 +322,6 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as ReceivingLoadReceiptScreenRequest;
     const sent = request;
     const outcome = await loadReceiptScreen(props.transport, [sent]);
@@ -483,7 +481,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
   const formValues = useStore(form.store, (state) => state.values);
   const [valueLineLocationIdOptions, setValueLineLocationIdOptions] = createSignal<PageState<LocationListRow>>(emptyPage<LocationListRow>());
   const readValueLineLocationIdOptions = async (cursor: string | null) => {
-    const request = { requestId: newRequestId() } as LocationListRequest;
+    const request = {} as LocationListRequest;
     const outcome = await locationList(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
@@ -504,7 +502,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       setValueLinePurchaseOrderLineIdOptions(emptyPage<ReceivingLoadReceiptScreenRow>());
       return;
     }
-    const request = { requestId: newRequestId(), purchaseOrderId: narrowed } as ReceivingLoadReceiptScreenRequest;
+    const request = { purchaseOrderId: narrowed } as ReceivingLoadReceiptScreenRequest;
     const outcome = await receivingLoadReceiptScreen(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
@@ -524,7 +522,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
   const [valuePurchaseOrderIdOptions, setValuePurchaseOrderIdOptions] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
   const [valuePurchaseOrderIdSearch, setValuePurchaseOrderIdSearch] = createSignal("");
   const readValuePurchaseOrderIdOptions = async (cursor: string | null) => {
-    let request = { requestId: newRequestId() } as PurchaseOrderQueryRequest;
+    let request = {} as PurchaseOrderQueryRequest;
     if (valuePurchaseOrderIdSearch() !== "") {
       request = writeMember(request, ["filter", "purchaseOrderNumber"], [valuePurchaseOrderIdSearch()]) as PurchaseOrderQueryRequest;
     }
@@ -543,7 +541,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     );
   };
   const readValuePurchaseOrderIdRecord = async (key: string): Promise<PurchaseOrderQueryRow | null> => {
-    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PurchaseOrderGetRequest;
+    const request = writeMember({}, ["id"], key) as PurchaseOrderGetRequest;
     const outcome = await purchaseOrderGet(props.transport, [request]);
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PurchaseOrderQueryRow | null) : null;
   };
