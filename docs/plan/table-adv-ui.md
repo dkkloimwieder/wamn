@@ -64,6 +64,7 @@ Views and child tables refer to a table definition by name.
 - **Feature bundle:** one static wamn bundle built from `gridFeatures` (`web/ui/src/grid.ts`), plus the client row models the table uses (sorted, filtered, grouped, expanded, faceted). No client pagination row model. Modes switch through options (`manualSorting`, `manualFiltering`), never by swapping bundles.
 - **Row identity:** rows are keyed by the definition's row id (TanStack `getRowId`). Selection, expansion, inline edit and reload use it.
 - **Rendering:** rows render through the Epic 17 list windowing. No table draws every row into the DOM.
+- **Layout:** the table fills its container's height. The toolbar sits above the grid and does not scroll; the grid body is the only scroll element and the windowing scroll element. The container's height belongs to the app.
 - **Aggregates:** type decides which aggregates a column allows and which is its default. Numbers (int32, decimal, float) default to sum; dates and timestamps to max; everything else to count. Keys, references and the revision column default to count. The user can pick another per column; the choice is part of the view.
 - **`int64` columns:** opaque by platform rule. Group by and count only.
 - **Reference columns:** show the display field, not the UUID. Group and pivot label by the display field and key by the id.
