@@ -51,7 +51,7 @@ render(
   () => (
     <ColorModeProvider initialColorMode={mode}>
       {/* The app-shaped table alone, so a measurement reads that shape only. */}
-      {location.search === `?${APP_TABLE_ONLY}` ? <AppTable /> : <Gallery />}
+      {new URLSearchParams(location.search).has(APP_TABLE_ONLY) ? <AppTable /> : <Gallery />}
       <Toaster />
     </ColorModeProvider>
   ),

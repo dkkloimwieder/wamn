@@ -6,13 +6,13 @@
  * only to a fully read set.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DataTable, type DataTableColumn } from "@wamn/ui";
 
-import { bodyRows, pickMenu, theButton } from "./dom.js";
+import { bodyRows, pickChoice, pickMenu, theButton } from "./dom.js";
 
 afterEach(cleanup);
 
@@ -107,23 +107,6 @@ const total = (field: string) =>
 /** Choose one column's aggregate in its header menu. */
 const aggregate = (field: string, name: string) => pickMenu(field, name);
 
-/** Pick one option of a choice field. */
-async function pick(label: string | RegExp, name: string) {
-  const trigger = screen.getByRole("button", { name: label });
-  await waitFor(() => {
-    if (trigger.getAttribute("aria-expanded") !== "true") {
-      fireEvent.pointerDown(trigger, { pointerType: "mouse", button: 0 });
-      fireEvent.pointerUp(trigger, { pointerType: "mouse", button: 0 });
-      fireEvent.click(trigger);
-      throw new Error(`the choice ${String(label)} did not open`);
-    }
-  });
-  const option = await waitFor(() => screen.getByRole("option", { name }));
-  fireEvent.pointerDown(option, { pointerType: "mouse", button: 0 });
-  fireEvent.pointerUp(option, { pointerType: "mouse", button: 0 });
-  fireEvent.click(option);
-}
-
 describe("the grouping", () => {
   it("nests two levels in the group bar's order, and empty values form one group", () => {
     table({ groupedFields: ["region", "maker"] });
@@ -189,7 +172,7 @@ describe("the grouping", () => {
     expect(groups()).toEqual(["(none) (2)", "west (1)", "east (2)"]);
     press("region groups descending");
     // The trigger's name also holds the choice it shows.
-    await pick(/^sort region groups by/, "qty sum");
+    await pickChoice(/^sort region groups by/, "qty sum");
     expect(groups()).toEqual(["west (1)", "east (2)", "(none) (2)"]);
     press("expand all region");
     press("qty");

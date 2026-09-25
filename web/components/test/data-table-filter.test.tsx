@@ -148,7 +148,8 @@ describe("the refine filters", () => {
     expect(shown()).toEqual(["Alpha", "ALPHABET", "gamma"]);
     cleanup();
     expect(filtered("body", () => press("is empty"))).toEqual(["gamma"]);
-    expect(screen.queryByRole("textbox")).toBeNull();
+    // The open filter holds no value box. The toolbar has its own boxes.
+    expect(document.querySelector('[data-slot="popover-content"] input')).toBeNull();
   });
 
   it("show a chip that names the column and the value, and clear all removes them", () => {

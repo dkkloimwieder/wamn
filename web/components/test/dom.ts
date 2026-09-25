@@ -6,7 +6,7 @@
  * the label or the text of an element instead.
  */
 
-import { fireEvent } from "@solidjs/testing-library";
+import { fireEvent, screen, waitFor } from "@solidjs/testing-library";
 
 /** The button whose `aria-label`, or else whose text, is `name`, or null. */
 export function button(name: string): HTMLButtonElement | null {
@@ -50,4 +50,21 @@ export function pickMenu(column: string, item: string) {
   if (trigger.getAttribute("aria-expanded") === "true") {
     fireEvent.keyDown(found, { key: "Escape" });
   }
+}
+
+/** Pick one option of a choice field. */
+export async function pickChoice(label: string | RegExp, name: string) {
+  const trigger = screen.getByRole("button", { name: label });
+  await waitFor(() => {
+    if (trigger.getAttribute("aria-expanded") !== "true") {
+      fireEvent.pointerDown(trigger, { pointerType: "mouse", button: 0 });
+      fireEvent.pointerUp(trigger, { pointerType: "mouse", button: 0 });
+      fireEvent.click(trigger);
+      throw new Error(`the choice ${String(label)} did not open`);
+    }
+  });
+  const option = await waitFor(() => screen.getByRole("option", { name }));
+  fireEvent.pointerDown(option, { pointerType: "mouse", button: 0 });
+  fireEvent.pointerUp(option, { pointerType: "mouse", button: 0 });
+  fireEvent.click(option);
 }

@@ -172,6 +172,7 @@ function MemoryTable(props: {
   size: number;
   cap?: number;
   groupedFields?: readonly (keyof PalletRow & string)[];
+  urlKey?: string;
 }): JSX.Element {
   const [state, setState] = createSignal<LoadState<PalletRow>>(
     emptyLoad(props.cap ?? DEFAULT_CAP),
@@ -206,6 +207,7 @@ function MemoryTable(props: {
       scopeFilters={[]}
       onScopeChange={() => {}}
       groupedFields={props.groupedFields}
+      urlKey={props.urlKey}
     />
   );
 }
@@ -223,6 +225,7 @@ function LoadedTable<Row extends object>(props: {
   scopeFilters: readonly (keyof Row & string)[];
   onScopeChange: (filters: readonly DataTableScopeFilter<keyof Row & string>[]) => void;
   groupedFields?: readonly (keyof Row & string)[] | undefined;
+  urlKey?: string | undefined;
 }): JSX.Element {
   return (
     <DataTable
@@ -244,6 +247,7 @@ function LoadedTable<Row extends object>(props: {
       scopeFilters={props.scopeFilters}
       onScopeChange={props.onScopeChange}
       groupedFields={props.groupedFields}
+      urlKey={props.urlKey}
     />
   );
 }
@@ -261,7 +265,8 @@ export function AppTable(): JSX.Element {
         <p class="text-sm font-semibold uppercase">App header</p>
       </header>
       <main class="min-h-0 flex-1 p-6">
-        <MemoryTable size={10000} cap={10000} groupedFields={["createdAt", "quantity"]} />
+        {/* The one top-level table keeps its state in the URL, so a reload brings it back. */}
+        <MemoryTable size={10000} cap={10000} groupedFields={["createdAt", "quantity"]} urlKey="pallets" />
       </main>
     </div>
   );

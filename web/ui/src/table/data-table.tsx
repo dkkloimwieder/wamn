@@ -47,6 +47,12 @@
  * filter with its values, and the current sort as a chip. A scope change calls
  * `onScopeChange`, and the source reads again. The table applies no scope.
  *
+ * A view is a named copy of all of this state and the cap, kept in memory for
+ * the session. A table with a `urlKey` reads its state from the URL when it
+ * draws and keeps the URL in step, in the canonical form of `view.ts`. On a
+ * set that is not fully read, the scope, the cap and the sort of a view reach
+ * the source, and the client parts wait, as the filters do.
+ *
  * The table fills the height of its container, which the app sizes. The
  * toolbar stays above the grid, and the grid body is the only element that
  * scrolls, so it is the element the windowing measures against.
@@ -81,6 +87,7 @@ import {
   type JSX,
   Match,
   on,
+  onMount,
   Show,
   Switch,
   untrack,
@@ -124,6 +131,15 @@ import { ColumnMenu } from "./column-menu";
 import { ColumnPanel } from "./column-panel";
 import { type DataTableGroupSort, GroupBar, VALUE_SORT } from "./group-bar";
 import { type DataTableScopeFilter, ScopeBar } from "./scope-bar";
+import {
+  type DataTableView,
+  type DataTableViewDeclaration,
+  type DataTableViewState,
+  declaredView,
+  decodeView,
+  encodeView,
+} from "./view";
+import { ViewBar } from "./view-bar";
 
 /** The type of a column, as the frozen `wamn:postgres/types.sql-value` names it. */
 export type DataTableColumnType =
@@ -204,6 +220,11 @@ export interface DataTableProps<TRow extends object> {
   readonly timeZone?: string | undefined;
   /** The ISO weekday a week bucket starts on, 1 for Monday, the default. A setting replaces it later. */
   readonly weekStart?: number | undefined;
+  /**
+   * The key of the table's state in the URL, such as the definition name.
+   * Only a top-level table has one. A table without one stays out of the URL.
+   */
+  readonly urlKey?: string | undefined;
 }
 
 /** The text the search box shows when the set is not fully read. */
@@ -591,6 +612,140 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   };
 
   const search = () => (table.atoms.globalFilter?.get() as string | undefined) ?? "";
+
+  /** What the table declares, which a view is checked against. */
+  const declaration = (): DataTableViewDeclaration => ({
+    columns: props.columns.map((declared) => ({
+      field: declared.field,
+      time: declared.type === "timestamptz",
+      groupable: groupable(declared.type),
+      aggregates: allowedAggregates(declared.type),
+    })),
+    scopeFilters: props.scopeFilters,
+  });
+
+  /** The state of the table definition, which reset applies. The cap is the first one. */
+  const defaults: DataTableViewState = untrack(() => ({
+    order: props.columns.map((declared) => declared.field as string),
+    hidden: [...(props.hiddenFields ?? [])],
+    widths: {},
+    left: [],
+    right: [],
+    sort: [],
+    scope: [],
+    filters: [],
+    search: "",
+    group: (props.groupedFields ?? []).map((field) => ({
+      field,
+      bucket: column(field).type === "timestamptz" ? "day" : null,
+      sort: VALUE_SORT,
+    })),
+    aggregates: {},
+    cap: props.cap,
+  }));
+
+  /** The table state as a view holds it. */
+  const currentView = (): DataTableViewState => {
+    const visibility = table.atoms.columnVisibility?.get() ?? {};
+    const pinning = table.atoms.columnPinning?.get();
+    return {
+      order: panelColumns().map((shown) => shown.id),
+      hidden: props.columns.map((shown) => shown.field as string).filter((field) => visibility[field] === false),
+      widths: Object.fromEntries(
+        Object.entries(table.atoms.columnSizing?.get() ?? {}).map(([field, width]) => [field, Math.round(width)]),
+      ),
+      left: [...(pinning?.start ?? [])],
+      right: [...(pinning?.end ?? [])],
+      sort: (table.atoms.sorting?.get() ?? []).map((sort) => ({
+        field: sort.id,
+        direction: sort.desc ? "descending" : "ascending",
+      })),
+      scope: props.scopeFilters
+        .filter((field) => (scope()[field] ?? []).length > 0)
+        .map((field) => ({ field, values: scope()[field]! })),
+      filters: (table.atoms.columnFilters?.get() ?? []).map((active) => ({
+        field: active.id,
+        filter: active.value as DataTableFilter,
+      })),
+      search: search(),
+      group: grouping().map((field) => ({
+        field,
+        bucket: column(field).type === "timestamptz" ? bucketFor(field) : null,
+        sort: groupSortFor(field),
+      })),
+      aggregates: Object.fromEntries(
+        Object.entries(chosen()).filter(
+          ([field, aggregate]) => aggregate !== defaultAggregate(column(field).type, column(field).role ?? "value"),
+        ),
+      ),
+      cap: props.cap,
+    };
+  };
+
+  /**
+   * Sets the table to a view, without the fields the table does not declare.
+   * The scope and the cap reach the source, which reads again. A sort reaches
+   * it too when the set is not fully read.
+   */
+  function applyView(state: DataTableViewState) {
+    const view = declaredView(state, declaration());
+    const sortBefore = JSON.stringify(table.atoms.sorting?.get() ?? []);
+    table.setColumnOrder([...view.order]);
+    table.setColumnVisibility(
+      Object.fromEntries(props.columns.map((shown) => [shown.field, !view.hidden.includes(shown.field)])),
+    );
+    table.setColumnSizing({ ...view.widths });
+    table.setColumnPinning({ start: [...view.left], end: [...view.right] });
+    table.setSorting(view.sort.map((sort) => ({ id: sort.field, desc: sort.direction === "descending" })));
+    table.setColumnFilters(view.filters.map((active) => ({ id: active.field, value: active.filter })));
+    table.setGlobalFilter(view.search === "" ? undefined : view.search);
+    table.setGrouping(view.group.map((level) => level.field));
+    setBuckets(
+      Object.fromEntries(view.group.flatMap((level) => (level.bucket === null ? [] : [[level.field, level.bucket]]))),
+    );
+    setGroupSorts(Object.fromEntries(view.group.map((level) => [level.field, level.sort])));
+    setChosen({ ...view.aggregates });
+    setGeneration((value) => value + 1);
+    if (JSON.stringify(currentView().scope) !== JSON.stringify(view.scope)) {
+      setScope(Object.fromEntries(view.scope.map((scoped) => [scoped.field, scoped.values])));
+      props.onScopeChange(view.scope as readonly DataTableScopeFilter<keyof TRow & string>[]);
+    }
+    if (view.cap !== props.cap) {
+      props.onCapChange(view.cap);
+    }
+    if (JSON.stringify(table.atoms.sorting?.get() ?? []) !== sortBefore) {
+      sortChanged();
+    }
+  }
+
+  const [views, setViews] = createSignal<readonly DataTableView[]>([]);
+  const [chosenView, setChosenView] = createSignal<string | null>(null);
+
+  // A table with a URL key reads its state from the URL once, and then keeps the URL in step.
+  const [ignored, setIgnored] = createSignal<readonly string[]>([]);
+  onMount(() => {
+    const key = props.urlKey;
+    if (key === undefined) {
+      return;
+    }
+    const read = decodeView(key, new URLSearchParams(window.location.search), defaults, declaration());
+    setIgnored(read.ignored);
+    applyView(read.state);
+    createEffect(() => {
+      // The other keys stay as they were written, and this table's keys follow them.
+      const others = window.location.search
+        .slice(1)
+        .split("&")
+        .filter((part) => part !== "" && !part.startsWith(`${encodeURIComponent(key)}.`));
+      const own = new URLSearchParams(encodeView(key, currentView(), defaults)).toString();
+      const query = [...others, ...(own === "" ? [] : [own])].join("&");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${query === "" ? "" : `?${query}`}${window.location.hash}`,
+      );
+    });
+  });
   const searchId = createUniqueId();
   const grouping = () => table.atoms.grouping?.get() ?? [];
 
@@ -706,6 +861,39 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
               <FieldDescription>{EXPORT_NEEDS_FULL_SET}</FieldDescription>
             </Show>
           </Field>
+          <ViewBar
+            names={views().map((view) => view.name)}
+            chosen={chosenView()}
+            ignored={ignored()}
+            onPick={(name) => {
+              const view = views().find((candidate) => candidate.name === name);
+              if (view !== undefined) {
+                applyView(view.state);
+                setChosenView(name);
+              }
+            }}
+            onSave={(name) => {
+              const state = currentView();
+              setViews((current) =>
+                current.some((view) => view.name === name)
+                  ? current.map((view) => (view.name === name ? { name, state } : view))
+                  : [...current, { name, state }],
+              );
+              setChosenView(name);
+            }}
+            onRename={(from, to) => {
+              setViews((current) => current.map((view) => (view.name === from ? { ...view, name: to } : view)));
+              setChosenView(to);
+            }}
+            onDelete={(name) => {
+              setViews((current) => current.filter((view) => view.name !== name));
+              setChosenView(null);
+            }}
+            onReset={() => {
+              applyView(defaults);
+              setChosenView(null);
+            }}
+          />
           <ColumnPanel
             columns={panelColumns()}
             onVisible={(id, visible) => table.getColumn(id)?.toggleVisibility(visible)}
