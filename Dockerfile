@@ -106,6 +106,7 @@ WORKDIR /build/apps
 
 # tools/guest-rustflags maps /build to /wamn and the Cargo home to /cargo, so
 # each guest here has the digest of the same guest built by tools/build-components.
+# The router must match the pin beside its crate, as in tools/build-components.
 FROM component-toolchain AS component-builder
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
@@ -113,6 +114,8 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     export RUSTFLAGS="$(/build/tools/guest-rustflags)" \
  && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p http-route \
+ && (cd target/wasm32-wasip2/release \
+     && sha256sum -c /build/apps/platform/ingress/http-route/http_route.wasm.sha256) \
  && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p materializer \
  && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \

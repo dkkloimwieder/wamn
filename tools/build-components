@@ -416,7 +416,7 @@ wamn_build() {
     # every guest-consumed crate inside this workspace so `-C metadata` stops
     # deriving from an absolute path; tools/guest-rustflags closes the other
     # channel, the absolute source paths that file!() and panic locations bake
-    # into the artifact. wamn_artifact_plan refuses a guest that still has one.
+    # into the artifact. wamn_check_outputs refuses a guest that still has one.
     RUSTFLAGS="$WAMN_GUEST_RUSTFLAGS" \
       "$WAMN_CARGO" "${arguments[@]}" || leg_status=$?
     if ((leg_status != 0)); then
@@ -427,6 +427,48 @@ wamn_build() {
     fi
   done
   return "$exit_status"
+}
+
+# Every guest a leg built: no local path in its bytes, and the pin beside its
+# crate when the crate has one. A pin is the file <artifact>.sha256 in the
+# crate directory, in sha256sum format.
+wamn_check_outputs() {
+  local outputs raw pin package expected actual
+  outputs="$(
+    printf '%s\n' "${WAMN_METADATA[@]}" | jq -er -s \
+      --argjson manifests "$WAMN_MANIFEST_LIST" \
+      --argjson build "$WAMN_PLAN" '
+      [to_entries[]
+       | .key as $index
+       | .value as $metadata
+       | [$build[] | select(.manifest == $manifests[$index]) | .packages[]] as $selected
+       | $metadata.packages[]
+       | select(.name as $name | $selected | index($name) != null)
+       | .name as $package
+       | (.manifest_path | sub("/Cargo.toml$"; "")) as $directory
+       | .targets[]
+       | select((.kind | index("cdylib")) != null or (.kind | index("bin")) != null)
+       | [$package,
+          $metadata.target_directory + "/wasm32-wasip2/release/" + .name + ".wasm",
+          $directory + "/" + .name + ".wasm.sha256"]
+       | @tsv]
+      | select(length > 0)
+      | join("\n")
+    '
+  )" || wamn_fail 65 'could not list the built guests from locked metadata'
+  while IFS=$'\t' read -r package raw pin; do
+    [[ -s "$raw" ]] || wamn_fail 65 "built guest is missing or empty for $package: $raw"
+    if grep -a -F -q -e '/home/' -e "$WAMN_CARGO_HOME" -e "$WAMN_REPOSITORY_ROOT" -- "$raw"; then
+      wamn_fail 65 "built guest embeds a local path for $package: $raw (see tools/guest-rustflags)"
+    fi
+    [[ -e "$pin" ]] || continue
+    read -r expected _ <"$pin" || wamn_fail 65 "cannot read pin $pin"
+    actual="$(sha256sum -- "$raw")" || wamn_fail 65 "cannot hash built guest $raw"
+    actual="${actual%% *}"
+    [[ "$actual" == "$expected" ]] || {
+      wamn_fail 65 "built guest $package is sha256:$actual but $pin pins sha256:$expected. If the change is intended, write the new digest to the pin."
+    }
+  done <<<"$outputs"
 }
 
 wamn_artifact_plan() {
@@ -441,9 +483,6 @@ wamn_artifact_plan() {
     [[ -s "$input" ]] || {
       wamn_fail 65 "raw component is missing or empty for $package: $input"
     }
-    if grep -a -F -q -e '/home/' -e "$WAMN_CARGO_HOME" -e "$WAMN_REPOSITORY_ROOT" -- "$input"; then
-      wamn_fail 65 "raw component embeds a local path for $package: $input (see tools/guest-rustflags)"
-    fi
     digest="$(sha256sum -- "$input")" || {
       wamn_fail 65 "cannot hash raw component for $package: $input"
     }
@@ -647,6 +686,7 @@ wamn_compose() {
 
 if [[ "$WAMN_MODE" != virtualize-only ]]; then
   wamn_build
+  wamn_check_outputs
 fi
 
 WAMN_CURRENT_ARTIFACT_PLAN="$(wamn_artifact_plan)"

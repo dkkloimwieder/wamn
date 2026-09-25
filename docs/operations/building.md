@@ -40,7 +40,10 @@ Cargo combines dependency features within each invocation, which can change arti
 [`tools/guest-rustflags`](../../tools/guest-rustflags) sets the RUSTFLAGS of every guest build.
 It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
 `tools/build-components` and the Dockerfile `component-builder` stage call it. Nothing else sets guest RUSTFLAGS.
-The build tool refuses a guest that contains `/home/`, the Cargo home, or the repository path.
+The build tool refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
+A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
+The build tool and the Dockerfile stage refuse a guest that does not match its pin.
+If you change the router on purpose, write its new digest to `apps/platform/ingress/http-route/http_route.wasm.sha256`.
 A plain `cargo build` of a guest does not use the script, so its bytes depend on the machine. Do not pin such a guest.
 
 After virtualization, the tool composes each overlay whose component declaration names a base operation dependency.
