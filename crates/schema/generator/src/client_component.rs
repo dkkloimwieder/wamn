@@ -1913,18 +1913,19 @@ fn emit_selector_control(
         "{pad}<RecordSelect\n{pad}  label={label:?}\n{pad}  options={{{state}Options().rows}}\n{pad}  optionValue={{(row) => String(row.{key})}}\n{pad}  optionLabel={{(row) => String(row.{display})}}\n{pad}  value={{field().state.value == null ? null : String(field().state.value)}}"
     )
     .expect("write");
-    // A choice that supplies a revision keeps the revision its row carried.
+    writeln!(
+        source,
+        "{pad}  onChange={{(value) => field().handleChange(value ?? \"\")}}"
+    )
+    .expect("write");
+    // A selector that supplies a revision keeps the revision of the row that
+    // carries the held key: the row the operator picked, a listed row that
+    // carries a filled key, or the record read for a key off the list.
     if let Some(revision) = populated.revision {
         writeln!(
             source,
-            "{pad}  onChange={{(value) => {{\n{pad}    field().handleChange(value ?? \"\");\n{pad}    set{state_upper}Revision(\n{pad}      {state}Options().rows.find((row) => String(row.{key}) === value)?.{} ?? null,\n{pad}    );\n{pad}  }}}}",
+            "{pad}  onRow={{(row) => set{state_upper}Revision(row?.{} ?? null)}}",
             crate::client_ts::to_camel(revision.field)
-        )
-        .expect("write");
-    } else {
-        writeln!(
-            source,
-            "{pad}  onChange={{(value) => field().handleChange(value ?? \"\")}}"
         )
         .expect("write");
     }

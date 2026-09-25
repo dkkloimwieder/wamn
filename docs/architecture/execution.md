@@ -441,7 +441,7 @@ A delete asks for a confirmation first.
 A form whose plan binds a revision reads the record when it opens and sends the revision of that read.
 It reads nothing at submit, so a change that another writer makes in between refuses as a conflict.
 A delete whose plan binds a revision takes the key and the revision of the record that the page displayed, and it reads nothing.
-A command revision input can state `revision_of`, the input whose record it guards. The form then sends the revision that the row carried when the operator chose that record in its selector. If no row was chosen, the form refuses locally and marks that selector.
+A command revision input can state `revision_of`, the input whose record it guards. The form then sends the revision of the row that carries the held key in that selector: the row the operator chose, a listed row that carries a filled key, or the record read for a key off the list. If no row carries the key, the form refuses locally and marks that selector.
 A table row fills a form input only when that input is the one input of the form that names the row's model. If two inputs name it, the row fills neither.
 A table column that names a record shows the record's text, not its key.
 A generated result field states `references` from its column's foreign key, and an authored result field can declare it.

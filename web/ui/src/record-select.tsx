@@ -40,6 +40,12 @@ export interface RecordSelectProps<Row extends object> {
   /** The stored value, or null when no record is chosen. */
   readonly value: string | null;
   readonly onChange: (value: string | null) => void;
+  /**
+   * Called with the row the stored value names each time that row changes:
+   * the row the operator picked, a listed row that carries a filled value,
+   * or the row `readRow` returned. It is null while no row carries the value.
+   */
+  readonly onRow?: (row: Row | null) => void;
   /** The label of the control. */
   readonly label: string;
   /** The refusal that marks this control, or null. */
@@ -84,6 +90,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
       if (row !== null) {
         setChosen(() => row);
       }
+      props.onRow?.(row);
     }),
   );
 

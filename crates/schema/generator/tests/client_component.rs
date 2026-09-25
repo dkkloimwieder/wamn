@@ -1266,13 +1266,11 @@ fn a_form_sends_the_revision_of_the_record_its_revision_names() {
     assert!(widget.contains(
         "  const [valueInspectorIdRevision, setValueInspectorIdRevision] = createSignal<WidgetMakerQueryRow[\"editVersion\"] | null>(null);\n"
     ));
+    // The revision follows the row that carries the held key, which a filled
+    // key reaches without a pick (wamn-fuda).
     assert!(widget.contains(concat!(
-        "              onChange={(value) => {\n",
-        "                field().handleChange(value ?? \"\");\n",
-        "                setValueInspectorIdRevision(\n",
-        "                  valueInspectorIdOptions().rows.find((row) => String(row.id) === value)?.editVersion ?? null,\n",
-        "                );\n",
-        "              }}\n",
+        "              onChange={(value) => field().handleChange(value ?? \"\")}\n",
+        "              onRow={(row) => setValueInspectorIdRevision(row?.editVersion ?? null)}\n",
     )));
     assert!(widget.contains(concat!(
         "      const valueInspectorIdChosen = valueInspectorIdRevision();\n",

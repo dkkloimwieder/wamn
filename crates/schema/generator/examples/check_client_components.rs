@@ -9,7 +9,9 @@
 //! A component imports SolidJS, TanStack Table, TanStack Form, and zod, so the
 //! check runs inside `web/components`, which installs those libraries once.
 //! The command writes the fixture output into `web/components/fixture`, which
-//! Git ignores, and then runs the package's own check and tests.
+//! Git ignores, and then runs the package's own check and tests. The guarded
+//! fixture, whose batch revision names its inspector, goes into
+//! `fixture/guarded`, so a test reaches a selector that supplies a revision.
 //!
 //! `check_client_ts` keeps its own job, which is the bindings alone in a
 //! temporary directory.
@@ -34,20 +36,32 @@ fn main() -> Result<()> {
         );
     }
     let output = harness.join("fixture");
-    let release = fixture::client_release();
-    let mut files = emit_ts_client(&release)
-        .map_err(|error| anyhow::anyhow!("the platform fixture emits its bindings: {error}"))?;
-    files.extend(
-        emit_ts_components(&ClientPlan::from_ir(&release)).map_err(|error| {
-            anyhow::anyhow!("the platform fixture emits its components: {error}")
-        })?,
-    );
-
     if output.exists() {
         std::fs::remove_dir_all(&output)
             .with_context(|| format!("{} must be replaceable", output.display()))?;
     }
-    std::fs::create_dir_all(&output)?;
+    write_fixture(&fixture::client_release(), &output)?;
+    write_fixture(&fixture::guarded_release(), &output.join("guarded"))?;
+
+    run(&harness, "check")?;
+    run(&harness, "test")?;
+    println!("the generated components type-check and their tests pass");
+    Ok(())
+}
+
+/// Write the bindings and components of one release into `output`.
+fn write_fixture(
+    release: &wamn_schema_generator::client_ir::ClientContractIr,
+    output: &Path,
+) -> Result<()> {
+    let mut files = emit_ts_client(release)
+        .map_err(|error| anyhow::anyhow!("the platform fixture emits its bindings: {error}"))?;
+    files.extend(
+        emit_ts_components(&ClientPlan::from_ir(release)).map_err(|error| {
+            anyhow::anyhow!("the platform fixture emits its components: {error}")
+        })?,
+    );
+    std::fs::create_dir_all(output)?;
     for file in &files {
         // Every emitted path starts with `generated/client-ts/`. The check
         // needs the modules beside each other, not that prefix.
@@ -59,10 +73,6 @@ fn main() -> Result<()> {
         std::fs::write(destination, file.bytes())?;
     }
     println!("wrote {} modules into {}", files.len(), output.display());
-
-    run(&harness, "check")?;
-    run(&harness, "test")?;
-    println!("the generated components type-check and their tests pass");
     Ok(())
 }
 

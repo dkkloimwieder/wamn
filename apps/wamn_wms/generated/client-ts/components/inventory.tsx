@@ -625,12 +625,8 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
               optionValue={(row) => String(row.id)}
               optionLabel={(row) => String(row.palletCode)}
               value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => {
-                field().handleChange(value ?? "");
-                setValueTargetPalletIdRevision(
-                  valueTargetPalletIdOptions().rows.find((row) => String(row.id) === value)?.rowVersion ?? null,
-                );
-              }}
+              onChange={(value) => field().handleChange(value ?? "")}
+              onRow={(row) => setValueTargetPalletIdRevision(row?.rowVersion ?? null)}
               onSearch={(text) => {
                 setValueTargetPalletIdSearch(text);
                 void readValueTargetPalletIdOptions(null);

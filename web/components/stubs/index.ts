@@ -207,6 +207,46 @@ export function groupStub(): { transport: Transport; sent: WireRequest[] } {
 }
 
 /**
+ * One transport for the guarded batch, whose revision names its inspector.
+ *
+ * Each maker carries a revision. Northwind at revision 1 is on the first page
+ * of the maker list, and Southwind at revision 3 is off it, so only the maker
+ * read returns Southwind. A batch completes.
+ */
+export function batchStub(): { transport: Transport; sent: WireRequest[] } {
+  const sent: WireRequest[] = [];
+  return {
+    sent,
+    transport: {
+      invoke: (request: WireRequest) => {
+        sent.push(request);
+        let reply: Outcome<JsonValue>;
+        if (request.operation.includes("widget-maker/get@")) {
+          const key = String((request.items[0] as { id?: string }).id);
+          reply =
+            key === SOUTH
+              ? { status: "completed", value: { id: SOUTH, name: "Southwind", edit_version: "3" } }
+              : { status: "refused", code: "not_found", detail: null };
+        } else if (request.operation.includes("widget-maker")) {
+          reply = {
+            status: "completed",
+            value: {
+              item: [{ id: MAKER, name: "Northwind", edit_version: "1" }],
+              next_cursor: "page-2",
+            },
+          };
+        } else if (request.operation.includes("record-batch")) {
+          reply = { status: "completed", value: { id: WIDGET } };
+        } else {
+          reply = { status: "completed", value: { rows: [{ id: WIDGET, code: "priority" }] } };
+        }
+        return Promise.resolve(reply);
+      },
+    },
+  };
+}
+
+/**
  * One transport that holds one widget at revision 7, as a server does.
  *
  * A removal with that revision completes with an empty result, and a removal
