@@ -395,8 +395,9 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
   rowId: "id",
   pageMaximum: 100,
   scopeFilters: ["purchaseOrderNumber", "status", "supplierId"],
-  sortFields: ["created_at", "purchase_order_number", "status"],
+  sortFields: [{ field: "createdAt", wire: "created_at" }, { field: "purchaseOrderNumber", wire: "purchase_order_number" }, { field: "status", wire: "status" }],
   sortDirections: ["ascending", "descending"],
+  sortMaxFields: 1,
   columns: [
     { field: "createdAt", label: "Created", type: "timestamptz" },
     { field: "createdBy", label: "Created by", type: "uuid" },

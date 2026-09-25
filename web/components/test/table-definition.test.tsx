@@ -1,6 +1,7 @@
 /**
  * The DataTable renders from the fixture's emitted table definition, and loads
- * through the load state with the definition's page maximum (wamn-xtz2.3).
+ * through the load state with the definition's page maximum (wamn-xtz2.3). Its
+ * sort fields name the row member and the wire name (wamn-vfvx.1).
  */
 
 import { cleanup, render, screen, waitFor } from "@solidjs/testing-library";
@@ -40,6 +41,9 @@ function loaded(cap: number, ids: string[], cursor: string | null) {
       onRefresh={() => {}}
       startedAt={state().startedAt}
       endedAt={state().endedAt}
+      sortFields={definition.sortFields}
+      sortMaxFields={definition.sortMaxFields}
+      onSortChange={() => {}}
     />
   ));
   return sent;
@@ -51,7 +55,8 @@ describe("the table definition of the widget query", () => {
     expect(definition.rowId).toBe("id");
     expect(definition.pageMaximum).toBe(100);
     expect(definition.scopeFilters).toEqual(["code"]);
-    expect(definition.sortFields).toEqual(["created_at"]);
+    expect(definition.sortFields).toEqual([{ field: "createdAt", wire: "created_at" }]);
+    expect(definition.sortMaxFields).toBe(1);
     expect(definition.columns.map((column) => column.field)).toEqual([
       "code",
       "createdAt",

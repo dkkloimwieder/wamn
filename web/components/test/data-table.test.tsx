@@ -1,5 +1,6 @@
 /**
- * The DataTable renders the load state it is given (wamn-xtz2.1, wamn-xtz2.2).
+ * The DataTable renders the load state it is given (wamn-xtz2.1, wamn-xtz2.2),
+ * and a header click sorts (wamn-vfvx.1).
  *
  * The document has no layout, so the test gives the scroll box and each row
  * the height a browser would measure, as `window.test.tsx` does.
@@ -8,7 +9,7 @@
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { DataTable, WINDOW_FROM, type DataTableColumn } from "@wamn/ui";
+import { DataTable, WINDOW_FROM, type DataTableColumn, type DataTableSort } from "@wamn/ui";
 
 const BOX = 480;
 const ROW = 48;
@@ -38,14 +39,20 @@ afterEach(cleanup);
 interface Row {
   readonly id: string;
   readonly code: string;
+  /** Falls as the code rises, so a sort by rank reverses the rows. */
+  readonly rank: number;
 }
 
-const COLUMNS: readonly DataTableColumn<Row>[] = [{ field: "code", label: "code", type: "text" }];
+const COLUMNS: readonly DataTableColumn<Row>[] = [
+  { field: "code", label: "code", type: "text" },
+  { field: "rank", label: "rank", type: "int32" },
+];
 
 const rows = (count: number): Row[] =>
   Array.from({ length: count }, (_, index) => ({
     id: `r${index}`,
     code: `c${String(index).padStart(4, "0")}`,
+    rank: count - index,
   }));
 
 interface Shown {
@@ -53,6 +60,9 @@ interface Shown {
   readonly fullyRead: boolean;
   readonly busy: boolean;
   readonly refusal?: string;
+  readonly sortFields?: readonly { readonly field: keyof Row & string }[];
+  readonly sortMaxFields?: number;
+  readonly onSortChange?: (sort: readonly DataTableSort<Row>[]) => void;
 }
 
 function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
@@ -69,11 +79,23 @@ function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
       onRefresh={onRefresh}
       startedAt={new Date(0)}
       endedAt={state.busy ? null : new Date(1000)}
+      sortFields={state.sortFields ?? []}
+      sortMaxFields={state.sortMaxFields ?? 1}
+      onSortChange={state.onSortChange ?? (() => {})}
     />
   ));
 }
 
 const MESSAGE = "Full dataset cannot be loaded";
+
+/** The codes of the body rows, in the order they show. */
+const shown = () =>
+  screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => row.textContent?.slice(0, 5));
+
+const header = (label: string) => screen.queryByRole("button", { name: label });
 
 describe("the data table", () => {
   it("fills its container, with the toolbar outside the one element that scrolls (wamn-xtz2.4)", () => {
@@ -147,5 +169,72 @@ describe("the data table", () => {
     table({ rows: [], fullyRead: false, busy: false, refusal: "You are not signed in." });
     expect(screen.getByText("You are not signed in.")).toBeDefined();
     expect(screen.queryByText(MESSAGE)).toBeNull();
+  });
+
+  it("sorts a fully read set in the table, and does not call onSortChange", () => {
+    const onSortChange = vi.fn();
+    table({ rows: rows(3), fullyRead: true, busy: false, onSortChange });
+    expect(shown()).toEqual(["c0000", "c0001", "c0002"]);
+    fireEvent.click(header("rank")!);
+    expect(shown()).toEqual(["c0002", "c0001", "c0000"]);
+    fireEvent.click(header("rank")!);
+    expect(shown()).toEqual(["c0000", "c0001", "c0002"]);
+    expect(onSortChange).not.toHaveBeenCalled();
+  });
+
+  it("calls onSortChange with the whole sort on a set that is not fully read, and does not sort", () => {
+    const onSortChange = vi.fn();
+    table({
+      rows: rows(3),
+      fullyRead: false,
+      busy: false,
+      sortFields: [{ field: "rank" }],
+      onSortChange,
+    });
+    fireEvent.click(header("rank")!);
+    fireEvent.click(header("rank")!);
+    expect(onSortChange.mock.calls).toEqual([
+      [[{ field: "rank", direction: "ascending" }]],
+      [[{ field: "rank", direction: "descending" }]],
+    ]);
+    expect(shown()).toEqual(["c0000", "c0001", "c0002"]);
+  });
+
+  it("lets only the declared sort fields sort a set that is not fully read", () => {
+    table({ rows: rows(3), fullyRead: false, busy: false, sortFields: [{ field: "rank" }] });
+    expect(header("rank")).not.toBeNull();
+    expect(header("code")).toBeNull();
+    expect(screen.getByText("code")).toBeDefined();
+    cleanup();
+    table({ rows: rows(3), fullyRead: true, busy: false, sortFields: [{ field: "rank" }] });
+    expect(header("code")).not.toBeNull();
+  });
+
+  it("adds a field on a shift click only when the sort can hold more than one", () => {
+    const declared = [{ field: "code" as const }, { field: "rank" as const }];
+    for (const [sortMaxFields, last] of [
+      [1, [{ field: "code", direction: "ascending" }]],
+      [
+        2,
+        [
+          { field: "rank", direction: "ascending" },
+          { field: "code", direction: "ascending" },
+        ],
+      ],
+    ] as const) {
+      const onSortChange = vi.fn();
+      table({
+        rows: rows(3),
+        fullyRead: false,
+        busy: false,
+        sortFields: declared,
+        sortMaxFields,
+        onSortChange,
+      });
+      fireEvent.click(header("rank")!);
+      fireEvent.click(header("code")!, { shiftKey: true });
+      expect(onSortChange.mock.lastCall).toEqual([last]);
+      cleanup();
+    }
   });
 });

@@ -462,6 +462,7 @@ export const LOCATION_QUERY_TABLE = {
   scopeFilters: ["locationCode"],
   sortFields: [],
   sortDirections: [],
+  sortMaxFields: 1,
   columns: [
     { field: "createdAt", label: "created at", type: "timestamptz" },
     { field: "id", label: "id", type: "uuid" },

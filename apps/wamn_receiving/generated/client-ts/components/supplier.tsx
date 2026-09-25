@@ -323,6 +323,7 @@ export const SUPPLIER_QUERY_TABLE = {
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
+  sortMaxFields: 1,
   columns: [
     { field: "createdAt", label: "Added", type: "timestamptz" },
     { field: "id", label: "id", type: "uuid" },

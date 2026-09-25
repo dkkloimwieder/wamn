@@ -368,6 +368,7 @@ export const INVENTORY_MOVEMENT_QUERY_TABLE = {
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
+  sortMaxFields: 1,
   columns: [
     { field: "createdAt", label: "created at", type: "timestamptz" },
     { field: "createdBy", label: "created by", type: "uuid" },

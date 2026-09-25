@@ -1330,8 +1330,9 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
         "  rowId: \"id\",",
         "  pageMaximum: 100,",
         "  scopeFilters: [\"code\"],",
-        "  sortFields: [\"created_at\"],",
+        "  sortFields: [{ field: \"createdAt\", wire: \"created_at\" }],",
         "  sortDirections: [\"ascending\", \"descending\"],",
+        "  sortMaxFields: 1,",
         "    { field: \"code\", label: \"Widget code\", type: \"text\" },",
         "    { field: \"makerId\", label: \"maker id\", type: \"uuid\", displayField: \"name\" },",
     ] {

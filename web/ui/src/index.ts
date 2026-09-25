@@ -50,4 +50,4 @@ export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";
 export { RecordSelect, type RecordSelectProps } from "./record-select";
 export { ROW_HEIGHT, WINDOW_FROM, WindowedTable } from "./windowed-table";
-export { DataTable, type DataTableColumn, type DataTableColumnType, type DataTableProps } from "./table/data-table";
+export { DataTable, type DataTableColumn, type DataTableColumnType, type DataTableProps, type DataTableSort, type DataTableSortDirection } from "./table/data-table";

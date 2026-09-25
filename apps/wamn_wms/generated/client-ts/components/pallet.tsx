@@ -605,8 +605,9 @@ export const PALLET_QUERY_TABLE = {
   rowId: "id",
   pageMaximum: 100,
   scopeFilters: ["locationId", "palletCode", "status"],
-  sortFields: ["created_at", "location_id", "pallet_code", "updated_at"],
+  sortFields: [{ field: "createdAt", wire: "created_at" }, { field: "locationId", wire: "location_id" }, { field: "palletCode", wire: "pallet_code" }, { field: "updatedAt", wire: "updated_at" }],
   sortDirections: ["ascending", "descending"],
+  sortMaxFields: 1,
   columns: [
     { field: "createdAt", label: "created at", type: "timestamptz" },
     { field: "createdBy", label: "created by", type: "uuid" },

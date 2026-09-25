@@ -312,6 +312,7 @@ export const RECEIPT_QUERY_TABLE = {
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
+  sortMaxFields: 1,
   columns: [
     { field: "createdAt", label: "Recorded", type: "timestamptz" },
     { field: "createdBy", label: "Recorded by", type: "uuid" },

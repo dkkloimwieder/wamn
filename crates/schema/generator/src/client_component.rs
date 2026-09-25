@@ -1033,18 +1033,28 @@ fn write_table_definition(
         })
         .collect::<Result<Vec<_>, _>>()?;
     writeln!(source, "  scopeFilters: [{}],", filters.join(", ")).expect("write");
-    let (fields, directions): (Vec<_>, Vec<_>) =
-        paging.sort.map_or_else(Default::default, |sort| {
-            (
-                sort.fields.iter().map(|field| quote(field)).collect(),
-                sort.directions
-                    .iter()
-                    .map(|direction| quote(direction))
-                    .collect(),
-            )
-        });
+    // A sort field names its row member, which the table matches, and its wire
+    // name, which the request sends.
+    let fields = paging
+        .sort
+        .map_or(&[][..], |sort| &sort.fields[..])
+        .iter()
+        .map(|field| {
+            column_member(field, &operation.operation)
+                .map(|member| format!("{{ field: {}, wire: {} }}", quote(&member), quote(field)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let directions = paging
+        .sort
+        .map_or(&[][..], |sort| &sort.directions[..])
+        .iter()
+        .map(|direction| quote(direction))
+        .collect::<Vec<_>>();
+    // A contract that states no bound sorts by one field.
+    let max_fields = paging.sort.and_then(|sort| sort.max_fields).unwrap_or(1);
     writeln!(source, "  sortFields: [{}],", fields.join(", ")).expect("write");
     writeln!(source, "  sortDirections: [{}],", directions.join(", ")).expect("write");
+    writeln!(source, "  sortMaxFields: {max_fields},").expect("write");
     source.push_str("  columns: [\n");
     for column in &screen.columns {
         column_type(column, &operation.operation)?;
