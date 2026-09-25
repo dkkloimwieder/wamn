@@ -8,7 +8,8 @@
 #
 # The identity is the hash of the HEAD tree entries that the Dockerfile copies.
 # Two commits that change only an uncopied path share one identity, which is
-# the point: the image is the same. The per-run tag still carries the run's own
+# the point: the image is the same. The host and identity stages also leave
+# out the test-only files in TEST_ONLY. The per-run tag still carries the run's own
 # HEAD in wamn.dev/source-head, because that is what the loaded-image checks
 # read.
 
@@ -29,6 +30,14 @@ readonly COPIED=(
   deploy
 )
 
+# Copied files that the host and identity binaries never build from: test
+# crates and test data. A commit that changes only these files keeps the
+# host and identity images (wamn-as5u). Every Cargo.toml under them stays in
+# the identity, because a manifest can change how the workspace resolves.
+# tests/conformance/tests/journey_image_cache.rs keeps this list outside the
+# dependency closure of wamn-host and wamn-identity.
+readonly TEST_ONLY='^(tests/|test-support/(fixture-package|fixtures|harness|infrastructure|simulator)/|apps/[^/]+/tests/)'
+
 # Identities kept per image repository, newest use first.
 readonly RETAINED=3
 
@@ -41,8 +50,9 @@ state_root() {
 usage() {
   cat >&2 <<'EOF'
 usage: journey-image-cache ACTION [arguments]
-  identity REPOSITORY
-      Print the source identity of REPOSITORY at HEAD.
+  identity REPOSITORY [TARGET]
+      Print the source identity of REPOSITORY at HEAD for the Docker stage
+      TARGET. The host and identity stages leave out test-only files.
   ensure REPOSITORY TARGET NAME HEAD TAG CLUSTER
       Build wamn-NAME for the Docker stage TARGET if no image of this identity
       exists, then relabel it to wamn-NAME:TAG carrying source-head=HEAD, and
@@ -60,16 +70,27 @@ EOF
 }
 
 identity() {
-  local repository=$1 path object
+  local repository=$1 target=${2-} path object
   git -C "$repository" rev-parse --verify --quiet HEAD >/dev/null ||
     { printf 'the repository has no HEAD commit\n' >&2; exit 64; }
-  {
-    for path in "${COPIED[@]}"; do
-      object=$(git -C "$repository" rev-parse --verify --quiet "HEAD:$path") ||
-        { printf 'HEAD does not carry the copied path %s\n' "$path" >&2; exit 64; }
-      printf '%s %s\n' "$path" "$object"
-    done
-  } | sha256sum | cut -c1-16
+  for path in "${COPIED[@]}"; do
+    git -C "$repository" rev-parse --verify --quiet "HEAD:$path" >/dev/null ||
+      { printf 'HEAD does not carry the copied path %s\n' "$path" >&2; exit 64; }
+  done
+  case "$target" in
+    host | identity)
+      git -C "$repository" ls-tree -r --full-tree HEAD -- "${COPIED[@]}" |
+        awk -F '\t' -v test_only="$TEST_ONLY" \
+          '!($2 ~ test_only) || $2 ~ /(^|\/)Cargo\.toml$/' |
+        sha256sum | cut -c1-16
+      ;;
+    *)
+      for path in "${COPIED[@]}"; do
+        object=$(git -C "$repository" rev-parse --verify --quiet "HEAD:$path")
+        printf '%s %s\n' "$path" "$object"
+      done | sha256sum | cut -c1-16
+      ;;
+  esac
 }
 
 # Docker cannot change the labels of an existing image, and the loaded-image
@@ -87,7 +108,7 @@ relabel() {
 ensure() {
   local repository=$1 target=$2 name=$3 head=$4 tag=$5 cluster=$6
   local source_identity image
-  source_identity=$(identity "$repository")
+  source_identity=$(identity "$repository" "$target")
   image="wamn-$name:src-$source_identity"
   if ! "$docker_executable" image inspect "$image" >/dev/null 2>&1; then
     "$docker_executable" build --platform=linux/amd64 --provenance=false \
@@ -185,7 +206,7 @@ retain() {
 }
 
 case "${1-}" in
-  identity) identity "${2:?repository}" ;;
+  identity) identity "${2:?repository}" "${3-}" ;;
   ensure)
     ensure "${2:?repository}" "${3:?docker target}" "${4:?image name}" \
       "${5:?source head}" "${6:?per-run tag}" "${7:?cluster}"

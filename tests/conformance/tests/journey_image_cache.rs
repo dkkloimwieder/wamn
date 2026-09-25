@@ -146,7 +146,14 @@ fn run(directory: &TestDirectory, arguments: &[&str]) -> Output {
 }
 
 fn identity(directory: &TestDirectory, repository: &Path) -> String {
-    let output = run(directory, &["identity", repository.to_str().expect("path")]);
+    stage_identity(directory, repository, "")
+}
+
+fn stage_identity(directory: &TestDirectory, repository: &Path, target: &str) -> String {
+    let output = run(
+        directory,
+        &["identity", repository.to_str().expect("path"), target],
+    );
     assert!(
         output.status.success(),
         "stderr={}",
@@ -195,6 +202,137 @@ fn the_identity_follows_the_copied_paths_and_ignores_the_rest() {
     );
 }
 
+/// The copied directories that hold only test crates and test data. The tool's
+/// TEST_ONLY list names the same paths.
+const TEST_ONLY: [&str; 7] = [
+    "tests/",
+    "test-support/fixture-package/",
+    "test-support/fixtures/",
+    "test-support/harness/",
+    "test-support/infrastructure/",
+    "test-support/simulator/",
+    "apps/receiving/tests/",
+];
+
+/// A commit that changes only test files keeps the host and identity images,
+/// so a rerun after a test fix rebuilds nothing. A test manifest still counts,
+/// and the gates image, which carries the test binaries, still rebuilds
+/// (wamn-as5u).
+#[test]
+fn the_host_and_identity_stages_ignore_test_only_files() {
+    let directory = TestDirectory::new();
+    executable(&directory.path("docker"), FAKE_DOCKER_ABSENT);
+    let repository = source_repository(&directory);
+    for path in TEST_ONLY {
+        fs::create_dir_all(repository.join(path)).expect("create the test directory");
+        fs::write(repository.join(path).join("kept.rs"), "one\n").expect("write test file");
+        fs::write(repository.join(path).join("Cargo.toml"), "[package]\n")
+            .expect("write test manifest");
+    }
+    git(&repository, &["add", "."]);
+    git(&repository, &["commit", "--quiet", "-m", "tests"]);
+    let host = stage_identity(&directory, &repository, "host");
+    let gates = stage_identity(&directory, &repository, "gates");
+    assert_eq!(host, stage_identity(&directory, &repository, "identity"));
+
+    for path in TEST_ONLY {
+        fs::write(repository.join(path).join("kept.rs"), "two\n").expect("edit test file");
+    }
+    git(&repository, &["commit", "--quiet", "-am", "test only"]);
+    assert_eq!(
+        host,
+        stage_identity(&directory, &repository, "host"),
+        "a test-only change rebuilt the host image"
+    );
+    assert_ne!(
+        gates,
+        stage_identity(&directory, &repository, "gates"),
+        "a test-only change kept the gates image"
+    );
+
+    fs::write(repository.join("tests/Cargo.toml"), "[package]\n# two\n")
+        .expect("edit test manifest");
+    git(&repository, &["commit", "--quiet", "-am", "manifest"]);
+    assert_ne!(
+        host,
+        stage_identity(&directory, &repository, "host"),
+        "a test manifest change kept the host image"
+    );
+}
+
+/// The host and identity binaries build from none of the test-only paths, so
+/// leaving those paths out of their identity cannot hide a change to them.
+#[test]
+fn the_host_and_identity_binaries_reach_no_test_only_path() {
+    let root = repository_root();
+    let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .current_dir(&root)
+        .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+        .output()
+        .expect("run cargo metadata");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("decode cargo metadata");
+    let packages = metadata["packages"].as_array().expect("packages");
+    let nodes = metadata["resolve"]["nodes"]
+        .as_array()
+        .expect("resolve nodes");
+    for binary in ["wamn-host", "wamn-identity"] {
+        let mut stack = packages
+            .iter()
+            .filter(|package| package["name"] == binary && package["source"].is_null())
+            .map(|package| package["id"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(stack.len(), 1, "{binary} is one workspace package");
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(id) = stack.pop() {
+            let id = id.as_str().expect("package id").to_owned();
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let node = nodes
+                .iter()
+                .find(|node| node["id"] == id.as_str())
+                .expect("resolved node");
+            for dependency in node["deps"].as_array().expect("deps") {
+                // Development dependencies never reach the binary.
+                if dependency["dep_kinds"]
+                    .as_array()
+                    .expect("dependency kinds")
+                    .iter()
+                    .any(|kind| kind["kind"].is_null() || kind["kind"] == "build")
+                {
+                    stack.push(dependency["pkg"].clone());
+                }
+            }
+        }
+        for package in packages
+            .iter()
+            .filter(|package| seen.contains(package["id"].as_str().expect("id")))
+        {
+            let manifest = package["manifest_path"].as_str().expect("manifest path");
+            let Ok(relative) = Path::new(manifest).strip_prefix(&root) else {
+                continue;
+            };
+            let relative = relative.to_str().expect("path");
+            let components = relative.split('/').collect::<Vec<_>>();
+            // The last TEST_ONLY entry stands for every apps/<name>/tests/.
+            let application_tests =
+                components.len() > 2 && components[0] == "apps" && components[2] == "tests";
+            let test_only =
+                application_tests || TEST_ONLY[..6].iter().any(|path| relative.starts_with(path));
+            assert!(
+                !test_only,
+                "{binary} builds from the test-only path {relative}"
+            );
+        }
+    }
+}
+
 /// The second run of one source builds nothing and still gets its own labels.
 #[test]
 fn a_second_run_of_one_source_relabels_instead_of_building() {
@@ -202,7 +340,7 @@ fn a_second_run_of_one_source_relabels_instead_of_building() {
     executable(&directory.path("docker"), FAKE_DOCKER_ABSENT);
     let repository = source_repository(&directory);
     let source = repository.to_str().expect("path");
-    let first = identity(&directory, &repository);
+    let first = stage_identity(&directory, &repository, "host");
 
     let built = run(
         &directory,
