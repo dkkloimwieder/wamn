@@ -1,0 +1,15 @@
+[package]
+name = "wamn-edge"
+description = "One application and one device loop on a small box, with the engine and no cloud plugin."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The edge links the engine and run-state and never wamn-runtime. The
+# dependency test measures what these two bring.
+wamn-engine = { workspace = true }
+wamn-run-state = { workspace = true }
+
+[lints]
+workspace = true

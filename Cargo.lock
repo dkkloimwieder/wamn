@@ -5809,6 +5809,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-edge"
+version = "0.1.0"
+dependencies = [
+ "wamn-engine",
+ "wamn-run-state",
+]
+
+[[package]]
 name = "wamn-engine"
 version = "0.1.0"
 dependencies = [
