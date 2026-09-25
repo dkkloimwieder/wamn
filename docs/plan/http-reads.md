@@ -1,12 +1,17 @@
 # HTTP reads and caching
 
-Epic 16 makes every generated read an HTTP GET with cache headers, and gives `web/runtime` a query cache. Beads epic `wamn-rst8` holds the issues and their status. This page is the scope for owner review. No code exists yet.
+Epic 16 makes every generated read an HTTP GET with cache headers, and gives `web/runtime` a query cache. Beads epic `wamn-rst8` holds the issues and their status. The owner reviewed this scope on 2026-09-25.
 
 ## 1. Goal
 
 1. The route kinds `get`, `query` and `projection` are GET. Every other kind stays POST. The request JSON does not change. A GET carries it in the query string, in one canonical encoding.
 2. Each read response carries cache headers by kind. A `get` revalidates on every use, with an ETag from `row_version`. A `query` or `projection` can be reused for a short time, with an ETag from the versions of the models that it reads. A write changes those versions.
 3. `web/runtime` gets a query cache. It sends one request for equal reads on one page. After a write, it reads the page again, and unchanged reads come back as `304 Not Modified`.
+
+The owner decided two rules before this epic, and this page records them.
+
+- Reads are GET and writes are POST. The method follows from the operation kind. Before this epic, three places wrote it as a literal: the authored attachments, the generator test routes, and the delivery check.
+- A shared cache never serves one caller's read to another caller. The router checks the permission of each caller, and a shared cache does not run the router. So every authenticated read is `private`, and only a read whose auth policy is `none` can be `public`.
 
 The catalog has no `list` kind. A list is a `query` or a `projection` whose result is a page or a bounded list, so "list" below means those two kinds.
 
@@ -43,11 +48,9 @@ Measured on main at `07aa8d811` on 2026-09-25.
 
 `wamn-zrrg` resolves a table reference with one get per record, so a table of 1000 rows can send 1000 gets. It is the first consumer of the query cache.
 
-The brief names architecture notes called "HTTP reads and shared caching" and a POST-versus-GET note. Neither is in the repository, on another branch, or in the two owner docs. This page uses the brief as that input.
-
 ## 4. Decisions
 
-Each decision lists the options and one pick. The owner review confirms or changes each pick.
+Each decision lists the options and the owner ruling of 2026-09-25.
 
 ### 4.1 Query-string encoding
 
@@ -57,7 +60,7 @@ The brief fixes sorted keys, and arrays and nested members as JSON in one parame
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (pick) | Each top-level member is one parameter. Its value is the compact JSON text of the member, strings included: `?id=%22b1c2...%22`. | Quote characters in the URL. |
+| A (ruled) | Each top-level member is one parameter. Its value is the compact JSON text of the member, strings included: `?id=%22b1c2...%22`. | Quote characters in the URL. |
 | B | Strings are raw text. The router reads the route input schema to decide how to parse each value. | The decoder depends on the schema, and a nullable string cannot tell `null` from `"null"`. |
 | C | The whole item is one parameter: `?q={...}`. | One opaque parameter that a log or a person cannot read by member. |
 
@@ -67,7 +70,7 @@ Option A has one rule and needs no schema to decode. The encoder writes paramete
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (pick) | A platform table `wamn_cache.model_versions (relation, version)` in each application database. A statement-level trigger on each model relation adds 1 to its row. apply-package installs the trigger, as it installs the record history trigger today. | Two writes to one model serialize from the trigger to the commit. |
+| A (ruled) | A platform table `wamn_cache.model_versions (relation, version)` in each application database. A statement-level trigger on each model relation adds 1 to its row. apply-package installs the trigger, as it installs the record history trigger today. | Two writes to one model serialize from the trigger to the commit. |
 | B | The generated write SQL adds 1 to the version. | Authored SQL writes do not update it, so the version can miss a write. |
 | C | The host keeps the versions in memory. | Two hosts disagree, and a restart loses them. |
 | D | The CDC reader derives versions from the change stream. | It adds a dependency on the change stream to every read. |
@@ -83,13 +86,15 @@ Option A is correct for every writer, and the version becomes visible in the sam
 
 ### 4.4 `request_id` on a GET
 
-Pick: a read carries no `request_id`. The router adds a fixed `request_id` to the one item before it checks the schema, so the contract does not change and equal URLs give equal bytes. The transport does not match `request_id` for a GET. A write still sends its own `request_id` and `idempotency_key`.
+Ruled: a read carries no `request_id` at all. A fixed value that the router adds is a `request_id` that means nothing, so the router does not add one. If the span of a read needs an identity, the router mints a trace identity, which is not a `request_id`. A write still sends its own `request_id` and `idempotency_key`.
+
+Today `request_id` is a member of every generated operation contract and of the generated WIT item and outcome records, reads included. `wamn-rst8.1` measures what removing it from reads changes, and brings any WIT change to the owner first.
 
 ### 4.5 The query cache
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (pick) | A small store in `web/runtime`. It maps the canonical URL to an in-flight promise and a result. After a write, it marks every read as stale and reads the active ones again with `cache: "no-cache"`. | About 150 lines that the platform owns. |
+| A (ruled) | A small store in `web/runtime`. It maps the canonical URL to an in-flight promise and a result. After a write, it marks every read as stale and reads the active ones again with `cache: "no-cache"`. | About 150 lines that the platform owns. |
 | B | `@tanstack/query-core`, which is framework-free. | A new dependency with retry, garbage collection and focus refetch rules to configure. |
 
 Option A is enough, because the browser HTTP cache stores the responses and the ETags make a fresh read cheap. The store only removes duplicate requests and re-reads after a write. It does not need to know which model a write touched: an unchanged model answers 304.
@@ -106,15 +111,17 @@ Option A is enough, because the browser HTTP cache stores the responses and the 
 
 Every read response also sends `Vary: Authorization, Cookie`, so a browser does not give one user's cached read to the next user who signs in.
 
-This table uses `private` for every generated read. Section 5 explains why, and asks the owner to confirm it.
+This table uses `private` for every generated read, as section 5 states.
 
-## 5. The shared-cache question
+## 5. Shared caches
 
 The brief says caller-dependent reads are `private`, and that the grant says which reads those are. Today no grant, route or operation declares that a result depends on the caller. Every read route requires authentication, and the router checks the caller's permission token on each request.
 
 A shared cache that stores a `public` response gives it to the next request for the same URL. It does not run the router, so it does not check the permission of that caller. It also does not know the tenant. Every authenticated read is therefore caller-dependent in the sense that matters: the caller's grant decides whether the caller can see it.
 
-The pick: `public` only for a route whose auth policy is `none`. Every other read is `private`. No application route uses `none` today, so after this epic the browser cache and the 304 carry the benefit. A shared cache in front of authenticated reads needs a key that includes the tenant and the grant. That design belongs to the CDN epic, item 7 of section 7 in [web operator client](web-operator-client.md).
+Ruled on 2026-09-25: every authenticated read is `private`, and `public` applies only where the auth policy is `none`. No application route uses `none` today. This epic therefore delivers the browser cache, the ETags and the 304 responses.
+
+A shared cache for authenticated reads is a separate decision for later. It needs a cache key that includes the grant, or a platform cache behind the permission check. That decision belongs to the CDN epic, item 7 of section 7 in [web operator client](web-operator-client.md).
 
 ## 6. Issues
 
